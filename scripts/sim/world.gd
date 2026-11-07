@@ -31,6 +31,14 @@ class Nation:
 	extends RefCounted
 	var id := 0
 	var name := ""
+	var tag := ""
+	var full_name := ""
+	var ideology := ""          # democracy / authoritarian / fascism / communism
+	var leader := ""
+	var leader_title := ""
+	var flag := {}
+	var population := 0.0       # млн, метрополия
+	var manpower_rate := 0.015
 	var color := Color.WHITE
 	var capital := -1
 	var alive := true
@@ -79,6 +87,7 @@ var height_image: Image
 var province_ids := PackedInt32Array()  # width*height (только процедурная карта)
 var ai_wars := true                     # ИИ сам объявляет войны (на исторической карте — нет до этапов 3/5)
 var nation_tags := PackedStringArray()
+var ideology_names := {}
 
 var prov_count := 0
 var land_count := 0
@@ -92,7 +101,9 @@ var p_controller := PackedInt32Array()
 var p_vp := PackedInt32Array()
 var p_civ := PackedInt32Array()
 var p_mil := PackedInt32Array()
-var p_manpower := PackedInt32Array()
+var p_manpower := PackedInt32Array()     # призывной резерв провинции, тыс.
+var p_population := PackedInt32Array()   # население, тыс.
+var p_colony := PackedByteArray()
 var p_name := PackedStringArray()
 
 var nations: Array = []

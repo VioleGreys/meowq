@@ -135,6 +135,12 @@ ADM0_TAG = {
     "KWT": "ENG", "IRQ": "IRQ", "SAU": "SAU", "IRN": "PER",
 }
 
+# Колониальные владения (у метрополий Франции, Британии, Италии, Испании):
+# такие провинции дают меньше промышленности и призывников (данные — nations.json).
+COLONY_ADM0 = {"MAR", "DZA", "TUN", "LBY", "SYR", "LBN", "ISR", "PSX", "PSE", "JOR", "KWT",
+               "MLT", "CYP", "CYN", "ESB", "WSB", "GIB", "GRC", "TUR"}
+COLONIAL_POWERS = {"FRA", "ENG", "ITA", "SPR"}
+
 # Отдельные области (adm0, name) -> государство 1936 г.
 ADM1_TAG = {
     ("RUS", "Kaliningrad"): "GER",
@@ -447,22 +453,39 @@ def main():
 
     prov = np.full(region.shape, -1, np.int32)
     next_id = 0
+    island_merge_px = 300.0 / KM_PER_PX   # мелкий остров ближе 300 км к своей стране — к ней
     for t in range(len(tags)):
         mask = owner == t
         if not mask.any():
             continue
         lab, n = ndimage.label(mask)
         objs = ndimage.find_objects(lab)
+        small = []
         for ci in range(n):
             sl = objs[ci]
             sub = lab[sl] == ci + 1
             ys, xs = np.nonzero(sub)
             ys = ys + sl[0].start
             xs = xs + sl[1].start
+            # остров меньше трети целевой провинции (и не больше 2500 км²) — отложить
+            if ys.size < min(0.33 * float(area_px[ys, xs].mean()), 2500.0 / KM_PER_PX ** 2):
+                small.append((ys, xs))
+                continue
             coords = np.stack([xs, ys], 1).astype(np.float64)
             labels = kmeans_regions(coords, area_px[ys, xs], rng)
             prov[ys, xs] = labels + next_id
             next_id += int(labels.max()) + 1
+        if small:
+            own = (prov >= 0) & mask
+            if own.any():
+                dist, idx = ndimage.distance_transform_edt(~own, return_indices=True)
+            for ys, xs in sorted(small, key=lambda c: -c[0].size):
+                if own.any() and dist[ys, xs].min() < island_merge_px:
+                    k = int(np.argmin(dist[ys, xs]))
+                    prov[ys, xs] = prov[idx[0][ys[k], xs[k]], idx[1][ys[k], xs[k]]]
+                else:
+                    prov[ys, xs] = next_id
+                    next_id += 1
     n_land = next_id
     print(f"Провинций суши: {n_land}")
 
@@ -618,8 +641,9 @@ def main():
             if is_cap:
                 vp = 20
                 terrain = 4
+            colony = tag in COLONIAL_POWERS and r["adm0"] in COLONY_ADM0
             provinces.append({
-                "land": 1, "owner": tag, "name": name, "x": round(float(cx[i]), 1), "y": round(float(cy[i]), 1),
+                "land": 1, "owner": tag, "name": name, "adm0": r["adm0"], "colony": colony, "x": round(float(cx[i]), 1), "y": round(float(cy[i]), 1),
                 "px": int(counts[i]), "terrain": terrain, "vp": vp, "pop": int(total_pop),
                 "lat": round(lat, 2), "lon": round(lon, 2), "region": r["name_ru"],
                 "adj": sorted(adj[i]),

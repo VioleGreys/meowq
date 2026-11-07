@@ -72,6 +72,8 @@ func _auto_screenshot(path: String) -> void:
 			_on_province_tapped(world.nations[me].capital)
 	else:
 		pick(me)
+		if _arg("tab") != "":
+			hud.open_tab(_arg("tab"))
 	for i in 10:
 		await get_tree().process_frame
 	hud.refresh_top()

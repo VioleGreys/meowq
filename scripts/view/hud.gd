@@ -8,7 +8,7 @@ var gen_info := ""
 
 var root: Control
 var top_bar: PanelContainer
-var swatch: ColorRect
+var swatch: Flag
 var nation_label: Label
 var date_label: Label
 var res_label: Label
@@ -117,8 +117,7 @@ func _build_top_bar() -> void:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 12)
 	top_bar.add_child(h)
-	swatch = ColorRect.new()
-	swatch.custom_minimum_size = Vector2(34, 34)
+	swatch = Flag.make({}, Vector2(48, 32))
 	h.add_child(swatch)
 	nation_label = Label.new()
 	nation_label.add_theme_font_size_override("font_size", 22)
@@ -284,9 +283,23 @@ func show_select(nid: int) -> void:
 				provs += 1
 				civ += w.p_civ[p]
 				mil += w.p_mil[p]
-		var t := _label(n.name, 30, n.color.lightened(0.3))
-		overlay_box.add_child(t)
-		overlay_box.add_child(_label("Столица: %s · Провинций: %d · Дивизий: %d · Фабрик: %d гражд. / %d воен." % [w.p_name[n.capital], provs, w.divisions_of(nid).size(), civ, mil], 18))
+		var head := HBoxContainer.new()
+		head.add_theme_constant_override("separation", 12)
+		head.add_child(Flag.make(n.flag, Vector2(66, 44)))
+		var names := VBoxContainer.new()
+		names.add_theme_constant_override("separation", 0)
+		names.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		for l in [_label(n.name, 28, n.color.lightened(0.35)), _label(n.full_name, 15, Color(0.75, 0.73, 0.68))]:
+			l.autowrap_mode = TextServer.AUTOWRAP_OFF
+			names.add_child(l)
+		head.add_child(names)
+		overlay_box.add_child(head)
+		overlay_box.add_child(_label("%s · %s: %s" % [w.ideology_names.get(n.ideology, n.ideology), n.leader_title, n.leader], 18))
+		var pop := 0
+		for p in w.prov_count:
+			if w.p_owner[p] == nid:
+				pop += w.p_population[p]
+		overlay_box.add_child(_label("Столица: %s · Население: %.1f млн · Дивизий: %d · Фабрики: %d гражд. / %d воен." % [w.p_name[n.capital], pop / 1000.0, w.divisions_of(nid).size(), civ, mil], 17, Color(0.85, 0.83, 0.78)))
 		overlay_box.add_child(_button("Начать игру: %s" % n.name, func(): game.start_as(nid), Vector2(0, 64)))
 	if game.procedural:
 		var row := HBoxContainer.new()
@@ -303,7 +316,7 @@ func show_select(nid: int) -> void:
 		grid.columns = 4
 		grid.add_theme_constant_override("h_separation", 6)
 		grid.add_theme_constant_override("v_separation", 6)
-		for tag in ["GER", "SOV", "ENG", "FRA", "ITA", "POL", "SPR", "TUR"]:
+		for tag in ["GER", "SOV", "ENG", "FRA", "ITA", "POL", "SPR"]:
 			var i: int = game.nation_by_tag(tag)
 			if i < 0:
 				continue
@@ -312,6 +325,9 @@ func show_select(nid: int) -> void:
 			if i == nid:
 				b.disabled = true
 			grid.add_child(b)
+		var all_btn := _button("Все страны…", func(): open_tab("nations"), Vector2(150, 48))
+		all_btn.add_theme_font_size_override("font_size", 17)
+		grid.add_child(all_btn)
 		overlay_box.add_child(grid)
 	overlay_box.add_child(_label(gen_info, 14, Color(0.7, 0.7, 0.7)))
 	overlay.show()
@@ -349,7 +365,8 @@ func refresh_top() -> void:
 	if w == null or game.player() < 0:
 		return
 	var n: World.Nation = w.nations[game.player()]
-	swatch.color = n.color
+	if swatch.spec != n.flag:
+		swatch.spec = n.flag
 	nation_label.text = n.name
 	date_label.text = w.date_string()
 	res_label.text = "Снаряж. %d (+%.0f)  ·  Люди %dк  ·  Фабр. %d/%d  ·  Див. %d" % [
@@ -409,7 +426,10 @@ func _province_text(p: int) -> String:
 	var s := "%s  ·  %s  ·  %s" % [w.p_name[p], World.TERRAIN_NAMES[w.p_terrain[p]], own.name]
 	if ctrl != own:
 		s += " (оккупирована: %s)" % ctrl.name
-	s += "\nФабрики: %d гражд. / %d воен. · Население: %dк · Очки победы: %d" % [w.p_civ[p], w.p_mil[p], w.p_manpower[p], w.p_vp[p]]
+	if w.p_colony[p] == 1:
+		s += " · колония"
+	s += "\nФабрики: %d гражд. / %d воен. · Население: %s · Резерв: %dк · Очки победы: %d" % [
+		w.p_civ[p], w.p_mil[p], _fmt_pop(w.p_population[p]), w.p_manpower[p], w.p_vp[p]]
 	var counts := {}
 	for d in w.prov_divs[p]:
 		if d.alive:
@@ -417,6 +437,10 @@ func _province_text(p: int) -> String:
 	for k in counts:
 		s += "\nДивизии %s: %d" % [w.nations[k].name, counts[k]]
 	return s
+
+
+func _fmt_pop(k: int) -> String:
+	return "%.1f млн" % (k / 1000.0) if k >= 1000 else "%d тыс." % k
 
 
 func show_province(p: int) -> void:
@@ -472,12 +496,16 @@ func open_tab(tab: String) -> void:
 	_rebuild_popup()
 	popup.show()
 	log_box.hide()
+	if tab == "nations":
+		overlay.hide()
 
 
 func close_popup() -> bool:
 	if popup.visible:
 		popup.hide()
 		log_box.show()
+		if game.state == "select":
+			overlay.show()
 		return true
 	return false
 
@@ -492,6 +520,9 @@ func _rebuild_popup() -> void:
 	_clear(popup_body)
 	_dynamic.clear()
 	var w: World = game.world
+	if popup_tab == "nations":
+		_build_nation_list(w)
+		return
 	var me: int = game.player()
 	var n: World.Nation = w.nations[me]
 	match popup_tab:
@@ -557,13 +588,10 @@ func _rebuild_popup() -> void:
 				if o.id == me or not o.alive:
 					continue
 				var row := HBoxContainer.new()
-				var sw := ColorRect.new()
-				sw.color = o.color
-				sw.custom_minimum_size = Vector2(22, 22)
-				sw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-				row.add_child(sw)
+				row.add_theme_constant_override("separation", 8)
+				row.add_child(Flag.make(o.flag, Vector2(36, 24)))
 				var status := "ВОЙНА" if w.is_at_war(me, o.id) else ("сосед" if neighbours.has(o.id) else "мир")
-				var l := _label("%s · %s · дивизий %d · провинций %d" % [o.name, status, o.division_count, o.province_count], 17,
+				var l := _label("%s · %s · %s · дивизий %d" % [o.name, status, w.ideology_names.get(o.ideology, ""), o.division_count], 17,
 					Color(1, 0.5, 0.45) if status == "ВОЙНА" else Color(0.9, 0.88, 0.8))
 				l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				row.add_child(l)
@@ -574,6 +602,28 @@ func _rebuild_popup() -> void:
 	_update_popup_dynamic()
 
 
+## Список всех стран для выбора (экран выбора, игрока ещё нет).
+func _build_nation_list(w: World) -> void:
+	popup_title.text = "Все страны"
+	var order: Array = []
+	for o in w.nations:
+		if o.alive:
+			order.append(o)
+	order.sort_custom(func(a, b): return a.name < b.name)
+	for o in order:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		row.add_child(Flag.make(o.flag, Vector2(42, 28)))
+		var oid: int = o.id
+		var b := _button("%s · %s" % [o.name, w.ideology_names.get(o.ideology, "")], func():
+			close_popup()
+			game.pick(oid), Vector2(0, 50))
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(b)
+		popup_body.add_child(row)
+
+
 func _train(count: int) -> void:
 	var made: int = game.train(count)
 	toast("В подготовке: +%d" % made if made > 0 else "Не хватает снаряжения или людей")
@@ -582,6 +632,8 @@ func _train(count: int) -> void:
 
 func _update_popup_dynamic() -> void:
 	var w: World = game.world
+	if game.player() < 0:
+		return
 	var n: World.Nation = w.nations[game.player()]
 	match popup_tab:
 		"army":

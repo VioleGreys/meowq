@@ -31,7 +31,7 @@ func refresh_income() -> void:
 		nat.mil = r[1]
 		nat.province_count = r[3]
 		nat.daily_equipment = nat.mil * 0.4 * (1.0 + nat.b("industry"))
-		nat.daily_manpower = r[2] * 0.0012 * (1.0 + nat.b("manpower"))
+		nat.daily_manpower = r[2] * 0.0014 * (1.0 + nat.b("manpower"))
 		nat.daily_research = (1.0 + nat.civ * 0.05) * (1.0 + nat.b("research"))
 
 
@@ -74,7 +74,7 @@ func _phase_economy() -> void:
 		nat.mil = r[1]
 		nat.province_count = r[3]
 		nat.daily_equipment = nat.mil * 0.4 * (1.0 + nat.b("industry"))
-		nat.daily_manpower = r[2] * 0.0012 * (1.0 + nat.b("manpower"))
+		nat.daily_manpower = r[2] * 0.0014 * (1.0 + nat.b("manpower"))
 		nat.daily_research = (1.0 + nat.civ * 0.05) * (1.0 + nat.b("research"))
 		nat.equipment += nat.daily_equipment
 		nat.manpower += nat.daily_manpower
