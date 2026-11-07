@@ -1,24 +1,29 @@
 extends SceneTree
-## Безголовый прогон: генерирует мир, гоняет симуляцию в однопоточном и
-## многопоточном режимах, проверяет детерминизм и печатает замеры.
-##   godot --headless --script res://tests/sim_bench.gd
+## Безголовый прогон: загружает карту Европы 1936 г. (или генерирует
+## процедурную), гоняет симуляцию в однопоточном и многопоточном режимах,
+## проверяет детерминизм и печатает замеры.
+##   godot --headless --path . --script res://tests/sim_bench.gd
+##   ... -- --procedural [--large]   процедурная карта
+## ИИ-войны в тесте включены принудительно, чтобы нагрузить бои и движение.
 
 const DAYS := 400
 
 
 var cell := 22
 var nation_count := 12
+var procedural := false
 
 
 func _init() -> void:
 	print("Ядер: ", OS.get_processor_count())
+	procedural = "--procedural" in OS.get_cmdline_user_args()
 	if "--large" in OS.get_cmdline_user_args():
 		cell = 13
 		nation_count = 24
 	var single := _run(false)
 	var multi := _run(true)
-	print("Однопоточно: генерация %.0f мс, %d дней за %.0f мс" % [single[0], DAYS, single[1]])
-	print("Многопоточно: генерация %.0f мс, %d дней за %.0f мс" % [multi[0], DAYS, multi[1]])
+	print("Однопоточно: загрузка %.0f мс, %d дней за %.0f мс" % [single[0], DAYS, single[1]])
+	print("Многопоточно: загрузка %.0f мс, %d дней за %.0f мс" % [multi[0], DAYS, multi[1]])
 	print("Ускорение симуляции: x%.2f" % (single[1] / maxf(1.0, multi[1])))
 	if single[2] != multi[2]:
 		push_error("Результаты различаются! %s vs %s" % [single[2], multi[2]])
@@ -32,7 +37,12 @@ func _run(parallel: bool) -> Array:
 	Parallel.enabled = parallel
 	var world := World.new()
 	var t := Time.get_ticks_msec()
-	var timings := MapGen.generate(world, 12345, 800, 500, cell, nation_count)
+	var timings := {}
+	if procedural:
+		timings = MapGen.generate(world, 12345, 800, 500, cell, nation_count)
+	else:
+		timings = MapLoader.load_world(world)
+	world.ai_wars = true
 	var gen_ms := Time.get_ticks_msec() - t
 	if parallel:
 		print("Провинций: %d (суша %d), стран: %d, дивизий: %d" % [world.prov_count, world.land_count, world.nations.size(), world.divisions.size()])

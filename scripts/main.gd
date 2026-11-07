@@ -17,6 +17,7 @@ var selected_prov := -1
 var selected_divs: Array = []
 var pick_nation := -1
 var large_map := false
+var procedural := false          # старая процедурная карта (для тестов): -- --procedural
 
 
 func _ready() -> void:
@@ -32,6 +33,7 @@ func _ready() -> void:
 	hud.game = self
 	add_child(hud)
 	map_view.province_tapped.connect(_on_province_tapped)
+	procedural = "--procedural" in OS.get_cmdline_user_args()
 	await new_world(randi() % 100000 if _arg("seed") == "" else int(_arg("seed")))
 	if _arg("screenshot") != "":
 		_auto_screenshot(_arg("screenshot"))
@@ -47,21 +49,24 @@ func _arg(name: String) -> String:
 ## Отладка/CI: godot -- --screenshot=out.png [--days=N] [--zoom=Z] [--select]
 func _auto_screenshot(path: String) -> void:
 	var days := int(_arg("days")) if _arg("days") != "" else 0
-	if days >= 0 and _arg("pick") == "":
-		start_as(0)
+	var me := 0
+	if _arg("nation") != "" and nation_by_tag(_arg("nation")) >= 0:
+		me = nation_by_tag(_arg("nation"))
+	if _arg("pick") == "":
+		start_as(me)
 		set_speed(0)
 		for i in days:
 			sim.tick()
 		hud.on_tick()
 		if _arg("zoom") != "":
 			map_view.camera.zoom = Vector2.ONE * float(_arg("zoom"))
-			map_view.center_on(world.nations[0].capital)
+			map_view.center_on(world.nations[me].capital)
 		if _arg("tab") != "":
 			hud.open_tab(_arg("tab"))
 		if "--select" in OS.get_cmdline_user_args():
-			_on_province_tapped(world.nations[0].capital)
+			_on_province_tapped(world.nations[me].capital)
 	else:
-		_on_province_tapped(world.nations[0].capital)
+		pick(me)
 	for i in 10:
 		await get_tree().process_frame
 	hud.refresh_top()
@@ -77,23 +82,39 @@ func new_world(seed_value: int) -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	world = World.new()
-	var cell := 14 if large_map else 22
-	var nations := 22 if large_map else 12
 	var t := Time.get_ticks_msec()
-	MapGen.generate(world, seed_value, 800, 500, cell, nations)
-	var gen_ms := Time.get_ticks_msec() - t
+	if procedural:
+		MapGen.generate(world, seed_value, 800, 500, 14 if large_map else 22, 22 if large_map else 12)
+	else:
+		MapLoader.load_world(world)
+	var load_ms := Time.get_ticks_msec() - t
 	sim = Simulation.new(world)
 	map_view.setup(world)
 	unit_layer.map = map_view
 	unit_layer.world = world
 	unit_layer.player = -1
+	unit_layer._labels_day = -1
 	selected_divs.clear()
 	unit_layer.selected = selected_divs
 	selected_prov = -1
 	pick_nation = -1
 	state = "select"
-	hud.gen_info = "Карта #%d: %d провинций, сгенерирована за %d мс на %d ядрах" % [seed_value, world.prov_count, gen_ms, Parallel.thread_count()]
+	if procedural:
+		hud.gen_info = "Карта #%d: %d провинций, сгенерирована за %d мс на %d ядрах" % [seed_value, world.prov_count, load_ms, Parallel.thread_count()]
+	else:
+		hud.gen_info = "Европа, 1 января 1936 г.: %d провинций суши, %d морских зон · загрузка %d мс" % [world.land_count, world.prov_count - world.land_count, load_ms]
 	hud.show_select(-1)
+
+
+func nation_by_tag(tag: String) -> int:
+	var i := world.nation_tags.find(tag)
+	return i
+
+
+func pick(nid: int) -> void:
+	pick_nation = nid
+	map_view.set_highlight_nation(nid)
+	hud.show_select(nid)
 
 
 func start_as(nid: int) -> void:
@@ -103,6 +124,7 @@ func start_as(nid: int) -> void:
 	unit_layer.player = nid
 	map_view.set_highlight_nation(-1)
 	map_view.set_selected(-1)
+	map_view.camera.zoom = Vector2.ONE * 0.9
 	map_view.center_on(world.nations[nid].capital)
 	state = "play"
 	speed = 1
@@ -151,9 +173,7 @@ func _prune_selection() -> void:
 func _on_province_tapped(p: int) -> void:
 	if state == "select":
 		if world.p_land[p] == 1:
-			pick_nation = world.p_owner[p]
-			map_view.set_highlight_nation(pick_nation)
-			hud.show_select(pick_nation)
+			pick(world.p_owner[p])
 		return
 	if state != "play":
 		return

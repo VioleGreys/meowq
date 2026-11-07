@@ -18,6 +18,21 @@ var phase_usec := {}
 
 func _init(w: World) -> void:
 	world = w
+	refresh_income()
+
+
+## Пересчитать доход всех стран без начисления (для интерфейса до первого тика).
+func refresh_income() -> void:
+	world.refresh_stats()
+	var all := world.compute_all_income()
+	for nat in world.nations:
+		var r: Array = all[nat.id]
+		nat.civ = r[0]
+		nat.mil = r[1]
+		nat.province_count = r[3]
+		nat.daily_equipment = nat.mil * 0.4 * (1.0 + nat.b("industry"))
+		nat.daily_manpower = r[2] * 0.0012 * (1.0 + nat.b("manpower"))
+		nat.daily_research = (1.0 + nat.civ * 0.05) * (1.0 + nat.b("research"))
 
 
 func tick() -> void:
@@ -47,12 +62,8 @@ func _timed(label: String, fn: Callable) -> void:
 
 func _phase_economy() -> void:
 	var n_count := world.nations.size()
-	var results: Array = []
-	results.resize(n_count)
-	var task := func(i: int) -> void:
-		results[i] = world.compute_income(i)
-	# параллелим, только когда работы достаточно (большая карта / много стран)
-	Parallel.run(n_count, task, "economy", 2 if world.prov_count * n_count > 15000 else 1 << 30)
+	# один проход по всем провинциям дешевле, чем по проходу на каждую страну
+	var results := world.compute_all_income()
 
 	for i in n_count:
 		var nat: World.Nation = world.nations[i]

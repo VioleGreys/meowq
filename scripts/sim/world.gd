@@ -9,19 +9,22 @@ const T_HILLS := 2
 const T_MOUNTAIN := 3
 const T_URBAN := 4
 const T_SEA := 5
+const T_DESERT := 6
+const T_MARSH := 7
 
-const TERRAIN_NAMES := ["Равнины", "Лес", "Холмы", "Горы", "Город", "Море"]
-const TERRAIN_MOVE := [1.0, 0.7, 0.6, 0.4, 0.85, 1.0]
-const TERRAIN_DEFENSE := [0.0, 0.2, 0.3, 0.55, 0.35, 0.0]
+const TERRAIN_NAMES := ["Равнины", "Лес", "Холмы", "Горы", "Город", "Море", "Пустыня", "Болота"]
+const TERRAIN_MOVE := [1.0, 0.7, 0.6, 0.4, 0.85, 1.0, 0.8, 0.45]
+const TERRAIN_DEFENSE := [0.0, 0.2, 0.3, 0.55, 0.35, 0.0, 0.0, 0.3]
 const TERRAIN_COLORS := [
 	Color(0.62, 0.68, 0.40), Color(0.30, 0.48, 0.28), Color(0.64, 0.56, 0.38),
 	Color(0.62, 0.60, 0.58), Color(0.72, 0.52, 0.42), Color(0.2, 0.3, 0.4),
+	Color(0.86, 0.78, 0.55), Color(0.42, 0.52, 0.42),
 ]
 
 const MONTHS := ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
 	"августа", "сентября", "октября", "ноября", "декабря"]
 const MONTH_DAYS := [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-const START_YEAR := 1937
+const START_YEAR := 1936
 
 
 class Nation:
@@ -73,7 +76,9 @@ var width := 0
 var height := 0
 var id_image: Image
 var height_image: Image
-var province_ids := PackedInt32Array()  # width*height
+var province_ids := PackedInt32Array()  # width*height (только процедурная карта)
+var ai_wars := true                     # ИИ сам объявляет войны (на исторической карте — нет до этапов 3/5)
+var nation_tags := PackedStringArray()
 
 var prov_count := 0
 var land_count := 0
@@ -120,13 +125,27 @@ var game_over := ""
 
 func date_string() -> String:
 	var d := day
-	var year := START_YEAR + d / 365
-	d = d % 365
+	var year := START_YEAR
+	while d >= _year_days(year):
+		d -= _year_days(year)
+		year += 1
 	var m := 0
-	while d >= MONTH_DAYS[m]:
-		d -= MONTH_DAYS[m]
+	while d >= _month_days(m, year):
+		d -= _month_days(m, year)
 		m += 1
-	return "%d %s %d" % [d + 1, MONTHS[m], year]
+	return "%d %s %d г." % [d + 1, MONTHS[m], year]
+
+
+static func _leap(y: int) -> bool:
+	return (y % 4 == 0 and y % 100 != 0) or y % 400 == 0
+
+
+static func _year_days(y: int) -> int:
+	return 366 if _leap(y) else 365
+
+
+static func _month_days(m: int, y: int) -> int:
+	return 29 if m == 1 and _leap(y) else MONTH_DAYS[m]
 
 
 func log_event(text: String) -> void:
@@ -203,6 +222,35 @@ func compute_income(nid: int) -> Array:
 	return [civ, mil, mp, provs]
 
 
+## То же для всех стран за один проход: Array из [гражд., воен., призывники, провинций].
+func compute_all_income() -> Array:
+	var civ := PackedInt32Array()
+	var mil := PackedInt32Array()
+	var mp := PackedInt32Array()
+	var provs := PackedInt32Array()
+	civ.resize(nation_count)
+	mil.resize(nation_count)
+	mp.resize(nation_count)
+	provs.resize(nation_count)
+	for p in prov_count:
+		var c := p_controller[p]
+		if c < 0:
+			continue
+		provs[c] += 1
+		if p_owner[p] == c:
+			civ[c] += p_civ[p]
+			mil[c] += p_mil[p]
+			mp[c] += p_manpower[p]
+		else:
+			civ[c] += p_civ[p] / 2
+			mil[c] += p_mil[p] / 2
+			mp[c] += p_manpower[p] / 5
+	var res: Array = []
+	for n in nation_count:
+		res.append([civ[n], mil[n], mp[n], provs[n]])
+	return res
+
+
 func has_enemies(nation: int, prov: int) -> bool:
 	for d in prov_divs[prov]:
 		if d.alive and is_at_war(nation, d.owner):
@@ -219,6 +267,9 @@ func province_at_pixel(px: Vector2) -> int:
 	var y := int(px.y)
 	if x < 0 or y < 0 or x >= width or y >= height:
 		return -1
+	if province_ids.is_empty():
+		var c := id_image.get_pixel(x, y)
+		return int(round(c.r * 255.0)) + int(round(c.g * 255.0)) * 256
 	return province_ids[y * width + x]
 
 

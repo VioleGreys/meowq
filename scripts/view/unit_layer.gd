@@ -118,34 +118,58 @@ func _draw() -> void:
 func _draw_nation_labels(z: float, vp: Vector2) -> void:
 	if z > 1.6:
 		return
-	if _labels_day != world.day or world.palette_dirty:
+	if _labels_day < 0 or world.day - _labels_day >= 5 or world.day < _labels_day:
 		_rebuild_labels()
 	for l in _labels:
 		var pos := map.world_to_screen(l[0])
-		var size := int(clampf(l[2] * z, 12, 64))
-		if size < 13:
-			continue
+		var size := int(clampf(l[2] * z, 12, 60))
 		var w := font.get_string_size(l[1], HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+		var fit: float = l[3] * z * 0.95
+		if w > fit and w > 0.0:
+			size = int(size * fit / w)
+			w = font.get_string_size(l[1], HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+		if size < 11:
+			continue
 		var alpha := clampf((1.6 - z) * 2.0, 0.0, 0.75)
 		draw_string_outline(font, pos - Vector2(w * 0.5, 0), l[1], HORIZONTAL_ALIGNMENT_LEFT, -1, size, 4, Color(1, 1, 1, alpha * 0.4))
 		draw_string(font, pos - Vector2(w * 0.5, 0), l[1], HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0.08, 0.07, 0.06, alpha))
 
 
 func _rebuild_labels() -> void:
+	# Подпись — по самому большому связному куску территории страны
+	# (иначе «Франция» уезжает в Алжир, а «Великобритания» — в Средиземное море).
 	_labels_day = world.day
 	_labels.clear()
-	var sums := {}
+	var comp := PackedInt32Array()
+	comp.resize(world.prov_count)
+	comp.fill(-1)
+	var best := {}   # нация -> [пиксели, сумма центров, мин, макс]
 	for p in world.prov_count:
 		var c := world.p_controller[p]
-		if c < 0 or world.p_land[p] == 0:
+		if c < 0 or world.p_land[p] == 0 or comp[p] >= 0:
 			continue
-		if not sums.has(c):
-			sums[c] = [Vector2.ZERO, 0]
-		sums[c][0] += world.p_center[p] * world.p_pixels[p]
-		sums[c][1] += world.p_pixels[p]
-	for c in sums:
+		comp[p] = p
+		var stack := [p]
+		var px := 0
+		var sum := Vector2.ZERO
+		var lo := Vector2(INF, INF)
+		var hi := Vector2(-INF, -INF)
+		while not stack.is_empty():
+			var q: int = stack.pop_back()
+			px += world.p_pixels[q]
+			sum += world.p_center[q] * world.p_pixels[q]
+			lo = lo.min(world.p_center[q])
+			hi = hi.max(world.p_center[q])
+			for r in world.p_adj[q]:
+				if comp[r] < 0 and world.p_land[r] == 1 and world.p_controller[r] == c:
+					comp[r] = p
+					stack.append(r)
+		if not best.has(c) or best[c][0] < px:
+			best[c] = [px, sum, lo, hi]
+	for c in best:
 		if not world.nations[c].alive:
 			continue
-		var px: int = sums[c][1]
-		var center: Vector2 = sums[c][0] / maxf(1.0, px)
-		_labels.append([center * MapView.SCALE, world.nations[c].name.to_upper(), sqrt(float(px)) * 0.55])
+		var b: Array = best[c]
+		var center: Vector2 = b[1] / maxf(1.0, b[0])
+		var span: Vector2 = (b[3] - b[2]) * MapView.SCALE
+		_labels.append([center * MapView.SCALE, world.nations[c].name.to_upper(), sqrt(float(b[0])) * 0.5, maxf(span.x, span.y * 0.8)])

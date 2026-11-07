@@ -273,7 +273,7 @@ func show_select(nid: int) -> void:
 	overlay.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	if nid < 0:
 		overlay_box.add_child(_label("Выберите страну", 28))
-		overlay_box.add_child(_label("Коснитесь любой страны на карте. Перетаскивайте карту пальцем, масштаб — двумя пальцами.", 18))
+		overlay_box.add_child(_label("Коснитесь страны на карте или выберите державу ниже. Карту двигайте пальцем, масштаб — двумя пальцами.", 18))
 	else:
 		var n: World.Nation = w.nations[nid]
 		var provs := 0
@@ -286,16 +286,33 @@ func show_select(nid: int) -> void:
 				mil += w.p_mil[p]
 		var t := _label(n.name, 30, n.color.lightened(0.3))
 		overlay_box.add_child(t)
-		overlay_box.add_child(_label("Провинций: %d · Дивизий: %d · Фабрик: %d гражд. / %d воен." % [provs, w.divisions_of(nid).size(), civ, mil], 18))
+		overlay_box.add_child(_label("Столица: %s · Провинций: %d · Дивизий: %d · Фабрик: %d гражд. / %d воен." % [w.p_name[n.capital], provs, w.divisions_of(nid).size(), civ, mil], 18))
 		overlay_box.add_child(_button("Начать игру: %s" % n.name, func(): game.start_as(nid), Vector2(0, 64)))
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	row.add_child(_button("Новая карта", func(): game.new_world(randi() % 100000), Vector2(200, 56)))
-	var size_btn := _button("Большая карта" if not game.large_map else "Обычная карта", func():
-		game.large_map = not game.large_map
-		game.new_world(randi() % 100000), Vector2(220, 56))
-	row.add_child(size_btn)
-	overlay_box.add_child(row)
+	if game.procedural:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		row.add_child(_button("Новая карта", func(): game.new_world(randi() % 100000), Vector2(200, 56)))
+		var size_btn := _button("Большая карта" if not game.large_map else "Обычная карта", func():
+			game.large_map = not game.large_map
+			game.new_world(randi() % 100000), Vector2(220, 56))
+		row.add_child(size_btn)
+		overlay_box.add_child(row)
+	else:
+		# быстрый выбор великих держав
+		var grid := GridContainer.new()
+		grid.columns = 4
+		grid.add_theme_constant_override("h_separation", 6)
+		grid.add_theme_constant_override("v_separation", 6)
+		for tag in ["GER", "SOV", "ENG", "FRA", "ITA", "POL", "SPR", "TUR"]:
+			var i: int = game.nation_by_tag(tag)
+			if i < 0:
+				continue
+			var b := _button(w.nations[i].name, func(): game.pick(i), Vector2(150, 48))
+			b.add_theme_font_size_override("font_size", 17)
+			if i == nid:
+				b.disabled = true
+			grid.add_child(b)
+		overlay_box.add_child(grid)
 	overlay_box.add_child(_label(gen_info, 14, Color(0.7, 0.7, 0.7)))
 	overlay.show()
 
@@ -321,6 +338,7 @@ func show_game_over(result: String) -> void:
 		overlay_box.add_child(_label("Капитуляция", 36, Color(0.9, 0.4, 0.35)))
 		overlay_box.add_child(_label("Ваша страна пала. %s" % game.world.date_string(), 20))
 	overlay_box.add_child(_button("Новая игра", func(): game.new_world(randi() % 100000), Vector2(0, 64)))
+
 	overlay.show()
 
 

@@ -6,7 +6,7 @@ shader_type canvas_item;
 uniform sampler2D id_tex : filter_nearest;
 uniform sampler2D ctrl_tex : filter_nearest;   // rgb — цвет контролёра/режима, a — (нация+1)/255, 0 = море
 uniform sampler2D owner_tex : filter_nearest;  // rgb — цвет владельца, a — (нация+1)/255
-uniform sampler2D height_tex : filter_linear;
+uniform sampler2D height_tex : filter_linear;  // r — высота (0.5 = уровень моря), g — реки
 uniform vec2 map_size = vec2(800.0, 500.0);
 uniform int selected_id = -1;
 uniform int highlight_nation = -1;
@@ -47,7 +47,7 @@ void fragment() {
 	vec3 col;
 	if (!land) {
 		float depth = clamp((0.5 - h) * 2.4, 0.0, 1.0);
-		col = mix(vec3(0.36, 0.55, 0.62), vec3(0.09, 0.18, 0.29), depth);
+		col = mix(vec3(0.26, 0.43, 0.52), vec3(0.09, 0.18, 0.29), sqrt(depth));
 		float wave = sin(TIME * 0.7 + px.x * 0.21 + sin(px.y * 0.13 + TIME * 0.3) * 2.0);
 		col += vec3(0.018) * wave * (1.0 - depth * 0.5);
 	} else {
@@ -58,6 +58,8 @@ void fragment() {
 			base = mix(base, oc.rgb, s * 0.75);
 		}
 		col = base * (0.70 + 0.48 * light);
+		float river = texture(height_tex, UV).g;
+		col = mix(col, vec3(0.22, 0.42, 0.58), smoothstep(0.25, 0.8, river) * 0.75 * smoothstep(0.35, 0.9, zoom));
 		// лёгкая «бумажная» зернистость
 		col *= 0.97 + 0.03 * fract(sin(dot(vec2(ip), vec2(12.9898, 78.233))) * 43758.5453);
 		if (highlight_nation >= 0 && ctrl != highlight_nation) {

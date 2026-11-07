@@ -28,7 +28,7 @@ static func plan(world: World, nid: int, rng: RandomNumberGenerator) -> Dictiona
 		result["build"] = "civ"
 
 	# --- Объявление войны --------------------------------------------------
-	if not at_war and world.day > 45 and rng.randf() < 0.06:
+	if world.ai_wars and not at_war and world.day > 45 and rng.randf() < 0.06:
 		var my_power := _power(world, nid)
 		var best := -1
 		var best_ratio := 1.35
