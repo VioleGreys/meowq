@@ -229,7 +229,7 @@ func _phase_supply() -> void:
 			hubs[rep_index[rep[nat.id]]].append(nat.capital)
 	for p in world.prov_count:
 		var c := ctl[p]
-		if c >= 0 and coastal[p] == 1 and vp[p] >= 3 and rep_index.has(rep[c]) and not Forces.port_blockaded(world, c, p):
+		if c >= 0 and coastal[p] == 1 and Forces.is_port(world, p) and rep_index.has(rep[c]) and not Forces.port_blockaded(world, c, p):
 			hubs[rep_index[rep[c]]].append(p)
 	# плацдармы высадок временно работают как порты
 	for p in world.beachheads.keys():
@@ -360,6 +360,7 @@ func _phase_navy() -> void:
 			Forces.ai_air(world, nat.id)
 			if (world.day + nat.id) % 10 == 0:
 				Forces.ai_invasion(world, nat.id, Parallel.rng(world.seed_value, world.day, 6100 + nat.id))
+				Forces.ai_transfers(world, nat.id)
 
 
 func _ai_train(nat: World.Nation, count: int) -> void:

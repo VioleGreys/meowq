@@ -24,6 +24,21 @@ static func setup(world: World, dir: String) -> void:
 	_build_regions(world)
 	var d = JSON.parse_string(FileAccess.get_file_as_string(dir + "/forces.json"))
 	var data: Dictionary = d.get("nations", {}) if typeof(d) == TYPE_DICTIONARY else {}
+	world.p_naval_base.resize(world.prov_count)
+	world.p_naval_base.fill(0)
+	for nat in world.nations:
+		var fd0: Dictionary = data.get(nat.tag, {})
+		for ll in fd0.get("bases", []):
+			var best := -1
+			var best_d := INF
+			for p in world.prov_count:
+				if world.p_land[p] == 1 and world.p_coastal[p] == 1 and world.p_owner[p] == nat.id:
+					var dd := world.p_lonlat[p].distance_squared_to(Vector2(float(ll[0]), float(ll[1])))
+					if dd < best_d:
+						best_d = dd
+						best = p
+			if best >= 0:
+				world.p_naval_base[best] = 1
 	for nat in world.nations:
 		if not nat.alive:
 			continue
@@ -100,14 +115,16 @@ static func _build_regions(world: World) -> void:
 	world.air_sup.fill(0.5)
 
 
-## Морская зона у главного порта страны (столица или крупнейший прибрежный город).
+## Морская зона у главной базы флота страны (база в метрополии с наибольшими
+## очками победы; если баз нет — у крупнейшего порта).
 static func home_zone(world: World, n: int) -> int:
 	var best := -1
 	var best_vp := -1
 	for p in world.prov_count:
-		if world.p_owner[p] != n or world.p_coastal[p] == 0 or world.p_colony[p] == 1:
+		if world.p_controller[p] != n or world.p_coastal[p] == 0:
 			continue
-		var v := world.p_vp[p] + (100 if p == world.nations[n].capital else 0)
+		var v := world.p_vp[p] + (1000 if world.p_naval_base.size() > p and world.p_naval_base[p] == 1 else 0) \
+			+ (100 if p == world.nations[n].capital else 0) - (500 if world.p_colony[p] == 1 else 0)
 		if v > best_vp:
 			best_vp = v
 			best = p
@@ -117,6 +134,45 @@ static func home_zone(world: World, n: int) -> int:
 		if world.p_land[q] == 0:
 			return q
 	return -1
+
+
+## Порт — прибрежный город (точка снабжения и переправы), военно-морская база
+## или действующий плацдарм высадки.
+static func is_port(world: World, p: int) -> bool:
+	if world.p_land[p] == 0 or world.p_coastal[p] == 0:
+		return false
+	if world.p_vp[p] >= 3 or (world.p_naval_base.size() > p and world.p_naval_base[p] == 1):
+		return true
+	return world.beachheads.has(p) and int(world.beachheads[p]) >= world.day
+
+
+## Ближайшая военно-морская база стороны страны n (морская зона рядом с ней).
+static func base_zone(world: World, n: int, from_zone: int) -> int:
+	var dist := sea_dist(world, from_zone) if from_zone >= 0 else {}
+	var best := -1
+	var best_d := 1 << 20
+	for p in world.prov_count:
+		if world.p_naval_base.size() <= p or world.p_naval_base[p] == 0:
+			continue
+		var c := world.p_controller[p]
+		if c < 0 or (c != n and world.ally[n * world.nation_count + c] == 0):
+			continue
+		for q in world.p_adj[p]:
+			if world.p_land[q] == 0:
+				var d: int = dist.get(q, 1 << 19) if from_zone >= 0 else 0
+				if d < best_d:
+					best_d = d
+					best = q
+	return best
+
+
+static func at_base(world: World, f: World.Fleet) -> bool:
+	for q in world.p_adj[f.zone]:
+		if world.p_land[q] == 1 and world.p_naval_base.size() > q and world.p_naval_base[q] == 1:
+			var c := world.p_controller[q]
+			if c == f.owner or (c >= 0 and world.ally[f.owner * world.nation_count + c] == 1):
+				return true
+	return false
 
 
 static func create_fleet(world: World, n: int, zone: int, ships: PackedInt32Array, name: String) -> World.Fleet:
@@ -153,6 +209,11 @@ static func fleet_power(f: World.Fleet) -> float:
 	return s
 
 
+## Боевая сила с учётом готовности (после боёв — ниже, пока флот не на базе).
+static func combat_power(f: World.Fleet) -> float:
+	return fleet_power(f) * (0.3 + 0.7 * f.readiness)
+
+
 static func fleet_size(f: World.Fleet) -> int:
 	return f.ships[0] + f.ships[1] + f.ships[2] + f.ships[3]
 
@@ -176,7 +237,7 @@ static func supremacy(world: World, n: int, zone: int) -> float:
 	for f in world.zone_fleets.get(zone, []):
 		if f.mission == "port":
 			continue
-		var p := fleet_power(f)
+		var p := combat_power(f)
 		if world.ally[n * nc + f.owner] == 1:
 			mine += p
 		elif world.is_at_war(n, f.owner):
@@ -190,11 +251,29 @@ static func supremacy(world: World, n: int, zone: int) -> float:
 
 static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 	_build_ships(world)
-	# движение: зона в день
+	# движение: зона в день; готовность восстанавливается на базе
 	for f in world.fleets:
-		if f.alive and not f.path.is_empty():
+		if not f.alive:
+			continue
+		if not f.path.is_empty():
 			f.zone = f.path[0]
 			f.path.remove_at(0)
+		if f.path.is_empty() and at_base(world, f):
+			f.readiness = minf(1.0, f.readiness + (0.05 if f.mission == "port" else 0.02))
+		else:
+			f.readiness = minf(1.0, f.readiness + 0.002)
+		# база потеряна — приписываем флот к ближайшей своей
+		if world.day % 7 == f.id % 7 and f.home >= 0:
+			var home_ok := false
+			for q in world.p_adj[f.home]:
+				if world.p_land[q] == 1 and world.p_naval_base.size() > q and world.p_naval_base[q] == 1:
+					var c := world.p_controller[q]
+					if c == f.owner or (c >= 0 and world.ally[f.owner * world.nation_count + c] == 1):
+						home_ok = true
+			if not home_ok:
+				var b := base_zone(world, f.owner, f.zone)
+				if b >= 0:
+					f.home = b
 	_refresh_cache(world)
 	# морские бои
 	for f in world.fleets:
@@ -218,10 +297,10 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 		var pa := 0.0
 		var pb := 0.0
 		for f in side_a:
-			pa += fleet_power(f)
+			pa += combat_power(f)
 			f.in_battle = true
 		for f in side_b:
-			pb += fleet_power(f)
+			pb += combat_power(f)
 			f.in_battle = true
 		var r := world.p_region[zone]
 		var nc := world.nation_count
@@ -229,6 +308,10 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 		var db := pa * 0.035 * rng.randf_range(0.7, 1.3) * world.cas_mult[r * nc + a.owner]
 		_take_losses(world, side_a, da, rng)
 		_take_losses(world, side_b, db, rng)
+		for f in side_a:
+			f.readiness = maxf(0.0, f.readiness - da / maxf(1.0, pa) * 0.6)
+		for f in side_b:
+			f.readiness = maxf(0.0, f.readiness - db / maxf(1.0, pb) * 0.6)
 		_retreat_if_beaten(world, side_a, pb)
 		_retreat_if_beaten(world, side_b, pa)
 	_trade_war(world, rng)
@@ -262,8 +345,12 @@ static func _retreat_if_beaten(world: World, side: Array, enemy_power: float) ->
 			p += fleet_power(f)
 	if p < enemy_power * 0.4:
 		for f in side:
-			if f.alive and f.zone != f.home:
-				f.path = sea_path(world, f.zone, f.home)
+			if f.alive:
+				var b := base_zone(world, f.owner, f.zone)
+				if b >= 0:
+					f.home = b
+				if f.zone != f.home:
+					f.path = sea_path(world, f.zone, f.home)
 				f.mission = "port"
 
 
@@ -463,8 +550,8 @@ static func invasion_check(world: World, divs: Array, target: int) -> Array:
 		return ["нет войны с владельцем провинции", 0, -1]
 	var start_zones := {}
 	for d in divs:
-		if world.p_coastal[d.prov] == 0 or world.p_controller[d.prov] != n:
-			return ["дивизии должны стоять в своих прибрежных провинциях", 0, -1]
+		if not is_port(world, d.prov) or world.p_controller[d.prov] != n:
+			return ["дивизии должны стоять в своём порту", 0, -1]
 		for q in world.p_adj[d.prov]:
 			if world.p_land[q] == 0:
 				start_zones[q] = true
@@ -490,6 +577,96 @@ static func invasion_check(world: World, divs: Array, target: int) -> Array:
 	return ["", 5 + int(best_len * 1.2), best_zone]
 
 
+## Переправа: дивизии морем из своего порта в свой/союзный порт (подкрепления на
+## плацдарм, в колонии). Пустая строка — отправлены; иначе причина.
+static func sea_transfer(world: World, divs: Array, target: int) -> String:
+	if divs.is_empty():
+		return "нет дивизий"
+	var n: int = divs[0].owner
+	var c := world.p_controller[target]
+	if c < 0 or (c != n and world.ally[n * world.nation_count + c] == 0):
+		return "порт назначения должен быть нашим или союзным"
+	if not is_port(world, target):
+		return "в провинции назначения нет порта"
+	var port: int = divs[0].prov
+	for d in divs:
+		if d.prov != port:
+			return "для переправы дивизии должны стоять в одном порту"
+	if not is_port(world, port) or world.p_controller[port] != n:
+		return "отправка только из своего порта"
+	var dist := _sea_distance(world, port, target)
+	if dist < 0:
+		return "нет морского пути"
+	var days := 2 + dist
+	for d in divs:
+		d.transit_days = days
+		d.transit_total = days
+		d.transit_from = port
+		d.transit_target = target
+		d.transfer = true
+		d.path = PackedInt32Array()
+		d.group = -1
+		if d.inv_plan >= 0:
+			_drop_from_plan(world, d)
+	return ""
+
+
+## ИИ: подкрепления морем на заморские участки фронта (захваченные порты,
+## колонии), куда не дойти по суше от столицы.
+static func ai_transfers(world: World, n: int) -> void:
+	var nat: World.Nation = world.nations[n]
+	if nat.at_war.is_empty():
+		return
+	# провинции, связанные со столицей по суше
+	var home := {}
+	var stack := [nat.capital]
+	home[nat.capital] = true
+	while not stack.is_empty():
+		var p: int = stack.pop_back()
+		for q in world.p_adj[p]:
+			if world.p_land[q] == 1 and world.p_controller[q] == n and not home.has(q):
+				home[q] = true
+				stack.append(q)
+	# заморский порт на фронте, где мало наших войск
+	var dest := -1
+	var dest_need := 0
+	for p in world.prov_count:
+		if world.p_controller[p] != n or home.has(p) or not is_port(world, p):
+			continue
+		var enemies := 0
+		for q in world.p_adj[p]:
+			var c := world.p_controller[q]
+			if c >= 0 and world.is_at_war(n, c):
+				enemies += 1
+		if enemies == 0:
+			continue
+		var mine := 0
+		for d in world.prov_divs[p]:
+			if d.owner == n:
+				mine += 1
+		var need := 3 + enemies - mine
+		if need > dest_need:
+			dest_need = need
+			dest = p
+	if dest < 0:
+		return
+	# свободные дивизии в домашних портах
+	var by_port := {}
+	for d in world.divisions:
+		if d.alive and d.owner == n and home.has(d.prov) and is_port(world, d.prov) and d.path.is_empty() \
+				and not d.in_battle and d.transit_days == 0 and d.inv_plan < 0 and d.reserved_until < world.day \
+				and not _at_front(world, d):
+			if not by_port.has(d.prov):
+				by_port[d.prov] = []
+			by_port[d.prov].append(d)
+	for port in by_port:
+		var group: Array = by_port[port].slice(0, mini(dest_need, 3))
+		if sea_transfer(world, group, dest) == "":
+			if Diplomacy.is_major(world, n) or nat.is_player:
+				world.log_event("%s: переправа %d див. → %s" % [nat.name, group.size(), world.p_name[dest]])
+			return
+
+
 ## Подготовка высадки. Пустая строка — план создан; иначе причина.
 static func plan_invasion(world: World, divs: Array, target: int) -> String:
 	if divs.is_empty():
@@ -505,8 +682,8 @@ static func plan_invasion(world: World, divs: Array, target: int) -> String:
 	for d in divs:
 		if d.prov != port:
 			return "для высадки дивизии должны стоять в одной прибрежной провинции"
-	if world.p_coastal[port] == 0 or world.p_controller[port] != n:
-		return "провинция посадки должна быть нашей и на побережье"
+	if not is_port(world, port) or world.p_controller[port] != n:
+		return "посадка только в своём порту (прибрежный город или база)"
 	var dist := _sea_distance(world, port, target)
 	if dist < 0:
 		return "нет морского пути"
@@ -651,6 +828,15 @@ static func daily_transit(world: World) -> void:
 				continue
 		d.transit_days -= 1
 		if d.transit_days <= 0:
+			if d.transfer:
+				# переправа: в свой порт сразу; если порт потерян — обратно
+				d.transfer = false
+				var c := world.p_controller[d.transit_target]
+				var ok: bool = c == d.owner or (c >= 0 and world.ally[d.owner * world.nation_count + c] == 1)
+				d.prov = d.transit_target if ok else d.transit_from
+				d.path = PackedInt32Array()
+				d.progress = 0.0
+				continue
 			d.path = PackedInt32Array([d.transit_target])
 			d.progress = 0.95
 			d.landing = true
@@ -906,7 +1092,7 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 		port = -1
 		var port_d := INF
 		for p in world.prov_count:
-			if world.p_controller[p] == n and world.p_owner[p] == n and world.p_coastal[p] == 1:
+			if world.p_controller[p] == n and world.p_owner[p] == n and is_port(world, p):
 				var dd := world.p_center[p].distance_squared_to(world.p_center[best])
 				if dd < port_d:
 					port_d = dd

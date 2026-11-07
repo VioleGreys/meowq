@@ -45,22 +45,55 @@ func _init() -> void:
 			ger_wings += 1
 	check(ger_wings >= 4, "у Германии %d авиакрыльев" % ger_wings)
 
+	var bases := 0
+	for p in w.prov_count:
+		if w.p_naval_base[p] == 1 and w.p_owner[p] == ENG:
+			bases += 1
+	check(bases >= 5, "у Британии %d военно-морских баз" % bases)
+
 	print("Морской бой и блокада:")
 	w.set_war(GER, ENG)
 	w.nations[GER].is_player = true
 	w.nations[ENG].is_player = true
 	sim._refresh_sides()
-	eng_main.zone = ger_main.zone
+	# бой в открытом море, по соседству с германской базой
+	var open_sea := -1
+	for q in w.p_adj[ger_main.zone]:
+		if w.p_land[q] == 0:
+			open_sea = q
+			break
+	var ger_base_zone := ger_main.zone
+	ger_main.zone = open_sea
+	eng_main.zone = open_sea
 	eng_main.path = PackedInt32Array()
 	var before := Forces.fleet_power(ger_main)
-	for i in 5:
+	sim.tick()
+	check(eng_main.readiness < 1.0, "в бою готовность британского флота падает (%.1f%%)" % (eng_main.readiness * 100.0))
+	for i in 4:
 		sim.tick()
-	check(not ger_main.alive or Forces.fleet_power(ger_main) < before * 0.6, "германский флот разбит в бою (%.0f → %.0f)" % [before, Forces.fleet_power(ger_main) if ger_main.alive else 0.0])
+	check(not ger_main.alive or (Forces.fleet_power(ger_main) < before and ger_main.mission == "port"),
+		"германский флот потерял корабли и ушёл на базу (%.0f → %.0f)" % [before, Forces.fleet_power(ger_main) if ger_main.alive else 0.0])
+	# блокада: британский флот у германской базы (флот в порту господства не даёт)
+	eng_main.zone = ger_base_zone
+	eng_main.path = PackedInt32Array()
+	Forces._refresh_cache(w)
 	var port := -1
-	for q in w.p_adj[eng_main.zone]:
-		if w.p_land[q] == 1 and w.p_owner[q] == GER and w.p_vp[q] >= 3:
+	for q in w.p_adj[ger_base_zone]:
+		if w.p_land[q] == 1 and w.p_owner[q] == GER and Forces.is_port(w, q):
 			port = q
 	check(port >= 0 and Forces.port_blockaded(w, GER, port), "германский порт %s заблокирован" % (w.p_name[port] if port >= 0 else "?"))
+	# ремонт на своей базе
+	eng_main.readiness = 0.5
+	eng_main.zone = eng_main.home
+	eng_main.mission = "port"
+	for i in 5:
+		sim.tick()
+	check(eng_main.readiness > 0.6, "на базе готовность восстанавливается (%d%%)" % (eng_main.readiness * 100.0))
+	var ger_port_fleet := Forces.create_fleet(w, GER, eng_main.home, PackedInt32Array([0, 0, 5, 0]), "тест")
+	ger_port_fleet.mission = "port"
+	w.set_war(GER, ENG)
+	sim.tick()
+	check(ger_port_fleet.alive and ger_port_fleet.ships[Forces.SHIP_DD] == 5, "флот в порту в морском бою не участвует")
 
 	print("Рейды подлодок:")
 	r = fresh()
@@ -119,6 +152,38 @@ func _init() -> void:
 		sim.tick()
 	check(w.p_controller[target] == GER, "высадившиеся войска заняли %s" % w.p_name[target])
 	check(w.beachheads.has(target), "плацдарм работает как временный порт")
+
+	print("Переправа:")
+	r = fresh()
+	w = r[0]
+	sim = r[1]
+	w.nations[ENG].is_player = true
+	var FRA := w.nation_tags.find("FRA")
+	var dover := -1
+	var calais := -1
+	for p in w.prov_count:
+		if w.p_owner[p] == ENG and Forces.is_port(w, p) and w.p_lonlat[p].x > 0.0 and w.p_lonlat[p].y < 52.0:
+			dover = p
+		if w.p_owner[p] == FRA and Forces.is_port(w, p) and w.p_lonlat[p].y > 50.0 and w.p_lonlat[p].x < 3.0:
+			calais = p
+	var tdivs: Array = []
+	for d in w.divisions_of(ENG):
+		if tdivs.size() < 2:
+			d.prov = dover
+			tdivs.append(d)
+	w.rebuild_prov_divs()
+	var tw := Forces.sea_transfer(w, tdivs, calais)
+	check(tw == "", "переправа %s → %s (союзная Франция): %s" % [w.p_name[dover], w.p_name[calais], tw if tw != "" else "%d дн." % tdivs[0].transit_days])
+	for i in tdivs[0].transit_total + 2:
+		sim.tick()
+	check(tdivs[0].prov == calais, "дивизии прибыли во французский порт")
+	var inland := -1
+	for p in w.prov_count:
+		if w.p_owner[p] == ENG and w.p_coastal[p] == 0:
+			inland = p
+			break
+	tdivs[0].prov = inland
+	check(Forces.plan_invasion(w, [tdivs[0]], calais) != "", "без порта посадки высадка невозможна")
 
 	print("Авиация:")
 	r = fresh()

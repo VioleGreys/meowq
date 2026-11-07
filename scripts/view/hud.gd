@@ -1002,7 +1002,7 @@ func _build_navy(w: World, me: int) -> void:
 		if f.alive and f.owner == me:
 			any = true
 			var fid: int = f.id
-			var b := _button("%s · %s · %s · %s" % [f.name, _ships_text(f), w.p_name[f.zone], MISSION_NAMES.get(f.mission, f.mission)], func():
+			var b := _button("%s · %s · %d%% · %s · %s" % [f.name, _ships_text(f), f.readiness * 100.0, w.p_name[f.zone], MISSION_NAMES.get(f.mission, f.mission)], func():
 				close_popup()
 				game.select_fleet(fid), Vector2(0, 46))
 			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -1074,14 +1074,14 @@ func _build_navy(w: World, me: int) -> void:
 				_rebuild_popup(), Vector2(110, 44)))
 			popup_body.add_child(r)
 	if plans == 0:
-		popup_body.add_child(_small("Выделите дивизии в прибрежной провинции и коснитесь вражеского побережья за морем. Подготовка — 1–2 месяца, войска ждут в порту; высадка — когда подготовка готова и у цели господство на море. Плацдарм снабжает войска 60 дней — захватите порт."))
+		popup_body.add_child(_small("Переправа: выделите дивизии в своём порту и коснитесь своего или союзного порта за морем — войска пойдут без подготовки. Высадка: выделите дивизии в порту и коснитесь вражеского побережья. Подготовка — 1–2 месяца, войска ждут в порту; высадка — когда подготовка готова и у цели господство на море. Плацдарм снабжает войска 60 дней — захватите порт: через него идут снабжение и подкрепления."))
 
 
 func show_fleet(f: World.Fleet) -> void:
 	var w: World = game.world
 	_info_prov = -1
-	info_label.text = "%s · %s · сила %d · %s · %s%s\nКоснитесь моря (или берега), чтобы отправить флот. Господство нужно для высадок и блокады; флот в порту в бою не участвует." % [
-		f.name, _ships_text(f), Forces.fleet_power(f), w.p_name[f.zone], MISSION_NAMES.get(f.mission, f.mission),
+	info_label.text = "%s · %s · сила %d · готовность %d%% · %s · %s%s\nКоснитесь моря (или берега), чтобы отправить флот. Готовность восстанавливается на военно-морской базе; флот на базе в бою не участвует." % [
+		f.name, _ships_text(f), Forces.fleet_power(f), f.readiness * 100.0, w.p_name[f.zone], MISSION_NAMES.get(f.mission, f.mission),
 		(" · в пути %d дн." % f.path.size()) if not f.path.is_empty() else ""]
 	_clear(info_actions)
 	for m in ["patrol", "raid", "port"]:

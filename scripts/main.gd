@@ -305,7 +305,16 @@ func _on_province_tapped(p: int) -> void:
 			map_view.set_selected(p)
 			hud.show_selection()
 			return
-		# по суше не пройти — может, высадка с моря?
+		# по суше не пройти — переправа в свой/союзный порт или высадка с моря
+		var ctl := world.p_controller[p]
+		if world.p_land[p] == 1 and Forces.is_port(world, p) and ctl >= 0 and (ctl == me or world.ally[me * world.nation_count + ctl] == 1):
+			var twhy := Forces.sea_transfer(world, selected_divs, p)
+			if twhy == "":
+				hud.toast("Переправа → %s: %d дн." % [world.p_name[p], selected_divs[0].transit_days])
+				clear_selection()
+			else:
+				hud.toast("Переправа невозможна: " + twhy)
+			return
 		if world.p_land[p] == 1 and world.p_coastal[p] == 1:
 			var why := Forces.plan_invasion(world, selected_divs, p)
 			if why == "":

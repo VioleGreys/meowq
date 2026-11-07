@@ -125,6 +125,7 @@ class Division:
 	var transit_from := -1
 	var transit_target := -1
 	var landing := false            # высаживается с моря: атака ослаблена
+	var transfer := false           # переправа между своими портами (не штурм)
 	var reserved_until := 0         # ИИ держит дивизию под десант до этого дня
 	var inv_plan := -1              # участвует в плане высадки (World.invasions)
 	# кэш характеристик (Military.refresh_division), читается из потоков
@@ -149,6 +150,7 @@ class Fleet:
 	var alive := true
 	var in_battle := false
 	var task_until := 0             # прикрывает высадку до этого дня (ИИ не уводит в порт)
+	var readiness := 1.0            # готовность 0..1: падает в боях, восстанавливается на военно-морской базе
 
 
 ## План морской высадки: подготовка 30–60 дней, войска ждут в порту посадки.
@@ -256,6 +258,7 @@ var trade_cache := {}                     # страна -> Dictionary торг�
 var cas_mult := PackedFloat32Array()      # region*nation_count + n: множитель боя от авиации
 var air_sup := PackedFloat32Array()       # region*nation_count + n: превосходство в воздухе 0..1
 var invasions: Array = []                 # Array[InvasionPlan]
+var p_naval_base := PackedByteArray()     # 1 — военно-морская база (стоянка и ремонт флота)
 var beachheads := {}                      # провинция -> последний день временного порта на плацдарме
 var zone_fleets := {}                     # морская зона -> Array[Fleet] (кэш на день)
 var divisions: Array = []

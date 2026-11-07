@@ -253,6 +253,25 @@ func _draw_navy_air(z: float, vp: Vector2) -> void:
 	var game = get_tree().current_scene if get_tree() else null
 	var sel_fleet: int = game.selected_fleet if game != null and "selected_fleet" in game else -1
 	var sel_wing: int = game.selected_wing if game != null and "selected_wing" in game else -1
+	# порты и военно-морские базы (свои и союзные) при приближении
+	if z >= 0.9 and player >= 0 and world.p_naval_base.size() == world.prov_count:
+		for p in world.prov_count:
+			if world.p_land[p] == 0 or world.p_coastal[p] == 0:
+				continue
+			var c := world.p_controller[p]
+			if c < 0 or (c != player and world.ally[player * world.nation_count + c] == 0):
+				continue
+			var base := world.p_naval_base[p] == 1
+			if not base and not Forces.is_port(world, p):
+				continue
+			var pos := map.world_to_screen(map.province_world_pos(p)) + Vector2(-26, 14)
+			if not screen.has_point(pos):
+				continue
+			if base:
+				_anchor_icon(pos)
+			else:
+				draw_circle(pos, 4.5, Color(0.05, 0.05, 0.05, 0.85))
+				draw_circle(pos, 3.0, Color(0.55, 0.85, 1.0))
 	# планы высадок и войска в море
 	for plan in world.invasions:
 		if plan.alive and plan.owner == player:
@@ -313,6 +332,17 @@ func _draw_navy_air(z: float, vp: Vector2) -> void:
 		_plane_icon(c, world.nations[g[1]].color if mine else Color(0.9, 0.3, 0.25), g[2], g[4])
 		draw_string_outline(font, c + Vector2(14, 5), str(int(g[3])), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, 3, Color.BLACK)
 		draw_string(font, c + Vector2(14, 5), str(int(g[3])), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+
+
+func _anchor_icon(c: Vector2) -> void:
+	var dark := Color(0.05, 0.05, 0.05, 0.9)
+	var col := Color(0.7, 0.9, 1.0)
+	for pass_i in 2:
+		var w := 4.0 if pass_i == 0 else 2.0
+		var cc := dark if pass_i == 0 else col
+		draw_line(c + Vector2(0, -7), c + Vector2(0, 6), cc, w)
+		draw_line(c + Vector2(-4, -4), c + Vector2(4, -4), cc, w)
+		draw_arc(c + Vector2(0, 1), 6, 0.2, PI - 0.2, 10, cc, w)
 
 
 func _ship_icon(c: Vector2, col: Color, s: float) -> void:
