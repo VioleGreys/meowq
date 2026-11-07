@@ -1,0 +1,31 @@
+{
+  "_comment": "Флоты и авиация на 1 января 1936 г. (собственные оценки по историческим данным, округлённо). navy: bb — линкоры (и броненосцы), cr — крейсеры, dd — эсминцы, ss — подводные лодки. air: fig — истребители, bomb — бомбардировщики (самолётов). naval_share/air_share — доля военных заводов на судостроение и авиацию.",
+  "nations": {
+    "ENG": {"navy": {"bb": 15, "cr": 50, "dd": 120, "ss": 50}, "air": {"fig": 900, "bomb": 700}, "naval_share": 0.3, "air_share": 0.25},
+    "FRA": {"navy": {"bb": 7, "cr": 18, "dd": 60, "ss": 75}, "air": {"fig": 900, "bomb": 600}, "naval_share": 0.15, "air_share": 0.2},
+    "ITA": {"navy": {"bb": 4, "cr": 22, "dd": 60, "ss": 70}, "air": {"fig": 800, "bomb": 700}, "naval_share": 0.15, "air_share": 0.2},
+    "GER": {"navy": {"bb": 3, "cr": 6, "dd": 12, "ss": 24}, "air": {"fig": 700, "bomb": 800}, "naval_share": 0.1, "air_share": 0.3},
+    "SOV": {"navy": {"bb": 3, "cr": 5, "dd": 20, "ss": 100}, "air": {"fig": 1500, "bomb": 1500}, "naval_share": 0.05, "air_share": 0.25},
+    "SPR": {"navy": {"bb": 2, "cr": 7, "dd": 15, "ss": 12}, "air": {"fig": 120, "bomb": 80}, "naval_share": 0.1, "air_share": 0.1},
+    "POL": {"navy": {"dd": 4, "ss": 5}, "air": {"fig": 200, "bomb": 150}, "naval_share": 0.02, "air_share": 0.15},
+    "CZE": {"air": {"fig": 300, "bomb": 200}, "air_share": 0.15},
+    "TUR": {"navy": {"bb": 1, "cr": 2, "dd": 8, "ss": 5}, "air": {"fig": 100, "bomb": 50}, "naval_share": 0.05, "air_share": 0.1},
+    "GRE": {"navy": {"cr": 2, "dd": 10, "ss": 6}, "air": {"fig": 60, "bomb": 30}, "naval_share": 0.05, "air_share": 0.1},
+    "HOL": {"navy": {"cr": 4, "dd": 8, "ss": 15}, "air": {"fig": 80, "bomb": 40}, "naval_share": 0.1, "air_share": 0.1},
+    "SWE": {"navy": {"cr": 6, "dd": 12, "ss": 12}, "air": {"fig": 100, "bomb": 60}, "naval_share": 0.1, "air_share": 0.15},
+    "NOR": {"navy": {"cr": 2, "dd": 6, "ss": 6}, "air": {"fig": 30, "bomb": 20}, "naval_share": 0.05, "air_share": 0.1},
+    "DEN": {"navy": {"cr": 2, "dd": 4, "ss": 6}, "air": {"fig": 30, "bomb": 10}, "naval_share": 0.05, "air_share": 0.1},
+    "FIN": {"navy": {"cr": 2, "dd": 2, "ss": 5}, "air": {"fig": 60, "bomb": 30}, "naval_share": 0.03, "air_share": 0.15},
+    "YUG": {"navy": {"cr": 1, "dd": 4, "ss": 4}, "air": {"fig": 120, "bomb": 80}, "naval_share": 0.03, "air_share": 0.1},
+    "ROM": {"navy": {"dd": 4, "ss": 1}, "air": {"fig": 150, "bomb": 100}, "naval_share": 0.03, "air_share": 0.1},
+    "BEL": {"air": {"fig": 100, "bomb": 50}, "air_share": 0.1},
+    "HUN": {"air": {"fig": 80, "bomb": 50}, "air_share": 0.1},
+    "BUL": {"air": {"fig": 40, "bomb": 20}, "air_share": 0.1},
+    "POR": {"navy": {"cr": 2, "dd": 5, "ss": 3}, "air": {"fig": 40, "bomb": 20}, "naval_share": 0.05, "air_share": 0.1},
+    "EST": {"navy": {"ss": 2}}, "LAT": {"navy": {"ss": 2}},
+    "SWI": {"air": {"fig": 80, "bomb": 20}, "air_share": 0.1},
+    "AUS": {"air": {"fig": 50, "bomb": 20}, "air_share": 0.1},
+    "PER": {"air": {"fig": 50, "bomb": 30}, "air_share": 0.1},
+    "EGY": {"air": {"fig": 20, "bomb": 10}}
+  }
+}

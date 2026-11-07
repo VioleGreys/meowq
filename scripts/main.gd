@@ -21,6 +21,8 @@ var days_per_sec := 0.0          # фактическая скорость, дл
 var selected_prov := -1
 var selected_divs: Array = []
 var selected_group := -1         # выбранная армия: касание карты задаёт ей цель
+var selected_fleet := -1         # выбранный флот: касание моря — куда идти
+var selected_wing := -1          # выбранное авиакрыло: касание карты — район задачи
 var pick_nation := -1
 var large_map := false
 var procedural := false          # старая процедурная карта (для тестов): -- --procedural
@@ -85,6 +87,18 @@ func _auto_screenshot(path: String) -> void:
 		if _arg("zoom") != "":
 			map_view.camera.zoom = Vector2.ONE * float(_arg("zoom"))
 			map_view.center_on(world.nations[me].capital)
+		if _arg("center") != "" and nation_by_tag(_arg("center")) >= 0:
+			map_view.center_on(world.nations[nation_by_tag(_arg("center"))].capital)
+		if _arg("sel") == "fleet":
+			for f in world.fleets:
+				if f.alive and f.owner == me:
+					select_fleet(f.id)
+					break
+		if _arg("sel") == "wing":
+			for wg in world.wings:
+				if wg.alive and wg.owner == me:
+					select_wing(wg.id)
+					break
 		if _arg("card") != "":
 			hud._card_nation = nation_by_tag(_arg("card"))
 		if _arg("mapmode") != "":
@@ -233,6 +247,38 @@ func _on_province_tapped(p: int) -> void:
 	if state != "play":
 		return
 	var me := player()
+	# выбран флот -> идёт в морскую зону (касание берега — в соседнюю зону)
+	if selected_fleet >= 0:
+		var f: World.Fleet = world.fleets[selected_fleet]
+		var zone := p
+		if world.p_land[p] == 1:
+			zone = -1
+			for q in world.p_adj[p]:
+				if world.p_land[q] == 0:
+					zone = q
+					break
+		if zone >= 0:
+			var path := Forces.sea_path(world, f.zone, zone)
+			if zone == f.zone or not path.is_empty():
+				f.path = path
+				if f.mission == "port":
+					f.mission = "patrol"
+				hud.toast("%s идёт: %s (%d дн.)" % [f.name, world.p_name[zone], path.size()])
+			else:
+				hud.toast("Туда флоту не дойти")
+		hud.show_fleet(f)
+		return
+	# выбрано авиакрыло -> район задачи
+	if selected_wing >= 0:
+		var w: World.AirWing = world.wings[selected_wing]
+		var r: int = world.p_region[p]
+		if Forces.wing_in_range(world, w, r):
+			w.region = r
+			hud.toast("%s: район %s" % [w.name, world.region_name[r]])
+		else:
+			hud.toast("Слишком далеко от наших аэродромов")
+		hud.show_wing(w)
+		return
 	# выбрана армия -> касание задаёт направление наступления
 	if selected_group >= 0:
 		var g: World.ArmyGroup = world.groups[selected_group]
@@ -259,7 +305,17 @@ func _on_province_tapped(p: int) -> void:
 			map_view.set_selected(p)
 			hud.show_selection()
 			return
-		hud.toast("Туда не пройти: нужна война с владельцем")
+		# по суше не пройти — может, высадка с моря?
+		if world.p_land[p] == 1 and world.p_coastal[p] == 1:
+			var why := Forces.plan_invasion(world, selected_divs, p)
+			if why == "":
+				var plan: World.InvasionPlan = world.invasions[world.invasions.size() - 1]
+				hud.toast("Готовим высадку → %s: %d дн. Войска ждут в порту" % [world.p_name[p], plan.total])
+				clear_selection()
+				return
+			hud.toast("Высадка невозможна: " + why)
+		else:
+			hud.toast("Туда не пройти: нужна война с владельцем")
 	# повторное касание той же провинции снимает выделение
 	if p == selected_prov and not selected_divs.is_empty():
 		clear_selection()
@@ -279,6 +335,8 @@ func _on_province_tapped(p: int) -> void:
 
 func clear_selection() -> void:
 	selected_group = -1
+	selected_fleet = -1
+	selected_wing = -1
 	selected_divs.clear()
 	selected_prov = -1
 	map_view.set_selected(-1)
@@ -308,6 +366,18 @@ func create_group_from_selection() -> void:
 		break
 	select_group(g.id)
 	hud.toast("Создана %s: %d дивизий" % [g.name, selected_divs.size()])
+
+
+func select_fleet(id: int) -> void:
+	clear_selection()
+	selected_fleet = id
+	hud.show_fleet(world.fleets[id])
+
+
+func select_wing(id: int) -> void:
+	clear_selection()
+	selected_wing = id
+	hud.show_wing(world.wings[id])
 
 
 func select_group(id: int) -> void:

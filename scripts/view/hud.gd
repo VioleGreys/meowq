@@ -147,14 +147,15 @@ func _build_top_bar() -> void:
 func _build_side() -> void:
 	side = VBoxContainer.new()
 	side.set_anchors_preset(Control.PRESET_CENTER_LEFT)
-	side.position = Vector2(10, -262)
-	side.add_theme_constant_override("separation", 5)
+	side.position = Vector2(10, -272)
+	side.add_theme_constant_override("separation", 4)
 	root.add_child(side)
-	var bs := Vector2(160, 54)
+	var bs := Vector2(166, 52)
 	side.add_child(_button("Фокусы", func():
 		close_popup()
 		focus_view.open(game, game.world, game.player()), bs))
 	side.add_child(_button("Армия", func(): open_tab("army"), bs))
+	side.add_child(_button("Флот и авиация", func(): open_tab("navy"), bs))
 	side.add_child(_button("Производство", func(): open_tab("production"), bs))
 	side.add_child(_button("Наука", func(): open_tab("research"), bs))
 	side.add_child(_button("Стройка", func(): open_tab("build"), bs))
@@ -416,7 +417,11 @@ func on_tick() -> void:
 	if focus_view.visible:
 		focus_view.refresh()
 	if info_panel.visible:
-		if game.selected_group >= 0:
+		if game.selected_fleet >= 0 and w.fleets[game.selected_fleet].alive:
+			show_fleet(w.fleets[game.selected_fleet])
+		elif game.selected_wing >= 0 and w.wings[game.selected_wing].alive:
+			show_wing(w.wings[game.selected_wing])
+		elif game.selected_group >= 0:
 			var g: World.ArmyGroup = w.groups[game.selected_group]
 			if g.alive:
 				_update_group_text(g)
@@ -606,6 +611,8 @@ func _rebuild_popup() -> void:
 			_build_army(w, me)
 		"production":
 			_build_production(w, me)
+		"navy":
+			_build_navy(w, me)
 		"research":
 			popup_title.text = "Наука"
 			_dynamic["res_id"] = n.current_research
@@ -974,6 +981,141 @@ func _build_army(w: World, me: int) -> void:
 			tp["atk"], tp["def"], tp["spd"], tp["men"], _eq_text(tp["eq"]), tp["days"], ("\n   " + why) if why != "" else ""]))
 
 
+func _ships_text(f: World.Fleet) -> String:
+	var parts: Array = []
+	for k in 4:
+		if f.ships[k] > 0:
+			parts.append("%s %d" % [Forces.SHIP_NAMES[k].substr(0, 4).to_lower(), f.ships[k]])
+	return ", ".join(parts)
+
+
+const MISSION_NAMES := {"patrol": "патруль", "raid": "рейды", "port": "в порту",
+	"sup": "превосходство", "cas": "поддержка войск", "bomb": "бомбардировка", "naval": "удары по флоту"}
+
+
+func _build_navy(w: World, me: int) -> void:
+	popup_title.text = "Флот и авиация"
+	var n: World.Nation = w.nations[me]
+	popup_body.add_child(_section("Флоты"))
+	var any := false
+	for f in w.fleets:
+		if f.alive and f.owner == me:
+			any = true
+			var fid: int = f.id
+			var b := _button("%s · %s · %s · %s" % [f.name, _ships_text(f), w.p_name[f.zone], MISSION_NAMES.get(f.mission, f.mission)], func():
+				close_popup()
+				game.select_fleet(fid), Vector2(0, 46))
+			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			b.add_theme_font_size_override("font_size", 15)
+			popup_body.add_child(b)
+	if not any:
+		popup_body.add_child(_small("Флота нет."))
+	popup_body.add_child(_section("Верфи"))
+	var q: Array = []
+	for t in n.ship_queue:
+		q.append(Forces.SHIP_ONE[t])
+	popup_body.add_child(_small("Очки судостроения: %d (+%.1f/день, заводы — во вкладке «Производство»). Очередь: %s" % [
+		n.stock[Military.EQ_SHIP], n.daily_output[Military.EQ_SHIP], ", ".join(q) if not q.is_empty() else "пусто"]))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	for t in 4:
+		var tt := t
+		var b := _button("+%s\n%d" % [Forces.SHIP_ONE[t], Forces.SHIP_COST[t]], func():
+			n.ship_queue.append(tt)
+			_rebuild_popup(), Vector2(0, 56))
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.add_theme_font_size_override("font_size", 14)
+		row.add_child(b)
+	popup_body.add_child(row)
+	popup_body.add_child(_section("Авиация"))
+	for wg in w.wings:
+		if wg.alive and wg.owner == me:
+			var wid: int = wg.id
+			var b := _button("%s · %d самол. · %s · %s" % [wg.name, wg.planes, w.region_name[wg.region], MISSION_NAMES.get(wg.mission, wg.mission)], func():
+				close_popup()
+				game.select_wing(wid), Vector2(0, 46))
+			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			b.add_theme_font_size_override("font_size", 15)
+			popup_body.add_child(b)
+	popup_body.add_child(_small("В резерве: истребителей %d, бомбардировщиков %d — пополняют крылья до %d самолётов." % [
+		n.stock[Military.EQ_FIG], n.stock[Military.EQ_BOMB], Forces.WING_MAX]))
+	var row2 := HBoxContainer.new()
+	row2.add_theme_constant_override("separation", 4)
+	for kind in 2:
+		var k := kind
+		var b := _button("Новое крыло: %s" % ("истребители" if kind == 0 else "бомбардировщики"), func():
+			var eq := Military.EQ_FIG if k == 0 else Military.EQ_BOMB
+			if n.stock[eq] < 50.0:
+				toast("Нужно хотя бы 50 самолётов в резерве")
+				return
+			var nw := Forces.create_wing(w, me, k, w.p_region[n.capital])
+			nw.planes = minf(Forces.WING_MAX, n.stock[eq])
+			n.stock[eq] -= nw.planes
+			nw.mission = "sup" if k == 0 else "cas"
+			_rebuild_popup(), Vector2(0, 48))
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.add_theme_font_size_override("font_size", 14)
+		row2.add_child(b)
+	popup_body.add_child(row2)
+	popup_body.add_child(_section("Морские высадки"))
+	var plans := 0
+	for plan in w.invasions:
+		if plan.alive and plan.owner == me:
+			plans += 1
+			var pl: World.InvasionPlan = plan
+			var r := HBoxContainer.new()
+			var l := _label("%s → %s · %d див. · %s" % [w.p_name[plan.port], w.p_name[plan.target], plan.divs.size(), Forces.plan_status(w, plan)], 15)
+			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			r.add_child(l)
+			r.add_child(_button("Отменить", func():
+				Forces.cancel_plan(w, pl)
+				_rebuild_popup(), Vector2(110, 44)))
+			popup_body.add_child(r)
+	if plans == 0:
+		popup_body.add_child(_small("Выделите дивизии в прибрежной провинции и коснитесь вражеского побережья за морем. Подготовка — 1–2 месяца, войска ждут в порту; высадка — когда подготовка готова и у цели господство на море. Плацдарм снабжает войска 60 дней — захватите порт."))
+
+
+func show_fleet(f: World.Fleet) -> void:
+	var w: World = game.world
+	_info_prov = -1
+	info_label.text = "%s · %s · сила %d · %s · %s%s\nКоснитесь моря (или берега), чтобы отправить флот. Господство нужно для высадок и блокады; флот в порту в бою не участвует." % [
+		f.name, _ships_text(f), Forces.fleet_power(f), w.p_name[f.zone], MISSION_NAMES.get(f.mission, f.mission),
+		(" · в пути %d дн." % f.path.size()) if not f.path.is_empty() else ""]
+	_clear(info_actions)
+	for m in ["patrol", "raid", "port"]:
+		var mm: String = m
+		var b := _button(MISSION_NAMES[m].capitalize(), func():
+			f.mission = mm
+			if mm == "port":
+				f.path = Forces.sea_path(w, f.zone, f.home)
+			show_fleet(f))
+		b.disabled = f.mission == m
+		info_actions.add_child(b)
+	info_actions.add_child(_button("✕", func(): game.clear_selection(), Vector2(56, 56)))
+	info_panel.show()
+
+
+func show_wing(wg: World.AirWing) -> void:
+	var w: World = game.world
+	_info_prov = -1
+	var sup: float = w.air_sup[wg.region * w.nation_count + wg.owner] if w.air_sup.size() > wg.region * w.nation_count + wg.owner else 0.5
+	info_label.text = "%s · %d самолётов · район %s · превосходство %d%%\nКоснитесь карты, чтобы сменить район (дальность ограничена)." % [
+		wg.name, wg.planes, w.region_name[wg.region], sup * 100.0]
+	_clear(info_actions)
+	var missions := ["sup"] if wg.kind == 0 else ["cas", "bomb", "naval"]
+	for m in missions:
+		var mm: String = m
+		var b := _button(MISSION_NAMES[m].capitalize(), func():
+			wg.mission = mm
+			show_wing(wg))
+		b.disabled = wg.mission == m
+		info_actions.add_child(b)
+	info_actions.add_child(_button("✕", func(): game.clear_selection(), Vector2(56, 56)))
+	info_panel.show()
+
+
 func _build_production(w: World, me: int) -> void:
 	popup_title.text = "Производство"
 	var n: World.Nation = w.nations[me]
@@ -1048,7 +1190,7 @@ func _update_popup_dynamic() -> void:
 				_dynamic["bar"].max_value = t["cost"]
 				_dynamic["bar"].value = n.research_points
 		"build":
-			var rate := n.civ * 0.12 * (1.0 + n.b("construction"))
+			var rate := n.civ * Simulation.BUILD_RATE * (1.0 + n.b("construction"))
 			_dynamic["build"].text = "Фабрики: %d гражданских, %d военных\nСледующая: %s, %d%% (+%.1f/день)" % [
 				n.civ, n.mil, "гражданская" if n.build_mode == "civ" else "военная",
 				n.build_progress / Simulation.FACTORY_COST * 100.0, rate]

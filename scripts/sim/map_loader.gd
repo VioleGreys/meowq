@@ -147,6 +147,8 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	world.ai_wars = true
 	Diplomacy.load_setup(world, dir + "/diplomacy.json")
 	History.load(world, dir)
+	world.build_caches()
+	Forces.setup(world, dir)
 	world.rebuild_prov_divs()
 	world.palette_dirty = true
 	return timings
@@ -200,7 +202,7 @@ static func _distribute_economy(world: World, provs: Array, data: Dictionary) ->
 		# часть резерва уже служит в армии
 		nat.manpower = mp_total * 0.35
 		# склад: запас на ~четверть армии + немного сверху
-		nat.stock = PackedFloat32Array([200.0, 30.0, 0.0, 0.0])
+		nat.stock = PackedFloat32Array([200.0, 30.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
 
 static func _spread_population(world: World, provs: Array, list: Array, total_k: float) -> void:
@@ -306,7 +308,7 @@ static func _spawn_armies(world: World, rng: RandomNumberGenerator, data: Dictio
 		Military.assign_free_factories(nat, Military.default_split(nat))
 		for line in nat.lines:
 			line[2] = 0.8
-		var need := [0.0, 0.0, 0.0, 0.0]
+		var need := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 		for dv in world.divisions:
 			if dv.owner == nat.id:
 				var eq: Array = Military.tpl(dv.tpl)["eq"]

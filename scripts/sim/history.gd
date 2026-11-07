@@ -112,6 +112,8 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 				apply(world, nat.id, fd.get("effects", []), rng)
 		if nat.focus_current == "" and not nat.is_player:
 			_ai_pick_focus(world, nat.id, rng)
+		if not nat.is_player and world.day % 5 == nat.id % 5:
+			nat.planned_wars = planned_wars(world, nat.id)
 	# события, автоматически срабатывающие по дате
 	for id in world.event_defs:
 		var ev: Dictionary = world.event_defs[id]
@@ -142,6 +144,33 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 		else:
 			choose_option(world, id, _ai_option(world, ev, rng), rng)
 	world.event_queue = keep
+
+
+## С кем у страны запланирована война: текущий фокус и ближайший следующий
+## (требования выполнены, дата ещё не наступила). ИИ готовится к ним заранее.
+static func planned_wars(world: World, n: int) -> Dictionary:
+	var nat: World.Nation = world.nations[n]
+	var res := {}
+	var look: Array = []
+	if nat.focus_current != "":
+		look.append(focus_def(world, n, nat.focus_current))
+	for fd in tree_of(world, n):
+		if nat.focus_done.has(fd["id"]) or fd["id"] == nat.focus_current:
+			continue
+		var ok := true
+		for r in fd.get("requires", []):
+			if not nat.focus_done.has(r):
+				ok = false
+		if ok:
+			look.append(fd)
+			break
+	for fd in look:
+		for e in fd.get("effects", []):
+			if e.get("t", "") == "war":
+				var t := tag_id(world, e["target"])
+				if t >= 0 and world.nations[t].alive:
+					res[t] = true
+	return res
 
 
 static func _ai_pick_focus(world: World, n: int, rng: RandomNumberGenerator) -> void:
@@ -356,7 +385,7 @@ static func place_factory(world: World, nid: int, mode: String) -> void:
 		if world.p_owner[p] != nid or world.p_controller[p] != nid:
 			continue
 		var total := world.p_civ[p] + world.p_mil[p]
-		if total >= 12:
+		if total >= Simulation.factory_slots(world, p):
 			continue
 		var score := float(total) - (2.0 if world.p_terrain[p] == World.T_URBAN else 0.0) + float(p % 7) * 0.01
 		if score < best_score:
@@ -477,7 +506,7 @@ static func release(world: World, tag: String, provs: Array, overlord: int, take
 	var income := world.compute_all_income()
 	nat.civ = income[n][0]
 	nat.mil = income[n][1]
-	nat.stock = PackedFloat32Array([300.0 + nat.mil * 50.0, 40.0, 0.0, 0.0])
+	nat.stock = PackedFloat32Array([300.0 + nat.mil * 50.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 	Military.assign_free_factories(nat, Military.default_split(nat))
 	if overlord >= 0:
 		Diplomacy._inherit_wars(world, n, overlord)

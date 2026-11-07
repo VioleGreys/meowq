@@ -61,6 +61,7 @@ func _init() -> void:
 				marks[m] = true
 				milestones[m].call()
 	print("Итог %s за %d мс: напряжённость %d%%" % [w.date_string(), Time.get_ticks_msec() - t0, w.tension])
+	print("Последний тик %.1f мс: %s" % [sim.last_tick_usec / 1000.0, sim.phase_usec])
 	var lines: Array = []
 	for n in w.nations:
 		if n.alive:

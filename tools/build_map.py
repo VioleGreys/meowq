@@ -586,7 +586,15 @@ def main():
             city_best[pid] = (pop, name)
 
     marine = load(os.path.join(ne, "ne_10m_geography_marine_polys.geojson"))["features"]
-    marine_sorted = sorted(marine, key=lambda f: (f["properties"].get("scalerank") or 0), reverse=True)
+    # крупные акватории рисуем первыми, мелкие (моря, заливы) — поверх
+    def _area(f):
+        a = 0.0
+        for r in rings_of(f["geometry"]):
+            arr = np.asarray(r, dtype=np.float64)
+            x, y = arr[:, 0], arr[:, 1]
+            a += abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1))) * 0.5
+        return a
+    marine_sorted = sorted(marine, key=_area, reverse=True)
     sea_img = Image.new("I", (WIDTH, HEIGHT), 0)
     sd = ImageDraw.Draw(sea_img)
     marine_names = [""]

@@ -56,8 +56,15 @@ class Nation:
 	var justify_days := 0       # сколько дней осталось
 	var justify_total := 0
 	var war_activity_day := 0   # последний день с захватом провинций (для белого мира)
-	var stock := PackedFloat32Array([0, 0, 0, 0])        # склад снаряжения по типам
-	var daily_output := PackedFloat32Array([0, 0, 0, 0]) # выпуск за последний день
+	var stock := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0])        # склад по типам (Military.EQ_*)
+	var daily_output := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0]) # выпуск за последний день
+	var naval_share := 0.0      # доля заводов на судостроение (forces.json)
+	var air_share := 0.1        # доля заводов на авиацию
+	var trade_penalty := 0.0    # потери выпуска от рейдов подлодок (0..0.3)
+	var ship_queue: Array = []  # заложенные корабли: типы Forces.SHIP_*
+	var planned_wars := {}      # ИИ: с кем война запланирована фокусами (готовиться заранее)
+	var inv_target := -1        # ИИ: цель готовящейся высадки
+	var inv_port := -1          # ИИ: порт посадки
 	var lines: Array = []       # производственные линии: [тип снаряжения, заводов, эффективность]
 	var trained_count := 0
 	var stats_dirty := true
@@ -113,12 +120,61 @@ class Division:
 	var supply := 1.0               # снабжение 0..1 (0 — окружена)
 	var group := -1                 # армия игрока (World.groups), -1 — нет
 	var entrench := 0.0             # окапывание 0..1: растёт, пока дивизия стоит на месте
+	var transit_days := 0           # > 0 — в море (высадка), см. Forces
+	var transit_total := 0
+	var transit_from := -1
+	var transit_target := -1
+	var landing := false            # высаживается с моря: атака ослаблена
+	var reserved_until := 0         # ИИ держит дивизию под десант до этого дня
+	var inv_plan := -1              # участвует в плане высадки (World.invasions)
 	# кэш характеристик (Military.refresh_division), читается из потоков
 	var atk := 10.0
 	var def := 12.0
 	var max_org := 40.0
 	var spd := 0.28
 	var hard := 0.0
+
+
+## Флот: корабли по типам (Forces.SHIP_*), стоит в морской зоне (провинция-море).
+class Fleet:
+	extends RefCounted
+	var id := 0
+	var owner := 0
+	var name := ""
+	var ships := PackedInt32Array([0, 0, 0, 0])   # линкоры, крейсеры, эсминцы, подлодки
+	var zone := -1
+	var home := -1                  # морская зона у главного порта
+	var path := PackedInt32Array()
+	var mission := "patrol"         # patrol — господство и бои, raid — рейды на торговлю, port — в порту
+	var alive := true
+	var in_battle := false
+	var task_until := 0             # прикрывает высадку до этого дня (ИИ не уводит в порт)
+
+
+## План морской высадки: подготовка 30–60 дней, войска ждут в порту посадки.
+class InvasionPlan:
+	extends RefCounted
+	var id := 0
+	var owner := 0
+	var port := -1                  # провинция посадки
+	var target := -1                # цель на вражеском побережье
+	var divs: Array = []            # id дивизий
+	var days_left := 0
+	var total := 0
+	var alive := true
+
+
+## Авиакрыло: истребители или бомбардировщики над воздушным районом.
+class AirWing:
+	extends RefCounted
+	var id := 0
+	var owner := 0
+	var name := ""
+	var kind := 0                   # 0 — истребители, 1 — бомбардировщики
+	var planes := 0.0
+	var region := -1
+	var mission := "sup"            # sup — превосходство, cas — поддержка войск, bomb — бомбёжка заводов, naval — удары по флоту
+	var alive := true
 
 
 ## Армия игрока: группа дивизий с общим приказом.
@@ -187,6 +243,21 @@ var p_supply_cap := PackedFloat32Array()  # пропускная способн�
 var ally := PackedByteArray()             # nation_count^2: 1 — одна сторона (фракция/сюзерен)
 var supply_dist: Array = []               # по странам: PackedInt32Array, переходов до узла снабжения (-1 — нет)
 var groups: Array = []                    # Array[ArmyGroup]
+# Флот и авиация (этап 6)
+var fleets: Array = []                    # Array[Fleet]
+var wings: Array = []                     # Array[AirWing]
+var region_count := 0
+var p_region := PackedInt32Array()        # воздушный район провинции
+var region_center := PackedVector2Array() # центр района (пиксели карты)
+var region_name := PackedStringArray()
+var region_anchor := PackedInt32Array()   # главная провинция района (для значков)
+var region_provs: Array = []              # район -> PackedInt32Array провинций
+var trade_cache := {}                     # страна -> Dictionary торговых зон (пересчёт раз в 30 дней)
+var cas_mult := PackedFloat32Array()      # region*nation_count + n: множитель боя от авиации
+var air_sup := PackedFloat32Array()       # region*nation_count + n: превосходство в воздухе 0..1
+var invasions: Array = []                 # Array[InvasionPlan]
+var beachheads := {}                      # провинция -> последний день временного порта на плацдарме
+var zone_fleets := {}                     # морская зона -> Array[Fleet] (кэш на день)
 var divisions: Array = []
 var next_div_id := 1
 var day := 0
@@ -439,7 +510,8 @@ func rebuild_prov_divs() -> void:
 	for d in divisions:
 		if d.alive:
 			alive_list.append(d)
-			prov_divs[d.prov].append(d)
+			if d.transit_days <= 0:   # в море — не стоит в провинции
+				prov_divs[d.prov].append(d)
 	divisions = alive_list
 	for n in nations:
 		n.division_count = 0

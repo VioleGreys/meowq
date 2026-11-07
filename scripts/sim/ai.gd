@@ -137,13 +137,17 @@ static func plan_military(world: World, nid: int, divs: Array, opts: Dictionary,
 			fronts[nat.capital] = true
 		else:
 			return result
-	# в войну столица всегда под охраной (вес по очкам победы)
+	# в войну столица и крупные порты (узлы снабжения) всегда под охраной
 	if mode == "auto" and at_war and ctrl[nat.capital] == nid:
 		fronts[nat.capital] = true
+		var coastal := world.p_coastal
+		for p in world.prov_count:
+			if ctrl[p] == nid and coastal[p] == 1 and vp[p] >= 5 and world.p_owner[p] == nid:
+				fronts[p] = true
 
 	var idle: Array = []
 	for d in divs:
-		if d.alive and d.path.is_empty() and not d.in_battle:
+		if d.alive and d.path.is_empty() and not d.in_battle and d.transit_days <= 0 and d.reserved_until < world.day and d.inv_plan < 0:
 			idle.append(d)
 	if idle.is_empty():
 		return result
@@ -193,7 +197,7 @@ static func plan_military(world: World, nid: int, divs: Array, opts: Dictionary,
 			for k in range(a_start[t], a_start[t + 1]):
 				for d in prov_divs[a_list[k]]:
 					if d.owner == nid and in_group.has(d.id) and d.path.is_empty() and not d.in_battle \
-							and not used.has(d.id) and d.org > d.max_org * 0.6:
+							and not used.has(d.id) and d.org > d.max_org * 0.6 and d.inv_plan < 0 and d.reserved_until < world.day:
 						group.append(d)
 			if group.is_empty():
 				continue

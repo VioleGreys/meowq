@@ -70,6 +70,8 @@ func _draw() -> void:
 			draw_line(c + Vector2(-22, 0), c + Vector2(22, 0), g.color, 2.0)
 			draw_line(c + Vector2(0, -22), c + Vector2(0, 22), g.color, 2.0)
 
+	_draw_navy_air(z, vp)
+
 	# значки боёв
 	var battle_provs := {}
 	for d in world.divisions:
@@ -244,3 +246,91 @@ func _draw_icon(r: Rect2, tpl: int, col: Color) -> void:
 				var t := TAU * i / 16.0
 				pts.append(c + Vector2(cos(t) * rx, sin(t) * ry))
 			draw_polyline(pts, col, 1.5)
+
+
+func _draw_navy_air(z: float, vp: Vector2) -> void:
+	var screen := Rect2(Vector2.ZERO, vp).grow(40)
+	var game = get_tree().current_scene if get_tree() else null
+	var sel_fleet: int = game.selected_fleet if game != null and "selected_fleet" in game else -1
+	var sel_wing: int = game.selected_wing if game != null and "selected_wing" in game else -1
+	# планы высадок и войска в море
+	for plan in world.invasions:
+		if plan.alive and plan.owner == player:
+			var a := map.world_to_screen(map.province_world_pos(plan.port))
+			var b := map.world_to_screen(map.province_world_pos(plan.target))
+			draw_dashed_line(a, b, Color(0.4, 0.8, 1.0, 0.85), 2.5, 8.0)
+			draw_string(font, b + Vector2(8, -6), "%d дн." % plan.days_left if plan.days_left > 0 else "готово",
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.6, 0.9, 1.0))
+	for d in world.divisions:
+		if d.alive and d.transit_days > 0 and (d.owner == player or z > 0.8):
+			var a := map.world_to_screen(map.province_world_pos(d.transit_from))
+			var b := map.world_to_screen(map.province_world_pos(d.transit_target))
+			var t := 1.0 - float(d.transit_days) / maxf(1.0, d.transit_total)
+			draw_line(a, b, Color(1, 1, 1, 0.4), 1.5)
+			_ship_icon(a.lerp(b, t), world.nations[d.owner].color, 0.8)
+	# флоты
+	for f in world.fleets:
+		if not f.alive or f.zone < 0:
+			continue
+		if f.owner != player and z < 0.6 and not world.is_at_war(player, f.owner):
+			continue
+		var c := map.world_to_screen(map.province_world_pos(f.zone))
+		if f.mission == "raid":
+			c += Vector2(0, 16)
+		if not screen.has_point(c):
+			continue
+		if f.id == sel_fleet and not f.path.is_empty():
+			var pts := PackedVector2Array([c])
+			for q in f.path:
+				pts.append(map.world_to_screen(map.province_world_pos(q)))
+			draw_polyline(pts, Color(0.6, 0.9, 1.0), 2.5)
+		_ship_icon(c, world.nations[f.owner].color, 1.0 if f.mission != "raid" else 0.8)
+		if f.id == sel_fleet:
+			draw_arc(c, 18, 0, TAU, 20, Color.WHITE, 2.0)
+		draw_string(font, c + Vector2(13, 5), str(Forces.fleet_size(f)), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
+		if f.in_battle:
+			draw_circle(c + Vector2(-14, -10), 5, Color(0.9, 0.2, 0.1))
+	# авиация игрока (и вражеская при войне): один значок на район и тип
+	var groups := {}
+	for wg in world.wings:
+		if not wg.alive or wg.region < 0:
+			continue
+		if wg.owner != player and not world.is_at_war(player, wg.owner):
+			continue
+		var key := "%d:%d:%d" % [wg.region, 0 if wg.owner == player else 1, wg.kind]
+		if not groups.has(key):
+			groups[key] = [wg.region, wg.owner, wg.kind, 0.0, false]
+		groups[key][3] += wg.planes
+		if wg.id == sel_wing:
+			groups[key][4] = true
+	for key in groups:
+		var g: Array = groups[key]
+		var anchor: int = world.region_anchor[g[0]]
+		var mine: bool = g[1] == player
+		var c := map.world_to_screen(map.province_world_pos(anchor)) + Vector2(-30 + (0 if mine else 56), -34 - g[2] * 18)
+		if not screen.has_point(c):
+			continue
+		_plane_icon(c, world.nations[g[1]].color if mine else Color(0.9, 0.3, 0.25), g[2], g[4])
+		draw_string_outline(font, c + Vector2(14, 5), str(int(g[3])), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, 3, Color.BLACK)
+		draw_string(font, c + Vector2(14, 5), str(int(g[3])), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+
+
+func _ship_icon(c: Vector2, col: Color, s: float) -> void:
+	var pts := PackedVector2Array([c + Vector2(-12, -2) * s, c + Vector2(12, -2) * s, c + Vector2(8, 5) * s, c + Vector2(-9, 5) * s])
+	draw_colored_polygon(pts, col.darkened(0.2))
+	draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[0]]), Color(0, 0, 0, 0.8), 1.5)
+	draw_rect(Rect2(c + Vector2(-3, -7) * s, Vector2(6, 5) * s), col.darkened(0.4))
+
+
+func _plane_icon(c: Vector2, col: Color, kind: int, selected: bool) -> void:
+	var wing := 9.0 if kind == 0 else 12.0
+	var dark := Color(0.05, 0.05, 0.05, 0.9)
+	draw_line(c + Vector2(0, -8), c + Vector2(0, 8), dark, 5.0)
+	draw_line(c + Vector2(-wing - 1, -1), c + Vector2(wing + 1, -1), dark, 5.0)
+	draw_line(c + Vector2(-5, 6), c + Vector2(5, 6), dark, 4.0)
+	col = col.lightened(0.35)
+	draw_line(c + Vector2(0, -7), c + Vector2(0, 7), col, 3.0)
+	draw_line(c + Vector2(-wing, -1), c + Vector2(wing, -1), col, 3.0)
+	draw_line(c + Vector2(-4, 6), c + Vector2(4, 6), col, 2.0)
+	if selected:
+		draw_arc(c, 14, 0, TAU, 20, Color.WHITE, 2.0)

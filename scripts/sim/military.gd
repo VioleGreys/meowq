@@ -10,11 +10,15 @@ const EQ_INF := 0
 const EQ_ART := 1
 const EQ_TANK := 2
 const EQ_TRUCK := 3
-const EQ_COUNT := 4
-const EQ_NAMES := ["Стрелковое оружие", "Артиллерия", "Бронетехника", "Грузовики"]
-const EQ_SHORT := ["Винт.", "Ору.", "Танки", "Груз."]
+const EQ_SHIP := 4     # очки судостроения (корабли закладываются из них, см. Forces)
+const EQ_FIG := 5      # истребители (самолёты в резерве)
+const EQ_BOMB := 6     # бомбардировщики
+const EQ_COUNT := 7
+const EQ_LAND := 4     # первые 4 типа — снаряжение сухопутных дивизий
+const EQ_NAMES := ["Стрелковое оружие", "Артиллерия", "Бронетехника", "Грузовики", "Судостроение", "Истребители", "Бомбардировщики"]
+const EQ_SHORT := ["Винт.", "Ору.", "Танки", "Груз.", "Суда", "Истр.", "Бомб."]
 # цена единицы в «очках производства»; один военный завод даёт 1 очко в день
-const EQ_COST := [1.0, 3.5, 12.0, 2.5]
+const EQ_COST := [1.0, 3.5, 12.0, 2.5, 1.0, 6.0, 12.0]
 
 # --- Шаблоны дивизий -------------------------------------------------------------
 const T_INF := 0
@@ -26,12 +30,12 @@ const T_ARM := 5
 # men — тыс. человек; eq — [винт., ору., танки, груз.]; spd — множитель скорости;
 # hard — бронированность (снижает урон от атакующих без танков)
 const TEMPLATES := [
-	{"name": "Пехотная", "short": "пех.", "men": 10.0, "eq": [100, 12, 0, 0], "atk": 10.0, "def": 12.0, "org": 40.0, "spd": 1.0, "hard": 0.0, "days": 14, "req": ""},
-	{"name": "Горнострелковая", "short": "горн.", "men": 10.0, "eq": [110, 6, 0, 0], "atk": 9.0, "def": 12.0, "org": 45.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "mnt1"},
-	{"name": "Кавалерийская", "short": "кав.", "men": 8.0, "eq": [80, 0, 0, 0], "atk": 8.0, "def": 8.0, "org": 50.0, "spd": 1.5, "hard": 0.0, "days": 14, "req": ""},
-	{"name": "Пехотная с артиллерией", "short": "п+арт", "men": 11.0, "eq": [100, 36, 0, 0], "atk": 16.0, "def": 14.0, "org": 38.0, "spd": 0.9, "hard": 0.0, "days": 18, "req": ""},
-	{"name": "Моторизованная", "short": "мот.", "men": 10.0, "eq": [100, 12, 0, 60], "atk": 11.0, "def": 12.0, "org": 40.0, "spd": 2.0, "hard": 0.1, "days": 20, "req": "mot1"},
-	{"name": "Танковая", "short": "танк.", "men": 8.0, "eq": [40, 0, 60, 40], "atk": 30.0, "def": 12.0, "org": 35.0, "spd": 1.8, "hard": 0.7, "days": 30, "req": "armor1"},
+	{"name": "Пехотная", "short": "пех.", "men": 10.0, "eq": [100, 12, 0, 0, 0, 0, 0], "atk": 10.0, "def": 12.0, "org": 40.0, "spd": 1.0, "hard": 0.0, "days": 14, "req": ""},
+	{"name": "Горнострелковая", "short": "горн.", "men": 10.0, "eq": [110, 6, 0, 0, 0, 0, 0], "atk": 9.0, "def": 12.0, "org": 45.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "mnt1"},
+	{"name": "Кавалерийская", "short": "кав.", "men": 8.0, "eq": [80, 0, 0, 0, 0, 0, 0], "atk": 8.0, "def": 8.0, "org": 50.0, "spd": 1.5, "hard": 0.0, "days": 14, "req": ""},
+	{"name": "Пехотная с артиллерией", "short": "п+арт", "men": 11.0, "eq": [100, 36, 0, 0, 0, 0, 0], "atk": 16.0, "def": 14.0, "org": 38.0, "spd": 0.9, "hard": 0.0, "days": 18, "req": ""},
+	{"name": "Моторизованная", "short": "мот.", "men": 10.0, "eq": [100, 12, 0, 60, 0, 0, 0], "atk": 11.0, "def": 12.0, "org": 40.0, "spd": 2.0, "hard": 0.1, "days": 20, "req": "mot1"},
+	{"name": "Танковая", "short": "танк.", "men": 8.0, "eq": [40, 0, 60, 40, 0, 0, 0], "atk": 30.0, "def": 12.0, "org": 35.0, "spd": 1.8, "hard": 0.7, "days": 30, "req": "armor1"},
 ]
 const BASE_SPEED := 0.28   # доля провинции в день для скорости 1.0 на равнине
 
@@ -96,11 +100,22 @@ static func build_tables(world: World) -> void:
 
 ## Стартовые линии по доктрине/технологиям: доли заводов по типам снаряжения.
 static func default_split(nat: World.Nation) -> Array:
+	var land: Array
 	if nat.techs.has("armor1"):
-		return [0.45, 0.2, 0.2, 0.15]
-	if nat.techs.has("mot1"):
-		return [0.55, 0.25, 0.0, 0.2]
-	return [0.7, 0.3, 0.0, 0.0]
+		land = [0.45, 0.2, 0.2, 0.15]
+	elif nat.techs.has("mot1"):
+		land = [0.55, 0.25, 0.0, 0.2]
+	else:
+		land = [0.7, 0.3, 0.0, 0.0]
+	# доли флота и авиации — из forces.json (nat.naval_share / air_share)
+	var rest := 1.0 - nat.naval_share - nat.air_share
+	var res: Array = []
+	for k in 4:
+		res.append(land[k] * rest)
+	res.append(nat.naval_share)
+	res.append(nat.air_share * 0.6)
+	res.append(nat.air_share * 0.4)
+	return res
 
 
 ## Разложить свободные заводы по долям (существующие линии не трогаем).
@@ -108,7 +123,7 @@ static func assign_free_factories(nat: World.Nation, split: Array) -> void:
 	var free := nat.mil - assigned_factories(nat)
 	if free <= 0:
 		return
-	var current := [0, 0, 0, 0]
+	var current := [0, 0, 0, 0, 0, 0, 0]
 	for line in nat.lines:
 		current[line[0]] += int(line[1])
 	var total := nat.mil
@@ -168,7 +183,8 @@ static func trim_lines(nat: World.Nation) -> void:
 
 ## Дневной выпуск: очки -> единицы снаряжения; эффективность растёт до 100%.
 static func produce(nat: World.Nation) -> void:
-	var mult := 1.0 + nat.b("industry")
+	# рейды подлодок по торговле снижают выпуск (Forces.trade_penalty)
+	var mult := (1.0 + nat.b("industry")) * (1.0 - nat.trade_penalty)
 	for k in EQ_COUNT:
 		nat.daily_output[k] = 0.0
 	for line in nat.lines:
@@ -239,7 +255,7 @@ static func reinforce(nat: World.Nation, d: World.Division) -> void:
 
 ## Сколько снаряжения нужно, чтобы укомплектовать все дивизии (для ИИ и экрана).
 static func shortage(world: World, n: int) -> Array:
-	var need := [0.0, 0.0, 0.0, 0.0]
+	var need := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 	for d in world.divisions:
 		if d.alive and d.owner == n and d.eq < 1.0:
 			var eq: Array = TEMPLATES[d.tpl]["eq"]
@@ -269,7 +285,7 @@ static func side_power(divs: Array, terr: int, tmul: PackedFloat32Array, defendi
 	var wsum := 0.0
 	for d in divs:
 		var w: float = d.strength / 100.0
-		var base: float = d.def * (1.0 + 0.3 * d.entrench) if defending else d.atk
+		var base: float = d.def * (1.0 + 0.3 * d.entrench) if defending else d.atk * (0.5 if d.landing else 1.0)
 		power += base * w * (0.4 + 0.6 * d.eq) * (0.5 + 0.5 * d.supply) * tmul[d.tpl * 8 + terr]
 		hard += d.hard * w
 		wsum += w

@@ -4,7 +4,8 @@ extends RefCounted
 ## последовательно применить», поэтому результат детерминирован и не зависит
 ## от числа ядер, а сама работа распределяется по WorkerThreadPool.
 
-const FACTORY_COST := 45.0
+const FACTORY_COST := 60.0
+const BUILD_RATE := 0.05      # очков стройки в день на гражданскую фабрику
 const MAX_FACTORIES := 12
 const AI_PERIOD := 3
 
@@ -21,9 +22,11 @@ func _init(w: World) -> void:
 		if nat.lines.is_empty() and nat.mil > 0:
 			Military.assign_free_factories(nat, Military.default_split(nat))
 			if nat.stock[0] == 0.0:
-				nat.stock = PackedFloat32Array([300.0, 40.0, 0.0, 0.0])
+				nat.stock = PackedFloat32Array([300.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 	if world.ally.size() != world.nation_count * world.nation_count:
 		_refresh_sides()
+	if world.p_region.size() != world.prov_count:
+		Forces._build_regions(world)
 
 
 ## Пересчитать доход всех стран без начисления (для интерфейса до первого тика).
@@ -54,8 +57,10 @@ func tick() -> void:
 		nat.stats_dirty = false
 	_refresh_sides()
 	_timed("экономика", _phase_economy)
+	_timed("флот", _phase_navy)
 	_timed("снабжение", _phase_supply)
 	_timed("ИИ", _phase_ai)
+	_timed("авиация", Forces.daily_air.bind(world, Parallel.rng(world.seed_value, world.day, 6001)))
 	var battles := _collect_battles()
 	_timed("движение", _phase_movement.bind(battles))
 	_timed("бои", _phase_combat.bind(battles))
@@ -107,7 +112,7 @@ func _phase_economy() -> void:
 				nat.research_points = 0.0
 
 		# строительство фабрик
-		nat.build_progress += nat.civ * 0.12 * (1.0 + nat.b("construction"))
+		nat.build_progress += nat.civ * BUILD_RATE * (1.0 + nat.b("construction"))
 		if nat.build_progress >= FACTORY_COST:
 			if _place_factory(i, nat.build_mode):
 				nat.build_progress -= FACTORY_COST
@@ -135,7 +140,7 @@ func _place_factory(nid: int, mode: String) -> bool:
 		if world.p_owner[p] != nid or world.p_controller[p] != nid:
 			continue
 		var total := world.p_civ[p] + world.p_mil[p]
-		if total >= MAX_FACTORIES:
+		if total >= factory_slots(world, p):
 			continue
 		var score := float(total) - (2.0 if world.p_terrain[p] == World.T_URBAN else 0.0) + float(p % 7) * 0.01
 		if score < best_score:
@@ -148,6 +153,14 @@ func _place_factory(nid: int, mode: String) -> bool:
 	else:
 		world.p_mil[best] += 1
 	return true
+
+
+## Сколько заводов помещается в провинции: зависит от населения (рабочие руки).
+static func factory_slots(world: World, p: int) -> int:
+	var pop := world.p_population[p] if world.p_population.size() > p else 0
+	if pop <= 0:
+		return MAX_FACTORIES
+	return clampi(1 + pop / 250, 1, MAX_FACTORIES)
 
 
 func _any_province(nid: int) -> int:
@@ -216,7 +229,15 @@ func _phase_supply() -> void:
 			hubs[rep_index[rep[nat.id]]].append(nat.capital)
 	for p in world.prov_count:
 		var c := ctl[p]
-		if c >= 0 and coastal[p] == 1 and vp[p] >= 3 and rep_index.has(rep[c]):
+		if c >= 0 and coastal[p] == 1 and vp[p] >= 3 and rep_index.has(rep[c]) and not Forces.port_blockaded(world, c, p):
+			hubs[rep_index[rep[c]]].append(p)
+	# плацдармы высадок временно работают как порты
+	for p in world.beachheads.keys():
+		if world.beachheads[p] < world.day:
+			world.beachheads.erase(p)
+			continue
+		var c := ctl[p]
+		if c >= 0 and rep_index.has(rep[c]):
 			hubs[rep_index[rep[c]]].append(p)
 	var results: Array = []
 	results.resize(reps.size())
@@ -326,6 +347,19 @@ func _phase_ai() -> void:
 			if d != null and d.alive:
 				d.path = order[1]
 				d.progress = 0.0
+
+
+func _phase_navy() -> void:
+	Forces.daily_navy(world, Parallel.rng(world.seed_value, world.day, 6000))
+	Forces.daily_plans(world)
+	Forces.daily_transit(world)
+	# решения ИИ по флоту, авиации и высадкам — раз в 5 дней на страну
+	for nat in world.nations:
+		if nat.alive and not nat.is_player and (world.day + nat.id) % 5 == 0:
+			Forces.ai_fleets(world, nat.id)
+			Forces.ai_air(world, nat.id)
+			if (world.day + nat.id) % 10 == 0:
+				Forces.ai_invasion(world, nat.id, Parallel.rng(world.seed_value, world.day, 6100 + nat.id))
 
 
 func _ai_train(nat: World.Nation, count: int) -> void:
@@ -458,7 +492,7 @@ func _collect_battles() -> Dictionary:
 	for d in world.divisions:
 		d.in_battle = false
 	for d in world.divisions:
-		if d.path.is_empty():
+		if d.path.is_empty() or d.transit_days > 0:
 			continue
 		var t: int = d.path[0]
 		if not world.can_enter(d.owner, t):
@@ -475,7 +509,7 @@ func _collect_battles() -> Dictionary:
 func _phase_movement(battles: Dictionary) -> void:
 	var movers: Array = []
 	for d in world.divisions:
-		if not d.path.is_empty() and not world.has_enemies(d.owner, d.path[0]):
+		if d.transit_days <= 0 and not d.path.is_empty() and not world.has_enemies(d.owner, d.path[0]):
 			movers.append(d)
 	if movers.is_empty():
 		return
@@ -505,6 +539,9 @@ func _phase_movement(battles: Dictionary) -> void:
 		world.prov_divs[t].append(d)
 		d.path.remove_at(0)
 		d.progress = 0.0
+		if d.landing:
+			d.landing = false
+			world.beachheads[t] = world.day + 60
 		var c := world.p_controller[t]
 		if c != d.owner and world.is_at_war(d.owner, c):
 			_capture(t, d.owner)
@@ -549,9 +586,12 @@ func _phase_combat(battles: Dictionary) -> void:
 		# снабжение x местность; бронированность — доля танков
 		var sa: Array = Military.side_power(attackers, terr, tmul, false)
 		var sd: Array = Military.side_power(defenders, terr, tmul, true)
-		var att_power: float = sa[0]
+		var reg: int = world.p_region[p]
+		var nc2: int = world.nation_count
+		var cas := world.cas_mult
+		var att_power: float = sa[0] * cas[reg * nc2 + att_owner]
 		var att_hard: float = sa[1]
-		var def_power: float = sd[0]
+		var def_power: float = sd[0] * cas[reg * nc2 + defenders[0].owner]
 		var def_hard: float = sd[1]
 		att_power *= rng.randf_range(0.8, 1.2) * (1.0 - terrain_def * 0.6)
 		def_power *= rng.randf_range(0.8, 1.2)
@@ -624,7 +664,7 @@ func _destroy(d: World.Division, why: String) -> void:
 
 func _phase_recovery() -> void:
 	for d in world.divisions:
-		if not d.alive:
+		if not d.alive or d.transit_days > 0:
 			continue
 		var nat: World.Nation = world.nations[d.owner]
 		if d.supply <= 0.0:
