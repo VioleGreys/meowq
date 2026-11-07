@@ -159,7 +159,7 @@ static func can_declare(world: World, a: int, b: int) -> String:
 
 ## Объявление войны. Атакующая сторона: страна, её марионетки и согласные
 ## члены фракции. Защищающаяся: цель, её сюзерен и марионетки, фракция, гаранты.
-static func declare_war(world: World, a: int, b: int) -> bool:
+static func declare_war(world: World, a: int, b: int, call_guarantors: bool = true) -> bool:
 	if can_declare(world, a, b) != "":
 		return false
 	var na: World.Nation = world.nations[a]
@@ -184,9 +184,10 @@ static func declare_war(world: World, a: int, b: int) -> bool:
 			var add: Array = [root(world, d)]
 			add.append_array(puppets_of(world, root(world, d)))
 			add.append_array(faction_members(world, world.nations[root(world, d)].faction))
-			for nat in world.nations:
-				if nat.alive and nat.guarantees.has(d) and not nat.pacts.has(a):
-					add.append(nat.id)
+			if call_guarantors:
+				for nat in world.nations:
+					if nat.alive and nat.guarantees.has(d) and not nat.pacts.has(a):
+						add.append(nat.id)
 			for x in add:
 				if not defenders.has(x) and not attackers.has(x):
 					defenders[x] = true
@@ -210,8 +211,8 @@ static func declare_war(world: World, a: int, b: int) -> bool:
 
 static func _joins_offensive(world: World, m: int, a: int, b: int) -> bool:
 	var nm: World.Nation = world.nations[m]
-	if nm.is_player or nm.pacts.has(b):
-		return false
+	if nm.is_player or nm.pacts.has(b) or world.historical:
+		return false   # в исторической игре союзники вступают в войны по фокусам и событиям
 	if nm.ideology == "democracy":
 		return world.tension >= 60.0
 	return nm.ideology == world.nations[a].ideology
@@ -451,7 +452,7 @@ static func ai_turn(world: World, n: int, rng: RandomNumberGenerator) -> void:
 				break
 		if best >= 0 and rng.randf() < 0.3:
 			join_faction(world, n, best)
-		elif best < 0 and nat.major and (nat.ideology == "fascism" or nat.ideology == "communism") \
+		elif best < 0 and not world.historical and nat.major and (nat.ideology == "fascism" or nat.ideology == "communism") \
 				and world.tension >= 12.0 and world.day >= 200:
 			# держава той же идеологии уже ведёт фракцию — вступаем к ней, а не создаём свою
 			var same := -1
@@ -464,7 +465,7 @@ static func ai_turn(world: World, n: int, rng: RandomNumberGenerator) -> void:
 				create_faction(world, n)
 
 	# 2. Гарантии: демократические державы защищают соседей агрессоров
-	if nat.ideology == "democracy" and nat.major and world.tension >= 25.0:
+	if nat.ideology == "democracy" and nat.major and world.tension >= 25.0 and not world.historical:
 		for o in world.nations:
 			if not o.alive or o.id == n or nat.guarantees.has(o.id) or o.overlord >= 0 or same_side(world, n, o.id):
 				continue
@@ -474,8 +475,8 @@ static func ai_turn(world: World, n: int, rng: RandomNumberGenerator) -> void:
 				guarantee(world, n, o.id)
 
 	# 3. Агрессия: фашисты и коммунисты обосновывают претензии к слабым соседям
-	if not world.ai_wars or not nat.at_war.is_empty():
-		return
+	if not world.ai_wars or not nat.at_war.is_empty() or world.historical:
+		return   # в исторической игре войны начинаются фокусами и событиями
 	if nat.ideology != "fascism" and nat.ideology != "communism":
 		return
 	# пока нет исторических событий (этап 5), ИИ-агрессия нарастает с напряжённостью

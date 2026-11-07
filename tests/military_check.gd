@@ -29,6 +29,7 @@ func _init() -> void:
 	var ger: World.Nation = w.nations[GER]
 
 	print("Производство и подготовка:")
+	ger.is_player = true   # чтобы ИИ не тратил склад на новые дивизии
 	var before := ger.stock.duplicate()
 	for i in 30:
 		sim.tick()

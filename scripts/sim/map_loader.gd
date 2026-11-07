@@ -51,6 +51,8 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	world.p_manpower.resize(n)
 	world.p_population.resize(n)
 	world.p_colony.resize(n)
+	world.p_adm0.resize(n)
+	world.p_lonlat.resize(n)
 	world.p_name.resize(n)
 	world.p_adj = []
 	world.p_adj.resize(n)
@@ -76,6 +78,24 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	if typeof(ndata) != TYPE_DICTIONARY:
 		push_error("Не удалось прочитать %s/nations.json" % dir)
 		ndata = {"ideologies": {}, "nations": {}}
+	# «спящие» государства — появятся по событиям (Нац. Испания, Словакия, Виши)
+	for tag in ndata["nations"]:
+		var dd: Dictionary = ndata["nations"][tag]
+		if not dd.get("dormant", false) or tag_index.has(tag):
+			continue
+		var nat := World.Nation.new()
+		nat.id = world.nations.size()
+		nat.name = dd.get("name", tag)
+		var cc: Array = dd.get("color", [150, 150, 150])
+		nat.color = Color8(int(cc[0]), int(cc[1]), int(cc[2]))
+		nat.capital = -1
+		nat.alive = false
+		nat.dormant = true
+		var ll: Array = dd.get("capital_lonlat", [0, 0])
+		nat.capital_lonlat = Vector2(float(ll[0]), float(ll[1]))
+		world.nations.append(nat)
+		world.nation_tags.append(tag)
+		tag_index[tag] = nat.id
 	var ideologies: Dictionary = ndata["ideologies"]
 	for k in ideologies:
 		world.ideology_names[k] = ideologies[k]["name"]
@@ -93,6 +113,9 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		nat.manpower_rate = float(ideologies.get(nat.ideology, {}).get("manpower_rate", 0.015))
 		for tech_id in d.get("techs", []):
 			Tech.complete(nat, tech_id)
+		var bon: Dictionary = d.get("bonus", {})
+		for k in bon:
+			nat.bonus[k] = float(nat.bonus.get(k, 0.0)) + float(bon[k])
 
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 1936
@@ -110,6 +133,8 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		world.p_owner[i] = owner
 		world.p_controller[i] = owner
 		world.p_colony[i] = 1 if land and p.get("colony", false) else 0
+		world.p_adm0[i] = p.get("adm0", "")
+		world.p_lonlat[i] = Vector2(float(p.get("lon", 0.0)), float(p.get("lat", 0.0)))
 		world.p_civ[i] = 0
 		world.p_mil[i] = 0
 		world.p_manpower[i] = 0
@@ -121,6 +146,7 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	_spawn_armies(world, rng, ndata["nations"])
 	world.ai_wars = true
 	Diplomacy.load_setup(world, dir + "/diplomacy.json")
+	History.load(world, dir)
 	world.rebuild_prov_divs()
 	world.palette_dirty = true
 	return timings

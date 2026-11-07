@@ -15,7 +15,10 @@ static func plan(world: World, nid: int, rng: RandomNumberGenerator) -> Dictiona
 	var at_war := not nat.at_war.is_empty()
 
 	# --- Экономика: сколько дивизий заказать (шаблоны выбираются в главном потоке)
-	var target_divs := 5 + nat.province_count / 3 + (6 if at_war else 0)
+	# размер армии — от промышленности (сколько она может вооружить) и территории
+	# потолок — по населению (примерно как могли содержать страны в 1939–41 гг.)
+	var cap := 4.0 + nat.population * 1.3
+	var target_divs := int(minf(6.0 + nat.mil * 2.5 + nat.civ * 0.3, cap) * (1.4 if at_war else 1.0))
 	var pending := my_divs.size() + nat.training.size()
 	while pending < target_divs and result["train"] < 3 and nat.manpower > 10.0 * (result["train"] + 1):
 		result["train"] += 1
@@ -41,7 +44,14 @@ static func plan(world: World, nid: int, rng: RandomNumberGenerator) -> Dictiona
 				best = other
 		result["war"] = best
 
-	var mil := plan_military(world, nid, my_divs, {"mode": "auto"}, rng)
+	# осторожность наступления по идеологии: демократии атакуют только с большим перевесом
+	var ratio := 1.3
+	match nat.ideology:
+		"democracy":
+			ratio = 2.2
+		"authoritarian":
+			ratio = 1.7
+	var mil := plan_military(world, nid, my_divs, {"mode": "auto", "ratio": ratio}, rng)
 	result["orders"] = mil["orders"]
 	return result
 
@@ -127,6 +137,9 @@ static func plan_military(world: World, nid: int, divs: Array, opts: Dictionary,
 			fronts[nat.capital] = true
 		else:
 			return result
+	# в войну столица всегда под охраной (вес по очкам победы)
+	if mode == "auto" and at_war and ctrl[nat.capital] == nid:
+		fronts[nat.capital] = true
 
 	var idle: Array = []
 	for d in divs:
@@ -171,39 +184,68 @@ static func plan_military(world: World, nid: int, divs: Array, opts: Dictionary,
 				score += obj_dist[t] * 25.0
 			target_list.append([score, t, enemy_str * def_mult])
 		target_list.sort_custom(func(a, b): return a[0] < b[0])
-		var ratio := 1.15 if objective >= 0 else 1.3
+		var ratio: float = opts.get("ratio", 1.15 if objective >= 0 else 1.3)
+		var left := {}   # сколько наших дивизий останется в провинции
 		for entry in target_list:
 			var t: int = entry[1]
 			var need: float = entry[2] * ratio
 			var group: Array = []
-			var power := 0.0
 			for k in range(a_start[t], a_start[t + 1]):
 				for d in prov_divs[a_list[k]]:
 					if d.owner == nid and in_group.has(d.id) and d.path.is_empty() and not d.in_battle \
 							and not used.has(d.id) and d.org > d.max_org * 0.6:
 						group.append(d)
-						power += d.strength * (d.atk / 10.0) * (0.4 + 0.6 * d.eq) * (0.5 + 0.5 * d.supply)
-			# оставляем хотя бы одну дивизию на месте, если на участке их мало
-			if power > need and not group.is_empty():
-				for d in group:
-					if prov_divs[d.prov].size() > 1 or entry[2] <= 0.0:
-						used[d.id] = true
-						result["orders"].append([d.id, PackedInt32Array([t])])
+			if group.is_empty():
+				continue
+			# сильнейшие первыми; берём ровно столько, сколько нужно (на пустую — одну)
+			group.sort_custom(func(a, b): return a.atk * a.strength > b.atk * b.strength)
+			var chosen: Array = []
+			var power := 0.0
+			for d in group:
+				if not left.has(d.prov):
+					left[d.prov] = prov_divs[d.prov].size()
+				if int(left[d.prov]) <= 1:
+					continue   # последняя дивизия участок не бросает
+				chosen.append(d)
+				left[d.prov] = int(left[d.prov]) - 1
+				power += d.strength * (d.atk / 10.0) * (0.4 + 0.6 * d.eq) * (0.5 + 0.5 * d.supply)
+				if power > need and (entry[2] <= 0.0 or chosen.size() >= 2):
+					break
+			if power > need and not chosen.is_empty():
+				for d in chosen:
+					used[d.id] = true
+					result["orders"].append([d.id, PackedInt32Array([t])])
+			else:
+				for d in chosen:
+					left[d.prov] = int(left[d.prov]) + 1
 
-	# Остальных распределяем по фронту поровну.
+	# Остальных распределяем по фронту: больше — туда, где больше противника.
 	var per_front := {}
 	for d in divs:
 		if d.alive and fronts.has(d.prov):
 			per_front[d.prov] = int(per_front.get(d.prov, 0)) + 1
-	var desired := maxi(1, int(ceil(float(divs.size()) / fronts.size())))
+	var weight := {}
+	var wsum := 0.0
+	for f in fronts:
+		var threat := 0.0
+		for k in range(a_start[f], a_start[f + 1]):
+			var q := a_list[k]
+			for e in prov_divs[q]:
+				if e.owner != nid and (ally.size() == 0 or ally[nid * nc + e.owner] == 0):
+					threat += 1.0 if war[nid * nc + e.owner] == 1 or not at_war else 0.3
+		weight[f] = 1.0 + threat + vp[f] * 0.15   # крупные города держим плотнее
+		wsum += weight[f]
+	var desired := {}
+	for f in fronts:
+		desired[f] = maxi(1, int(round(divs.size() * weight[f] / wsum)))
 	for d in idle:
 		if used.has(d.id):
 			continue
-		if fronts.has(d.prov) and int(per_front.get(d.prov, 0)) <= desired + 1:
+		if fronts.has(d.prov) and int(per_front.get(d.prov, 0)) <= int(desired[d.prov]) + 1:
 			continue
 		var goal := {}
 		for f in fronts:
-			if int(per_front.get(f, 0)) < desired and f != d.prov:
+			if int(per_front.get(f, 0)) < int(desired[f]) and f != d.prov:
 				goal[f] = true
 		if goal.is_empty():
 			continue

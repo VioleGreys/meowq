@@ -60,7 +60,13 @@ class Nation:
 	var daily_output := PackedFloat32Array([0, 0, 0, 0]) # выпуск за последний день
 	var lines: Array = []       # производственные линии: [тип снаряжения, заводов, эффективность]
 	var trained_count := 0
-	var stats_dirty := true     # технологии изменились — пересчитать кэш дивизий      # сколько дивизий ИИ уже заказал (для чередования шаблонов)
+	var stats_dirty := true
+	var dormant := false        # появится по событию
+	var capital_lonlat := Vector2.ZERO
+	# Фокусы (этап 5)
+	var focus_current := ""
+	var focus_days := 0
+	var focus_done := {}        # id -> true     # технологии изменились — пересчитать кэш дивизий      # сколько дивизий ИИ уже заказал (для чередования шаблонов)
 	var manpower := 0.0         # тысячи человек
 	var research_points := 0.0  # накопленные за текущую технологию
 	var current_research := ""
@@ -106,6 +112,7 @@ class Division:
 	var eq := 1.0                   # укомплектованность снаряжением 0..1
 	var supply := 1.0               # снабжение 0..1 (0 — окружена)
 	var group := -1                 # армия игрока (World.groups), -1 — нет
+	var entrench := 0.0             # окапывание 0..1: растёт, пока дивизия стоит на месте
 	# кэш характеристик (Military.refresh_division), читается из потоков
 	var atk := 10.0
 	var def := 12.0
@@ -153,6 +160,8 @@ var p_mil := PackedInt32Array()
 var p_manpower := PackedInt32Array()     # призывной резерв провинции, тыс.
 var p_population := PackedInt32Array()   # население, тыс.
 var p_colony := PackedByteArray()
+var p_adm0 := PackedStringArray()       # код современной страны (Natural Earth) — для исторических областей
+var p_lonlat := PackedVector2Array()
 var p_name := PackedStringArray()
 
 var nations: Array = []
@@ -190,10 +199,36 @@ var game_over := ""
 var diplomacy := false          # историческая дипломатия (фракции, претензии); на процедурной карте — нет
 var tension := 0.0              # мировая напряжённость, 0..100 %
 var factions: Array = []        # Array[Faction]
-var pending_peace: Array = []   # [проигравший, победитель] — ждут решения игрока
+var pending_peace: Array = []
+# История (этап 5)
+var historical := true          # исторический ИИ: фокусы и события по истории, без случайной агрессии
+var flags := {}
+var focus_trees := {}           # тег -> Array фокусов (Dictionary); "_generic" — для остальных
+var event_defs := {}            # id -> Dictionary
+var areas := {}
+var capitulation_rules: Array = []
+var event_queue: Array = []     # [id события, номер страны-инициатора] — ждут условий
+var events_fired := {}
+var pending_events: Array = []  # [id события] — ждут выбора игрока   # [проигравший, победитель] — ждут решения игрока
 
 
 # --- Время -------------------------------------------------------------------
+
+## Номер дня по дате «ГГГГ-ММ-ДД» (день 0 — 1 января 1936 г.).
+func day_of(date: String) -> int:
+	var parts := date.split("-")
+	if parts.size() < 3:
+		return 0
+	var y := int(parts[0])
+	var m := int(parts[1]) - 1
+	var d := int(parts[2]) - 1
+	var total := 0
+	for yy in range(START_YEAR, y):
+		total += _year_days(yy)
+	for mm in m:
+		total += _month_days(mm, y)
+	return total + d
+
 
 func date_string() -> String:
 	var d := day

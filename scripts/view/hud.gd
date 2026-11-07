@@ -30,6 +30,7 @@ var _toast_t := 0.0
 var _dynamic: Dictionary = {}   # ссылки на элементы окна, которые обновляются каждый тик
 var _info_prov := -1
 var _card_nation := -1
+var focus_view: FocusView
 
 
 func _ready() -> void:
@@ -45,6 +46,9 @@ func _ready() -> void:
 	_build_popup()
 	_build_log()
 	_build_overlay()
+	focus_view = FocusView.new()
+	root.add_child(focus_view)
+	focus_view.hide()
 	toast_label = Label.new()
 	toast_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	toast_label.position = Vector2(-300, -190)
@@ -143,10 +147,13 @@ func _build_top_bar() -> void:
 func _build_side() -> void:
 	side = VBoxContainer.new()
 	side.set_anchors_preset(Control.PRESET_CENTER_LEFT)
-	side.position = Vector2(10, -236)
-	side.add_theme_constant_override("separation", 6)
+	side.position = Vector2(10, -262)
+	side.add_theme_constant_override("separation", 5)
 	root.add_child(side)
-	var bs := Vector2(160, 56)
+	var bs := Vector2(160, 54)
+	side.add_child(_button("Фокусы", func():
+		close_popup()
+		focus_view.open(game, game.world, game.player()), bs))
 	side.add_child(_button("Армия", func(): open_tab("army"), bs))
 	side.add_child(_button("Производство", func(): open_tab("production"), bs))
 	side.add_child(_button("Наука", func(): open_tab("research"), bs))
@@ -314,6 +321,12 @@ func show_select(nid: int) -> void:
 		row.add_child(size_btn)
 		overlay_box.add_child(row)
 	else:
+		var hist := _button("Исторический ИИ: %s" % ("вкл" if w.historical else "выкл"), func():
+			w.historical = not w.historical
+			show_select(nid), Vector2(0, 44))
+		hist.add_theme_font_size_override("font_size", 16)
+		overlay_box.add_child(hist)
+		overlay_box.add_child(_small("Вкл — страны ИИ следуют истории (фокусы и события по датам). Выкл — альтернативная история."))
 		# быстрый выбор великих держав
 		var grid := GridContainer.new()
 		grid.columns = 4
@@ -400,6 +413,8 @@ func on_tick() -> void:
 			old.queue_free()
 	if popup.visible:
 		_update_popup_dynamic()
+	if focus_view.visible:
+		focus_view.refresh()
 	if info_panel.visible:
 		if game.selected_group >= 0:
 			var g: World.ArmyGroup = w.groups[game.selected_group]
@@ -639,6 +654,8 @@ func _rebuild_popup() -> void:
 			_build_nation_card(w, me, _card_nation)
 		"peace":
 			_build_peace(w)
+		"event":
+			_build_event(w)
 	_update_popup_dynamic()
 
 
@@ -853,6 +870,34 @@ func _build_peace(w: World) -> void:
 	popup_body.add_child(_small("Оккупанты забирают занятые провинции, остальное — нам. Напряжённость +1,5%."))
 	popup_body.add_child(_button("Сделать марионеткой", func(): game.resolve_peace("puppet"), Vector2(0, 56)))
 	popup_body.add_child(_small("Страна сохраняет все земли, распускает армию и воюет на нашей стороне."))
+
+
+func _build_event(w: World) -> void:
+	if w.pending_events.is_empty():
+		close_popup()
+		return
+	var id: String = w.pending_events[0]
+	var ev: Dictionary = w.event_defs.get(id, {})
+	popup_title.text = ev.get("title", id)
+	popup_body.add_child(_label(w.date_string(), 15, Color(0.75, 0.7, 0.6)))
+	popup_body.add_child(_label(ev.get("text", ""), 18))
+	var opts: Array = ev.get("options", [])
+	if opts.size() > 1:
+		popup_body.add_child(_small("★ — так поступили в истории"))
+	var best := 0
+	for i in opts.size():
+		if float(opts[i].get("ai", 0)) > float(opts[best].get("ai", 0)):
+			best = i
+	for i in opts.size():
+		var o: Dictionary = opts[i]
+		var k := i
+		var b := _button(o.get("name", "?") + ("  ★" if i == best and opts.size() > 1 else ""), func():
+			game.resolve_event(k), Vector2(0, 56))
+		b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		popup_body.add_child(b)
+		var et := History.effects_text(w, o.get("effects", []))
+		if et != "":
+			popup_body.add_child(_small("   " + et))
 
 
 ## Список всех стран для выбора (экран выбора, игрока ещё нет).

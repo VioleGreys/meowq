@@ -20,6 +20,8 @@ func _init() -> void:
 	var sim := Simulation.new(w)
 	var rows: Array = []
 	for n in w.nations:
+		if n.dormant:
+			continue
 		var pop := 0
 		var civ := 0
 		var mil := 0

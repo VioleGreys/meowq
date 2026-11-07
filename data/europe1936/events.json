@@ -1,0 +1,121 @@
+{
+  "_comment": "Исторические события. Тексты написаны для этой игры. target — кто выбирает; trigger — условия (date — не раньше даты); auto — событие срабатывает само по условиям, иначе его вызывает фокус. В вариантах ai — вес для ИИ (исторический ИИ берёт вариант с наибольшим весом); who у эффекта — чьим именем он выполняется (по умолчанию target).",
+  "events": {
+    "rhineland": {
+      "title": "Немецкие войска на Рейне", "target": "FRA", "trigger": {"date": "1936-03-07"},
+      "text": "Вермахт вошёл в демилитаризованную Рейнскую область. Батальонов немного, но это прямое нарушение Локарнских договоров. Британия не готова действовать.",
+      "options": [
+        {"name": "Ограничиться протестом", "ai": 100, "effects": [{"t": "tension", "v": 1}]},
+        {"name": "Готовиться к войне с Германией", "ai": 0, "effects": [{"t": "wargoal", "target": "GER"}, {"t": "tension", "v": 5}]}
+      ]
+    },
+    "spanish_war": {
+      "title": "Мятеж в Испании", "target": "SPR", "auto": true, "trigger": {"date": "1936-07-17", "alive": "SPR"},
+      "text": "Часть армии во главе с генералами Мола и Франко подняла мятеж против Республики. Страна раскололась: на севере, западе, в Андалузии и Марокко власть у мятежников.",
+      "options": [
+        {"name": "Защищать Республику", "ai": 100, "effects": [{"t": "civil_war", "tag": "NSP", "area": "nationalist_spain"}, {"t": "divisions", "tpl": "inf", "n": 12}, {"t": "bonus", "key": "defense", "v": 0.4}, {"t": "divisions", "who": "NSP", "tpl": "inf", "n": 4}, {"t": "bonus", "who": "NSP", "key": "attack", "v": -0.15}, {"t": "bonus", "who": "NSP", "key": "speed", "v": -0.3}, {"t": "tension", "v": 3}]}
+      ]
+    },
+    "axis_offer": {
+      "title": "Предложение Берлина", "target": "ITA", "trigger": {"date": "1936-10-24"},
+      "text": "Германия предлагает согласовать политику: «ось», вокруг которой будет вращаться Европа.",
+      "options": [
+        {"name": "Принять", "ai": 100, "effects": [{"t": "join_faction_of", "target": "GER"}]},
+        {"name": "Сохранить свободу рук", "ai": 0, "effects": []}
+      ]
+    },
+    "anschluss": {
+      "title": "Ультиматум Германии", "target": "AUS", "trigger": {"date": "1938-03-11"},
+      "text": "Берлин требует отставки правительства и назначения канцлером Зейсс-Инкварта. Немецкие войска стоят у границы.",
+      "options": [
+        {"name": "Уступить", "ai": 100, "effects": [{"t": "annex", "who": "GER", "target": "AUS"}, {"t": "tension", "v": 3}]},
+        {"name": "Сопротивляться", "ai": 0, "effects": [{"t": "war", "who": "GER", "target": "AUS"}]}
+      ]
+    },
+    "munich": {
+      "title": "Мюнхенская конференция", "target": "ENG", "trigger": {"date": "1938-09-29"},
+      "text": "Германия требует Судетскую область. Чемберлен, Даладье, Гитлер и Муссолини собрались в Мюнхене. Чехословакию не пригласили.",
+      "options": [
+        {"name": "Передать Судеты Германии", "ai": 100, "effects": [{"t": "transfer", "area": "sudetenland", "to": "GER"}, {"t": "tension", "v": 3}]},
+        {"name": "Встать за Чехословакию", "ai": 0, "effects": [{"t": "guarantee", "target": "CZE"}, {"t": "wargoal", "who": "GER", "target": "CZE"}, {"t": "tension", "v": 5}]}
+      ]
+    },
+    "bohemia": {
+      "title": "Конец Чехословакии", "target": "CZE", "trigger": {"date": "1939-03-15"},
+      "text": "Президента Гаху вызвали в Берлин. Словакия провозгласила «независимость» под защитой Германии, Венгрия претендует на Закарпатье.",
+      "options": [
+        {"name": "Подчиниться", "ai": 100, "effects": [{"t": "release", "tag": "SLO", "area": "slovakia", "puppet_of": "GER"}, {"t": "transfer", "area": "ruthenia", "to": "HUN"}, {"t": "annex", "who": "GER", "target": "CZE"}, {"t": "tension", "v": 5}]},
+        {"name": "Сопротивляться", "ai": 0, "effects": [{"t": "war", "who": "GER", "target": "CZE"}]}
+      ]
+    },
+    "memel": {
+      "title": "Требование о Мемеле", "target": "LIT", "trigger": {"date": "1939-03-22"},
+      "text": "Германия требует вернуть Клайпедский край.",
+      "options": [
+        {"name": "Уступить", "ai": 100, "effects": [{"t": "transfer", "area": "memel", "to": "GER"}, {"t": "tension", "v": 1}]},
+        {"name": "Отказать", "ai": 0, "effects": [{"t": "wargoal", "who": "GER", "target": "LIT"}]}
+      ]
+    },
+    "albania": {
+      "title": "Ультиматум Рима", "target": "ALB", "trigger": {"date": "1939-04-07"},
+      "text": "Италия требует согласия на ввод войск и протекторат.",
+      "options": [
+        {"name": "Принять", "ai": 100, "effects": [{"t": "annex", "who": "ITA", "target": "ALB"}]},
+        {"name": "Сопротивляться", "ai": 0, "effects": [{"t": "war", "who": "ITA", "target": "ALB"}]}
+      ]
+    },
+    "mr_pact": {
+      "title": "Предложение Риббентропа", "target": "SOV", "trigger": {"date": "1939-08-23"},
+      "text": "Германия предлагает договор о ненападении и секретный протокол о разделе сфер влияния: Прибалтика, восток Польши и Бессарабия — советские.",
+      "options": [
+        {"name": "Подписать", "ai": 100, "effects": [{"t": "pact", "target": "GER"}, {"t": "flag", "id": "mr_pact"}]},
+        {"name": "Отклонить", "ai": 0, "effects": []}
+      ]
+    },
+    "baltic_est": {
+      "title": "Советский ультиматум", "target": "EST", "trigger": {"date": "1940-06-16"},
+      "text": "Москва требует ввода дополнительных войск и смены правительства.",
+      "options": [
+        {"name": "Принять", "ai": 100, "effects": [{"t": "annex", "who": "SOV", "target": "EST"}]},
+        {"name": "Отвергнуть", "ai": 0, "effects": [{"t": "war", "who": "SOV", "target": "EST"}]}
+      ]
+    },
+    "baltic_lat": {
+      "title": "Советский ультиматум", "target": "LAT", "trigger": {"date": "1940-06-16"},
+      "text": "Москва требует ввода дополнительных войск и смены правительства.",
+      "options": [
+        {"name": "Принять", "ai": 100, "effects": [{"t": "annex", "who": "SOV", "target": "LAT"}]},
+        {"name": "Отвергнуть", "ai": 0, "effects": [{"t": "war", "who": "SOV", "target": "LAT"}]}
+      ]
+    },
+    "baltic_lit": {
+      "title": "Советский ультиматум", "target": "LIT", "trigger": {"date": "1940-06-15"},
+      "text": "Москва требует ввода дополнительных войск и смены правительства.",
+      "options": [
+        {"name": "Принять", "ai": 100, "effects": [{"t": "annex", "who": "SOV", "target": "LIT"}]},
+        {"name": "Отвергнуть", "ai": 0, "effects": [{"t": "war", "who": "SOV", "target": "LIT"}]}
+      ]
+    },
+    "moscow_peace": {
+      "title": "Московский мир", "target": "FIN", "trigger": {"date": "1940-03-12", "at_war_pair": ["SOV", "FIN"]},
+      "text": "Финская армия держится, но силы на исходе. Москва готова заключить мир ценой Карельского перешейка и Приладожья.",
+      "options": [
+        {"name": "Принять условия", "ai": 100, "effects": [{"t": "peace", "target": "SOV"}, {"t": "transfer", "area": "karelia", "to": "SOV"}]},
+        {"name": "Продолжать войну", "ai": 0, "effects": []}
+      ]
+    },
+    "bessarabia": {
+      "title": "Требование о Бессарабии", "target": "ROM", "trigger": {"date": "1940-06-26"},
+      "text": "СССР требует в течение суток передать Бессарабию и Северную Буковину. Германия советует уступить.",
+      "options": [
+        {"name": "Уступить", "ai": 100, "effects": [{"t": "transfer", "area": "bessarabia", "to": "SOV"}]},
+        {"name": "Отказать", "ai": 0, "effects": [{"t": "war", "who": "SOV", "target": "ROM"}]}
+      ]
+    }
+  },
+  "capitulation": [
+    {"loser": "FRA", "winner": "GER", "effects": [{"t": "vichy", "tag": "VIC"}], "log": "Перемирие в Компьене: север Франции оккупирован, на юге — режим Виши"},
+    {"loser": "SPR", "winner": "NSP", "mode": "annex"},
+    {"loser": "NSP", "winner": "SPR", "mode": "annex"}
+  ]
+}

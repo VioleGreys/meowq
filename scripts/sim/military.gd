@@ -269,7 +269,7 @@ static func side_power(divs: Array, terr: int, tmul: PackedFloat32Array, defendi
 	var wsum := 0.0
 	for d in divs:
 		var w: float = d.strength / 100.0
-		var base: float = d.def if defending else d.atk
+		var base: float = d.def * (1.0 + 0.3 * d.entrench) if defending else d.atk
 		power += base * w * (0.4 + 0.6 * d.eq) * (0.5 + 0.5 * d.supply) * tmul[d.tpl * 8 + terr]
 		hard += d.hard * w
 		wsum += w

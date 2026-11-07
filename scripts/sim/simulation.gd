@@ -40,7 +40,7 @@ func refresh_income() -> void:
 
 
 func tick() -> void:
-	if world.game_over != "" or not world.pending_peace.is_empty():
+	if world.game_over != "" or not world.pending_peace.is_empty() or not world.pending_events.is_empty():
 		return
 	var t0 := Time.get_ticks_usec()
 	world.day += 1
@@ -635,6 +635,7 @@ func _phase_recovery() -> void:
 			if d.strength <= 5.0:
 				_destroy(d, "погибла в окружении")
 			continue
+		d.entrench = minf(1.0, d.entrench + 0.05) if d.path.is_empty() else 0.0
 		if not d.in_battle:
 			var rate := 0.06 if d.path.is_empty() else 0.03
 			d.org = minf(d.max_org, d.org + d.max_org * rate * (0.3 + 0.7 * d.supply))
@@ -660,9 +661,10 @@ func _check_capitulation() -> void:
 		if not nat.alive or nat.at_war.is_empty() or total[nat.id] == 0 or _peace_pending(nat.id):
 			continue
 		var ratio := float(held[nat.id]) / float(total[nat.id])
-		var capital_lost: bool = world.p_controller[nat.capital] != nat.id
-		if ratio < 0.25 or (capital_lost and ratio < 0.45):
+		if ratio < 0.3:
 			_capitulate(nat.id)
+		elif world.p_controller[nat.capital] != nat.id:
+			_move_capital(nat)
 
 	var alive := 0
 	var player := world.player_nation()
@@ -696,6 +698,9 @@ func _capitulate(nid: int) -> void:
 	if winner < 0:
 		return
 	var w_root := Diplomacy.root(world, winner)
+	if History.capitulation_hook(world, nid, w_root, Parallel.rng(world.seed_value, world.day, 8888)):
+		_fix_capitals()
+		return
 	if world.nations[w_root].is_player:
 		# условия мира выбирает игрок: тик ставится на паузу до решения
 		for pp in world.pending_peace:
@@ -704,6 +709,14 @@ func _capitulate(nid: int) -> void:
 		world.pending_peace.append([nid, w_root])
 		return
 	Diplomacy.make_peace(world, nid, winner, Diplomacy.ai_peace_mode(world, w_root))
+	_fix_capitals()
+
+
+func resolve_event(option: int) -> void:
+	if world.pending_events.is_empty():
+		return
+	var id: String = world.pending_events.pop_front()
+	History.choose_option(world, id, option, Parallel.rng(world.seed_value, world.day, 9999))
 	_fix_capitals()
 
 
@@ -719,6 +732,7 @@ func _phase_diplomacy() -> void:
 	if not world.diplomacy:
 		return
 	Diplomacy.daily(world)
+	History.daily(world, Parallel.rng(world.seed_value, world.day, 7777))
 	for nat in world.nations:
 		if nat.alive and not nat.is_player and (world.day + nat.id) % 7 == 0:
 			Diplomacy.ai_turn(world, nat.id, Parallel.rng(world.seed_value, world.day, 1000 + nat.id))
@@ -736,6 +750,20 @@ func _fix_capitals() -> void:
 			nat.capital = best
 		else:
 			nat.alive = false
+
+
+## Столица захвачена — правительство переезжает в крупнейший свободный город.
+func _move_capital(nat: World.Nation) -> void:
+	var best := -1
+	for p in world.prov_count:
+		if world.p_owner[p] == nat.id and world.p_controller[p] == nat.id:
+			if best < 0 or world.p_vp[p] > world.p_vp[best]:
+				best = p
+	if best < 0:
+		return
+	var old := nat.capital
+	nat.capital = best
+	world.log_event("%s: столица захвачена (%s), правительство переезжает в %s" % [nat.name, world.p_name[old], world.p_name[best]])
 
 
 func _peace_pending(nid: int) -> bool:

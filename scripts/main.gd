@@ -89,6 +89,10 @@ func _auto_screenshot(path: String) -> void:
 			hud._card_nation = nation_by_tag(_arg("card"))
 		if _arg("mapmode") != "":
 			set_map_mode(int(_arg("mapmode")))
+		if _arg("event") != "":
+			world.pending_events.append(_arg("event"))
+		if "--focus" in OS.get_cmdline_user_args():
+			hud.focus_view.open(self, world, me)
 		if _arg("peace") != "":
 			world.pending_peace.append([nation_by_tag(_arg("peace")), me])
 		if _arg("tab") != "":
@@ -174,6 +178,12 @@ func _process(dt: float) -> void:
 	if world.game_over != "":
 		state = "over"
 		hud.show_game_over(world.game_over)
+		return
+	if not world.pending_events.is_empty():
+		if hud.popup_tab != "event" or not hud.popup.visible:
+			speed = 0
+			hud.open_tab("event")
+		hud.refresh_top()
 		return
 	if not world.pending_peace.is_empty():
 		if hud.popup_tab != "peace" or not hud.popup.visible:
@@ -355,6 +365,14 @@ func train(count: int, tpl: int = Military.T_INF) -> int:
 func declare_war_on(target: int) -> void:
 	Diplomacy.declare_war(world, player(), target)
 	hud.on_tick()
+
+
+func resolve_event(option: int) -> void:
+	sim.resolve_event(option)
+	hud.close_popup()
+	hud.on_tick()
+	if not world.pending_events.is_empty():
+		hud.open_tab("event")
 
 
 func resolve_peace(mode: String) -> void:
