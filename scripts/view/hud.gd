@@ -29,6 +29,7 @@ var toast_label: Label
 var _toast_t := 0.0
 var _dynamic: Dictionary = {}   # ссылки на элементы окна, которые обновляются каждый тик
 var _info_prov := -1
+var _card_nation := -1
 
 
 func _ready() -> void:
@@ -424,6 +425,9 @@ func _province_text(p: int) -> String:
 	var own: World.Nation = w.nations[w.p_owner[p]]
 	var ctrl: World.Nation = w.nations[w.p_controller[p]]
 	var s := "%s  ·  %s  ·  %s" % [w.p_name[p], World.TERRAIN_NAMES[w.p_terrain[p]], own.name]
+	var fn := Diplomacy.faction_name(w, own.id)
+	if fn != "":
+		s += " («%s»)" % fn
 	if ctrl != own:
 		s += " (оккупирована: %s)" % ctrl.name
 	if w.p_colony[p] == 1:
@@ -451,10 +455,10 @@ func show_province(p: int) -> void:
 	if w.p_land[p] == 1:
 		var c := w.p_controller[p]
 		var me: int = game.player()
-		if c != me and w.nations[c].alive and not w.is_at_war(me, c):
-			info_actions.add_child(_button("Объявить войну: %s" % w.nations[c].name, func():
-				game.declare_war_on(c)
-				show_province(p)))
+		if c != me and w.nations[c].alive:
+			info_actions.add_child(_button("Страна: %s" % w.nations[c].name, func():
+				_card_nation = c
+				open_tab("nation")))
 		info_actions.add_child(_button("Закрыть", func(): game.clear_selection()))
 	info_panel.show()
 
@@ -511,9 +515,9 @@ func close_popup() -> bool:
 
 
 func _cycle_map_mode() -> void:
-	var m: int = (game.map_view.map_mode + 1) % 3
+	var m: int = (game.map_view.map_mode + 1) % 4
 	game.set_map_mode(m)
-	toast(["Политическая карта", "Местность", "Промышленность"][m])
+	toast(["Политическая карта", "Местность", "Промышленность", "Фракции"][m])
 
 
 func _rebuild_popup() -> void:
@@ -582,24 +586,225 @@ func _rebuild_popup() -> void:
 			popup_body.add_child(mil)
 			popup_body.add_child(_label("Гражданские фабрики ускоряют стройку и науку. Военные заводы выпускают снаряжение для дивизий. Оккупированные провинции дают половину.", 16, Color(0.75, 0.75, 0.7)))
 		"diplomacy":
-			popup_title.text = "Дипломатия"
-			var neighbours := w.neighbours_of_nation(me)
-			for o in w.nations:
-				if o.id == me or not o.alive:
-					continue
-				var row := HBoxContainer.new()
-				row.add_theme_constant_override("separation", 8)
-				row.add_child(Flag.make(o.flag, Vector2(36, 24)))
-				var status := "ВОЙНА" if w.is_at_war(me, o.id) else ("сосед" if neighbours.has(o.id) else "мир")
-				var l := _label("%s · %s · %s · дивизий %d" % [o.name, status, w.ideology_names.get(o.ideology, ""), o.division_count], 17,
-					Color(1, 0.5, 0.45) if status == "ВОЙНА" else Color(0.9, 0.88, 0.8))
-				l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				row.add_child(l)
-				if not w.is_at_war(me, o.id):
-					var oid: int = o.id
-					row.add_child(_button("Война", func(): game.declare_war_on(oid); _rebuild_popup(), Vector2(100, 48)))
-				popup_body.add_child(row)
+			_build_diplomacy(w, me)
+		"nation":
+			_build_nation_card(w, me, _card_nation)
+		"peace":
+			_build_peace(w)
 	_update_popup_dynamic()
+
+
+func _section(text: String) -> Label:
+	var l := _label(text, 19, Color(0.95, 0.82, 0.55))
+	return l
+
+
+func _small(text: String) -> Label:
+	return _label(text, 15, Color(0.72, 0.71, 0.66))
+
+
+func _relation(w: World, me: int, o: int) -> String:
+	if w.is_at_war(me, o):
+		return "ВОЙНА"
+	if w.nations[o].overlord == me:
+		return "наша марионетка"
+	if w.nations[me].overlord == o:
+		return "наш сюзерен"
+	if Diplomacy.same_side(w, me, o):
+		return "союзник"
+	var parts: Array = []
+	if w.nations[me].pacts.has(o):
+		parts.append("пакт")
+	if w.nations[me].guarantees.has(o):
+		parts.append("под нашей гарантией")
+	if w.nations[o].guarantees.has(me):
+		parts.append("гарантирует нас")
+	if w.nations[me].wargoals.has(o):
+		parts.append("претензии обоснованы")
+	if w.nations[me].justify_target == o:
+		parts.append("обоснование…")
+	if w.nations[o].wargoals.has(me) or w.nations[o].justify_target == me:
+		parts.append("угрожает нам")
+	return ", ".join(parts) if not parts.is_empty() else "мир"
+
+
+func _build_diplomacy(w: World, me: int) -> void:
+	popup_title.text = "Дипломатия"
+	var n: World.Nation = w.nations[me]
+	_dynamic["tension"] = _label("", 18)
+	popup_body.add_child(_dynamic["tension"])
+	var bar := ProgressBar.new()
+	bar.custom_minimum_size = Vector2(0, 18)
+	bar.show_percentage = false
+	bar.max_value = 100
+	_dynamic["tbar"] = bar
+	popup_body.add_child(bar)
+	popup_body.add_child(_small("Напряжённость растёт от претензий, войн и аннексий. Демократиям нужна напряжённость 50% для претензий, авторитарным режимам — 25%."))
+	_dynamic["justify"] = _label("", 17, Color(0.95, 0.8, 0.5))
+	popup_body.add_child(_dynamic["justify"])
+	# своя фракция
+	var fname := Diplomacy.faction_name(w, me)
+	if n.overlord >= 0:
+		popup_body.add_child(_section("Мы — марионетка страны %s" % w.nations[n.overlord].name))
+	elif fname != "":
+		var members: Array = []
+		for m in Diplomacy.faction_members(w, n.faction):
+			members.append(w.nations[m].name)
+		popup_body.add_child(_section("Фракция «%s»" % fname))
+		popup_body.add_child(_small(", ".join(members)))
+		popup_body.add_child(_button("Покинуть фракцию", func():
+			Diplomacy.leave_faction(w, me)
+			_rebuild_popup()))
+	else:
+		popup_body.add_child(_section("Мы вне фракций"))
+		popup_body.add_child(_button("Создать фракцию", func():
+			Diplomacy.create_faction(w, me)
+			_rebuild_popup()))
+	popup_body.add_child(_section("Страны"))
+	popup_body.add_child(_small("Нажмите на страну, чтобы открыть её карточку и действия."))
+	var order: Array = []
+	for o in w.nations:
+		if o.alive and o.id != me:
+			order.append(o)
+	var neighbours := w.neighbours_of_nation(me)
+	order.sort_custom(func(a, b):
+		var ka := (0 if w.is_at_war(me, a.id) else (1 if neighbours.has(a.id) else 2))
+		var kb := (0 if w.is_at_war(me, b.id) else (1 if neighbours.has(b.id) else 2))
+		return ka < kb if ka != kb else a.name < b.name)
+	for o in order:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		row.add_child(Flag.make(o.flag, Vector2(36, 24)))
+		var rel := _relation(w, me, o.id)
+		var f := Diplomacy.faction_name(w, o.id)
+		var oid: int = o.id
+		var b := _button("%s%s · %s" % [o.name, (" («%s»)" % f) if f != "" else "", rel], func():
+			_card_nation = oid
+			popup_tab = "nation"
+			_rebuild_popup(), Vector2(0, 46))
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		b.add_theme_font_size_override("font_size", 16)
+		if rel == "ВОЙНА":
+			b.add_theme_color_override("font_color", Color(1, 0.5, 0.45))
+		row.add_child(b)
+		popup_body.add_child(row)
+
+
+func _build_nation_card(w: World, me: int, oid: int) -> void:
+	var o: World.Nation = w.nations[oid]
+	var n: World.Nation = w.nations[me]
+	popup_title.text = o.name
+	popup_body.add_child(_button("← Ко всем странам", func():
+		popup_tab = "diplomacy"
+		_rebuild_popup(), Vector2(0, 44)))
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 10)
+	head.add_child(Flag.make(o.flag, Vector2(60, 40)))
+	var names := VBoxContainer.new()
+	names.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	names.add_child(_label(o.full_name, 17))
+	names.add_child(_small("%s · %s: %s" % [w.ideology_names.get(o.ideology, ""), o.leader_title, o.leader]))
+	head.add_child(names)
+	popup_body.add_child(head)
+	var f := Diplomacy.faction_name(w, oid)
+	var info := "Фракция: %s · Дивизий: %d · Фабрики: %d/%d" % [f if f != "" else "нет", o.division_count, o.civ, o.mil]
+	if o.overlord >= 0:
+		info += "\nМарионетка страны %s" % w.nations[o.overlord].name
+	if o.neutral:
+		info += "\nТрадиционный нейтралитет"
+	popup_body.add_child(_small(info))
+	popup_body.add_child(_label("Отношения: " + _relation(w, me, oid), 17))
+	popup_body.add_child(_section("Действия"))
+	# претензии и война
+	if w.nations[me].wargoals.has(oid):
+		_action("Объявить войну", Diplomacy.can_declare(w, me, oid), func():
+			game.declare_war_on(oid))
+	else:
+		var days := Diplomacy.justify_days(w, oid)
+		_action("Обосновать претензии (%d дн.)" % days, Diplomacy.can_justify(w, me, oid), func():
+			Diplomacy.start_justify(w, me, oid)
+			toast("Обоснование претензий: %d дней" % days))
+	# пакт
+	if n.pacts.has(oid):
+		_action("Расторгнуть пакт о ненападении", "", func():
+			Diplomacy.break_pact(w, me, oid))
+	else:
+		var why := _proposal_block(w, me, oid)
+		if why == "":
+			var ans: Array = Diplomacy.ai_accepts(w, me, oid, "pact") if not o.is_player else [true, ""]
+			why = "" if ans[0] else "откажут: " + ans[1]
+		_action("Предложить пакт о ненападении", why, func():
+			Diplomacy.sign_pact(w, me, oid))
+	# гарантия
+	if not n.guarantees.has(oid):
+		var gwhy := ""
+		if Diplomacy.same_side(w, me, oid) or w.is_at_war(me, oid):
+			gwhy = "невозможно"
+		elif n.overlord >= 0:
+			gwhy = "марионетка не ведёт свою внешнюю политику"
+		_action("Гарантировать независимость", gwhy, func():
+			Diplomacy.guarantee(w, me, oid))
+	# фракции
+	var my_f: int = w.nations[Diplomacy.root(w, me)].faction
+	if my_f >= 0 and w.factions[my_f].leader == me and o.faction < 0:
+		var ans: Array = Diplomacy.ai_accepts(w, me, oid, "invite")
+		var iwhy := _proposal_block(w, me, oid)
+		if iwhy == "" and not ans[0]:
+			iwhy = "откажут: " + ans[1]
+		_action("Пригласить во фракцию", iwhy, func():
+			Diplomacy.join_faction(w, oid, my_f))
+	if n.faction < 0 and n.overlord < 0 and o.faction >= 0 and w.factions[o.faction].leader == oid:
+		var ans2: Array = Diplomacy.ai_accepts(w, me, oid, "join")
+		var jwhy := _proposal_block(w, me, oid)
+		if jwhy == "" and not ans2[0]:
+			jwhy = "откажут: " + ans2[1]
+		_action("Попроситься во фракцию «%s»" % w.factions[o.faction].name, jwhy, func():
+			Diplomacy.join_faction(w, me, o.faction))
+
+
+func _proposal_block(w: World, me: int, oid: int) -> String:
+	if w.is_at_war(me, oid):
+		return "мы воюем"
+	if w.nations[me].overlord >= 0:
+		return "марионетка не ведёт свою внешнюю политику"
+	if w.nations[oid].overlord >= 0:
+		return "это марионетка страны %s" % w.nations[w.nations[oid].overlord].name
+	return ""
+
+
+## Кнопка действия; если нельзя — серая с причиной под ней.
+func _action(text: String, why: String, cb: Callable) -> void:
+	var b := _button(text, func():
+		cb.call()
+		game.hud_changed()
+		_rebuild_popup(), Vector2(0, 50))
+	b.disabled = why != ""
+	popup_body.add_child(b)
+	if why != "":
+		popup_body.add_child(_small("   " + why))
+
+
+func _build_peace(w: World) -> void:
+	popup_title.text = "Мирный договор"
+	if w.pending_peace.is_empty():
+		close_popup()
+		return
+	var pp: Array = w.pending_peace[0]
+	var loser: World.Nation = w.nations[pp[0]]
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 10)
+	head.add_child(Flag.make(loser.flag, Vector2(60, 40)))
+	var title := _label("%s капитулирует!" % loser.name, 22)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	popup_body.add_child(head)
+	popup_body.add_child(_small("Выберите условия мира. Время стоит, пока вы не решите."))
+	popup_body.add_child(_button("Аннексировать", func(): game.resolve_peace("annex"), Vector2(0, 56)))
+	popup_body.add_child(_small("Оккупанты забирают занятые провинции, остальное — нам. Напряжённость +1,5%."))
+	popup_body.add_child(_button("Сделать марионеткой", func(): game.resolve_peace("puppet"), Vector2(0, 56)))
+	popup_body.add_child(_small("Страна сохраняет все земли, распускает армию и воюет на нашей стороне."))
 
 
 ## Список всех стран для выбора (экран выбора, игрока ещё нет).
@@ -636,6 +841,18 @@ func _update_popup_dynamic() -> void:
 		return
 	var n: World.Nation = w.nations[game.player()]
 	match popup_tab:
+		"diplomacy":
+			_dynamic["tension"].text = "Мировая напряжённость: %d%%" % w.tension
+			_dynamic["tbar"].value = w.tension
+			if n.justify_target >= 0:
+				_dynamic["justify"].text = "Обоснование претензий к стране %s: осталось %d дн." % [w.nations[n.justify_target].name, n.justify_days]
+			elif not n.wargoals.is_empty():
+				var names: Array = []
+				for t in n.wargoals:
+					names.append(w.nations[t].name)
+				_dynamic["justify"].text = "Претензии обоснованы: " + ", ".join(names)
+			else:
+				_dynamic["justify"].text = ""
 		"army":
 			var next := ""
 			if not n.training.is_empty():

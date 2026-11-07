@@ -89,6 +89,8 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		nat.leader_title = d.get("title", "")
 		nat.flag = d.get("flag", {"t": "h", "c": [nat.color.to_html(false)]})
 		nat.population = float(d.get("population", 1.0))
+		nat.major = bool(d.get("major", false))
+		nat.neutral = bool(d.get("neutral", false))
 		nat.manpower_rate = float(ideologies.get(nat.ideology, {}).get("manpower_rate", 0.015))
 
 	var rng := RandomNumberGenerator.new()
@@ -116,6 +118,8 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 
 	world.build_caches()
 	_spawn_armies(world, rng, ndata["nations"])
+	world.ai_wars = true
+	Diplomacy.load_setup(world, dir + "/diplomacy.json")
 	world.rebuild_prov_divs()
 	world.palette_dirty = true
 	return timings

@@ -39,11 +39,23 @@ class Nation:
 	var flag := {}
 	var population := 0.0       # млн, метрополия
 	var manpower_rate := 0.015
+	var major := false
+	var neutral := false
 	var color := Color.WHITE
 	var capital := -1
 	var alive := true
 	var is_player := false
 	var at_war := {}            # nation_id -> true
+	# Дипломатия (этап 3)
+	var faction := -1           # индекс в World.factions
+	var overlord := -1          # для марионеток
+	var guarantees := {}        # кому мы гарантируем независимость: id -> true
+	var pacts := {}             # пакты о ненападении: id -> true
+	var wargoals := {}          # обоснованные претензии: id -> true
+	var justify_target := -1    # на кого сейчас обосновываем претензии
+	var justify_days := 0       # сколько дней осталось
+	var justify_total := 0
+	var war_activity_day := 0   # последний день с захватом провинций (для белого мира)
 	var equipment := 0.0
 	var manpower := 0.0         # тысячи человек
 	var research_points := 0.0  # накопленные за текущую технологию
@@ -64,6 +76,15 @@ class Nation:
 
 	func b(key: String) -> float:
 		return float(bonus.get(key, 0.0))
+
+
+class Faction:
+	extends RefCounted
+	var id := 0
+	var name := ""
+	var leader := 0
+	var color := Color.WHITE
+	var alive := true
 
 
 class Division:
@@ -130,6 +151,12 @@ var prov_divs: Array = []   # province -> Array[Division]
 var events: Array = []      # строки для журнала, забирает UI
 var palette_dirty := true
 var game_over := ""
+
+# Дипломатия
+var diplomacy := false          # историческая дипломатия (фракции, претензии); на процедурной карте — нет
+var tension := 0.0              # мировая напряжённость, 0..100 %
+var factions: Array = []        # Array[Faction]
+var pending_peace: Array = []   # [проигравший, победитель] — ждут решения игрока
 
 
 # --- Время -------------------------------------------------------------------
@@ -345,13 +372,21 @@ func spawn_division(owner: int, prov: int) -> Division:
 	return d
 
 
-func declare_war(a: int, b: int) -> void:
+## Низкоуровневое состояние войны между двумя странами (без союзников).
+## Полное объявление войны со сторонами — Diplomacy.declare_war.
+func set_war(a: int, b: int) -> void:
 	if a == b or is_at_war(a, b):
 		return
 	nations[a].at_war[b] = true
 	nations[b].at_war[a] = true
 	war[a * nation_count + b] = 1
 	war[b * nation_count + a] = 1
+
+
+func declare_war(a: int, b: int) -> void:
+	if a == b or is_at_war(a, b):
+		return
+	set_war(a, b)
 	log_event("%s объявляет войну: %s!" % [nations[a].name, nations[b].name])
 
 

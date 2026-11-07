@@ -66,6 +66,12 @@ func _auto_screenshot(path: String) -> void:
 		if _arg("zoom") != "":
 			map_view.camera.zoom = Vector2.ONE * float(_arg("zoom"))
 			map_view.center_on(world.nations[me].capital)
+		if _arg("card") != "":
+			hud._card_nation = nation_by_tag(_arg("card"))
+		if _arg("mapmode") != "":
+			set_map_mode(int(_arg("mapmode")))
+		if _arg("peace") != "":
+			world.pending_peace.append([nation_by_tag(_arg("peace")), me])
 		if _arg("tab") != "":
 			hud.open_tab(_arg("tab"))
 		if "--select" in OS.get_cmdline_user_args():
@@ -149,6 +155,12 @@ func _process(dt: float) -> void:
 	if world.game_over != "":
 		state = "over"
 		hud.show_game_over(world.game_over)
+		return
+	if not world.pending_peace.is_empty():
+		if hud.popup_tab != "peace" or not hud.popup.visible:
+			speed = 0
+			hud.open_tab("peace")
+		hud.refresh_top()
 		return
 	if speed > 0:
 		var unlimited: bool = SPEEDS[speed] == INF
@@ -260,7 +272,18 @@ func train(count: int) -> int:
 
 
 func declare_war_on(target: int) -> void:
-	world.declare_war(player(), target)
+	Diplomacy.declare_war(world, player(), target)
+	hud.on_tick()
+
+
+func resolve_peace(mode: String) -> void:
+	sim.resolve_peace(mode)
+	hud.close_popup()
+	hud.on_tick()
+
+
+## Что-то поменялось по действию игрока (дипломатия) — обновить карту и журнал.
+func hud_changed() -> void:
 	hud.on_tick()
 
 

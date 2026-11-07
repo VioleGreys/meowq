@@ -11,7 +11,7 @@ const MIN_ZOOM := 0.25
 const MAX_ZOOM := 5.0
 const TAP_SLOP := 14.0
 
-enum MapMode { POLITICAL, TERRAIN, INDUSTRY }
+enum MapMode { POLITICAL, TERRAIN, INDUSTRY, FACTIONS }
 
 var world: World
 var sprite: Sprite2D
@@ -124,6 +124,12 @@ func update_palette() -> void:
 		match map_mode:
 			MapMode.TERRAIN:
 				col = World.TERRAIN_COLORS[world.p_terrain[p]]
+			MapMode.FACTIONS:
+				var r := Diplomacy.root(world, c)
+				var f: int = world.nations[r].faction
+				col = world.factions[f].color if f >= 0 else Color(0.62, 0.6, 0.55)
+				if world.nations[c].overlord >= 0 and f < 0:
+					col = world.nations[r].color
 			MapMode.INDUSTRY:
 				var v := float(world.p_civ[p] + world.p_mil[p]) / max_ind
 				var mil_share := float(world.p_mil[p]) / maxf(1.0, world.p_civ[p] + world.p_mil[p])

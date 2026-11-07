@@ -36,7 +36,7 @@ func refresh_income() -> void:
 
 
 func tick() -> void:
-	if world.game_over != "":
+	if world.game_over != "" or not world.pending_peace.is_empty():
 		return
 	var t0 := Time.get_ticks_usec()
 	world.day += 1
@@ -48,6 +48,7 @@ func tick() -> void:
 	_timed("движение", _phase_movement.bind(battles))
 	_timed("бои", _phase_combat.bind(battles))
 	_phase_recovery()
+	_phase_diplomacy()
 	_check_capitulation()
 	last_tick_usec = Time.get_ticks_usec() - t0
 
@@ -189,7 +190,7 @@ func _phase_ai() -> void:
 				av.sort_custom(func(a, b): return a["cost"] < b["cost"])
 				nat.current_research = av[mini(av.size() - 1, (world.day + nid) % 2)]["id"]
 		if plan["war"] >= 0:
-			world.declare_war(nid, plan["war"])
+			Diplomacy.declare_war(world, nid, plan["war"])
 		for order in plan["orders"]:
 			var d = by_id.get(order[0])
 			if d != null and d.alive:
@@ -274,6 +275,9 @@ func _capture(p: int, nid: int) -> void:
 	# освобождение своей провинции возвращает её владельцу-союзнику
 	world.p_controller[p] = nid
 	world.palette_dirty = true
+	world.nations[nid].war_activity_day = world.day
+	if prev >= 0:
+		world.nations[prev].war_activity_day = world.day
 	if world.p_vp[p] >= 5 and (world.nations[nid].is_player or world.nations[prev].is_player):
 		world.log_event("%s захватывает %s" % [world.nations[nid].name, world.p_name[p]])
 
@@ -403,7 +407,7 @@ func _check_capitulation() -> void:
 		if world.p_controller[p] == o:
 			held[o] += world.p_vp[p]
 	for nat in world.nations:
-		if not nat.alive or nat.at_war.is_empty() or total[nat.id] == 0:
+		if not nat.alive or nat.at_war.is_empty() or total[nat.id] == 0 or _peace_pending(nat.id):
 			continue
 		var ratio := float(held[nat.id]) / float(total[nat.id])
 		var capital_lost: bool = world.p_controller[nat.capital] != nat.id
@@ -416,14 +420,18 @@ func _check_capitulation() -> void:
 		if nat.alive:
 			alive += 1
 	if player >= 0:
-		if not world.nations[player].alive:
+		if not world.nations[player].alive or world.nations[player].overlord >= 0:
 			world.game_over = "defeat"
-		elif alive == 1:
-			world.game_over = "victory"
+		else:
+			var rivals := 0
+			for nat in world.nations:
+				if nat.alive and not Diplomacy.same_side(world, player, nat.id):
+					rivals += 1
+			if rivals == 0:
+				world.game_over = "victory"
 
 
 func _capitulate(nid: int) -> void:
-	var nat: World.Nation = world.nations[nid]
 	# главный победитель — тот, кто держит больше всего наших провинций
 	var occ := {}
 	for p in world.prov_count:
@@ -437,23 +445,33 @@ func _capitulate(nid: int) -> void:
 			winner = k
 	if winner < 0:
 		return
-	for p in world.prov_count:
-		if world.p_owner[p] == nid:
-			if world.p_controller[p] == nid:
-				world.p_controller[p] = winner
-			world.p_owner[p] = world.p_controller[p]
-		elif world.p_controller[p] == nid:
-			world.p_controller[p] = world.p_owner[p]
-	for d in world.divisions:
-		if d.owner == nid:
-			d.alive = false
-	world.end_wars_of(nid)
-	nat.alive = false
-	nat.training.clear()
+	var w_root := Diplomacy.root(world, winner)
+	if world.nations[w_root].is_player:
+		# условия мира выбирает игрок: тик ставится на паузу до решения
+		for pp in world.pending_peace:
+			if pp[0] == nid:
+				return
+		world.pending_peace.append([nid, w_root])
+		return
+	Diplomacy.make_peace(world, nid, winner, Diplomacy.ai_peace_mode(world, w_root))
 	_fix_capitals()
-	world.palette_dirty = true
-	world.log_event("%s капитулирует перед %s!" % [nat.name, world.nations[winner].name])
-	world.rebuild_prov_divs()
+
+
+func resolve_peace(mode: String) -> void:
+	if world.pending_peace.is_empty():
+		return
+	var pp: Array = world.pending_peace.pop_front()
+	Diplomacy.make_peace(world, pp[0], pp[1], mode)
+	_fix_capitals()
+
+
+func _phase_diplomacy() -> void:
+	if not world.diplomacy:
+		return
+	Diplomacy.daily(world)
+	for nat in world.nations:
+		if nat.alive and not nat.is_player and (world.day + nat.id) % 7 == 0:
+			Diplomacy.ai_turn(world, nat.id, Parallel.rng(world.seed_value, world.day, 1000 + nat.id))
 
 
 func _fix_capitals() -> void:
@@ -468,3 +486,10 @@ func _fix_capitals() -> void:
 			nat.capital = best
 		else:
 			nat.alive = false
+
+
+func _peace_pending(nid: int) -> bool:
+	for pp in world.pending_peace:
+		if pp[0] == nid:
+			return true
+	return false
