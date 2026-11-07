@@ -20,6 +20,7 @@ var _accum := 0.0
 var days_per_sec := 0.0          # фактическая скорость, для индикатора
 var selected_prov := -1
 var selected_divs: Array = []
+var selected_group := -1         # выбранная армия: касание карты задаёт ей цель
 var pick_nation := -1
 var large_map := false
 var procedural := false          # старая процедурная карта (для тестов): -- --procedural
@@ -60,8 +61,26 @@ func _auto_screenshot(path: String) -> void:
 	if _arg("pick") == "":
 		start_as(me)
 		set_speed(0)
+		var war_on := nation_by_tag(_arg("war")) if _arg("war") != "" else -1
+		if "--group" in OS.get_cmdline_user_args():
+			select_all()
+			create_group_from_selection()
+			if war_on >= 0:
+				world.groups[selected_group].enemy = war_on
+		var war_day := int(_arg("warday")) if _arg("warday") != "" else 0
 		for i in days:
+			if i == war_day and war_on >= 0:
+				world.nations[me].pacts.erase(war_on)
+				world.nations[war_on].pacts.erase(me)
+				world.nations[me].wargoals[war_on] = true
+				Diplomacy.declare_war(world, me, war_on)
+				if selected_group >= 0:
+					var g: World.ArmyGroup = world.groups[selected_group]
+					g.mode = "attack"
+					g.objective = world.nations[war_on].capital
 			sim.tick()
+		if selected_group >= 0:
+			select_group(selected_group)
 		hud.on_tick()
 		if _arg("zoom") != "":
 			map_view.camera.zoom = Vector2.ONE * float(_arg("zoom"))
@@ -204,12 +223,26 @@ func _on_province_tapped(p: int) -> void:
 	if state != "play":
 		return
 	var me := player()
+	# выбрана армия -> касание задаёт направление наступления
+	if selected_group >= 0:
+		var g: World.ArmyGroup = world.groups[selected_group]
+		if world.p_land[p] == 1:
+			g.objective = p
+			if world.p_controller[p] != me:
+				g.mode = "attack"
+				if g.enemy < 0 and world.p_controller[p] >= 0 and world.is_at_war(me, world.p_controller[p]):
+					g.enemy = world.p_controller[p]
+			hud.toast("%s: цель — %s" % [g.name, world.p_name[p]])
+			map_view.set_selected(p)
+			hud.show_group(g)
+		return
 	# есть выделенные войска -> приказ на движение
 	if not selected_divs.is_empty() and p != selected_prov:
 		var ok := 0
 		for d in selected_divs:
 			if sim.order_move(d, p):
 				ok += 1
+				d.group = -1   # ручной приказ выводит дивизию из армии
 		if ok > 0:
 			hud.toast("Приказ отдан: %d дивизий → %s" % [ok, world.p_name[p]])
 			selected_prov = p
@@ -235,6 +268,7 @@ func _on_province_tapped(p: int) -> void:
 
 
 func clear_selection() -> void:
+	selected_group = -1
 	selected_divs.clear()
 	selected_prov = -1
 	map_view.set_selected(-1)
@@ -242,6 +276,7 @@ func clear_selection() -> void:
 
 
 func select_all() -> void:
+	selected_group = -1
 	selected_divs.clear()
 	for d in world.divisions_of(player()):
 		if not d.in_battle:
@@ -249,6 +284,52 @@ func select_all() -> void:
 	selected_prov = -1
 	map_view.set_selected(-1)
 	hud.show_selection()
+
+
+# --- Армии -----------------------------------------------------------------
+
+func create_group_from_selection() -> void:
+	if selected_divs.is_empty():
+		return
+	var g := sim.create_group(player(), selected_divs)
+	# по умолчанию — против ближайшего противника, иначе держать границу
+	for e in world.nations[player()].at_war:
+		g.enemy = e
+		break
+	select_group(g.id)
+	hud.toast("Создана %s: %d дивизий" % [g.name, selected_divs.size()])
+
+
+func select_group(id: int) -> void:
+	var g: World.ArmyGroup = world.groups[id]
+	selected_group = id
+	selected_divs.clear()
+	for d in world.divisions:
+		if d.alive and d.group == id:
+			selected_divs.append(d)
+	selected_prov = -1
+	map_view.set_selected(g.objective)
+	hud.show_group(g)
+
+
+func group_divisions(id: int) -> Array:
+	var res: Array = []
+	for d in world.divisions:
+		if d.alive and d.group == id:
+			res.append(d)
+	return res
+
+
+## Противники для выбора фронта армии: страны в войне с нами и соседи.
+func enemy_options() -> Array:
+	var me := player()
+	var opts: Array = [-1]
+	for e in world.nations[me].at_war:
+		opts.append(e)
+	for nb in world.neighbours_of_nation(me):
+		if not opts.has(nb) and not Diplomacy.same_side(world, me, nb):
+			opts.append(nb)
+	return opts
 
 
 func stop_selected() -> void:
@@ -263,10 +344,10 @@ func set_speed(s: int) -> void:
 	speed = clampi(s, 0, SPEEDS.size() - 1)
 
 
-func train(count: int) -> int:
+func train(count: int, tpl: int = Military.T_INF) -> int:
 	var made := 0
 	for i in count:
-		if sim.train_division(player()):
+		if sim.train_division(player(), tpl):
 			made += 1
 	return made
 

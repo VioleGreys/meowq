@@ -67,7 +67,6 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		var c: Array = nm["color"]
 		nat.color = Color8(int(c[0]), int(c[1]), int(c[2]))
 		nat.capital = int(nm["capital"])
-		nat.equipment = 300.0
 		nat.manpower = 60.0
 		world.nations.append(nat)
 		world.nation_tags.append(nm["tag"])
@@ -92,6 +91,8 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		nat.major = bool(d.get("major", false))
 		nat.neutral = bool(d.get("neutral", false))
 		nat.manpower_rate = float(ideologies.get(nat.ideology, {}).get("manpower_rate", 0.015))
+		for tech_id in d.get("techs", []):
+			Tech.complete(nat, tech_id)
 
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 1936
@@ -172,7 +173,8 @@ static func _distribute_economy(world: World, provs: Array, data: Dictionary) ->
 			mp_total += world.p_manpower[i]
 		# часть резерва уже служит в армии
 		nat.manpower = mp_total * 0.35
-		nat.equipment = 150.0 + float(d.get("mil", 0)) * 40.0
+		# склад: запас на ~четверть армии + немного сверху
+		nat.stock = PackedFloat32Array([200.0, 30.0, 0.0, 0.0])
 
 
 static func _spread_population(world: World, provs: Array, list: Array, total_k: float) -> void:
@@ -243,15 +245,56 @@ static func _spawn_armies(world: World, rng: RandomNumberGenerator, data: Dictio
 		# города по убыванию населения
 		var cities := home.duplicate()
 		cities.sort_custom(func(a, b): return world.p_population[a] > world.p_population[b])
+		# состав армии по шаблонам; подвижные части — ближе к столице, пехота — на границах
+		var army: Dictionary = d.get("army", {})
+		var keys := {"inf": Military.T_INF, "mnt": Military.T_MNT, "cav": Military.T_CAV,
+			"art": Military.T_ART, "mot": Military.T_MOT, "arm": Military.T_ARM}
+		var tpls: Array = []
+		for key in ["arm", "mot", "cav", "mnt", "art", "inf"]:
+			for i in int(army.get(key, 0)):
+				tpls.append(keys[key])
 		var n_home := int(d.get("divisions", 2))
+		while tpls.size() < n_home:
+			tpls.append(Military.T_INF)
 		for k in n_home:
 			var where: int
-			if border.is_empty() or k % 5 < 2:
+			var tp: int = tpls[k]
+			if tp == Military.T_MNT:
+				where = _mountain_spot(world, nat.id, home, k)
+			elif border.is_empty() or k % 5 < 2 or tp == Military.T_ARM or tp == Military.T_MOT:
 				where = nat.capital if k == 0 else cities[(k / 2) % mini(cities.size(), 6)]
 			else:
 				where = border[(k * 7 + rng.randi() % 3) % border.size()]
-			world.spawn_division(nat.id, where)
+			world.spawn_division(nat.id, where, tp)
 		if not colony.is_empty():
 			colony.sort_custom(func(a, b): return world.p_population[a] > world.p_population[b])
 			for k in int(d.get("colony_divisions", 0)):
 				world.spawn_division(nat.id, colony[k % mini(colony.size(), 8)])
+	# производственные линии по доктрине и запас снаряжения по армии
+	var income := world.compute_all_income()
+	for nat in world.nations:
+		if not nat.alive:
+			continue
+		nat.civ = income[nat.id][0]
+		nat.mil = income[nat.id][1]
+		Military.assign_free_factories(nat, Military.default_split(nat))
+		for line in nat.lines:
+			line[2] = 0.8
+		var need := [0.0, 0.0, 0.0, 0.0]
+		for dv in world.divisions:
+			if dv.owner == nat.id:
+				var eq: Array = Military.tpl(dv.tpl)["eq"]
+				for k in Military.EQ_COUNT:
+					need[k] += eq[k]
+		for k in Military.EQ_COUNT:
+			nat.stock[k] += need[k] * 0.15
+
+
+static func _mountain_spot(world: World, nid: int, home: Array, k: int) -> int:
+	var hills: Array = []
+	for p in home:
+		if world.p_terrain[p] == World.T_MOUNTAIN or world.p_terrain[p] == World.T_HILLS:
+			hills.append(p)
+	if hills.is_empty():
+		return world.nations[nid].capital
+	return hills[(k * 5) % hills.size()]

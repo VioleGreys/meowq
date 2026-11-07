@@ -126,7 +126,7 @@ func _build_top_bar() -> void:
 	res_label = Label.new()
 	res_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	res_label.clip_text = true
-	res_label.add_theme_font_size_override("font_size", 18)
+	res_label.add_theme_font_size_override("font_size", 16)
 	h.add_child(res_label)
 	date_label = Label.new()
 	date_label.custom_minimum_size = Vector2(190, 0)
@@ -143,15 +143,17 @@ func _build_top_bar() -> void:
 func _build_side() -> void:
 	side = VBoxContainer.new()
 	side.set_anchors_preset(Control.PRESET_CENTER_LEFT)
-	side.position = Vector2(10, -220)
-	side.add_theme_constant_override("separation", 8)
+	side.position = Vector2(10, -236)
+	side.add_theme_constant_override("separation", 6)
 	root.add_child(side)
-	side.add_child(_button("Армия", func(): open_tab("army"), Vector2(150, 60)))
-	side.add_child(_button("Наука", func(): open_tab("research"), Vector2(150, 60)))
-	side.add_child(_button("Стройка", func(): open_tab("build"), Vector2(150, 60)))
-	side.add_child(_button("Дипломатия", func(): open_tab("diplomacy"), Vector2(150, 60)))
-	side.add_child(_button("Все войска", func(): game.select_all(), Vector2(150, 60)))
-	side.add_child(_button("Режим карты", _cycle_map_mode, Vector2(150, 60)))
+	var bs := Vector2(160, 56)
+	side.add_child(_button("Армия", func(): open_tab("army"), bs))
+	side.add_child(_button("Производство", func(): open_tab("production"), bs))
+	side.add_child(_button("Наука", func(): open_tab("research"), bs))
+	side.add_child(_button("Стройка", func(): open_tab("build"), bs))
+	side.add_child(_button("Дипломатия", func(): open_tab("diplomacy"), bs))
+	side.add_child(_button("Все войска", func(): game.select_all(), bs))
+	side.add_child(_button("Режим карты", _cycle_map_mode, bs))
 
 
 func _build_info() -> void:
@@ -370,8 +372,8 @@ func refresh_top() -> void:
 		swatch.spec = n.flag
 	nation_label.text = n.name
 	date_label.text = w.date_string()
-	res_label.text = "Снаряж. %d (+%.0f)  ·  Люди %dк  ·  Фабр. %d/%d  ·  Див. %d" % [
-		n.equipment, n.daily_equipment, n.manpower, n.civ, n.mil, n.division_count]
+	res_label.text = "Винт. %d · Ору. %d · Танки %d · Груз. %d · Люди %dк · Див. %d" % [
+		n.stock[0], n.stock[1], n.stock[2], n.stock[3], n.manpower, n.division_count]
 	for i in speed_buttons.size():
 		speed_buttons[i].button_pressed = game.speed == i
 	var phases := ""
@@ -399,7 +401,11 @@ func on_tick() -> void:
 	if popup.visible:
 		_update_popup_dynamic()
 	if info_panel.visible:
-		if not game.selected_divs.is_empty():
+		if game.selected_group >= 0:
+			var g: World.ArmyGroup = w.groups[game.selected_group]
+			if g.alive:
+				_update_group_text(g)
+		elif not game.selected_divs.is_empty():
 			_update_selection_text()
 		elif _info_prov >= 0:
 			info_label.text = _province_text(_info_prov)
@@ -467,9 +473,60 @@ func show_selection() -> void:
 	_info_prov = -1
 	_update_selection_text()
 	_clear(info_actions)
+	info_actions.add_child(_button("Создать армию", func(): game.create_group_from_selection()))
 	info_actions.add_child(_button("Стоп", func(): game.stop_selected(); toast("Войска остановлены")))
 	info_actions.add_child(_button("Снять выделение", func(): game.clear_selection()))
 	info_panel.show()
+
+
+## Панель выбранной армии: приказ, противник, цель.
+func show_group(g: World.ArmyGroup) -> void:
+	_info_prov = -1
+	_update_group_text(g)
+	_clear(info_actions)
+	var hold := _button("Держать фронт", func():
+		g.mode = "hold"
+		g.objective = -1
+		game.map_view.set_selected(-1)
+		show_group(g))
+	hold.disabled = g.mode == "hold"
+	info_actions.add_child(hold)
+	var atk := _button("Наступать", func():
+		g.mode = "attack"
+		show_group(g))
+	atk.disabled = g.mode == "attack"
+	info_actions.add_child(atk)
+	var w: World = game.world
+	var en: String = "все противники" if g.enemy < 0 else w.nations[g.enemy].name
+	info_actions.add_child(_button("Фронт: %s ▸" % en, func():
+		var opts: Array = game.enemy_options()
+		var i := opts.find(g.enemy)
+		g.enemy = opts[(i + 1) % opts.size()]
+		show_group(g)))
+	info_actions.add_child(_button("Распустить", func():
+		game.sim.disband_group(g)
+		game.clear_selection()))
+	info_actions.add_child(_button("✕", func(): game.clear_selection(), Vector2(56, 56)))
+	info_panel.show()
+
+
+func _update_group_text(g: World.ArmyGroup) -> void:
+	var w: World = game.world
+	var divs: Array = game.group_divisions(g.id)
+	var s := 0.0
+	var sup := 0.0
+	var fights := 0
+	for d in divs:
+		s += d.strength
+		sup += d.supply
+		if d.in_battle:
+			fights += 1
+	var n := maxi(1, divs.size())
+	var order := "держит фронт" if g.mode == "hold" else "наступает"
+	if g.mode == "attack" and g.objective >= 0:
+		order += " на %s" % w.p_name[g.objective]
+	info_label.text = "%s · %d дивизий · %s · сила %d%% · снабжение %d%% · в бою %d\nКоснитесь провинции — цель наступления. Дивизии распределяются по фронту сами." % [
+		g.name, divs.size(), order, s / n, sup / n * 100.0, fights]
 
 
 func _update_selection_text() -> void:
@@ -484,7 +541,7 @@ func _update_selection_text() -> void:
 	var fighting := 0
 	for d in sel:
 		s += d.strength
-		o += d.org / maxf(1.0, w.division_max_org(d.owner))
+		o += d.org / maxf(1.0, d.max_org)
 		if not d.path.is_empty():
 			moving += 1
 		if d.in_battle:
@@ -515,9 +572,9 @@ func close_popup() -> bool:
 
 
 func _cycle_map_mode() -> void:
-	var m: int = (game.map_view.map_mode + 1) % 4
+	var m: int = (game.map_view.map_mode + 1) % 5
 	game.set_map_mode(m)
-	toast(["Политическая карта", "Местность", "Промышленность", "Фракции"][m])
+	toast(["Политическая карта", "Местность", "Промышленность", "Фракции", "Снабжение"][m])
 
 
 func _rebuild_popup() -> void:
@@ -531,18 +588,9 @@ func _rebuild_popup() -> void:
 	var n: World.Nation = w.nations[me]
 	match popup_tab:
 		"army":
-			popup_title.text = "Армия"
-			_dynamic["army"] = _label("", 18)
-			popup_body.add_child(_dynamic["army"])
-			popup_body.add_child(_label("Дивизия: %d снаряжения и %dк человек, подготовка %d дн." % [
-				Simulation.DIV_EQUIP_COST, Simulation.DIV_MANPOWER_COST, Simulation.DIV_TRAIN_DAYS], 16, Color(0.75, 0.75, 0.7)))
-			var b1 := _button("Сформировать дивизию", func(): _train(1))
-			var b5 := _button("Сформировать 5 дивизий", func(): _train(5))
-			_dynamic["b1"] = b1
-			_dynamic["b5"] = b5
-			popup_body.add_child(b1)
-			popup_body.add_child(b5)
-			popup_body.add_child(_label("Новые дивизии появляются в столице. Потрёпанные части пополняются на своей территории за счёт снаряжения.", 16, Color(0.75, 0.75, 0.7)))
+			_build_army(w, me)
+		"production":
+			_build_production(w, me)
 		"research":
 			popup_title.text = "Наука"
 			_dynamic["res_id"] = n.current_research
@@ -829,10 +877,87 @@ func _build_nation_list(w: World) -> void:
 		popup_body.add_child(row)
 
 
-func _train(count: int) -> void:
-	var made: int = game.train(count)
-	toast("В подготовке: +%d" % made if made > 0 else "Не хватает снаряжения или людей")
-	_update_popup_dynamic()
+func _train(count: int, tpl: int) -> void:
+	var made: int = game.train(count, tpl)
+	toast("В подготовке: +%d" % made if made > 0 else Military.can_train(game.world.nations[game.player()], tpl))
+	_rebuild_popup()
+
+
+func _eq_text(eq: Array) -> String:
+	var parts: Array = []
+	for k in Military.EQ_COUNT:
+		if eq[k] > 0:
+			parts.append("%s %d" % [Military.EQ_SHORT[k], eq[k]])
+	return ", ".join(parts)
+
+
+func _build_army(w: World, me: int) -> void:
+	popup_title.text = "Армия"
+	var n: World.Nation = w.nations[me]
+	_dynamic["army"] = _label("", 17)
+	popup_body.add_child(_dynamic["army"])
+	popup_body.add_child(_section("Армии"))
+	var any := false
+	for g in w.groups:
+		if g.alive and g.owner == me:
+			any = true
+			var cnt: int = game.group_divisions(g.id).size()
+			var gid: int = g.id
+			var b := _button("%s · %d див. · %s" % [g.name, cnt, "держит фронт" if g.mode == "hold" else "наступает"], func():
+				close_popup()
+				game.select_group(gid), Vector2(0, 48))
+			b.add_theme_color_override("font_color", g.color)
+			popup_body.add_child(b)
+	if not any:
+		popup_body.add_child(_small("Выделите дивизии на карте (или «Все войска») и нажмите «Создать армию». Армия сама держит фронт против выбранной страны или наступает к цели."))
+	popup_body.add_child(_section("Формирование дивизий"))
+	for t in Military.tpl_count():
+		var tp: Dictionary = Military.tpl(t)
+		var why := Military.can_train(n, t)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var b1 := _button("%s" % tp["name"], func(): _train(1, t), Vector2(0, 48))
+		b1.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b1.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b1.disabled = why != ""
+		row.add_child(b1)
+		var b5 := _button("×5", func(): _train(5, t), Vector2(60, 48))
+		b5.disabled = why != ""
+		row.add_child(b5)
+		popup_body.add_child(row)
+		popup_body.add_child(_small("   атака %d · оборона %d · скорость ×%.1f · %dк чел. · %s · %d дн.%s" % [
+			tp["atk"], tp["def"], tp["spd"], tp["men"], _eq_text(tp["eq"]), tp["days"], ("\n   " + why) if why != "" else ""]))
+
+
+func _build_production(w: World, me: int) -> void:
+	popup_title.text = "Производство"
+	var n: World.Nation = w.nations[me]
+	_dynamic["prod"] = _label("", 17)
+	popup_body.add_child(_dynamic["prod"])
+	popup_body.add_child(_small("Военные заводы выпускают снаряжение для новых дивизий и пополнения. Новая линия разгоняется с 30% до 100% эффективности."))
+	var need := Military.shortage(w, me)
+	for k in Military.EQ_COUNT:
+		var f := 0
+		var eff := 0.0
+		for line in n.lines:
+			if line[0] == k:
+				f = line[1]
+				eff = line[2]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var l := _label("%s\nзаводов %d · эфф. %d%% · +%.1f/день · склад %d · не хватает %d" % [
+			Military.EQ_NAMES[k], f, eff * 100.0, n.daily_output[k], n.stock[k], need[k]], 16)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		var kk := k
+		row.add_child(_button("−", func():
+			Military.change_line(n, kk, -1)
+			_rebuild_popup(), Vector2(52, 48)))
+		row.add_child(_button("+", func():
+			if not Military.change_line(n, kk, 1):
+				toast("Нет свободных заводов")
+			_rebuild_popup(), Vector2(52, 48)))
+		popup_body.add_child(row)
 
 
 func _update_popup_dynamic() -> void:
@@ -856,13 +981,15 @@ func _update_popup_dynamic() -> void:
 		"army":
 			var next := ""
 			if not n.training.is_empty():
-				next = " (ближайшая через %d дн.)" % n.training.min()
-			_dynamic["army"].text = "Дивизий: %d · в подготовке: %d%s\nАтака %.1f · Защита %.1f · Организация %.0f · Скорость x%.2f" % [
-				n.division_count, n.training.size(), next, w.division_attack(n.id), w.division_defense(n.id),
-				w.division_max_org(n.id), 1.0 + n.b("speed")]
-			var can := n.equipment >= Simulation.DIV_EQUIP_COST and n.manpower >= Simulation.DIV_MANPOWER_COST
-			_dynamic["b1"].disabled = not can
-			_dynamic["b5"].disabled = not can
+				var m := 9999
+				for e in n.training:
+					m = mini(m, int(e[0]))
+				next = " (ближайшая через %d дн.)" % m
+			_dynamic["army"].text = "Дивизий: %d · в подготовке: %d%s · людей в резерве: %dк" % [
+				n.division_count, n.training.size(), next, n.manpower]
+		"production":
+			var used := Military.assigned_factories(n)
+			_dynamic["prod"].text = "Военных заводов: %d · на линиях: %d · свободно: %d" % [n.mil, used, n.mil - used]
 		"research":
 			if n.current_research != _dynamic.get("res_id", ""):
 				_rebuild_popup()  # технология изучена — обновить список

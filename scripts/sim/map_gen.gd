@@ -375,7 +375,6 @@ static func _make_nations(world: World, rng: RandomNumberGenerator, count: int) 
 		var hue := fmod(0.07 + i * 0.618034, 1.0)
 		nat.color = Color.from_hsv(hue, rng.randf_range(0.38, 0.55), rng.randf_range(0.70, 0.85))
 		nat.capital = capitals[i]
-		nat.equipment = 300.0
 		nat.manpower = 60.0
 		nat.build_mode = "civ" if rng.randf() < 0.5 else "mil"
 		world.nations.append(nat)

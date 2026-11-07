@@ -34,11 +34,22 @@ func _init() -> void:
 		check(mil == int(d.get("mil", -1)), "%s: воен. фабрик %d, ожидалось %d" % [n.tag, mil, d.get("mil", -1)])
 		var divs := w.divisions_of(n.id).size()
 		check(divs == int(d.get("divisions", 0)) + int(d.get("colony_divisions", 0)), "%s: дивизий %d" % [n.tag, divs])
+		var army: Dictionary = d.get("army", {})
+		if not army.is_empty():
+			var arm := 0
+			for dv in w.divisions_of(n.id):
+				if dv.tpl == Military.T_ARM:
+					arm += 1
+			check(arm == int(army.get("arm", 0)), "%s: танковых дивизий %d" % [n.tag, arm])
 		check(n.leader != "" and n.ideology != "", n.tag + ": нет лидера/идеологии")
 		check(w.p_owner[n.capital] == n.id, n.tag + ": столица не своя")
-		rows.append([n.tag, n.name, pop / 1000.0, civ, mil, divs, n.manpower, n.daily_equipment, n.daily_manpower])
+		var out := 0.0
+		for line in n.lines:
+			out += float(line[1])
+		check(Military.assigned_factories(n) == n.mil, n.tag + ": все военные заводы на линиях")
+		rows.append([n.tag, n.name, pop / 1000.0, civ, mil, divs, n.manpower, out, n.daily_manpower])
 	rows.sort_custom(func(a, b): return a[3] + a[4] > b[3] + b[4])
-	print("%-4s %-18s %7s %4s %4s %4s %8s %6s %6s" % ["тег", "страна", "нас.млн", "гр.", "воен", "див", "резерв к", "сн/д", "люд/д"])
+	print("%-4s %-18s %7s %4s %4s %4s %8s %6s %6s" % ["тег", "страна", "нас.млн", "гр.", "воен", "див", "резерв к", "линии", "люд/д"])
 	for r in rows:
 		print("%-4s %-18s %7.1f %4d %4d %4d %8.0f %6.1f %6.2f" % r)
 	var g := w.nation_tags.find("GER")

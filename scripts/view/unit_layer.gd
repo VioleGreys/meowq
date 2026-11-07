@@ -51,6 +51,25 @@ func _draw() -> void:
 			var p0 := pts[0].lerp(pts[1], clampf(d.progress, 0.0, 1.0))
 			draw_circle(p0, 3.0, col)
 
+	# фронты и цели армий игрока
+	for g in world.groups:
+		if not g.alive or g.owner != player:
+			continue
+		var fp: PackedInt32Array = g.front_pairs
+		for i in range(0, fp.size(), 2):
+			var a := map.province_world_pos(fp[i])
+			var b := map.province_world_pos(fp[i + 1])
+			var m := map.world_to_screen((a + b) * 0.5)
+			var dir := map.world_to_screen(b) - map.world_to_screen(a)
+			var side := Vector2(-dir.y, dir.x).normalized() * minf(dir.length() * 0.45, 40.0)
+			draw_line(m - side, m + side, Color(g.color, 0.9), 5.0)
+			draw_line(m - side, m + side, Color(0, 0, 0, 0.35), 1.5)
+		if g.objective >= 0 and g.mode == "attack":
+			var c := map.world_to_screen(map.province_world_pos(g.objective))
+			draw_arc(c, 16, 0, TAU, 24, g.color, 4.0)
+			draw_line(c + Vector2(-22, 0), c + Vector2(22, 0), g.color, 2.0)
+			draw_line(c + Vector2(0, -22), c + Vector2(0, 22), g.color, 2.0)
+
 	# значки боёв
 	var battle_provs := {}
 	for d in world.divisions:
@@ -90,21 +109,43 @@ func _draw() -> void:
 				draw_rect(Rect2(base - Vector2(4, 4), Vector2(8, 8)), world.nations[owner].color.darkened(0.35))
 				continue
 			var any_sel := false
+			var tpl_count := {}
+			var min_supply := 1.0
+			var grp := -1
 			var str_sum := 0.0
 			var org_sum := 0.0
 			for d in g:
 				str_sum += d.strength
-				org_sum += d.org / maxf(1.0, world.division_max_org(d.owner))
+				org_sum += d.org / maxf(1.0, d.max_org)
+				tpl_count[d.tpl] = int(tpl_count.get(d.tpl, 0)) + 1
+				min_supply = minf(min_supply, d.supply)
+				if d.group >= 0 and grp < 0:
+					grp = d.group
 				if selected.has(d):
 					any_sel = true
 			var nat_col: Color = world.nations[owner].color
 			var rect := Rect2(pos, counter)
 			draw_rect(Rect2(pos + Vector2(2, 2), counter), Color(0, 0, 0, 0.35))
 			draw_rect(rect, nat_col.darkened(0.15))
-			draw_rect(Rect2(pos, Vector2(counter.x * 0.32, counter.y)), nat_col.lightened(0.25))
+			var icon_rect := Rect2(pos + Vector2(2, 2), Vector2(counter.x * 0.42, counter.y - 4))
+			draw_rect(icon_rect, nat_col.lightened(0.35))
+			var main_tpl := 0
+			var best := -1
+			for t in tpl_count:
+				if tpl_count[t] > best:
+					best = tpl_count[t]
+					main_tpl = t
+			_draw_icon(icon_rect, main_tpl, Color(0.08, 0.08, 0.08))
 			draw_rect(rect, Color.WHITE if any_sel else Color(0.08, 0.08, 0.08), false, 2.5 if any_sel else 1.5)
-			draw_string(font, pos + Vector2(counter.x * 0.36, counter.y * 0.5 + font_size * 0.36), str(g.size()),
-				HORIZONTAL_ALIGNMENT_CENTER, counter.x * 0.6, font_size, Color(0.05, 0.05, 0.05))
+			draw_string(font, pos + Vector2(counter.x * 0.44, counter.y * 0.5 + font_size * 0.36), str(g.size()),
+				HORIZONTAL_ALIGNMENT_CENTER, counter.x * 0.56, font_size, Color(0.05, 0.05, 0.05))
+			if grp >= 0 and owner == player:
+				draw_rect(Rect2(pos + Vector2(0, -4), Vector2(counter.x, 3)), world.groups[grp].color)
+			if min_supply < 0.3:
+				# нет снабжения: красный восклицательный знак
+				var c2 := pos + Vector2(counter.x + 6, 4)
+				draw_circle(c2, 7, Color(0.85, 0.15, 0.1))
+				draw_string(font, c2 + Vector2(-3, 5), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
 			# полоски: зелёная — сила, жёлтая — организация
 			var bw := counter.x
 			var s := str_sum / (100.0 * g.size())
@@ -173,3 +214,33 @@ func _rebuild_labels() -> void:
 		var center: Vector2 = b[1] / maxf(1.0, b[0])
 		var span: Vector2 = (b[3] - b[2]) * MapView.SCALE
 		_labels.append([center * MapView.SCALE, world.nations[c].name.to_upper(), sqrt(float(b[0])) * 0.5, maxf(span.x, span.y * 0.8)])
+
+
+## Условные знаки родов войск (в духе военных карт).
+func _draw_icon(r: Rect2, tpl: int, col: Color) -> void:
+	var a := r.position
+	var b := r.position + r.size
+	match tpl:
+		Military.T_INF, Military.T_MNT, Military.T_ART:
+			draw_line(a, b, col, 1.5)
+			draw_line(Vector2(a.x, b.y), Vector2(b.x, a.y), col, 1.5)
+			if tpl == Military.T_MNT:
+				var c := Vector2(r.get_center().x, b.y)
+				draw_colored_polygon(PackedVector2Array([c + Vector2(-4, 0), c + Vector2(4, 0), c + Vector2(0, -5)]), col)
+			if tpl == Military.T_ART:
+				draw_circle(r.get_center(), 2.5, col)
+		Military.T_CAV:
+			draw_line(Vector2(a.x, b.y), Vector2(b.x, a.y), col, 1.5)
+		Military.T_MOT:
+			draw_line(a, b, col, 1.5)
+			draw_line(Vector2(a.x, b.y), Vector2(b.x, a.y), col, 1.5)
+			draw_line(Vector2(r.get_center().x, a.y), Vector2(r.get_center().x, b.y), col, 1.5)
+		Military.T_ARM:
+			var c := r.get_center()
+			var rx := r.size.x * 0.36
+			var ry := r.size.y * 0.28
+			var pts := PackedVector2Array()
+			for i in 17:
+				var t := TAU * i / 16.0
+				pts.append(c + Vector2(cos(t) * rx, sin(t) * ry))
+			draw_polyline(pts, col, 1.5)

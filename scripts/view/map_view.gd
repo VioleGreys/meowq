@@ -11,7 +11,7 @@ const MIN_ZOOM := 0.25
 const MAX_ZOOM := 5.0
 const TAP_SLOP := 14.0
 
-enum MapMode { POLITICAL, TERRAIN, INDUSTRY, FACTIONS }
+enum MapMode { POLITICAL, TERRAIN, INDUSTRY, FACTIONS, SUPPLY }
 
 var world: World
 var sprite: Sprite2D
@@ -124,6 +124,19 @@ func update_palette() -> void:
 		match map_mode:
 			MapMode.TERRAIN:
 				col = World.TERRAIN_COLORS[world.p_terrain[p]]
+			MapMode.SUPPLY:
+				# снабжение игрока: зелёный — хорошо, красный — далеко или мало дорог
+				var me := world.player_nation()
+				col = Color(0.55, 0.55, 0.52)
+				if me >= 0 and world.supply_dist.size() > me and not world.supply_dist[me].is_empty():
+					var dist: PackedInt32Array = world.supply_dist[me]
+					var h: int = dist[p]
+					if h >= 0:
+						var reach := 1.0 if h <= 5 else maxf(0.35, 1.0 - (h - 5) * 0.06)
+						var v := reach * minf(1.0, world.p_supply_cap[p] / 4.0)
+						col = Color(0.85, 0.25, 0.2).lerp(Color(0.3, 0.75, 0.3), v)
+					elif world.ally[me * world.nation_count + c] == 1:
+						col = Color(0.35, 0.1, 0.1)
 			MapMode.FACTIONS:
 				var r := Diplomacy.root(world, c)
 				var f: int = world.nations[r].faction

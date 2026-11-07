@@ -56,7 +56,11 @@ class Nation:
 	var justify_days := 0       # сколько дней осталось
 	var justify_total := 0
 	var war_activity_day := 0   # последний день с захватом провинций (для белого мира)
-	var equipment := 0.0
+	var stock := PackedFloat32Array([0, 0, 0, 0])        # склад снаряжения по типам
+	var daily_output := PackedFloat32Array([0, 0, 0, 0]) # выпуск за последний день
+	var lines: Array = []       # производственные линии: [тип снаряжения, заводов, эффективность]
+	var trained_count := 0
+	var stats_dirty := true     # технологии изменились — пересчитать кэш дивизий      # сколько дивизий ИИ уже заказал (для чередования шаблонов)
 	var manpower := 0.0         # тысячи человек
 	var research_points := 0.0  # накопленные за текущую технологию
 	var current_research := ""
@@ -64,13 +68,12 @@ class Nation:
 	var bonus := {}             # bonus_key -> float
 	var build_mode := "mil"     # "civ" или "mil"
 	var build_progress := 0.0
-	var training: Array = []    # оставшиеся дни для каждой дивизии в подготовке
+	var training: Array = []    # в подготовке: [оставшиеся дни, шаблон]
 	# Кэш, пересчитывается в экономической фазе (параллельно)
 	var civ := 0
 	var mil := 0
 	var province_count := 0
 	var division_count := 0
-	var daily_equipment := 0.0
 	var daily_research := 0.0
 	var daily_manpower := 0.0
 
@@ -98,6 +101,31 @@ class Division:
 	var org := 40.0
 	var alive := true
 	var in_battle := false
+	# Этап 4: шаблон, укомплектованность, снабжение, армия
+	var tpl := 0                    # Military.T_*
+	var eq := 1.0                   # укомплектованность снаряжением 0..1
+	var supply := 1.0               # снабжение 0..1 (0 — окружена)
+	var group := -1                 # армия игрока (World.groups), -1 — нет
+	# кэш характеристик (Military.refresh_division), читается из потоков
+	var atk := 10.0
+	var def := 12.0
+	var max_org := 40.0
+	var spd := 0.28
+	var hard := 0.0
+
+
+## Армия игрока: группа дивизий с общим приказом.
+class ArmyGroup:
+	extends RefCounted
+	var id := 0
+	var owner := 0
+	var name := ""
+	var color := Color.WHITE
+	var mode := "hold"              # hold — держать фронт, attack — наступать
+	var enemy := -1                 # против кого (-1 — все противники)
+	var objective := -1             # провинция-цель наступления
+	var alive := true
+	var front_pairs := PackedInt32Array()   # пары (наша провинция, чужая) для отрисовки фронта
 
 
 var seed_value := 0
@@ -144,6 +172,12 @@ var n_attack := PackedFloat32Array()
 var n_defense := PackedFloat32Array()
 var n_org := PackedFloat32Array()
 var n_speed := PackedFloat32Array()
+var tpl_terrain := PackedFloat32Array()   # Military.TERRAIN_MULT построчно (шаблон*8 + местность)
+var p_coastal := PackedByteArray()
+var p_supply_cap := PackedFloat32Array()  # пропускная способность снабжения провинции (дивизий)
+var ally := PackedByteArray()             # nation_count^2: 1 — одна сторона (фракция/сюзерен)
+var supply_dist: Array = []               # по странам: PackedInt32Array, переходов до узла снабжения (-1 — нет)
+var groups: Array = []                    # Array[ArmyGroup]
 var divisions: Array = []
 var next_div_id := 1
 var day := 0
@@ -223,6 +257,25 @@ func build_caches() -> void:
 	for n in nations:
 		for o in n.at_war:
 			war[n.id * nation_count + o] = 1
+	p_coastal.resize(prov_count)
+	p_supply_cap.resize(prov_count)
+	for p in prov_count:
+		p_coastal[p] = 0
+		if p_land[p] == 0:
+			p_supply_cap[p] = 0.0
+			continue
+		for q in p_adj[p]:
+			if p_land[q] == 0:
+				p_coastal[p] = 1
+		var pop := float(p_population[p]) if p_population.size() == prov_count else 0.0
+		var cap := 2.0 + minf(3.0, pop / 600.0) + (1.0 if p_terrain[p] == T_URBAN else 0.0)
+		match p_terrain[p]:
+			T_MOUNTAIN, T_MARSH, T_DESERT:
+				cap -= 1.0
+			T_FOREST, T_HILLS:
+				cap -= 0.5
+		p_supply_cap[p] = maxf(1.0, cap)
+	Military.build_tables(self)
 	refresh_stats()
 
 
@@ -359,13 +412,15 @@ func rebuild_prov_divs() -> void:
 		nations[d.owner].division_count += 1
 
 
-func spawn_division(owner: int, prov: int) -> Division:
+func spawn_division(owner: int, prov: int, tpl: int = 0) -> Division:
 	var d := Division.new()
 	d.id = next_div_id
 	next_div_id += 1
 	d.owner = owner
 	d.prov = prov
-	d.org = division_max_org(owner)
+	d.tpl = tpl
+	Military.refresh_division(self, d)
+	d.org = d.max_org
 	divisions.append(d)
 	prov_divs[prov].append(d)
 	nations[owner].division_count += 1

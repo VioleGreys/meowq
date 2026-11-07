@@ -375,7 +375,6 @@ static func make_peace(world: World, loser: int, winner: int, mode: String) -> v
 			elif world.p_controller[p] == loser:
 				world.p_controller[p] = world.p_owner[p]
 		nl.overlord = root(world, winner)
-		nl.equipment = 100.0
 		_inherit_wars(world, loser, nl.overlord)
 		world.log_event("%s капитулирует и становится марионеткой страны %s" % [nl.name, world.nations[nl.overlord].name])
 	else:
