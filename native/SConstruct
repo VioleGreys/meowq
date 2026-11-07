@@ -1,0 +1,17 @@
+#!/usr/bin/env python
+# Сборка: положить godot-cpp (ветка 4.3) в native/godot-cpp и выполнить
+#   scons platform=linux target=template_release            (ПК)
+#   scons platform=android arch=arm64 target=template_release (телефон, нужен ANDROID_HOME/NDK)
+# Библиотека появляется в bin/, игра подхватывает её через meowq.gdextension.
+env = SConscript("godot-cpp/SConstruct")
+env.Append(CPPPATH=["src/"])
+sources = Glob("src/*.cpp")
+lib = "bin/libmeowq{}{}".format(env["suffix"], env["SHLIBSUFFIX"])
+Default(env.SharedLibrary(lib, source=sources))
+
+# Манифест расширения кладём в корень проекта только когда библиотека собрана:
+# без неё Godot выдавал бы ошибку загрузки, а игра и так работает на GDScript.
+def _install_manifest(target, source, env):
+    import shutil
+    shutil.copy("meowq.gdextension.in", "../meowq.gdextension")
+AddPostAction(lib, _install_manifest)

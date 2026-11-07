@@ -254,11 +254,25 @@ var region_center := PackedVector2Array() # центр района (пиксе�
 var region_name := PackedStringArray()
 var region_anchor := PackedInt32Array()   # главная провинция района (для значков)
 var region_provs: Array = []              # район -> PackedInt32Array провинций
-var trade_cache := {}                     # страна -> Dictionary торговых зон (пересчёт раз в 30 дней)
+var trade_cache := {}
+var air_range_cache := {}
+# Снимок дивизий для параллельных фаз (World.snapshot_divisions): плоские
+# массивы вместо объектов — потоки не дерутся за счётчики ссылок.
+var dv_id := PackedInt32Array()
+var dv_owner := PackedInt32Array()
+var dv_prov := PackedInt32Array()
+var dv_flags := PackedInt32Array()      # 1 — свободна (без пути и боя, не в море, не в резерве), 2 — в бою
+var dv_str := PackedFloat32Array()
+var dv_org := PackedFloat32Array()      # доля организации 0..1
+var dv_power := PackedFloat32Array()    # атакующая сила с учётом силы, снаряжения, снабжения
+var dv_defw := PackedFloat32Array()     # «вес» защитника для оценки целей
+var pd_start := PackedInt32Array()      # CSR: дивизии провинции p — pd_list[pd_start[p] .. pd_start[p+1])
+var pd_list := PackedInt32Array()                 # страна -> [день, районы в радиусе авиации]                     # страна -> Dictionary торговых зон (пересчёт раз в 30 дней)
 var cas_mult := PackedFloat32Array()      # region*nation_count + n: множитель боя от авиации
 var air_sup := PackedFloat32Array()       # region*nation_count + n: превосходство в воздухе 0..1
 var invasions: Array = []                 # Array[InvasionPlan]
 var p_naval_base := PackedByteArray()     # 1 — военно-морская база (стоянка и ремонт флота)
+var p_port := PackedByteArray()           # 1 — постоянный порт (город vp≥3 на побережье или база)
 var beachheads := {}                      # провинция -> последний день временного порта на плацдарме
 var zone_fleets := {}                     # морская зона -> Array[Fleet] (кэш на день)
 var divisions: Array = []
@@ -507,8 +521,10 @@ func division_speed(n: int) -> float:
 func rebuild_prov_divs() -> void:
 	if prov_divs.size() != prov_count:
 		prov_divs.resize(prov_count)
-	for p in prov_count:
-		prov_divs[p] = []
+		for p in prov_count:
+			prov_divs[p] = []
+	for list in prov_divs:   # переиспользуем массивы — без тысячи выделений памяти в день
+		list.clear()
 	var alive_list: Array = []
 	for d in divisions:
 		if d.alive:
@@ -520,6 +536,52 @@ func rebuild_prov_divs() -> void:
 		n.division_count = 0
 	for d in divisions:
 		nations[d.owner].division_count += 1
+
+
+## Снимок дивизий в плоские массивы (главный поток, раз в день).
+func snapshot_divisions() -> void:
+	var n := divisions.size()
+	dv_id.resize(n)
+	dv_owner.resize(n)
+	dv_prov.resize(n)
+	dv_flags.resize(n)
+	dv_str.resize(n)
+	dv_org.resize(n)
+	dv_power.resize(n)
+	dv_defw.resize(n)
+	var counts := PackedInt32Array()
+	counts.resize(prov_count + 1)
+	for i in n:
+		var d: Division = divisions[i]
+		dv_id[i] = d.id
+		dv_owner[i] = d.owner
+		dv_prov[i] = d.prov
+		var f := 0
+		if d.path.is_empty() and not d.in_battle and d.transit_days <= 0 and d.reserved_until < day and d.inv_plan < 0:
+			f |= 1
+		if d.in_battle:
+			f |= 2
+		if d.transit_days > 0:
+			f |= 4
+		dv_flags[i] = f
+		dv_str[i] = d.strength
+		var orgf := clampf(d.org / maxf(1.0, d.max_org), 0.0, 1.0)
+		dv_org[i] = orgf
+		dv_power[i] = d.strength * (d.atk / 10.0) * (0.4 + 0.6 * d.eq) * (0.5 + 0.5 * d.supply)
+		dv_defw[i] = d.strength * orgf * (0.4 + 0.6 * d.eq)
+		if d.transit_days <= 0:
+			counts[d.prov + 1] += 1
+	pd_start.resize(prov_count + 1)
+	pd_start[0] = 0
+	for p in prov_count:
+		pd_start[p + 1] = pd_start[p] + counts[p + 1]
+	pd_list.resize(pd_start[prov_count])
+	var fill := pd_start.duplicate()
+	for i in n:
+		if dv_flags[i] & 4 == 0:
+			var p := dv_prov[i]
+			pd_list[fill[p]] = i
+			fill[p] += 1
 
 
 func spawn_division(owner: int, prov: int, tpl: int = 0) -> Division:

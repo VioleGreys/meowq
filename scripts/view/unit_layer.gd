@@ -1,14 +1,23 @@
 class_name UnitLayer
 extends Node2D
-## Фишки дивизий, стрелки приказов, значки боёв и названия стран. Рисуется в
-## экранных координатах (в своём CanvasLayer), поэтому текст всегда чёткий.
+## Фишки дивизий, стрелки приказов, бои, фронты, флоты, авиация и названия
+## стран. Рисуется в экранных координатах (в своём CanvasLayer) — текст чёткий.
+##
+## Симуляция идёт в фоновом потоке, поэтому слой устроен в два шага:
+##  * rebuild() — под блокировкой мира собирает «список отрисовки» из чистых
+##    данных (мировые координаты, цвета, числа), без ссылок на объекты мира;
+##  * _draw() — каждый кадр рисует только из этого списка (мир не трогает),
+##    поэтому сдвиг и масштаб карты плавные, даже пока считается игровой день.
+
+enum { ARROW, FRONT, OBJECTIVE, BATTLE, COUNTER, LABEL, PORT, PLAN, TRANSIT, FLEET, PLANES }
 
 var map: MapView
 var world: World
-var selected: Array = []        # выбранные дивизии
+var selected: Array = []        # выбранные дивизии (объекты; читаются только в rebuild)
 var player := -1
 var font: Font
-var _labels: Array = []         # [world_pos, name, size]
+var items: Array = []           # список отрисовки: [тип, данные...]
+var _labels: Array = []         # [мировая позиция, имя, размер, ширина]
 var _labels_day := -1
 
 
@@ -20,100 +29,70 @@ func _process(_dt: float) -> void:
 	queue_redraw()
 
 
-func _draw() -> void:
-	if map == null or world == null:
-		return
-	var z := map.zoom_level()
-	var vp := get_viewport_rect().size
-	_draw_nation_labels(z, vp)
+func _wp(p: int) -> Vector2:
+	return world.p_center[p] * MapView.SCALE
 
-	var counter := Vector2(34, 22) * clampf(0.75 + z * 0.25, 0.8, 1.5)
+
+## Собрать список отрисовки. Вызывать ТОЛЬКО под блокировкой мира.
+func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
+	var out: Array = []
+	if world == null:
+		items = out
+		return
+	if _labels_day < 0 or world.day - _labels_day >= 5 or world.day < _labels_day:
+		_rebuild_labels()
+	for l in _labels:
+		out.append([LABEL, l[0], l[1], l[2], l[3]])
+	var sel := {}
+	for d in selected:
+		sel[d] = true
 	# стрелки движения
 	for d in world.divisions:
-		if not d.alive or d.path.is_empty():
+		if not d.alive or d.path.is_empty() or d.transit_days > 0:
 			continue
-		if d.owner != player and z < 1.4:
-			continue
-		var is_sel: bool = selected.has(d)
-		var a := map.world_to_screen(map.province_world_pos(d.prov))
-		var col := Color(1, 1, 1, 0.85) if is_sel else Color(world.nations[d.owner].color.darkened(0.5), 0.7)
-		var pts := PackedVector2Array([a])
+		var is_sel: bool = sel.has(d)
+		var pts := PackedVector2Array([_wp(d.prov)])
 		var limit: int = d.path.size() if is_sel else 1
 		for i in limit:
-			pts.append(map.world_to_screen(map.province_world_pos(d.path[i])))
-		if pts.size() >= 2:
-			draw_polyline(pts, col, 3.0 if is_sel else 2.0, true)
-			var tip := pts[pts.size() - 1]
-			var dir := (tip - pts[pts.size() - 2]).normalized()
-			var side := Vector2(-dir.y, dir.x)
-			draw_colored_polygon(PackedVector2Array([tip, tip - dir * 11 + side * 6, tip - dir * 11 - side * 6]), col)
-			# прогресс к первой провинции
-			var p0 := pts[0].lerp(pts[1], clampf(d.progress, 0.0, 1.0))
-			draw_circle(p0, 3.0, col)
-
+			pts.append(_wp(d.path[i]))
+		var col := Color(1, 1, 1, 0.85) if is_sel else Color(world.nations[d.owner].color.darkened(0.5), 0.7)
+		out.append([ARROW, pts, col, is_sel, clampf(d.progress, 0.0, 1.0), d.owner == player])
 	# фронты и цели армий игрока
 	for g in world.groups:
 		if not g.alive or g.owner != player:
 			continue
 		var fp: PackedInt32Array = g.front_pairs
 		for i in range(0, fp.size(), 2):
-			var a := map.province_world_pos(fp[i])
-			var b := map.province_world_pos(fp[i + 1])
-			var m := map.world_to_screen((a + b) * 0.5)
-			var dir := map.world_to_screen(b) - map.world_to_screen(a)
-			var side := Vector2(-dir.y, dir.x).normalized() * minf(dir.length() * 0.45, 40.0)
-			draw_line(m - side, m + side, Color(g.color, 0.9), 5.0)
-			draw_line(m - side, m + side, Color(0, 0, 0, 0.35), 1.5)
+			out.append([FRONT, _wp(fp[i]), _wp(fp[i + 1]), g.color])
 		if g.objective >= 0 and g.mode == "attack":
-			var c := map.world_to_screen(map.province_world_pos(g.objective))
-			draw_arc(c, 16, 0, TAU, 24, g.color, 4.0)
-			draw_line(c + Vector2(-22, 0), c + Vector2(22, 0), g.color, 2.0)
-			draw_line(c + Vector2(0, -22), c + Vector2(0, 22), g.color, 2.0)
-
-	_draw_navy_air(z, vp)
-
-	# значки боёв
+			out.append([OBJECTIVE, _wp(g.objective), g.color])
+	# бои
 	var battle_provs := {}
 	for d in world.divisions:
-		if d.alive and d.in_battle and not d.path.is_empty():
+		if d.alive and d.in_battle and not d.path.is_empty() and d.transit_days <= 0:
 			battle_provs[d.path[0]] = true
 	for p in battle_provs:
-		var c := map.world_to_screen(map.province_world_pos(p)) + Vector2(0, -counter.y)
-		if not Rect2(Vector2.ZERO, vp).grow(40).has_point(c):
-			continue
-		var r := 9.0 + sin(Time.get_ticks_msec() * 0.008) * 1.5
-		draw_circle(c, r + 2, Color(0.1, 0.05, 0.05, 0.8))
-		draw_circle(c, r, Color(0.85, 0.2, 0.15))
-		draw_line(c + Vector2(-5, -5), c + Vector2(5, 5), Color.WHITE, 2.0)
-		draw_line(c + Vector2(5, -5), c + Vector2(-5, 5), Color.WHITE, 2.0)
-
+		out.append([BATTLE, _wp(p)])
 	# фишки: по одной на (провинция, страна)
-	var font_size := int(clampf(12 + z * 2, 12, 20))
 	for p in world.prov_count:
 		var list: Array = world.prov_divs[p]
 		if list.is_empty():
 			continue
 		var groups := {}
+		var order: Array = []
 		for d in list:
 			if d.alive:
 				if not groups.has(d.owner):
 					groups[d.owner] = []
+					order.append(d.owner)
 				groups[d.owner].append(d)
-		var base := map.world_to_screen(map.province_world_pos(p))
-		if not Rect2(Vector2.ZERO, vp).grow(40).has_point(base):
-			continue
 		var k := 0
-		for owner in groups:
+		for owner in order:
 			var g: Array = groups[owner]
-			var pos := base + Vector2(k * (counter.x + 4), 0) - counter * 0.5
-			k += 1
-			if z < 0.55 and owner != player:
-				draw_rect(Rect2(base - Vector2(4, 4), Vector2(8, 8)), world.nations[owner].color.darkened(0.35))
-				continue
 			var any_sel := false
 			var tpl_count := {}
 			var min_supply := 1.0
-			var grp := -1
+			var grp_color := Color(0, 0, 0, 0)
 			var str_sum := 0.0
 			var org_sum := 0.0
 			for d in g:
@@ -121,61 +100,232 @@ func _draw() -> void:
 				org_sum += d.org / maxf(1.0, d.max_org)
 				tpl_count[d.tpl] = int(tpl_count.get(d.tpl, 0)) + 1
 				min_supply = minf(min_supply, d.supply)
-				if d.group >= 0 and grp < 0:
-					grp = d.group
-				if selected.has(d):
+				if d.group >= 0 and grp_color.a == 0.0 and owner == player:
+					grp_color = world.groups[d.group].color
+				if sel.has(d):
 					any_sel = true
-			var nat_col: Color = world.nations[owner].color
-			var rect := Rect2(pos, counter)
-			draw_rect(Rect2(pos + Vector2(2, 2), counter), Color(0, 0, 0, 0.35))
-			draw_rect(rect, nat_col.darkened(0.15))
-			var icon_rect := Rect2(pos + Vector2(2, 2), Vector2(counter.x * 0.42, counter.y - 4))
-			draw_rect(icon_rect, nat_col.lightened(0.35))
 			var main_tpl := 0
 			var best := -1
 			for t in tpl_count:
 				if tpl_count[t] > best:
 					best = tpl_count[t]
 					main_tpl = t
-			_draw_icon(icon_rect, main_tpl, Color(0.08, 0.08, 0.08))
-			draw_rect(rect, Color.WHITE if any_sel else Color(0.08, 0.08, 0.08), false, 2.5 if any_sel else 1.5)
-			draw_string(font, pos + Vector2(counter.x * 0.44, counter.y * 0.5 + font_size * 0.36), str(g.size()),
-				HORIZONTAL_ALIGNMENT_CENTER, counter.x * 0.56, font_size, Color(0.05, 0.05, 0.05))
-			if grp >= 0 and owner == player:
-				draw_rect(Rect2(pos + Vector2(0, -4), Vector2(counter.x, 3)), world.groups[grp].color)
-			if min_supply < 0.3:
-				# нет снабжения: красный восклицательный знак
-				var c2 := pos + Vector2(counter.x + 6, 4)
-				draw_circle(c2, 7, Color(0.85, 0.15, 0.1))
-				draw_string(font, c2 + Vector2(-3, 5), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
-			# полоски: зелёная — сила, жёлтая — организация
-			var bw := counter.x
-			var s := str_sum / (100.0 * g.size())
-			var o := org_sum / g.size()
-			draw_rect(Rect2(pos + Vector2(0, counter.y + 1), Vector2(bw, 3)), Color(0, 0, 0, 0.6))
-			draw_rect(Rect2(pos + Vector2(0, counter.y + 1), Vector2(bw * s, 3)), Color(0.35, 0.85, 0.35))
-			draw_rect(Rect2(pos + Vector2(0, counter.y + 4), Vector2(bw, 3)), Color(0, 0, 0, 0.6))
-			draw_rect(Rect2(pos + Vector2(0, counter.y + 4), Vector2(bw * o, 3)), Color(0.95, 0.8, 0.25))
+			out.append([COUNTER, _wp(p), k, world.nations[owner].color, g.size(), main_tpl,
+				str_sum / (100.0 * g.size()), org_sum / g.size(), any_sel, grp_color, min_supply < 0.3, owner == player])
+			k += 1
+	_rebuild_navy_air(out, sel_fleet, sel_wing)
+	items = out
 
 
-func _draw_nation_labels(z: float, vp: Vector2) -> void:
+func _rebuild_navy_air(out: Array, sel_fleet: int, sel_wing: int) -> void:
+	# порты и военно-морские базы (свои и союзные)
+	if player >= 0 and world.p_naval_base.size() == world.prov_count:
+		for p in world.prov_count:
+			if world.p_land[p] == 0 or world.p_coastal[p] == 0:
+				continue
+			var c := world.p_controller[p]
+			if c < 0 or (c != player and world.ally[player * world.nation_count + c] == 0):
+				continue
+			var base := world.p_naval_base[p] == 1
+			if base or Forces.is_port(world, p):
+				out.append([PORT, _wp(p), base])
+	# планы высадок и войска в море
+	for plan in world.invasions:
+		if plan.alive and plan.owner == player:
+			out.append([PLAN, _wp(plan.port), _wp(plan.target), plan.days_left])
+	for d in world.divisions:
+		if d.alive and d.transit_days > 0:
+			var t := 1.0 - float(d.transit_days) / maxf(1.0, d.transit_total)
+			out.append([TRANSIT, _wp(d.transit_from), _wp(d.transit_target), t, world.nations[d.owner].color, d.owner == player])
+	# флоты
+	for f in world.fleets:
+		if not f.alive or f.zone < 0:
+			continue
+		var pts := PackedVector2Array()
+		if f.id == sel_fleet:
+			for q in f.path:
+				pts.append(_wp(q))
+		var relevant: bool = f.owner == player or world.is_at_war(player, f.owner)
+		out.append([FLEET, _wp(f.zone), world.nations[f.owner].color, f.mission == "raid", Forces.fleet_size(f),
+			f.id == sel_fleet, f.in_battle, pts, relevant])
+	# авиация игрока (и вражеская при войне): один значок на район и тип
+	var groups := {}
+	for wg in world.wings:
+		if not wg.alive or wg.region < 0:
+			continue
+		if wg.owner != player and not world.is_at_war(player, wg.owner):
+			continue
+		var key := "%d:%d:%d" % [wg.region, 0 if wg.owner == player else 1, wg.kind]
+		if not groups.has(key):
+			groups[key] = [wg.region, wg.owner, wg.kind, 0.0, false]
+		groups[key][3] += wg.planes
+		if wg.id == sel_wing:
+			groups[key][4] = true
+	for key in groups:
+		var g: Array = groups[key]
+		var mine: bool = g[1] == player
+		out.append([PLANES, _wp(world.region_anchor[g[0]]), world.nations[g[1]].color if mine else Color(0.9, 0.3, 0.25),
+			g[2], g[4], int(g[3]), mine])
+
+
+func _draw() -> void:
+	if map == null:
+		return
+	var z := map.zoom_level()
+	var vp := get_viewport_rect().size
+	var screen := Rect2(Vector2.ZERO, vp).grow(40)
+	var counter := Vector2(34, 22) * clampf(0.75 + z * 0.25, 0.8, 1.5)
+	var font_size := int(clampf(12 + z * 2, 12, 20))
+	for it in items:
+		match it[0]:
+			LABEL:
+				_draw_label(it, z)
+			ARROW:
+				if not it[5] and z < 1.4:
+					continue
+				var wpts: PackedVector2Array = it[1]
+				var pts := PackedVector2Array()
+				for wpt in wpts:
+					pts.append(map.world_to_screen(wpt))
+				var col: Color = it[2]
+				draw_polyline(pts, col, 3.0 if it[3] else 2.0, true)
+				var tip := pts[pts.size() - 1]
+				var dir := (tip - pts[pts.size() - 2]).normalized()
+				var side := Vector2(-dir.y, dir.x)
+				draw_colored_polygon(PackedVector2Array([tip, tip - dir * 11 + side * 6, tip - dir * 11 - side * 6]), col)
+				draw_circle(pts[0].lerp(pts[1], it[4]), 3.0, col)
+			FRONT:
+				var a := map.world_to_screen(it[1])
+				var b := map.world_to_screen(it[2])
+				var m := (a + b) * 0.5
+				if not screen.has_point(m):
+					continue
+				var dir := b - a
+				var side := Vector2(-dir.y, dir.x).normalized() * minf(dir.length() * 0.45, 40.0)
+				draw_line(m - side, m + side, Color(it[3], 0.9), 5.0)
+				draw_line(m - side, m + side, Color(0, 0, 0, 0.35), 1.5)
+			OBJECTIVE:
+				var c := map.world_to_screen(it[1])
+				var col: Color = it[2]
+				draw_arc(c, 16, 0, TAU, 24, col, 4.0)
+				draw_line(c + Vector2(-22, 0), c + Vector2(22, 0), col, 2.0)
+				draw_line(c + Vector2(0, -22), c + Vector2(0, 22), col, 2.0)
+			BATTLE:
+				var c := map.world_to_screen(it[1]) + Vector2(0, -counter.y)
+				if not screen.has_point(c):
+					continue
+				var r := 9.0 + sin(Time.get_ticks_msec() * 0.008) * 1.5
+				draw_circle(c, r + 2, Color(0.1, 0.05, 0.05, 0.8))
+				draw_circle(c, r, Color(0.85, 0.2, 0.15))
+				draw_line(c + Vector2(-5, -5), c + Vector2(5, 5), Color.WHITE, 2.0)
+				draw_line(c + Vector2(5, -5), c + Vector2(-5, 5), Color.WHITE, 2.0)
+			COUNTER:
+				_draw_counter(it, z, counter, font_size, screen)
+			PORT:
+				if z < 0.9:
+					continue
+				var pos := map.world_to_screen(it[1]) + Vector2(-26, 14)
+				if not screen.has_point(pos):
+					continue
+				if it[2]:
+					_anchor_icon(pos)
+				else:
+					draw_circle(pos, 4.5, Color(0.05, 0.05, 0.05, 0.85))
+					draw_circle(pos, 3.0, Color(0.55, 0.85, 1.0))
+			PLAN:
+				var a := map.world_to_screen(it[1])
+				var b := map.world_to_screen(it[2])
+				draw_dashed_line(a, b, Color(0.4, 0.8, 1.0, 0.85), 2.5, 8.0)
+				draw_string(font, b + Vector2(8, -6), "%d дн." % it[3] if it[3] > 0 else "готово",
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.6, 0.9, 1.0))
+			TRANSIT:
+				if not it[5] and z <= 0.8:
+					continue
+				var a := map.world_to_screen(it[1])
+				var b := map.world_to_screen(it[2])
+				draw_line(a, b, Color(1, 1, 1, 0.4), 1.5)
+				_ship_icon(a.lerp(b, it[3]), it[4], 0.8)
+			FLEET:
+				if not it[8] and z < 0.6:
+					continue
+				var c := map.world_to_screen(it[1])
+				if it[3]:
+					c += Vector2(0, 16)
+				if not screen.has_point(c):
+					continue
+				var wpts: PackedVector2Array = it[7]
+				if not wpts.is_empty():
+					var pts := PackedVector2Array([c])
+					for wpt in wpts:
+						pts.append(map.world_to_screen(wpt))
+					draw_polyline(pts, Color(0.6, 0.9, 1.0), 2.5)
+				_ship_icon(c, it[2], 0.8 if it[3] else 1.0)
+				if it[5]:
+					draw_arc(c, 18, 0, TAU, 20, Color.WHITE, 2.0)
+				draw_string(font, c + Vector2(13, 5), str(it[4]), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
+				if it[6]:
+					draw_circle(c + Vector2(-14, -10), 5, Color(0.9, 0.2, 0.1))
+			PLANES:
+				var c := map.world_to_screen(it[1]) + Vector2(-30 + (0 if it[6] else 56), -34 - it[3] * 18)
+				if not screen.has_point(c):
+					continue
+				_plane_icon(c, it[2], it[3], it[4])
+				draw_string_outline(font, c + Vector2(14, 5), str(it[5]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, 3, Color.BLACK)
+				draw_string(font, c + Vector2(14, 5), str(it[5]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+
+
+func _draw_counter(it: Array, z: float, counter: Vector2, font_size: int, screen: Rect2) -> void:
+	var base := map.world_to_screen(it[1])
+	if not screen.has_point(base):
+		return
+	var nat_col: Color = it[3]
+	if z < 0.55 and not it[11]:
+		draw_rect(Rect2(base - Vector2(4, 4), Vector2(8, 8)), nat_col.darkened(0.35))
+		return
+	var pos: Vector2 = base + Vector2(it[2] * (counter.x + 4), 0) - counter * 0.5
+	var any_sel: bool = it[8]
+	var rect := Rect2(pos, counter)
+	draw_rect(Rect2(pos + Vector2(2, 2), counter), Color(0, 0, 0, 0.35))
+	draw_rect(rect, nat_col.darkened(0.15))
+	var icon_rect := Rect2(pos + Vector2(2, 2), Vector2(counter.x * 0.42, counter.y - 4))
+	draw_rect(icon_rect, nat_col.lightened(0.35))
+	_draw_icon(icon_rect, it[5], Color(0.08, 0.08, 0.08))
+	draw_rect(rect, Color.WHITE if any_sel else Color(0.08, 0.08, 0.08), false, 2.5 if any_sel else 1.5)
+	draw_string(font, pos + Vector2(counter.x * 0.44, counter.y * 0.5 + font_size * 0.36), str(it[4]),
+		HORIZONTAL_ALIGNMENT_CENTER, counter.x * 0.56, font_size, Color(0.05, 0.05, 0.05))
+	var grp: Color = it[9]
+	if grp.a > 0.0:
+		draw_rect(Rect2(pos + Vector2(0, -4), Vector2(counter.x, 3)), grp)
+	if it[10]:
+		# нет снабжения: красный восклицательный знак
+		var c2 := pos + Vector2(counter.x + 6, 4)
+		draw_circle(c2, 7, Color(0.85, 0.15, 0.1))
+		draw_string(font, c2 + Vector2(-3, 5), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
+	# полоски: зелёная — сила, жёлтая — организация
+	var bw := counter.x
+	draw_rect(Rect2(pos + Vector2(0, counter.y + 1), Vector2(bw, 3)), Color(0, 0, 0, 0.6))
+	draw_rect(Rect2(pos + Vector2(0, counter.y + 1), Vector2(bw * it[6], 3)), Color(0.35, 0.85, 0.35))
+	draw_rect(Rect2(pos + Vector2(0, counter.y + 4), Vector2(bw, 3)), Color(0, 0, 0, 0.6))
+	draw_rect(Rect2(pos + Vector2(0, counter.y + 4), Vector2(bw * it[7], 3)), Color(0.95, 0.8, 0.25))
+
+
+func _draw_label(l: Array, z: float) -> void:
 	if z > 1.6:
 		return
-	if _labels_day < 0 or world.day - _labels_day >= 5 or world.day < _labels_day:
-		_rebuild_labels()
-	for l in _labels:
-		var pos := map.world_to_screen(l[0])
-		var size := int(clampf(l[2] * z, 12, 60))
-		var w := font.get_string_size(l[1], HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
-		var fit: float = l[3] * z * 0.95
-		if w > fit and w > 0.0:
-			size = int(size * fit / w)
-			w = font.get_string_size(l[1], HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	var pos := map.world_to_screen(l[1])
+	var size := int(clampf(l[3] * z, 12, 60))
+	var w := font.get_string_size(l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	var fit: float = l[4] * z * 0.95
+	if w > fit and w > 0.0:
+		size = int(size * fit / w)
 		if size < 11:
-			continue
-		var alpha := clampf((1.6 - z) * 2.0, 0.0, 0.75)
-		draw_string_outline(font, pos - Vector2(w * 0.5, 0), l[1], HORIZONTAL_ALIGNMENT_LEFT, -1, size, 4, Color(1, 1, 1, alpha * 0.4))
-		draw_string(font, pos - Vector2(w * 0.5, 0), l[1], HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0.08, 0.07, 0.06, alpha))
+			return
+		w = font.get_string_size(l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	if size < 11:
+		return
+	var alpha := clampf((1.6 - z) * 2.0, 0.0, 0.75)
+	draw_string_outline(font, pos - Vector2(w * 0.5, 0), l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size, 4, Color(1, 1, 1, alpha * 0.4))
+	draw_string(font, pos - Vector2(w * 0.5, 0), l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0.08, 0.07, 0.06, alpha))
 
 
 func _rebuild_labels() -> void:
@@ -248,92 +398,6 @@ func _draw_icon(r: Rect2, tpl: int, col: Color) -> void:
 			draw_polyline(pts, col, 1.5)
 
 
-func _draw_navy_air(z: float, vp: Vector2) -> void:
-	var screen := Rect2(Vector2.ZERO, vp).grow(40)
-	var game = get_tree().current_scene if get_tree() else null
-	var sel_fleet: int = game.selected_fleet if game != null and "selected_fleet" in game else -1
-	var sel_wing: int = game.selected_wing if game != null and "selected_wing" in game else -1
-	# порты и военно-морские базы (свои и союзные) при приближении
-	if z >= 0.9 and player >= 0 and world.p_naval_base.size() == world.prov_count:
-		for p in world.prov_count:
-			if world.p_land[p] == 0 or world.p_coastal[p] == 0:
-				continue
-			var c := world.p_controller[p]
-			if c < 0 or (c != player and world.ally[player * world.nation_count + c] == 0):
-				continue
-			var base := world.p_naval_base[p] == 1
-			if not base and not Forces.is_port(world, p):
-				continue
-			var pos := map.world_to_screen(map.province_world_pos(p)) + Vector2(-26, 14)
-			if not screen.has_point(pos):
-				continue
-			if base:
-				_anchor_icon(pos)
-			else:
-				draw_circle(pos, 4.5, Color(0.05, 0.05, 0.05, 0.85))
-				draw_circle(pos, 3.0, Color(0.55, 0.85, 1.0))
-	# планы высадок и войска в море
-	for plan in world.invasions:
-		if plan.alive and plan.owner == player:
-			var a := map.world_to_screen(map.province_world_pos(plan.port))
-			var b := map.world_to_screen(map.province_world_pos(plan.target))
-			draw_dashed_line(a, b, Color(0.4, 0.8, 1.0, 0.85), 2.5, 8.0)
-			draw_string(font, b + Vector2(8, -6), "%d дн." % plan.days_left if plan.days_left > 0 else "готово",
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.6, 0.9, 1.0))
-	for d in world.divisions:
-		if d.alive and d.transit_days > 0 and (d.owner == player or z > 0.8):
-			var a := map.world_to_screen(map.province_world_pos(d.transit_from))
-			var b := map.world_to_screen(map.province_world_pos(d.transit_target))
-			var t := 1.0 - float(d.transit_days) / maxf(1.0, d.transit_total)
-			draw_line(a, b, Color(1, 1, 1, 0.4), 1.5)
-			_ship_icon(a.lerp(b, t), world.nations[d.owner].color, 0.8)
-	# флоты
-	for f in world.fleets:
-		if not f.alive or f.zone < 0:
-			continue
-		if f.owner != player and z < 0.6 and not world.is_at_war(player, f.owner):
-			continue
-		var c := map.world_to_screen(map.province_world_pos(f.zone))
-		if f.mission == "raid":
-			c += Vector2(0, 16)
-		if not screen.has_point(c):
-			continue
-		if f.id == sel_fleet and not f.path.is_empty():
-			var pts := PackedVector2Array([c])
-			for q in f.path:
-				pts.append(map.world_to_screen(map.province_world_pos(q)))
-			draw_polyline(pts, Color(0.6, 0.9, 1.0), 2.5)
-		_ship_icon(c, world.nations[f.owner].color, 1.0 if f.mission != "raid" else 0.8)
-		if f.id == sel_fleet:
-			draw_arc(c, 18, 0, TAU, 20, Color.WHITE, 2.0)
-		draw_string(font, c + Vector2(13, 5), str(Forces.fleet_size(f)), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
-		if f.in_battle:
-			draw_circle(c + Vector2(-14, -10), 5, Color(0.9, 0.2, 0.1))
-	# авиация игрока (и вражеская при войне): один значок на район и тип
-	var groups := {}
-	for wg in world.wings:
-		if not wg.alive or wg.region < 0:
-			continue
-		if wg.owner != player and not world.is_at_war(player, wg.owner):
-			continue
-		var key := "%d:%d:%d" % [wg.region, 0 if wg.owner == player else 1, wg.kind]
-		if not groups.has(key):
-			groups[key] = [wg.region, wg.owner, wg.kind, 0.0, false]
-		groups[key][3] += wg.planes
-		if wg.id == sel_wing:
-			groups[key][4] = true
-	for key in groups:
-		var g: Array = groups[key]
-		var anchor: int = world.region_anchor[g[0]]
-		var mine: bool = g[1] == player
-		var c := map.world_to_screen(map.province_world_pos(anchor)) + Vector2(-30 + (0 if mine else 56), -34 - g[2] * 18)
-		if not screen.has_point(c):
-			continue
-		_plane_icon(c, world.nations[g[1]].color if mine else Color(0.9, 0.3, 0.25), g[2], g[4])
-		draw_string_outline(font, c + Vector2(14, 5), str(int(g[3])), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, 3, Color.BLACK)
-		draw_string(font, c + Vector2(14, 5), str(int(g[3])), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
-
-
 func _anchor_icon(c: Vector2) -> void:
 	var dark := Color(0.05, 0.05, 0.05, 0.9)
 	var col := Color(0.7, 0.9, 1.0)
@@ -352,7 +416,7 @@ func _ship_icon(c: Vector2, col: Color, s: float) -> void:
 	draw_rect(Rect2(c + Vector2(-3, -7) * s, Vector2(6, 5) * s), col.darkened(0.4))
 
 
-func _plane_icon(c: Vector2, col: Color, kind: int, selected: bool) -> void:
+func _plane_icon(c: Vector2, col: Color, kind: int, selected_icon: bool) -> void:
 	var wing := 9.0 if kind == 0 else 12.0
 	var dark := Color(0.05, 0.05, 0.05, 0.9)
 	draw_line(c + Vector2(0, -8), c + Vector2(0, 8), dark, 5.0)
@@ -362,5 +426,5 @@ func _plane_icon(c: Vector2, col: Color, kind: int, selected: bool) -> void:
 	draw_line(c + Vector2(0, -7), c + Vector2(0, 7), col, 3.0)
 	draw_line(c + Vector2(-wing, -1), c + Vector2(wing, -1), col, 3.0)
 	draw_line(c + Vector2(-4, 6), c + Vector2(4, 6), col, 2.0)
-	if selected:
+	if selected_icon:
 		draw_arc(c, 14, 0, TAU, 20, Color.WHITE, 2.0)

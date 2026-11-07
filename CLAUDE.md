@@ -63,7 +63,20 @@
   мелко, восток СССР/пустыни крупно); сейчас ~1170 суши + ~150 морских зон.
 - Скорости 1–5: 0.5/1/2/4 дня в секунду и максимум; симуляции дан бюджет 8 мс
   на кадр (`SIM_BUDGET_USEC` в main.gd) — слабое устройство идёт медленнее, но
-  без рывков. Тик ~3–7 мс на ПК; потоки пока не ускоряют тик — этап 7.
+  без рывков.
+- Этап 7 (производительность) сделан, ждёт «ок». Симуляция идёт в фоновом
+  потоке (`main.gd`: `sim_thread`, `sim_mutex`, `sim_sem`; до `MAX_PENDING`
+  дней в очереди). Любое изменение мира из интерфейса — только между
+  `game.world_lock()` / `game.world_unlock()` (кнопки HUD, фокусы, касания карты);
+  интерфейс обновляется через `try_lock`, `UnitLayer.rebuild()` собирает
+  список отрисовки под замком, `_draw` читает только его. ИИ — раз в
+  `AI_PERIOD`=3 дня по снимку дивизий (`World.snapshot_divisions`: `dv_*`,
+  CSR `pd_start/pd_list`). Тик ~19 мс к 1940 г. (~1000 дивизий) на ПК.
+- C++: `native/` — GDExtension `MeowqCore` (supply_bfs, land_dist), сборка
+  `cd native && scons platform=linux|android ...` (нужен godot-cpp 4.3 в
+  `native/godot-cpp`); после сборки манифест `meowq.gdextension` копируется
+  в корень. Обёртка `scripts/sim/native.gd`: без библиотеки тот же алгоритм на
+  GDScript, результаты обязаны совпадать (sim_bench).
 
 ## Карта
 - Собирается на ПК: `python3 tools/build_map.py --ne <папка с GeoJSON Natural Earth> [--preview out.png]`
@@ -87,6 +100,9 @@
 - Военная система: `godot --headless --path . --script res://tests/military_check.gd`
 - Дипломатия (правила + прогон лет): `godot --headless --path . --script res://tests/diplomacy_check.gd -- --years=3`
 - Проверка стартовых данных: `godot --headless --path . --script res://tests/data_check.gd`
+- Производительность: `godot --headless --path . --script res://tests/perf_bench.gd`
+  (разгон до 1940 г., тик по фазам, один поток против многих); в реальном
+  времени: `godot --headless --path . -- --bench_rt=15 [--nation=SWE]`.
 - Тест детерминизма и скорости: `godot --headless --path . --script res://tests/sim_bench.gd`
   (`-- --large` — большая карта). Однопоточный и многопоточный результаты
   обязаны совпадать.

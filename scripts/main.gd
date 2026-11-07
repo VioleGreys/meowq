@@ -4,9 +4,9 @@ extends Node
 # Скорости как в стратегиях жанра: 1 — неспешно, 5 — «сколько потянет
 # процессор». Игровых дней в секунду; INF — максимум.
 const SPEEDS := [0.0, 0.5, 1.0, 2.0, 4.0, INF]
-# Бюджет симуляции на кадр: если телефон не успевает, игра идёт медленнее,
-# а картинка остаётся плавной (интерфейс и карта не подтормаживают).
-const SIM_BUDGET_USEC := 8000
+# Симуляция идёт в фоновом потоке; очередь не больше MAX_PENDING дней: если
+# телефон не успевает, игра идёт медленнее, а картинка остаётся плавной.
+const MAX_PENDING := 3
 
 var world: World
 var sim: Simulation
@@ -24,6 +24,22 @@ var selected_group := -1         # выбранная армия: касание
 var selected_fleet := -1         # выбранный флот: касание моря — куда идти
 var selected_wing := -1          # выбранное авиакрыло: касание карты — район задачи
 var pick_nation := -1
+
+# --- Фоновый поток симуляции --------------------------------------------------
+# Мир меняет только поток симуляции (под sim_mutex). Главный поток читает мир
+# только под тем же мьютексом: интерфейс и список отрисовки обновляются, когда
+# мьютекс свободен (try_lock), а действия игрока ждут конца текущего дня.
+var sim_thread: Thread
+var sim_mutex := Mutex.new()       # рекурсивный: вложенные блокировки безопасны
+var sim_sem := Semaphore.new()     # один post — один игровой день
+var _pending_mutex := Mutex.new()
+var _pending := 0
+var _quitting := false
+var ticks_done := 0
+var _ticks_seen := 0
+var _rate_time := 0.0
+var _rate_ticks := 0
+var _layer_dirty := true
 var large_map := false
 var procedural := false          # старая процедурная карта (для тестов): -- --procedural
 
@@ -42,9 +58,13 @@ func _ready() -> void:
 	add_child(hud)
 	map_view.province_tapped.connect(_on_province_tapped)
 	procedural = "--procedural" in OS.get_cmdline_user_args()
+	sim_thread = Thread.new()
+	sim_thread.start(_sim_loop)
 	await new_world(randi() % 100000 if _arg("seed") == "" else int(_arg("seed")))
 	if _arg("screenshot") != "":
 		_auto_screenshot(_arg("screenshot"))
+	elif _arg("bench_rt") != "":
+		_bench_realtime(float(_arg("bench_rt")))
 
 
 func _arg(name: String) -> String:
@@ -55,7 +75,67 @@ func _arg(name: String) -> String:
 
 
 ## Отладка/CI: godot -- --screenshot=out.png [--days=N] [--zoom=Z] [--select]
+## Замер в реальном времени: игра на максимальной скорости, время кадра главного
+## потока (без отрисовки) и дни в секунду. -- --bench_rt=15 [--nation=GER] [--from=1939-09-01]
+func _bench_realtime(seconds: float) -> void:
+	var me := nation_by_tag(_arg("nation")) if _arg("nation") != "" else 0
+	world_lock()
+	start_as(me)
+	if _arg("from") != "":
+		while world.day < world.day_of(_arg("from")):
+			if not world.pending_peace.is_empty():
+				sim.resolve_peace("annex")
+			world.pending_events.clear()
+			sim.tick()
+		world.events.clear()
+	world_unlock()
+	speed = SPEEDS.size() - 1
+	var start_day := ticks_done
+	var t0 := Time.get_ticks_msec()
+	var frames := 0
+	var worst := 0
+	var total := 0
+	while Time.get_ticks_msec() - t0 < seconds * 1000.0:
+		var f0 := Time.get_ticks_usec()
+		await get_tree().process_frame
+		var ft := Time.get_ticks_usec() - f0
+		frames += 1
+		total += ft
+		worst = maxi(worst, ft)
+		if not world.pending_events.is_empty() or not world.pending_peace.is_empty():
+			world_lock()
+			if not world.pending_events.is_empty():
+				sim.resolve_event(0)
+			if not world.pending_peace.is_empty():
+				sim.resolve_peace("annex")
+			world_unlock()
+			speed = SPEEDS.size() - 1
+	var days := ticks_done - start_day
+	print("BENCH_RT: %.1f с, дней %d (%.1f дн/с), кадров %d, средний кадр %.2f мс, худший %.2f мс, ядер %d" % [
+		seconds, days, days / seconds, frames, total / 1000.0 / maxi(1, frames), worst / 1000.0, Parallel.thread_count()])
+	speed = 0
+	_shutdown()
+	get_tree().quit()
+
+
 func _auto_screenshot(path: String) -> void:
+	world_lock()
+	_auto_screenshot_locked()
+	world_unlock()
+	for i in 10:
+		await get_tree().process_frame
+	world_lock()
+	hud.refresh_top()
+	unit_layer.rebuild(selected_fleet, selected_wing)
+	world_unlock()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	get_viewport().get_texture().get_image().save_png(path)
+	_shutdown()
+	get_tree().quit()
+
+
+func _auto_screenshot_locked() -> void:
 	var days := int(_arg("days")) if _arg("days") != "" else 0
 	var me := 0
 	if _arg("nation") != "" and nation_by_tag(_arg("nation")) >= 0:
@@ -117,20 +197,19 @@ func _auto_screenshot(path: String) -> void:
 		pick(me)
 		if _arg("tab") != "":
 			hud.open_tab(_arg("tab"))
-	for i in 10:
-		await get_tree().process_frame
-	hud.refresh_top()
-	await get_tree().process_frame
-	get_viewport().get_texture().get_image().save_png(path)
-	get_tree().quit()
+
 
 
 func new_world(seed_value: int) -> void:
+	world_lock()
 	state = "loading"
 	speed = 0
+	_accum = 0.0
+	world_unlock()
 	hud.show_loading()
 	await get_tree().process_frame
 	await get_tree().process_frame
+	world_lock()
 	world = World.new()
 	var t := Time.get_ticks_msec()
 	if procedural:
@@ -149,6 +228,8 @@ func new_world(seed_value: int) -> void:
 	selected_prov = -1
 	pick_nation = -1
 	state = "select"
+	unit_layer.rebuild()
+	world_unlock()
 	if procedural:
 		hud.gen_info = "Карта #%d: %d провинций, сгенерирована за %d мс на %d ядрах" % [seed_value, world.prov_count, load_ms, Parallel.thread_count()]
 	else:
@@ -186,9 +267,79 @@ func player() -> int:
 	return unit_layer.player
 
 
+func world_lock() -> void:
+	sim_mutex.lock()
+
+
+func world_unlock() -> void:
+	_layer_dirty = true
+	sim_mutex.unlock()
+
+
+## Цикл фонового потока: ждёт заказанный день, считает его под мьютексом.
+func _sim_loop() -> void:
+	while true:
+		sim_sem.wait()
+		if _quitting:
+			return
+		sim_mutex.lock()
+		if state == "play" and sim != null:
+			sim.tick()
+			ticks_done += 1
+		sim_mutex.unlock()
+		_pending_mutex.lock()
+		_pending = maxi(0, _pending - 1)
+		_pending_mutex.unlock()
+
+
+func _request_days(n: int) -> void:
+	_pending_mutex.lock()
+	_pending += n
+	_pending_mutex.unlock()
+	for i in n:
+		sim_sem.post()
+
+
+func _pending_days() -> int:
+	_pending_mutex.lock()
+	var v := _pending
+	_pending_mutex.unlock()
+	return v
+
+
 func _process(dt: float) -> void:
 	if state != "play":
 		return
+	# заказ дней фоновому потоку по выбранной скорости
+	if speed > 0:
+		var unlimited: bool = SPEEDS[speed] == INF
+		var pending := _pending_days()
+		if unlimited:
+			if pending < 2:
+				_request_days(2 - pending)
+		else:
+			_accum += dt * SPEEDS[speed]
+			var want := int(_accum)
+			if want > 0:
+				_accum -= want
+				var room := maxi(0, MAX_PENDING - pending)
+				if room > 0:
+					_request_days(mini(want, room))
+			_accum = minf(_accum, 1.0)   # не копим долг: отставшая симуляция идёт медленнее
+	# фактическая скорость
+	_rate_time += dt
+	if _rate_time >= 1.0:
+		var t := ticks_done
+		days_per_sec = lerpf(days_per_sec, (t - _rate_ticks) / _rate_time, 0.5)
+		_rate_ticks = t
+		_rate_time = 0.0
+	# интерфейс и список отрисовки — только когда мир не занят симуляцией
+	if sim_mutex.try_lock():
+		_ui_update()
+		sim_mutex.unlock()
+
+
+func _ui_update() -> void:
 	if world.game_over != "":
 		state = "over"
 		hud.show_game_over(world.game_over)
@@ -196,34 +347,23 @@ func _process(dt: float) -> void:
 	if not world.pending_events.is_empty():
 		if hud.popup_tab != "event" or not hud.popup.visible:
 			speed = 0
+			_accum = 0.0
 			hud.open_tab("event")
-		hud.refresh_top()
-		return
-	if not world.pending_peace.is_empty():
+	elif not world.pending_peace.is_empty():
 		if hud.popup_tab != "peace" or not hud.popup.visible:
 			speed = 0
+			_accum = 0.0
 			hud.open_tab("peace")
-		hud.refresh_top()
-		return
-	if speed > 0:
-		var unlimited: bool = SPEEDS[speed] == INF
-		if not unlimited:
-			_accum += dt * SPEEDS[speed]
-		var n := 0
-		var start := Time.get_ticks_usec()
-		while (unlimited or _accum >= 1.0) and Time.get_ticks_usec() - start < SIM_BUDGET_USEC:
-			if not unlimited:
-				_accum -= 1.0
-			sim.tick()
-			n += 1
-			if world.game_over != "":
-				break
-		# не копим долг: отставшая симуляция просто идёт медленнее
-		_accum = minf(_accum, 1.0)
-		days_per_sec = lerpf(days_per_sec, n / maxf(dt, 0.001), 0.05)
-		if n > 0:
-			_prune_selection()
-			hud.on_tick()
+	var new_day := ticks_done != _ticks_seen
+	if new_day:
+		_ticks_seen = ticks_done
+		_prune_selection()
+		hud.on_tick()
+	if world.palette_dirty:
+		map_view.update_palette()
+	if new_day or _layer_dirty:
+		unit_layer.rebuild(selected_fleet, selected_wing)
+		_layer_dirty = false
 	hud.refresh_top()
 
 
@@ -240,6 +380,12 @@ func _prune_selection() -> void:
 # --- Ввод с карты ------------------------------------------------------------
 
 func _on_province_tapped(p: int) -> void:
+	world_lock()
+	_on_province_tapped_locked(p)
+	world_unlock()
+
+
+func _on_province_tapped_locked(p: int) -> void:
 	if state == "select":
 		if world.p_land[p] == 1:
 			pick(world.p_owner[p])
@@ -467,6 +613,18 @@ func hud_changed() -> void:
 
 func set_map_mode(m: int) -> void:
 	map_view.set_map_mode(m)
+
+
+func _shutdown() -> void:
+	if sim_thread != null and sim_thread.is_started():
+		_quitting = true
+		sim_sem.post()
+		sim_thread.wait_to_finish()
+		sim_thread = null
+
+
+func _exit_tree() -> void:
+	_shutdown()
 
 
 func _notification(what: int) -> void:

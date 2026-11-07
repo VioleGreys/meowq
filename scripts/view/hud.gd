@@ -106,7 +106,13 @@ func _button(text: String, cb: Callable, min_size := Vector2(0, 56)) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.custom_minimum_size = min_size
-	b.pressed.connect(cb)
+	# действия игрока меняют мир — выполняем под блокировкой (ждём конца дня)
+	b.pressed.connect(func():
+		if game != null:
+			game.world_lock()
+		cb.call()
+		if game != null:
+			game.world_unlock())
 	return b
 
 

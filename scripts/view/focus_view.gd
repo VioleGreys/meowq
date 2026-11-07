@@ -56,7 +56,10 @@ func _ready() -> void:
 	start_btn = Button.new()
 	start_btn.text = "Начать"
 	start_btn.custom_minimum_size = Vector2(150, 60)
-	start_btn.pressed.connect(_start)
+	start_btn.pressed.connect(func():
+		game.world_lock()
+		_start()
+		game.world_unlock())
 	bottom.add_child(start_btn)
 
 
@@ -86,7 +89,10 @@ func _rebuild() -> void:
 		b.position = _pos(fd)
 		b.size = NODE
 		var id: String = fd["id"]
-		b.pressed.connect(func(): _select(id))
+		b.pressed.connect(func():
+			game.world_lock()
+			_select(id)
+			game.world_unlock())
 		tree.add_child(b)
 		_buttons[id] = b
 	tree.custom_minimum_size = Vector2((max_x + 1) * (NODE.x + GAP.x) + GAP.x, (max_y + 1) * (NODE.y + GAP.y) + GAP.y)

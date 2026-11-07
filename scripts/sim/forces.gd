@@ -139,11 +139,18 @@ static func home_zone(world: World, n: int) -> int:
 ## Порт — прибрежный город (точка снабжения и переправы), военно-морская база
 ## или действующий плацдарм высадки.
 static func is_port(world: World, p: int) -> bool:
-	if world.p_land[p] == 0 or world.p_coastal[p] == 0:
-		return false
-	if world.p_vp[p] >= 3 or (world.p_naval_base.size() > p and world.p_naval_base[p] == 1):
+	if world.p_port.size() != world.prov_count:
+		refresh_ports(world)
+	if world.p_port[p] == 1:
 		return true
-	return world.beachheads.has(p) and int(world.beachheads[p]) >= world.day
+	return not world.beachheads.is_empty() and world.beachheads.has(p) and int(world.beachheads[p]) >= world.day
+
+
+static func refresh_ports(world: World) -> void:
+	world.p_port.resize(world.prov_count)
+	for p in world.prov_count:
+		var base := world.p_naval_base.size() > p and world.p_naval_base[p] == 1
+		world.p_port[p] = 1 if world.p_land[p] == 1 and world.p_coastal[p] == 1 and (world.p_vp[p] >= 3 or base) else 0
 
 
 ## Ближайшая военно-морская база стороны страны n (морская зона рядом с ней).
@@ -849,7 +856,17 @@ static func wing_in_range(world: World, w: World.AirWing, region: int) -> bool:
 
 
 ## Районы в радиусе действия авиации стороны (от своих и союзных провинций).
+## Кэш на 10 дней: граница меняется медленно.
 static func regions_in_range(world: World, n: int) -> Dictionary:
+	var cached = world.air_range_cache.get(n)
+	if cached != null and int(cached[0]) > world.day - 10:
+		return cached[1]
+	var res := _regions_in_range(world, n)
+	world.air_range_cache[n] = [world.day, res]
+	return res
+
+
+static func _regions_in_range(world: World, n: int) -> Dictionary:
 	var nc := world.nation_count
 	var own_regions := {}
 	for p in world.prov_count:
@@ -986,46 +1003,58 @@ static func _bomb_factories(world: World, w: World.AirWing, r: int, sup: float, 
 ## бомбардировщики — по заводам врага, до которого не дойти по суше.
 static func ai_air(world: World, n: int) -> void:
 	var nat: World.Nation = world.nations[n]
+	var has_wing := false
+	for w in world.wings:
+		if w.alive and w.owner == n:
+			has_wing = true
+			break
+	if not has_wing:
+		return
 	var front_count := {}
-	var land_enemies := Diplomacy.reachable_neighbours(world, n)
-	for p in world.prov_count:
-		if world.p_controller[p] != n:
-			continue
-		for q in world.p_adj[p]:
-			var c := world.p_controller[q]
-			if c >= 0 and world.is_at_war(n, c):
-				var r: int = world.p_region[p]
-				front_count[r] = int(front_count.get(r, 0)) + 1
-				break
+	if not nat.at_war.is_empty():
+		var ctrl := world.p_controller
+		var a_start := world.adj_start
+		var a_list := world.adj_list
+		var war := world.war
+		var nc := world.nation_count
+		var region := world.p_region
+		for p in world.prov_count:
+			if ctrl[p] != n:
+				continue
+			for k in range(a_start[p], a_start[p + 1]):
+				var c := ctrl[a_list[k]]
+				if c >= 0 and c != n and war[n * nc + c] == 1:
+					var r: int = region[p]
+					front_count[r] = int(front_count.get(r, 0)) + 1
+					break
 	var main := world.p_region[nat.capital]
 	var best := 0
 	for r in front_count:
 		if front_count[r] > best:
 			best = front_count[r]
 			main = r
-	# цель стратегических бомбардировок — столица врага за морем
+	# цель стратегических бомбардировок — столица врага за морем (только если нет фронта)
 	var bomb_target := -1
-	for e in nat.at_war:
-		if not land_enemies.has(e) and world.nations[e].alive:
-			bomb_target = world.p_region[world.nations[e].capital]
-			break
+	if front_count.is_empty() and not nat.at_war.is_empty():
+		var land_enemies := Diplomacy.reachable_neighbours(world, n)
+		for e in nat.at_war:
+			if not land_enemies.has(e) and world.nations[e].alive:
+				bomb_target = world.p_region[world.nations[e].capital]
+				break
 	var regions := front_count.keys()
 	regions.sort_custom(func(a, b): return front_count[a] > front_count[b])
-	var reach := regions_in_range(world, n)
-	var k := 0
+	var reach := regions_in_range(world, n) if bomb_target >= 0 else {}
+	var k2 := 0
 	for w in world.wings:
 		if not w.alive or w.owner != n:
 			continue
 		var target := main
 		if regions.size() > 1:
-			target = regions[k % mini(3, regions.size())]
-		k += 1
-		if w.kind == 1 and bomb_target >= 0 and front_count.is_empty() and reach.has(bomb_target):
+			target = regions[k2 % mini(3, regions.size())]
+		k2 += 1
+		if bomb_target >= 0 and reach.has(bomb_target):
 			w.region = bomb_target
-			w.mission = "bomb"
-		elif w.kind == 0 and bomb_target >= 0 and front_count.is_empty() and reach.has(bomb_target):
-			w.region = bomb_target
-			w.mission = "sup"
+			w.mission = "bomb" if w.kind == 1 else "sup"
 		else:
 			w.region = target
 			w.mission = "sup" if w.kind == 0 else "cas"

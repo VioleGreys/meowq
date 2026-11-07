@@ -15,6 +15,7 @@ var phase_usec := {}
 
 
 func _init(w: World) -> void:
+	Native.init()
 	world = w
 	refresh_income()
 	# процедурный мир и прочие сценарии без линий: доктринные линии и базовый склад
@@ -47,26 +48,28 @@ func tick() -> void:
 		return
 	var t0 := Time.get_ticks_usec()
 	world.day += 1
-	world.rebuild_prov_divs()
-	world.refresh_stats()
-	# характеристики дивизий меняются только с новыми технологиями
-	for d in world.divisions:
-		if world.nations[d.owner].stats_dirty:
-			Military.refresh_division(world, d)
-	for nat in world.nations:
-		nat.stats_dirty = false
-	_refresh_sides()
+	_timed("подготовка", func():
+		world.rebuild_prov_divs()
+		world.refresh_stats()
+		# характеристики дивизий меняются только с новыми технологиями
+		for d in world.divisions:
+			if world.nations[d.owner].stats_dirty:
+				Military.refresh_division(world, d)
+		for nat in world.nations:
+			nat.stats_dirty = false
+		_refresh_sides())
 	_timed("экономика", _phase_economy)
 	_timed("флот", _phase_navy)
 	_timed("снабжение", _phase_supply)
 	_timed("ИИ", _phase_ai)
 	_timed("авиация", Forces.daily_air.bind(world, Parallel.rng(world.seed_value, world.day, 6001)))
-	var battles := _collect_battles()
+	var battles := {}
+	_timed("сбор боёв", func(): battles.merge(_collect_battles()))
 	_timed("движение", _phase_movement.bind(battles))
 	_timed("бои", _phase_combat.bind(battles))
-	_phase_recovery()
-	_phase_diplomacy()
-	_check_capitulation()
+	_timed("восстановление", _phase_recovery)
+	_timed("дипломатия", _phase_diplomacy)
+	_timed("капитуляции", _check_capitulation)
 	last_tick_usec = Time.get_ticks_usec() - t0
 
 
@@ -222,14 +225,14 @@ func _phase_supply() -> void:
 		hubs[i] = PackedInt32Array()
 		rep_index[reps[i]] = i
 	var ctl := world.p_controller
-	var coastal := world.p_coastal
-	var vp := world.p_vp
+	if world.p_port.size() != world.prov_count:
+		Forces.refresh_ports(world)
 	for nat in world.nations:
 		if nat.alive and ctl[nat.capital] == nat.id and rep_index.has(rep[nat.id]):
 			hubs[rep_index[rep[nat.id]]].append(nat.capital)
 	for p in world.prov_count:
 		var c := ctl[p]
-		if c >= 0 and coastal[p] == 1 and Forces.is_port(world, p) and rep_index.has(rep[c]) and not Forces.port_blockaded(world, c, p):
+		if c >= 0 and world.p_port[p] == 1 and rep_index.has(rep[c]) and not Forces.port_blockaded(world, c, p):
 			hubs[rep_index[rep[c]]].append(p)
 	# плацдармы высадок временно работают как порты
 	for p in world.beachheads.keys():
@@ -241,8 +244,13 @@ func _phase_supply() -> void:
 			hubs[rep_index[rep[c]]].append(p)
 	var results: Array = []
 	results.resize(reps.size())
+	var native: Object = Native.core
 	var task := func(i: int) -> void:
 		var r: int = reps[i]
+		if native != null:
+			results[i] = native.call("supply_bfs", world.adj_start, world.adj_list, world.p_land,
+					world.p_controller, world.ally, nc, r, hubs[i])
+			return
 		var ctrl := world.p_controller
 		var land := world.p_land
 		var ally := world.ally
@@ -298,14 +306,25 @@ func _phase_supply() -> void:
 
 func _phase_ai() -> void:
 	# задания: страны ИИ (раз в AI_PERIOD дней) и армии игрока (через день)
+	# все страны ИИ и армии игрока планируются одной пачкой раз в AI_PERIOD дней:
+	# один снимок дивизий на пачку и крупные задачи — ядра загружены лучше
+	if world.day % AI_PERIOD != 0:
+		return
 	var jobs: Array = []
 	for nat in world.nations:
-		if nat.alive and not nat.is_player and (world.day + nat.id) % AI_PERIOD == 0:
+		if nat.alive and not nat.is_player:
 			jobs.append({"nation": nat.id})
-	if world.day % 2 == 0:
-		jobs.append_array(_group_jobs())
+	jobs.append_array(_group_jobs())
 	if jobs.is_empty():
 		return
+	world.snapshot_divisions()
+	for job in jobs:
+		if job.has("group"):
+			var idx := PackedInt32Array()
+			for i in world.divisions.size():
+				if world.divisions[i].group == job["group"]:
+					idx.append(i)
+			job["divs"] = idx
 	var plans: Array = []
 	plans.resize(jobs.size())
 	var day := world.day
@@ -318,7 +337,7 @@ func _phase_ai() -> void:
 		else:
 			plans[i] = AIPlanner.plan_military(world, job["owner"], job["divs"], job["opts"],
 				Parallel.rng(seed_value, day, 5000 + int(job["group"])))
-	Parallel.run(jobs.size(), task, "ai")
+	Parallel.run(jobs.size(), task, "ai", 3)
 
 	var by_id := {}
 	for d in world.divisions:
@@ -350,17 +369,28 @@ func _phase_ai() -> void:
 
 
 func _phase_navy() -> void:
-	Forces.daily_navy(world, Parallel.rng(world.seed_value, world.day, 6000))
-	Forces.daily_plans(world)
-	Forces.daily_transit(world)
+	_timed("флот:бои", Forces.daily_navy.bind(world, Parallel.rng(world.seed_value, world.day, 6000)))
+	_timed("флот:планы", func():
+		Forces.daily_plans(world)
+		Forces.daily_transit(world))
 	# решения ИИ по флоту, авиации и высадкам — раз в 5 дней на страну
+	var t := Time.get_ticks_usec()
+	var ta := 0
+	var ti := 0
 	for nat in world.nations:
-		if nat.alive and not nat.is_player and (world.day + nat.id) % 5 == 0:
+		if nat.alive and not nat.is_player and (world.day + nat.id) % 10 == 0:
 			Forces.ai_fleets(world, nat.id)
+			var t2 := Time.get_ticks_usec()
 			Forces.ai_air(world, nat.id)
+			ta += Time.get_ticks_usec() - t2
 			if (world.day + nat.id) % 10 == 0:
+				t2 = Time.get_ticks_usec()
 				Forces.ai_invasion(world, nat.id, Parallel.rng(world.seed_value, world.day, 6100 + nat.id))
 				Forces.ai_transfers(world, nat.id)
+				ti += Time.get_ticks_usec() - t2
+	phase_usec["флот:ИИ"] = Time.get_ticks_usec() - t - ta - ti
+	phase_usec["авиа:ИИ"] = ta
+	phase_usec["флот:высадки"] = ti
 
 
 func _ai_train(nat: World.Nation, count: int) -> void:

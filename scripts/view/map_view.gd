@@ -157,9 +157,6 @@ func update_palette() -> void:
 	world.palette_dirty = false
 
 
-func _process(_dt: float) -> void:
-	if world != null and world.palette_dirty:
-		update_palette()
 
 
 # --- Ввод ----------------------------------------------------------------------

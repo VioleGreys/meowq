@@ -229,8 +229,8 @@ static func start_training(nat: World.Nation, t: int) -> bool:
 ## Пополнение дивизии за день: люди и снаряжение со склада; нужна связь
 ## со снабжением.
 static func reinforce(nat: World.Nation, d: World.Division) -> void:
-	if d.supply < 0.3:
-		return
+	if d.supply < 0.3 or (d.eq >= 1.0 and d.strength >= 100.0):
+		return   # полностью укомплектована — быстрый выход
 	var tp: Dictionary = TEMPLATES[d.tpl]
 	var eq: Array = tp["eq"]
 	var rate := 0.04 * (1.0 + nat.b("reinforce")) * d.supply
