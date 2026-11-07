@@ -190,12 +190,6 @@ OVERRIDES = [
     ("ITA", ["GRE"], [(26.6, 35.35), (28.6, 35.35), (28.6, 37.4), (26.6, 37.4)]),
 ]
 
-# Группы для плотности провинций (множитель площади провинции)
-SPARSE_ADM0 = {"MAR": 3.0, "DZA": 3.5, "TUN": 2.5, "LBY": 4.0, "EGY": 3.5, "ISR": 2.0, "PSX": 2.0,
-               "JOR": 3.5, "LBN": 2.0, "SYR": 3.0, "IRQ": 3.5, "SAU": 5.0, "KWT": 4.0, "IRN": 3.5,
-               "TKM": 4.0, "KAZ": 4.0, "UZB": 4.0, "TUR": 1.7, "GEO": 1.6, "ARM": 1.6, "AZE": 1.8,
-               "ISL": 3.0, "RUS": 2.0, "UKR": 1.3, "BLR": 1.3}
-
 MOUNTAIN_HEIGHT = {"ALPS": 1.0, "CAUCASUS MTS.": 1.0, "PYRENEES": 0.85, "HAUT ATLAS": 0.9,
                    "KJØLEN MOUNTAINS": 0.75, "CARPATHIAN MOUNTAINS": 0.65, "Transylvanian Alps": 0.75,
                    "Tatra Mts.": 0.8, "ZAGROS MOUNTAINS": 0.85, "ELBURZ MTS.": 0.9, "Taurus Mts.": 0.8,
@@ -222,6 +216,46 @@ CITY_1936 = {
     "Izhevsk": "Ижевск", "Togliatti": "Ставрополь-на-Волге", "Naberezhnye Chelny": "Челны",
     "Podgorica": "Подгорица", "Ústí nad Labem": "Усти-над-Лабем",
 }
+
+
+# --- Плотность провинций ------------------------------------------------------
+# Как в стратегиях жанра: где решается война — мелкие провинции, где пусто —
+# крупные. Значение — целевая площадь провинции (км²); побеждает наименьшая
+# подходящая зона, поэтому зоны можно задавать грубыми прямоугольниками.
+#   (мин. долгота, мин. широта, макс. долгота, макс. широта, км²)
+DENSITY_ZONES = [
+    # ядро: Франция, Бенилюкс, Германия, Чехия, Австрия, Польша, север Италии, юг Англии
+    (-5.0, 43.0, 24.5, 55.5, 6500),
+    (-3.5, 50.5, 1.8, 54.0, 6500),
+    # остальная Центральная и Западная Европа, Балканы, Прибалтика, Италия
+    (-10.5, 36.0, 30.0, 60.0, 11000),
+    # западная часть СССР до линии Ленинград — Москва — Сталинград
+    (24.0, 44.0, 45.0, 60.5, 17000),
+    # Скандинавия, Иберия, Анатолия, Кавказ
+    (-10.0, 35.5, 32.0, 64.0, 16000),
+    (26.0, 35.5, 50.0, 43.5, 22000),
+]
+DEFAULT_AREA = 45000          # север и восток СССР, Казахстан, Исландия
+REMOTE_AREA = 65000           # пустыни Африки, Аравии, Ирана, Заволжье
+COAST_AREA = 26000            # обжитое побережье Северной Африки и Леванта
+REMOTE_ADM0 = {"MAR", "DZA", "TUN", "LBY", "EGY", "SYR", "IRQ", "SAU", "KWT", "IRN", "JOR",
+               "ISR", "PSX", "LBN", "KAZ", "TKM", "UZB"}
+
+
+def province_area_km2(lon, lat, region, region_info, land):
+    area = np.full(lon.shape, float(DEFAULT_AREA), np.float32)
+    remote = np.zeros(len(region_info), bool)
+    for i, r in enumerate(region_info[1:], start=1):
+        remote[i] = r["adm0"] in REMOTE_ADM0
+    is_remote = remote[region]
+    coast_km = ndimage.distance_transform_edt(land) * KM_PER_PX
+    area = np.where(is_remote, np.where(coast_km < 160, COAST_AREA, REMOTE_AREA), area)
+    area = np.where((lon > 52) & ~is_remote, REMOTE_AREA, area)
+    for x0, y0, x1, y1, a in DENSITY_ZONES:
+        m = (lon >= x0) & (lon <= x1) & (lat >= y0) & (lat <= y1) & ~is_remote
+        area = np.where(m, np.minimum(area, a), area)
+    # плавный переход между зонами, чтобы не было резкой «ступеньки»
+    return ndimage.gaussian_filter(area, 25)
 
 
 def load(path):
@@ -408,13 +442,8 @@ def main():
     # --- 4. Провинции суши ------------------------------------------------------
     py_all, px_all = np.mgrid[0:HEIGHT, 0:WIDTH]
     lon_all, lat_all = unproject(px_all + 0.5, py_all + 0.5)
-    base_area = 4600.0 / (KM_PER_PX ** 2)   # ~4600 км² на провинцию в Европе
-    adm0_mult = np.ones(len(region_info), np.float32)
-    for i, r in enumerate(region_info[1:], start=1):
-        adm0_mult[i] = SPARSE_ADM0.get(r["adm0"], 1.0)
-    area_px = base_area * adm0_mult[region]
-    area_px = np.where(lat_all > 63.5, area_px * 2.0, area_px)
-    area_px = np.where((lon_all > 45) & (lat_all > 50), area_px * 1.6, area_px)
+    area_km2 = province_area_km2(lon_all, lat_all, region, region_info, land)
+    area_px = area_km2 / (KM_PER_PX ** 2)
 
     prov = np.full(region.shape, -1, np.int32)
     next_id = 0
@@ -440,7 +469,7 @@ def main():
     # --- 5. Морские зоны --------------------------------------------------------
     water = ~land
     lab, n = ndimage.label(water)
-    sea_area = 70000.0 / (KM_PER_PX ** 2)   # ~70 тыс. км² на морскую зону
+    sea_area = 110000.0 / (KM_PER_PX ** 2)   # ~110 тыс. км² на морскую зону
     for ci in range(1, n + 1):
         ys, xs = np.nonzero(lab == ci)
         if ys.size < 30:   # крошечные внутренние водоёмы — к соседней суше
@@ -570,7 +599,7 @@ def main():
                 terrain = 3
             elif mm > 0.25:
                 terrain = 2
-            elif r["adm0"] in SPARSE_ADM0 and SPARSE_ADM0[r["adm0"]] >= 2.5 and lat < 34.5:
+            elif r["adm0"] in REMOTE_ADM0 and lat < 34.5:
                 terrain = 6   # пустыня
             elif 23.5 < lon < 30.5 and 51.3 < lat < 52.5:
                 terrain = 7   # Полесье — болота

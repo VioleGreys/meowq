@@ -1,8 +1,12 @@
 extends Node
 ## Корень игры: создаёт мир, гоняет время, связывает карту, фишки и интерфейс.
 
-const SPEEDS := [0.0, 1.0, 3.0, 8.0, 20.0]   # игровых дней в секунду
-const MAX_TICKS_PER_FRAME := 4
+# Скорости как в стратегиях жанра: 1 — неспешно, 5 — «сколько потянет
+# процессор». Игровых дней в секунду; INF — максимум.
+const SPEEDS := [0.0, 0.5, 1.0, 2.0, 4.0, INF]
+# Бюджет симуляции на кадр: если телефон не успевает, игра идёт медленнее,
+# а картинка остаётся плавной (интерфейс и карта не подтормаживают).
+const SIM_BUDGET_USEC := 8000
 
 var world: World
 var sim: Simulation
@@ -13,6 +17,7 @@ var hud: Hud
 var state := "loading"           # loading / select / play / over
 var speed := 0
 var _accum := 0.0
+var days_per_sec := 0.0          # фактическая скорость, для индикатора
 var selected_prov := -1
 var selected_divs: Array = []
 var pick_nation := -1
@@ -127,7 +132,7 @@ func start_as(nid: int) -> void:
 	map_view.camera.zoom = Vector2.ONE * 0.9
 	map_view.center_on(world.nations[nid].capital)
 	state = "play"
-	speed = 1
+	speed = 0   # как в жанре: игра начинается на паузе
 	world.log_event("Вы правите страной %s. Удачи!" % world.nations[nid].name)
 	hud.show_play()
 
@@ -144,14 +149,21 @@ func _process(dt: float) -> void:
 		hud.show_game_over(world.game_over)
 		return
 	if speed > 0:
-		_accum += dt * SPEEDS[speed]
+		var unlimited: bool = SPEEDS[speed] == INF
+		if not unlimited:
+			_accum += dt * SPEEDS[speed]
 		var n := 0
-		while _accum >= 1.0 and n < MAX_TICKS_PER_FRAME:
-			_accum -= 1.0
+		var start := Time.get_ticks_usec()
+		while (unlimited or _accum >= 1.0) and Time.get_ticks_usec() - start < SIM_BUDGET_USEC:
+			if not unlimited:
+				_accum -= 1.0
 			sim.tick()
 			n += 1
-		if n == MAX_TICKS_PER_FRAME:
-			_accum = minf(_accum, 1.0)
+			if world.game_over != "":
+				break
+		# не копим долг: отставшая симуляция просто идёт медленнее
+		_accum = minf(_accum, 1.0)
+		days_per_sec = lerpf(days_per_sec, n / maxf(dt, 0.001), 0.05)
 		if n > 0:
 			_prune_selection()
 			hud.on_tick()

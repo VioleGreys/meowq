@@ -132,9 +132,9 @@ func _build_top_bar() -> void:
 	date_label.custom_minimum_size = Vector2(190, 0)
 	date_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	h.add_child(date_label)
-	var labels := ["II", "1", "2", "3", "4"]
+	var labels := ["II", "1", "2", "3", "4", "5"]
 	for i in labels.size():
-		var b := _button(labels[i], func(): game.set_speed(i); refresh_top(), Vector2(52, 48))
+		var b := _button(labels[i], func(): game.set_speed(i); refresh_top(), Vector2(48, 48))
 		b.toggle_mode = true
 		speed_buttons.append(b)
 		h.add_child(b)
@@ -359,7 +359,7 @@ func refresh_top() -> void:
 	var phases := ""
 	for k in game.sim.phase_usec:
 		phases += " %s %.1f" % [k, game.sim.phase_usec[k] / 1000.0]
-	perf_label.text = "Ядер %d · тик %.2f мс ·%s · %d FPS" % [Parallel.thread_count(), game.sim.last_tick_usec / 1000.0, phases, Engine.get_frames_per_second()]
+	perf_label.text = "Ядер %d · %.1f дн/с · тик %.2f мс ·%s · %d FPS" % [Parallel.thread_count(), game.days_per_sec, game.sim.last_tick_usec / 1000.0, phases, Engine.get_frames_per_second()]
 	if _toast_t > 0.0:
 		_toast_t -= get_process_delta_time()
 		toast_label.modulate.a = clampf(_toast_t, 0.0, 1.0)
