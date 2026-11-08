@@ -6,7 +6,7 @@ extends RefCounted
 ## (Расширение .bin — чтобы Godot не импортировал PNG как текстуры: нам нужны
 ## точные значения пикселей, а при экспорте файлы включаются фильтром data/*.)
 
-const DEFAULT_DIR := "res://data/europe1936"
+const DEFAULT_DIR := "res://data/world1936"
 
 
 static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
@@ -53,6 +53,8 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	world.p_colony.resize(n)
 	world.p_adm0.resize(n)
 	world.p_lonlat.resize(n)
+	world.p_air_src.resize(n)
+	world.air_region_names = PackedStringArray(meta.get("air_regions", []))
 	world.p_name.resize(n)
 	world.p_adj = []
 	world.p_adj.resize(n)
@@ -135,6 +137,7 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		world.p_colony[i] = 1 if land and p.get("colony", false) else 0
 		world.p_adm0[i] = p.get("adm0", "")
 		world.p_lonlat[i] = Vector2(float(p.get("lon", 0.0)), float(p.get("lat", 0.0)))
+		world.p_air_src[i] = int(p.get("air", -1))
 		world.p_civ[i] = 0
 		world.p_mil[i] = 0
 		world.p_manpower[i] = 0

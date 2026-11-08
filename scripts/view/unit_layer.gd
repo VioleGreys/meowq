@@ -280,7 +280,8 @@ func _draw_counter(it: Array, z: float, counter: Vector2, font_size: int, screen
 		return
 	var nat_col: Color = it[3]
 	if z < 0.55 and not it[11]:
-		draw_rect(Rect2(base - Vector2(4, 4), Vector2(8, 8)), nat_col.darkened(0.35))
+		if z >= 0.25:   # на масштабе всего мира стопки не рисуем — как в жанре
+			draw_rect(Rect2(base - Vector2(4, 4), Vector2(8, 8)), nat_col.darkened(0.35))
 		return
 	var pos: Vector2 = base + Vector2(it[2] * (counter.x + 4), 0) - counter * 0.5
 	var any_sel: bool = it[8]
@@ -329,8 +330,8 @@ func _draw_label(l: Array, z: float) -> void:
 
 
 func _rebuild_labels() -> void:
-	# Подпись — по самому большому связному куску территории страны
-	# (иначе «Франция» уезжает в Алжир, а «Великобритания» — в Средиземное море).
+	# Подпись — по связному куску территории со столицей (иначе «Великобритания»
+	# уезжает в Африку, «Дания» — в Гренландию), без столицы — по самому большому.
 	_labels_day = world.day
 	_labels.clear()
 	var comp := PackedInt32Array()
@@ -347,8 +348,11 @@ func _rebuild_labels() -> void:
 		var sum := Vector2.ZERO
 		var lo := Vector2(INF, INF)
 		var hi := Vector2(-INF, -INF)
+		var has_cap := false
 		while not stack.is_empty():
 			var q: int = stack.pop_back()
+			if q == world.nations[c].capital:
+				has_cap = true
 			px += world.p_pixels[q]
 			sum += world.p_center[q] * world.p_pixels[q]
 			lo = lo.min(world.p_center[q])
@@ -357,8 +361,9 @@ func _rebuild_labels() -> void:
 				if comp[r] < 0 and world.p_land[r] == 1 and world.p_controller[r] == c:
 					comp[r] = p
 					stack.append(r)
-		if not best.has(c) or best[c][0] < px:
-			best[c] = [px, sum, lo, hi]
+		var score := px + (1 << 30 if has_cap else 0)
+		if not best.has(c) or best[c][4] < score:
+			best[c] = [px, sum, lo, hi, score]
 	for c in best:
 		if not world.nations[c].alive:
 			continue

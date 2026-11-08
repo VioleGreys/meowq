@@ -45,7 +45,9 @@ void fragment() {
 	float light = clamp(dot(n, normalize(vec3(-0.55, -0.65, 0.75))), 0.0, 1.0);
 
 	vec3 col;
-	if (!land) {
+	// мелкие озёра входят в провинции суши, но по высоте ниже уровня моря — вода
+	bool lake = land && texture(height_tex, (vec2(ip) + 0.5) / map_size).r < 0.49;
+	if (!land || lake) {
 		float depth = clamp((0.5 - h) * 2.4, 0.0, 1.0);
 		col = mix(vec3(0.26, 0.43, 0.52), vec3(0.09, 0.18, 0.29), sqrt(depth));
 		float wave = sin(TIME * 0.7 + px.x * 0.21 + sin(px.y * 0.13 + TIME * 0.3) * 2.0);

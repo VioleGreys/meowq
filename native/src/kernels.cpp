@@ -507,3 +507,98 @@ PackedInt32Array MeowqCore::income(const PackedInt32Array &ctrl, const PackedInt
 	}
 	return r;
 }
+
+// Районы фронта страны n (Forces.ai_air): для каждой своей провинции, у
+// которой есть сосед-противник, +1 её воздушному району. Районы — в порядке
+// первой встречи, затем число провинций: [r0, c0, r1, c1, ...].
+PackedInt32Array MeowqCore::front_regions(const PackedInt32Array &ctrl, const PackedInt32Array &adj_start,
+		const PackedInt32Array &adj_list, const PackedByteArray &war, int nc, const PackedInt32Array &region, int n) const {
+	const int64_t pc = ctrl.size();
+	const int32_t *ct = ctrl.ptr(), *as = adj_start.ptr(), *al = adj_list.ptr(), *rg = region.ptr();
+	const uint8_t *wr = war.ptr() + int64_t(n) * nc;
+	std::vector<int32_t> order;
+	std::vector<int32_t> cnt;
+	std::vector<int32_t> slot;
+	for (int64_t p = 0; p < pc; p++) {
+		if (ct[p] != n) continue;
+		for (int32_t k = as[p]; k < as[p + 1]; k++) {
+			const int32_t c = ct[al[k]];
+			if (c >= 0 && c != n && wr[c] == 1) {
+				const int32_t r = rg[p];
+				if (r >= int32_t(slot.size())) slot.resize(r + 1, -1);
+				if (slot[r] < 0) {
+					slot[r] = int32_t(order.size());
+					order.push_back(r);
+					cnt.push_back(0);
+				}
+				cnt[slot[r]] += 1;
+				break;
+			}
+		}
+	}
+	PackedInt32Array out;
+	for (size_t i = 0; i < order.size(); i++) {
+		out.push_back(order[i]);
+		out.push_back(cnt[i]);
+	}
+	return out;
+}
+
+// Порты, у которых есть соседняя морская зона без флотов (там блокады нет).
+PackedByteArray MeowqCore::ports_open(const PackedInt32Array &ports, const PackedInt32Array &adj_start,
+		const PackedInt32Array &adj_list, const PackedByteArray &land, const PackedByteArray &zone_has_fleet) const {
+	PackedByteArray out;
+	out.resize(ports.size());
+	uint8_t *o = out.ptrw();
+	const int32_t *as = adj_start.ptr(), *al = adj_list.ptr();
+	const uint8_t *ld = land.ptr(), *zf = zone_has_fleet.ptr();
+	for (int64_t i = 0; i < ports.size(); i++) {
+		const int32_t p = ports[i];
+		o[i] = 0;
+		for (int32_t k = as[p]; k < as[p + 1]; k++) {
+			const int32_t q = al[k];
+			if (ld[q] == 0 && zf[q] == 0) {
+				o[i] = 1;
+				break;
+			}
+		}
+	}
+	return out;
+}
+
+// Воздушные районы в радиусе действия авиации стороны страны (Forces._regions_in_range):
+// маска по районам. Расстояние — Vector2::distance_to (float), как в GDScript.
+PackedByteArray MeowqCore::air_reach(const PackedByteArray &land, const PackedInt32Array &ctrl, const PackedByteArray &ally,
+		int nc, int n, const PackedInt32Array &region, const PackedVector2Array &centers, double range) const {
+	const int64_t pc = ctrl.size();
+	const int64_t rc = centers.size();
+	std::vector<char> own(rc, 0);
+	std::vector<int32_t> own_list;
+	const uint8_t *ld = land.ptr(), *al = ally.ptr() + int64_t(n) * nc;
+	const int32_t *ct = ctrl.ptr(), *rg = region.ptr();
+	for (int64_t p = 0; p < pc; p++) {
+		const int32_t o = ct[p];
+		if (ld[p] == 1 && o >= 0 && al[o] == 1) {
+			const int32_t r = rg[p];
+			if (r >= 0 && r < rc && !own[r]) {
+				own[r] = 1;
+				own_list.push_back(r);
+			}
+		}
+	}
+	PackedByteArray out;
+	out.resize(rc);
+	uint8_t *o = out.ptrw();
+	const Vector2 *c = centers.ptr();
+	const real_t rr = real_t(range);
+	for (int64_t r = 0; r < rc; r++) {
+		o[r] = 0;
+		for (int32_t q : own_list) {
+			if (c[q].distance_to(c[r]) <= rr) {
+				o[r] = 1;
+				break;
+			}
+		}
+	}
+	return out;
+}

@@ -164,7 +164,7 @@ func _init() -> void:
 	for p in w.prov_count:
 		if w.p_owner[p] == ENG and Forces.is_port(w, p) and w.p_lonlat[p].x > 0.0 and w.p_lonlat[p].y < 52.0:
 			dover = p
-		if w.p_owner[p] == FRA and Forces.is_port(w, p) and w.p_lonlat[p].y > 50.0 and w.p_lonlat[p].x < 3.0:
+		if w.p_owner[p] == FRA and Forces.is_port(w, p) and w.p_lonlat[p].y > 47.0 and w.p_lonlat[p].x < 3.0:
 			calais = p
 	var tdivs: Array = []
 	for d in w.divisions_of(ENG):

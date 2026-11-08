@@ -7,7 +7,7 @@ signal province_tapped(prov: int)
 signal view_changed
 
 const SCALE := 2.0
-const MIN_ZOOM := 0.25
+const MIN_ZOOM := 0.1
 const MAX_ZOOM := 5.0
 const TAP_SLOP := 14.0
 

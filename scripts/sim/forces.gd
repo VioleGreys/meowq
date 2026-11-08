@@ -14,8 +14,8 @@ const SHIP_ONE := ["линкор", "крейсер", "эсминец", "подл
 const SHIP_POWER := [10.0, 4.0, 1.0, 1.2]
 const SHIP_COST := [3000.0, 900.0, 150.0, 120.0]   # очки судостроения
 const WING_MAX := 300.0
-const REGION_CELL := 220.0                       # размер воздушного района, пикс. карты
-const AIR_RANGE := 260.0                         # дальность от своей территории, пикс.
+const REGION_CELL := 160.0                       # размер воздушного района, пикс. карты
+const AIR_RANGE := 190.0                         # дальность от своей территории, пикс.
 
 
 # --- Подготовка ----------------------------------------------------------------
@@ -69,6 +69,9 @@ static func setup(world: World, dir: String) -> void:
 
 
 static func _build_regions(world: World) -> void:
+	if world.p_air_src.size() == world.prov_count and world.prov_count > 0 and world.p_air_src[0] >= 0:
+		_regions_from_map(world)
+		return
 	var cols := int(ceil(world.width / REGION_CELL))
 	var cell_to_region := {}
 	world.p_region.resize(world.prov_count)
@@ -92,12 +95,42 @@ static func _build_regions(world: World) -> void:
 			best_vp[r] = v
 			names[r] = world.p_name[p]
 	world.region_count = sums.size()
+	for r in world.region_count:
+		sums[r] = sums[r][0] / maxf(1.0, sums[r][1])
+	_finish_regions(world, sums, names)
+
+
+## Районы из карты (как стратегические регионы жанра): группы соседних
+## провинций, собранные tools/build_map.py; центр — среднее центров провинций.
+static func _regions_from_map(world: World) -> void:
+	world.p_region = world.p_air_src.duplicate()
+	var n := 0
+	for p in world.prov_count:
+		n = maxi(n, world.p_region[p] + 1)
+	world.region_count = n
+	var sums: Array = []
+	var cnt := PackedInt32Array()
+	cnt.resize(n)
+	for r in n:
+		sums.append(Vector2.ZERO)
+	for p in world.prov_count:
+		var r := world.p_region[p]
+		sums[r] += world.p_center[p]
+		cnt[r] += 1
+	var names: Array = []
+	for r in n:
+		sums[r] = sums[r] / maxf(1.0, cnt[r])
+		names.append(world.air_region_names[r] if r < world.air_region_names.size() else "Район %d" % r)
+	_finish_regions(world, sums, names)
+
+
+static func _finish_regions(world: World, centers: Array, names: Array) -> void:
 	world.region_center.resize(world.region_count)
 	world.region_name.resize(world.region_count)
 	world.region_anchor.resize(world.region_count)
 	world.region_provs = []
 	for r in world.region_count:
-		world.region_center[r] = sums[r][0] / maxf(1.0, sums[r][1])
+		world.region_center[r] = centers[r]
 		world.region_name[r] = names[r]
 		world.region_provs.append(PackedInt32Array())
 	for p in world.prov_count:
@@ -115,8 +148,6 @@ static func _build_regions(world: World) -> void:
 	world.air_sup.fill(0.5)
 
 
-## Морская зона у главной базы флота страны (база в метрополии с наибольшими
-## очками победы; если баз нет — у крупнейшего порта).
 static func home_zone(world: World, n: int) -> int:
 	var best := -1
 	var best_vp := -1
@@ -987,6 +1018,14 @@ static func regions_in_range(world: World, n: int) -> Dictionary:
 
 static func _regions_in_range(world: World, n: int) -> Dictionary:
 	var nc := world.nation_count
+	if Native.core != null:
+		var mask: PackedByteArray = Native.core.call("air_reach", world.p_land, world.p_controller, world.ally, nc, n,
+				world.p_region, world.region_center, AIR_RANGE)
+		var out := {}
+		for r in mask.size():
+			if mask[r] == 1:
+				out[r] = true
+		return out
 	var own_regions := {}
 	for p in world.prov_count:
 		var o := world.p_controller[p]
@@ -1158,6 +1197,7 @@ static func _bomb_factories(world: World, w: World.AirWing, r: int, sup: float, 
 ## ИИ авиации: истребители и штурмовики над главным участком фронта,
 ## бомбардировщики — по заводам врага, до которого не дойти по суше.
 static func ai_air(world: World, n: int) -> void:
+	var _pt := Time.get_ticks_usec()
 	var nat: World.Nation = world.nations[n]
 	var has_wing := false
 	for w in world.wings:
@@ -1167,7 +1207,12 @@ static func ai_air(world: World, n: int) -> void:
 	if not has_wing:
 		return
 	var front_count := {}
-	if not nat.at_war.is_empty():
+	if not nat.at_war.is_empty() and Native.core != null:
+		var fr: PackedInt32Array = Native.core.call("front_regions", world.p_controller, world.adj_start,
+				world.adj_list, world.war, world.nation_count, world.p_region, n)
+		for k in range(0, fr.size(), 2):
+			front_count[fr[k]] = fr[k + 1]
+	elif not nat.at_war.is_empty():
 		var ctrl := world.p_controller
 		var a_start := world.adj_start
 		var a_list := world.adj_list
@@ -1183,6 +1228,8 @@ static func ai_air(world: World, n: int) -> void:
 					var r: int = region[p]
 					front_count[r] = int(front_count.get(r, 0)) + 1
 					break
+	Prof.add("авиаИИ:фронт", _pt)
+	_pt = Time.get_ticks_usec()
 	var main := world.p_region[nat.capital]
 	var best := 0
 	for r in front_count:
@@ -1197,9 +1244,12 @@ static func ai_air(world: World, n: int) -> void:
 			if not land_enemies.has(e) and world.nations[e].alive:
 				bomb_target = world.p_region[world.nations[e].capital]
 				break
+	Prof.add("авиаИИ:цель", _pt)
+	_pt = Time.get_ticks_usec()
 	var regions := front_count.keys()
 	regions.sort_custom(func(a, b): return front_count[a] > front_count[b])
 	var reach := regions_in_range(world, n) if bomb_target >= 0 else {}
+	Prof.add("авиаИИ:радиус", _pt)
 	var k2 := 0
 	for w in world.wings:
 		if not w.alive or w.owner != n:
@@ -1224,22 +1274,27 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 	var reach := Diplomacy.reachable_neighbours(world, n)
 	# только против заметно более слабой армии, до которой не дойти по суше;
 	# готовиться можно заранее — к тем, к кому обоснованы претензии
+	var my_navy := 0.0
+	for f in world.fleets:
+		if f.alive and f.owner == n:
+			my_navy += fleet_power(f)
+	if my_navy <= 0.0:
+		return
+	# первый подходящий противник: против сильного флота десант обречён — такого
+	# пропускаем и смотрим следующего (Британия сильнее — значит, Норвегия)
 	var enemy := -1
 	for e in nat.at_war.keys() + nat.wargoals.keys() + nat.planned_wars.keys():
-		if world.nations[e].alive and not reach.has(e) and nat.division_count > world.nations[e].division_count * 1.5:
+		if not world.nations[e].alive or reach.has(e) or nat.division_count <= world.nations[e].division_count * 1.5:
+			continue
+		var their_navy := 0.0
+		for f in world.fleets:
+			if f.alive and f.owner != n and world.ally[e * world.nation_count + f.owner] == 1:
+				their_navy += fleet_power(f)
+		if their_navy <= my_navy:
 			enemy = e
 			break
 	if enemy < 0:
 		return
-	var my_navy := 0.0
-	var their_navy := 0.0
-	for f in world.fleets:
-		if f.alive and f.owner == n:
-			my_navy += fleet_power(f)
-		elif f.alive and world.ally[enemy * world.nation_count + f.owner] == 1:
-			their_navy += fleet_power(f)
-	if my_navy <= 0.0 or their_navy > my_navy:
-		return   # против сильного флота десант обречён
 	# уже готовим высадку — к концу подготовки подводим флот к зоне высадки
 	for plan in world.invasions:
 		if plan.alive and plan.owner == n:

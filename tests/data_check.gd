@@ -16,7 +16,7 @@ func check(cond: bool, msg: String) -> void:
 func _init() -> void:
 	var w := World.new()
 	MapLoader.load_world(w)
-	var data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/europe1936/nations.json"))["nations"]
+	var data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/world1936/nations.json"))["nations"]
 	var sim := Simulation.new(w)
 	var rows: Array = []
 	for n in w.nations:

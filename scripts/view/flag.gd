@@ -115,6 +115,41 @@ func _draw() -> void:
 				draw_line(c - Vector2(h * 0.1, h * 0.1), c + Vector2(h * 0.1, h * 0.1), _c(1), 2.0)
 				draw_line(c - Vector2(h * 0.1, -h * 0.1), c + Vector2(h * 0.1, -h * 0.1), _c(1), 2.0)
 			draw_rect(Rect2(w * 0.22, h * 0.12, w * 0.16, h * 0.12), _c(2))
+		"disc":   # поле и круг (Япония, Бангладеш-подобные)
+			draw_rect(Rect2(0, 0, w, h), _c(0))
+			draw_circle(Vector2(w * float(spec.get("x", 0.5)), h * 0.5), h * 0.3, _c(1))
+		"stripes_canton":   # полосы и крыж со звёздами (США, Либерия)
+			var n := int(spec.get("n", 13))
+			for i in n:
+				draw_rect(Rect2(0, h * i / n, w, h / n + 0.5), _c(i % 2))
+			var ch := h * 7.0 / 13.0
+			draw_rect(Rect2(0, 0, w * 0.4, ch), _c(2))
+			for yy in 3:
+				for xx in 4:
+					draw_rect(Rect2(w * 0.04 + xx * w * 0.09, ch * 0.15 + yy * ch * 0.3, 1.5, 1.5), Color.WHITE)
+		"canton_sun":   # Китай: красное поле, синий крыж с белым солнцем
+			draw_rect(Rect2(0, 0, w, h), _c(0))
+			draw_rect(Rect2(0, 0, w * 0.5, h * 0.5), _c(1))
+			draw_circle(Vector2(w * 0.25, h * 0.25), h * 0.13, _c(2))
+		"ensign":   # флаг доминиона: поле и британский крыж
+			draw_rect(Rect2(0, 0, w, h), _c(0))
+			var cw := w * 0.5
+			var chh := h * 0.5
+			draw_rect(Rect2(0, 0, cw, chh), Color("#012169"))
+			draw_line(Vector2.ZERO, Vector2(cw, chh), Color.WHITE, chh * 0.2)
+			draw_line(Vector2(0, chh), Vector2(cw, 0), Color.WHITE, chh * 0.2)
+			draw_rect(Rect2(cw * 0.5 - chh * 0.12, 0, chh * 0.24, chh), Color.WHITE)
+			draw_rect(Rect2(0, chh * 0.38, cw, chh * 0.24), Color.WHITE)
+			draw_rect(Rect2(cw * 0.5 - chh * 0.07, 0, chh * 0.14, chh), Color("#c8102e"))
+			draw_rect(Rect2(0, chh * 0.43, cw, chh * 0.14), Color("#c8102e"))
+			for k in int(spec.get("stars", 0)):
+				_star(Vector2(w * (0.62 + 0.1 * (k % 3)), h * (0.35 + 0.22 * (k / 3))), h * 0.06, _c(1))
+		"triangle":   # полосы и треугольник у древка (Куба, Филиппины)
+			var cs2: Array = spec.get("c", ["#888888"])
+			var nst := cs2.size() - 1
+			for i in nst:
+				draw_rect(Rect2(0, h * i / nst, w, h / nst + 0.5), _c(i))
+			draw_colored_polygon(PackedVector2Array([Vector2.ZERO, Vector2(w * 0.4, h * 0.5), Vector2(0, h)]), _c(nst))
 		_:
 			draw_rect(Rect2(0, 0, w, h), _c(0))
 	if spec.has("emblem"):

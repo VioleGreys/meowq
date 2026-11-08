@@ -1,0 +1,2145 @@
+{
+ "_comment": "Государства мира на 1 января 1936 г. major — великая держава; neutral — традиционный нейтралитет (не вступает во фракции и не раздаёт гарантий). Население — млн человек (метрополия); colony_pop — млн по владениям (код страны Natural Earth). civ/mil — гражданские и военные фабрики (игровые единицы, собственная оценка по промышленному потенциалу 1936–37 гг.); divisions — дивизии в метрополии, colony_divisions — в колониях. Флаги упрощены и рисуются кодом (scripts/view/flag.gd). army — состав дивизий метрополии по шаблонам (inf пехотная, mnt горная, cav кавалерия, art пехота с артиллерией, mot моторизованная, arm танковая; остальное — пехота); techs — стартовые технологии. dormant — государство появляется только по событию (гражданская война, распад, перемирие); name и color для них заданы здесь, capital_lonlat — где искать столицу.",
+ "ideologies": {
+  "democracy": {
+   "name": "Демократия",
+   "manpower_rate": 0.012
+  },
+  "authoritarian": {
+   "name": "Авторитаризм",
+   "manpower_rate": 0.018
+  },
+  "fascism": {
+   "name": "Фашизм",
+   "manpower_rate": 0.025
+  },
+  "communism": {
+   "name": "Коммунизм",
+   "manpower_rate": 0.025
+  }
+ },
+ "nations": {
+  "GER": {
+   "major": true,
+   "full_name": "Германский рейх",
+   "ideology": "fascism",
+   "leader": "Адольф Гитлер",
+   "title": "Фюрер и рейхсканцлер",
+   "population": 67.3,
+   "civ": 28,
+   "mil": 16,
+   "divisions": 34,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#1a1a1a",
+     "#f2f2f2",
+     "#d02a2a"
+    ]
+   },
+   "army": {
+    "inf": 22,
+    "art": 4,
+    "mnt": 2,
+    "mot": 3,
+    "arm": 3
+   },
+   "techs": [
+    "mot1",
+    "armor1",
+    "mnt1"
+   ]
+  },
+  "SOV": {
+   "major": true,
+   "full_name": "Союз Советских Социалистических Республик",
+   "ideology": "communism",
+   "leader": "Иосиф Сталин",
+   "title": "Генеральный секретарь ЦК ВКП(б)",
+   "population": 162.0,
+   "civ": 30,
+   "mil": 26,
+   "divisions": 90,
+   "flag": {
+    "t": "canton_star",
+    "c": [
+     "#c8102e",
+     "#f5c518"
+    ]
+   },
+   "army": {
+    "inf": 60,
+    "art": 10,
+    "cav": 12,
+    "mot": 3,
+    "arm": 5
+   },
+   "techs": [
+    "mot1",
+    "armor1"
+   ]
+  },
+  "ENG": {
+   "major": true,
+   "full_name": "Соединённое Королевство",
+   "ideology": "democracy",
+   "leader": "Стэнли Болдуин",
+   "title": "Премьер-министр",
+   "population": 46.9,
+   "civ": 30,
+   "mil": 8,
+   "divisions": 10,
+   "colony_divisions": 12,
+   "colony_pop": {
+    "ISR": 1.3,
+    "PSX": 0.1,
+    "JOR": 0.35,
+    "KWT": 0.1,
+    "CYP": 0.37,
+    "CYN": 0.37,
+    "MLT": 0.25,
+    "GIB": 0.02,
+    "NGA": 20.0,
+    "GHA": 3.7,
+    "KEN": 3.3,
+    "UGA": 3.6,
+    "TZA": 5.1,
+    "SDN": 5.0,
+    "SDS": 0.8,
+    "ZWE": 1.3,
+    "ZMB": 1.4,
+    "MWI": 1.6,
+    "MYS": 4.4,
+    "SGP": 0.6,
+    "LKA": 5.8,
+    "HKG": 1.0,
+    "SLE": 1.8,
+    "GMB": 0.2,
+    "BWA": 0.27,
+    "LSO": 0.56,
+    "SWZ": 0.16,
+    "SOL": 0.35,
+    "JAM": 1.1,
+    "TTO": 0.45,
+    "GUY": 0.33,
+    "BLZ": 0.06,
+    "BHS": 0.07,
+    "BRB": 0.19,
+    "ARE": 0.08,
+    "QAT": 0.03,
+    "BHR": 0.1,
+    "YEM": 0.6,
+    "FJI": 0.2,
+    "BRN": 0.03,
+    "MDV": 0.08,
+    "MUS": 0.4,
+    "CAN": 0.29,
+    "FLK": 0.002,
+    "SLB": 0.09,
+    "VUT": 0.05,
+    "TON": 0.03,
+    "KIR": 0.03,
+    "BMU": 0.03,
+    "IOT": 0.001,
+    "SHN": 0.004,
+    "SYC": 0.03
+   },
+   "flag": {
+    "t": "union",
+    "c": [
+     "#012169",
+     "#ffffff",
+     "#c8102e"
+    ]
+   },
+   "army": {
+    "inf": 6,
+    "art": 2,
+    "mot": 1,
+    "arm": 1
+   },
+   "techs": [
+    "mot1",
+    "armor1"
+   ]
+  },
+  "FRA": {
+   "major": true,
+   "full_name": "Французская республика",
+   "ideology": "democracy",
+   "leader": "Пьер Лаваль",
+   "title": "Председатель Совета министров",
+   "population": 41.9,
+   "civ": 24,
+   "mil": 12,
+   "divisions": 38,
+   "colony_divisions": 20,
+   "colony_pop": {
+    "DZA": 7.2,
+    "MAR": 6.2,
+    "TUN": 2.6,
+    "SYR": 3.6,
+    "LBN": 0.9,
+    "TUR": 0.2,
+    "SEN": 1.7,
+    "MLI": 3.6,
+    "MRT": 0.4,
+    "GIN": 2.1,
+    "CIV": 4.0,
+    "BFA": 3.0,
+    "NER": 1.8,
+    "BEN": 1.3,
+    "TGO": 0.75,
+    "CMR": 2.4,
+    "TCD": 1.4,
+    "CAF": 0.8,
+    "COG": 0.7,
+    "GAB": 0.4,
+    "MDG": 3.8,
+    "DJI": 0.05,
+    "COM": 0.12,
+    "VNM": 18.0,
+    "LAO": 1.0,
+    "KHM": 3.0,
+    "NCL": 0.05,
+    "PYF": 0.04,
+    "FRA": 0.6,
+    "IND": 0.3,
+    "SPM": 0.004,
+    "WLF": 0.01,
+    "ATF": 0.0
+   },
+   "flag": {
+    "t": "v",
+    "c": [
+     "#0055a4",
+     "#ffffff",
+     "#ef4135"
+    ]
+   },
+   "army": {
+    "inf": 24,
+    "art": 6,
+    "mnt": 3,
+    "cav": 2,
+    "mot": 2,
+    "arm": 1
+   },
+   "techs": [
+    "mot1",
+    "armor1",
+    "mnt1"
+   ]
+  },
+  "ITA": {
+   "major": true,
+   "full_name": "Королевство Италия",
+   "ideology": "fascism",
+   "leader": "Бенито Муссолини",
+   "title": "Глава правительства",
+   "population": 42.9,
+   "civ": 16,
+   "mil": 8,
+   "divisions": 28,
+   "colony_divisions": 14,
+   "colony_pop": {
+    "LBY": 0.8,
+    "GRC": 0.1,
+    "ERI": 0.6,
+    "SOM": 1.0
+   },
+   "flag": {
+    "t": "v",
+    "c": [
+     "#009246",
+     "#ffffff",
+     "#ce2b37"
+    ]
+   },
+   "army": {
+    "inf": 18,
+    "art": 3,
+    "mnt": 5,
+    "mot": 2
+   },
+   "techs": [
+    "mot1",
+    "mnt1"
+   ]
+  },
+  "POL": {
+   "full_name": "Польская республика",
+   "ideology": "authoritarian",
+   "leader": "Игнаций Мосцицкий",
+   "title": "Президент",
+   "population": 33.8,
+   "civ": 10,
+   "mil": 4,
+   "divisions": 30,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ffffff",
+     "#dc143c"
+    ]
+   },
+   "army": {
+    "inf": 22,
+    "art": 2,
+    "cav": 6
+   },
+   "techs": []
+  },
+  "SPR": {
+   "full_name": "Испанская республика",
+   "ideology": "democracy",
+   "leader": "Нисето Алькала-Самора",
+   "title": "Президент",
+   "population": 24.7,
+   "civ": 9,
+   "mil": 2,
+   "divisions": 14,
+   "colony_divisions": 2,
+   "colony_pop": {
+    "MAR": 0.8,
+    "SAH": 0.03,
+    "GNQ": 0.17
+   },
+   "flag": {
+    "t": "h",
+    "c": [
+     "#c60b1e",
+     "#ffc400",
+     "#6a2c8c"
+    ]
+   },
+   "army": {
+    "inf": 10,
+    "art": 2,
+    "mnt": 2
+   },
+   "techs": [
+    "mnt1"
+   ]
+  },
+  "POR": {
+   "neutral": true,
+   "full_name": "Португальская республика",
+   "ideology": "authoritarian",
+   "leader": "Антониу Салазар",
+   "title": "Председатель Совета министров",
+   "population": 7.2,
+   "civ": 3,
+   "mil": 1,
+   "divisions": 4,
+   "flag": {
+    "t": "portugal",
+    "c": [
+     "#046a38",
+     "#da291c",
+     "#ffe900"
+    ]
+   },
+   "colony_pop": {
+    "AGO": 3.2,
+    "MOZ": 4.0,
+    "GNB": 0.4,
+    "CPV": 0.17,
+    "STP": 0.06,
+    "TLS": 0.45,
+    "MAC": 0.15,
+    "IND": 0.6
+   },
+   "colony_divisions": 2
+  },
+  "HOL": {
+   "neutral": true,
+   "full_name": "Королевство Нидерландов",
+   "ideology": "democracy",
+   "leader": "Хендрикус Колейн",
+   "title": "Премьер-министр",
+   "population": 8.4,
+   "civ": 8,
+   "mil": 2,
+   "divisions": 4,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ae1c28",
+     "#ffffff",
+     "#21468b"
+    ]
+   },
+   "colony_pop": {
+    "IDN": 65.0,
+    "SUR": 0.16,
+    "CUW": 0.08,
+    "ABW": 0.03,
+    "SXM": 0.003
+   },
+   "colony_divisions": 4
+  },
+  "BEL": {
+   "neutral": true,
+   "full_name": "Королевство Бельгия",
+   "ideology": "democracy",
+   "leader": "Поль ван Зеланд",
+   "title": "Премьер-министр",
+   "population": 8.3,
+   "civ": 8,
+   "mil": 3,
+   "divisions": 12,
+   "flag": {
+    "t": "v",
+    "c": [
+     "#1a1a1a",
+     "#fdda24",
+     "#ef3340"
+    ]
+   },
+   "colony_pop": {
+    "COD": 10.5,
+    "RWA": 1.9,
+    "BDI": 1.8
+   },
+   "colony_divisions": 2
+  },
+  "LUX": {
+   "neutral": true,
+   "full_name": "Великое герцогство Люксембург",
+   "ideology": "democracy",
+   "leader": "Жозеф Беш",
+   "title": "Премьер-министр",
+   "population": 0.3,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 0,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ed2939",
+     "#ffffff",
+     "#00a1de"
+    ]
+   }
+  },
+  "SWI": {
+   "neutral": true,
+   "full_name": "Швейцарская Конфедерация",
+   "ideology": "democracy",
+   "leader": "Альберт Мейер",
+   "title": "Президент Конфедерации",
+   "population": 4.1,
+   "civ": 5,
+   "mil": 2,
+   "divisions": 9,
+   "flag": {
+    "t": "swiss",
+    "c": [
+     "#d52b1e",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "inf": 4,
+    "mnt": 5
+   },
+   "techs": [
+    "mnt1"
+   ]
+  },
+  "AUS": {
+   "full_name": "Федеративное государство Австрия",
+   "ideology": "authoritarian",
+   "leader": "Курт Шушниг",
+   "title": "Федеральный канцлер",
+   "population": 6.8,
+   "civ": 5,
+   "mil": 1,
+   "divisions": 6,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ed2939",
+     "#ffffff",
+     "#ed2939"
+    ]
+   },
+   "army": {
+    "inf": 4,
+    "mnt": 2
+   },
+   "techs": [
+    "mnt1"
+   ]
+  },
+  "CZE": {
+   "full_name": "Чехословацкая республика",
+   "ideology": "democracy",
+   "leader": "Эдвард Бенеш",
+   "title": "Президент",
+   "population": 15.0,
+   "civ": 10,
+   "mil": 6,
+   "divisions": 17,
+   "flag": {
+    "t": "czech",
+    "c": [
+     "#ffffff",
+     "#d7141a",
+     "#11457e"
+    ]
+   },
+   "army": {
+    "inf": 12,
+    "art": 3,
+    "mnt": 2
+   },
+   "techs": [
+    "mnt1"
+   ]
+  },
+  "HUN": {
+   "full_name": "Королевство Венгрия",
+   "ideology": "authoritarian",
+   "leader": "Миклош Хорти",
+   "title": "Регент",
+   "population": 9.0,
+   "civ": 5,
+   "mil": 2,
+   "divisions": 7,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ce2939",
+     "#ffffff",
+     "#477050"
+    ]
+   },
+   "army": {
+    "inf": 5,
+    "cav": 2
+   },
+   "techs": []
+  },
+  "ROM": {
+   "full_name": "Королевство Румыния",
+   "ideology": "authoritarian",
+   "leader": "Кароль II",
+   "title": "Король",
+   "population": 19.0,
+   "civ": 6,
+   "mil": 3,
+   "divisions": 20,
+   "flag": {
+    "t": "v",
+    "c": [
+     "#002b7f",
+     "#fcd116",
+     "#ce1126"
+    ]
+   },
+   "army": {
+    "inf": 15,
+    "art": 2,
+    "mnt": 3
+   },
+   "techs": [
+    "mnt1"
+   ]
+  },
+  "YUG": {
+   "full_name": "Королевство Югославия",
+   "ideology": "authoritarian",
+   "leader": "Павел Карагеоргиевич",
+   "title": "Принц-регент",
+   "population": 15.2,
+   "civ": 5,
+   "mil": 2,
+   "divisions": 16,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#0c4076",
+     "#ffffff",
+     "#c6363c"
+    ]
+   },
+   "army": {
+    "inf": 12,
+    "mnt": 4
+   },
+   "techs": [
+    "mnt1"
+   ]
+  },
+  "BUL": {
+   "full_name": "Царство Болгария",
+   "ideology": "authoritarian",
+   "leader": "Борис III",
+   "title": "Царь",
+   "population": 6.2,
+   "civ": 2,
+   "mil": 1,
+   "divisions": 8,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ffffff",
+     "#00966e",
+     "#d62612"
+    ]
+   },
+   "army": {
+    "inf": 6,
+    "mnt": 2
+   },
+   "techs": [
+    "mnt1"
+   ]
+  },
+  "GRE": {
+   "full_name": "Королевство Греция",
+   "ideology": "authoritarian",
+   "leader": "Георг II",
+   "title": "Король",
+   "population": 6.9,
+   "civ": 3,
+   "mil": 1,
+   "divisions": 12,
+   "flag": {
+    "t": "greece",
+    "c": [
+     "#0d5eaf",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "inf": 9,
+    "mnt": 3
+   },
+   "techs": [
+    "mnt1"
+   ]
+  },
+  "ALB": {
+   "full_name": "Королевство Албания",
+   "ideology": "authoritarian",
+   "leader": "Ахмет Зогу",
+   "title": "Король",
+   "population": 1.0,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 1,
+   "flag": {
+    "t": "emblem",
+    "c": [
+     "#e41e20",
+     "#1a1a1a"
+    ]
+   }
+  },
+  "TUR": {
+   "neutral": true,
+   "full_name": "Турецкая Республика",
+   "ideology": "authoritarian",
+   "leader": "Мустафа Кемаль Ататюрк",
+   "title": "Президент",
+   "population": 16.2,
+   "civ": 5,
+   "mil": 1,
+   "divisions": 18,
+   "flag": {
+    "t": "crescent",
+    "c": [
+     "#e30a17",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "inf": 14,
+    "cav": 4
+   },
+   "techs": []
+  },
+  "DEN": {
+   "neutral": true,
+   "full_name": "Королевство Дания",
+   "ideology": "democracy",
+   "leader": "Торвальд Стаунинг",
+   "title": "Премьер-министр",
+   "population": 3.7,
+   "civ": 3,
+   "mil": 1,
+   "divisions": 2,
+   "flag": {
+    "t": "nordic",
+    "c": [
+     "#c8102e",
+     "#ffffff"
+    ]
+   },
+   "colony_pop": {
+    "GRL": 0.02
+   }
+  },
+  "NOR": {
+   "neutral": true,
+   "full_name": "Королевство Норвегия",
+   "ideology": "democracy",
+   "leader": "Юхан Нюгорсволл",
+   "title": "Премьер-министр",
+   "population": 2.9,
+   "civ": 3,
+   "mil": 1,
+   "divisions": 3,
+   "flag": {
+    "t": "nordic",
+    "c": [
+     "#ba0c2f",
+     "#ffffff",
+     "#00205b"
+    ]
+   },
+   "army": {
+    "inf": 2,
+    "mnt": 1
+   },
+   "techs": [
+    "mnt1"
+   ]
+  },
+  "SWE": {
+   "neutral": true,
+   "full_name": "Королевство Швеция",
+   "ideology": "democracy",
+   "leader": "Пер Альбин Ханссон",
+   "title": "Премьер-министр",
+   "population": 6.3,
+   "civ": 8,
+   "mil": 2,
+   "divisions": 6,
+   "flag": {
+    "t": "nordic",
+    "c": [
+     "#006aa7",
+     "#fecc00"
+    ]
+   }
+  },
+  "FIN": {
+   "bonus": {
+    "defense": 0.3
+   },
+   "full_name": "Финляндская республика",
+   "ideology": "democracy",
+   "leader": "Пер Эвинд Свинхувуд",
+   "title": "Президент",
+   "population": 3.7,
+   "civ": 3,
+   "mil": 1,
+   "divisions": 9,
+   "flag": {
+    "t": "nordic",
+    "c": [
+     "#ffffff",
+     "#002f6c"
+    ]
+   }
+  },
+  "EST": {
+   "full_name": "Эстонская республика",
+   "ideology": "authoritarian",
+   "leader": "Константин Пятс",
+   "title": "Государственный старейшина",
+   "population": 1.1,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 3,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#0072ce",
+     "#1a1a1a",
+     "#ffffff"
+    ]
+   }
+  },
+  "LAT": {
+   "full_name": "Латвийская республика",
+   "ideology": "authoritarian",
+   "leader": "Карлис Улманис",
+   "title": "Премьер-министр",
+   "population": 2.0,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 4,
+   "flag": {
+    "t": "h3",
+    "c": [
+     "#9e3039",
+     "#ffffff"
+    ]
+   }
+  },
+  "LIT": {
+   "full_name": "Литовская республика",
+   "ideology": "authoritarian",
+   "leader": "Антанас Сметона",
+   "title": "Президент",
+   "population": 2.5,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 3,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#fdb913",
+     "#006a44",
+     "#c1272d"
+    ]
+   }
+  },
+  "IRE": {
+   "neutral": true,
+   "full_name": "Ирландское Свободное государство",
+   "ideology": "democracy",
+   "leader": "Имон де Валера",
+   "title": "Председатель Исполнительного совета",
+   "population": 3.0,
+   "civ": 2,
+   "mil": 0,
+   "divisions": 2,
+   "flag": {
+    "t": "v",
+    "c": [
+     "#169b62",
+     "#ffffff",
+     "#ff883e"
+    ]
+   }
+  },
+  "ICE": {
+   "neutral": true,
+   "full_name": "Королевство Исландия",
+   "ideology": "democracy",
+   "leader": "Херманн Йоунассон",
+   "title": "Премьер-министр",
+   "population": 0.12,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 0,
+   "flag": {
+    "t": "nordic",
+    "c": [
+     "#02529c",
+     "#ffffff",
+     "#dc1e35"
+    ]
+   }
+  },
+  "DNZ": {
+   "full_name": "Вольный город Данциг",
+   "ideology": "fascism",
+   "leader": "Артур Грайзер",
+   "title": "Председатель Сената",
+   "population": 0.4,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 0,
+   "flag": {
+    "t": "danzig",
+    "c": [
+     "#d0202a",
+     "#ffffff",
+     "#f2c418"
+    ]
+   }
+  },
+  "EGY": {
+   "full_name": "Королевство Египет",
+   "ideology": "authoritarian",
+   "leader": "Фуад I",
+   "title": "Король",
+   "population": 15.9,
+   "civ": 3,
+   "mil": 0,
+   "divisions": 2,
+   "flag": {
+    "t": "egypt",
+    "c": [
+     "#0f7b3e",
+     "#ffffff"
+    ]
+   }
+  },
+  "IRQ": {
+   "full_name": "Королевство Ирак",
+   "ideology": "authoritarian",
+   "leader": "Гази I",
+   "title": "Король",
+   "population": 3.6,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 3,
+   "flag": {
+    "t": "iraq",
+    "c": [
+     "#1a1a1a",
+     "#ffffff",
+     "#0f7b3e",
+     "#ce1126"
+    ]
+   },
+   "army": {
+    "inf": 2,
+    "cav": 1
+   },
+   "techs": []
+  },
+  "SAU": {
+   "full_name": "Королевство Саудовская Аравия",
+   "ideology": "authoritarian",
+   "leader": "Абдул-Азиз ибн Сауд",
+   "title": "Король",
+   "population": 2.6,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 2,
+   "flag": {
+    "t": "saudi",
+    "c": [
+     "#006c35",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "cav": 2
+   },
+   "techs": []
+  },
+  "PER": {
+   "full_name": "Шахиншахское Государство Иран",
+   "ideology": "authoritarian",
+   "leader": "Реза Пехлеви",
+   "title": "Шах",
+   "population": 15.0,
+   "civ": 3,
+   "mil": 1,
+   "divisions": 6,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#239f40",
+     "#ffffff",
+     "#da0000"
+    ],
+    "emblem": "#d4a017"
+   },
+   "army": {
+    "inf": 4,
+    "cav": 2
+   },
+   "techs": []
+  },
+  "NSP": {
+   "dormant": true,
+   "name": "Нац. Испания",
+   "full_name": "Националистическая Испания",
+   "ideology": "fascism",
+   "leader": "Франсиско Франко",
+   "title": "Каудильо",
+   "color": [
+    196,
+    150,
+    66
+   ],
+   "capital_lonlat": [
+    -3.7,
+    42.34
+   ],
+   "population": 0,
+   "civ": 0,
+   "mil": 0,
+   "divisions": 0,
+   "techs": [
+    "mnt1"
+   ],
+   "flag": {
+    "t": "h",
+    "c": [
+     "#c60b1e",
+     "#ffc400",
+     "#ffc400",
+     "#c60b1e"
+    ]
+   }
+  },
+  "SLO": {
+   "dormant": true,
+   "name": "Словакия",
+   "full_name": "Словацкая республика",
+   "ideology": "fascism",
+   "leader": "Йозеф Тисо",
+   "title": "Президент",
+   "color": [
+    80,
+    120,
+    180
+   ],
+   "capital_lonlat": [
+    17.11,
+    48.15
+   ],
+   "population": 0,
+   "civ": 0,
+   "mil": 0,
+   "divisions": 0,
+   "techs": [
+    "mnt1"
+   ],
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ffffff",
+     "#0b4ea2",
+     "#ee1c25"
+    ]
+   }
+  },
+  "VIC": {
+   "dormant": true,
+   "name": "Виши",
+   "full_name": "Французское государство",
+   "ideology": "authoritarian",
+   "leader": "Филипп Петен",
+   "title": "Глава государства",
+   "color": [
+    120,
+    140,
+    190
+   ],
+   "capital_lonlat": [
+    3.43,
+    46.13
+   ],
+   "population": 0,
+   "civ": 0,
+   "mil": 0,
+   "divisions": 0,
+   "techs": [
+    "mot1",
+    "mnt1"
+   ],
+   "flag": {
+    "t": "v",
+    "c": [
+     "#0055a4",
+     "#ffffff",
+     "#ef4135"
+    ],
+    "emblem": "#d4a017"
+   }
+  },
+  "USA": {
+   "full_name": "Соединённые Штаты Америки",
+   "ideology": "democracy",
+   "leader": "Франклин Рузвельт",
+   "title": "Президент",
+   "population": 128.0,
+   "civ": 50,
+   "mil": 4,
+   "divisions": 20,
+   "flag": {
+    "t": "stripes_canton",
+    "c": [
+     "#b22234",
+     "#ffffff",
+     "#3c3b6e"
+    ]
+   },
+   "army": {
+    "inf": 16,
+    "art": 2,
+    "cav": 2
+   },
+   "techs": [
+    "mot1"
+   ],
+   "major": true,
+   "colony_divisions": 3,
+   "colony_pop": {
+    "USA": 0.45,
+    "PRI": 1.7,
+    "VIR": 0.02,
+    "GUM": 0.02,
+    "ASM": 0.01,
+    "UMI": 0.0,
+    "USG": 0.0
+   }
+  },
+  "CAN": {
+   "full_name": "Доминион Канада",
+   "ideology": "democracy",
+   "leader": "Уильям Лайон Маккензи Кинг",
+   "title": "Премьер-министр",
+   "population": 11.0,
+   "civ": 7,
+   "mil": 1,
+   "divisions": 4,
+   "flag": {
+    "t": "ensign",
+    "c": [
+     "#c8102e",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "inf": 4
+   },
+   "techs": []
+  },
+  "MEX": {
+   "full_name": "Мексиканские Соединённые Штаты",
+   "ideology": "authoritarian",
+   "leader": "Ласаро Карденас",
+   "title": "Президент",
+   "population": 18.7,
+   "civ": 3,
+   "mil": 1,
+   "divisions": 12,
+   "flag": {
+    "t": "v",
+    "c": [
+     "#006847",
+     "#ffffff",
+     "#ce1126"
+    ]
+   },
+   "army": {
+    "inf": 9,
+    "cav": 3
+   },
+   "techs": []
+  },
+  "GUA": {
+   "full_name": "Республика Гватемала",
+   "ideology": "authoritarian",
+   "leader": "Хорхе Убико",
+   "title": "Президент",
+   "population": 2.2,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 1,
+   "flag": {
+    "t": "v",
+    "c": [
+     "#4997d0",
+     "#ffffff",
+     "#4997d0"
+    ]
+   },
+   "army": {
+    "inf": 1
+   },
+   "techs": []
+  },
+  "HON": {
+   "full_name": "Республика Гондурас",
+   "ideology": "authoritarian",
+   "leader": "Тибурсио Кариас Андино",
+   "title": "Президент",
+   "population": 1.0,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 1,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#0073cf",
+     "#ffffff",
+     "#0073cf"
+    ]
+   },
+   "army": {
+    "inf": 1
+   },
+   "techs": []
+  },
+  "ELS": {
+   "full_name": "Республика Сальвадор",
+   "ideology": "authoritarian",
+   "leader": "Максимилиано Эрнандес Мартинес",
+   "title": "Президент",
+   "population": 1.6,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 1,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#0047ab",
+     "#ffffff",
+     "#0047ab"
+    ]
+   },
+   "army": {
+    "inf": 1
+   },
+   "techs": []
+  },
+  "NIC": {
+   "full_name": "Республика Никарагуа",
+   "ideology": "authoritarian",
+   "leader": "Хуан Баутиста Сакаса",
+   "title": "Президент",
+   "population": 0.8,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 1,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#3e5eb9",
+     "#ffffff",
+     "#3e5eb9"
+    ]
+   },
+   "army": {
+    "inf": 1
+   },
+   "techs": []
+  },
+  "HAI": {
+   "full_name": "Республика Гаити",
+   "ideology": "authoritarian",
+   "leader": "Стенио Винсент",
+   "title": "Президент",
+   "population": 2.6,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 1,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#00209f",
+     "#d21034"
+    ]
+   },
+   "army": {
+    "inf": 1
+   },
+   "techs": []
+  },
+  "DOM": {
+   "full_name": "Доминиканская Республика",
+   "ideology": "authoritarian",
+   "leader": "Рафаэль Трухильо",
+   "title": "Президент",
+   "population": 1.5,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 1,
+   "flag": {
+    "t": "swiss",
+    "c": [
+     "#002d62",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "inf": 1
+   },
+   "techs": []
+  },
+  "COS": {
+   "full_name": "Республика Коста-Рика",
+   "ideology": "democracy",
+   "leader": "Рикардо Хименес Ореамуно",
+   "title": "Президент",
+   "population": 0.6,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 1,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#002b7f",
+     "#ffffff",
+     "#ce1126",
+     "#ffffff",
+     "#002b7f"
+    ]
+   },
+   "army": {
+    "inf": 1
+   },
+   "techs": []
+  },
+  "PAN": {
+   "full_name": "Республика Панама",
+   "ideology": "democracy",
+   "leader": "Хармодио Ариас Мадрид",
+   "title": "Президент",
+   "population": 0.55,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 0,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ffffff",
+     "#d21034"
+    ]
+   },
+   "techs": []
+  },
+  "CUB": {
+   "full_name": "Республика Куба",
+   "ideology": "authoritarian",
+   "leader": "Хосе Барнет",
+   "title": "Президент",
+   "population": 4.2,
+   "civ": 2,
+   "mil": 0,
+   "divisions": 2,
+   "flag": {
+    "t": "triangle",
+    "c": [
+     "#002a8f",
+     "#ffffff",
+     "#002a8f",
+     "#ffffff",
+     "#002a8f",
+     "#cf142b"
+    ]
+   },
+   "army": {
+    "inf": 2
+   },
+   "techs": []
+  },
+  "COL": {
+   "full_name": "Республика Колумбия",
+   "ideology": "democracy",
+   "leader": "Альфонсо Лопес Пумарехо",
+   "title": "Президент",
+   "population": 8.5,
+   "civ": 2,
+   "mil": 0,
+   "divisions": 4,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#fcd116",
+     "#fcd116",
+     "#003893",
+     "#ce1126"
+    ]
+   },
+   "army": {
+    "inf": 4
+   },
+   "techs": []
+  },
+  "VEN": {
+   "full_name": "Соединённые Штаты Венесуэлы",
+   "ideology": "authoritarian",
+   "leader": "Элеасар Лопес Контрерас",
+   "title": "Президент",
+   "population": 3.3,
+   "civ": 2,
+   "mil": 0,
+   "divisions": 3,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ffcc00",
+     "#00247d",
+     "#cf142b"
+    ]
+   },
+   "army": {
+    "inf": 3
+   },
+   "techs": []
+  },
+  "ECU": {
+   "full_name": "Республика Эквадор",
+   "ideology": "authoritarian",
+   "leader": "Федерико Паэс",
+   "title": "Глава государства",
+   "population": 2.5,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 3,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ffdd00",
+     "#ffdd00",
+     "#034ea2",
+     "#ed1c24"
+    ]
+   },
+   "army": {
+    "inf": 3
+   },
+   "techs": []
+  },
+  "PRU": {
+   "full_name": "Республика Перу",
+   "ideology": "authoritarian",
+   "leader": "Оскар Бенавидес",
+   "title": "Президент",
+   "population": 6.5,
+   "civ": 2,
+   "mil": 1,
+   "divisions": 6,
+   "flag": {
+    "t": "v",
+    "c": [
+     "#d91023",
+     "#ffffff",
+     "#d91023"
+    ]
+   },
+   "army": {
+    "inf": 5,
+    "cav": 1
+   },
+   "techs": []
+  },
+  "BOL": {
+   "full_name": "Республика Боливия",
+   "ideology": "authoritarian",
+   "leader": "Хосе Луис Техада Сорсано",
+   "title": "Президент",
+   "population": 2.8,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 6,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#d52b1e",
+     "#f9e300",
+     "#007934"
+    ]
+   },
+   "army": {
+    "inf": 5,
+    "mnt": 1
+   },
+   "techs": []
+  },
+  "PAR": {
+   "full_name": "Республика Парагвай",
+   "ideology": "authoritarian",
+   "leader": "Эусебио Аяла",
+   "title": "Президент",
+   "population": 0.9,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 6,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#d52b1e",
+     "#ffffff",
+     "#0038a8"
+    ]
+   },
+   "army": {
+    "inf": 6
+   },
+   "techs": []
+  },
+  "CHL": {
+   "full_name": "Республика Чили",
+   "ideology": "democracy",
+   "leader": "Артуро Алессандри",
+   "title": "Президент",
+   "population": 4.6,
+   "civ": 2,
+   "mil": 1,
+   "divisions": 6,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ffffff",
+     "#d52b1e"
+    ]
+   },
+   "army": {
+    "inf": 5,
+    "mnt": 1
+   },
+   "techs": []
+  },
+  "ARG": {
+   "full_name": "Аргентинская Республика",
+   "ideology": "authoritarian",
+   "leader": "Агустин Хусто",
+   "title": "Президент",
+   "population": 12.7,
+   "civ": 5,
+   "mil": 1,
+   "divisions": 10,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#74acdf",
+     "#ffffff",
+     "#74acdf"
+    ]
+   },
+   "army": {
+    "inf": 8,
+    "cav": 2
+   },
+   "techs": [
+    "mot1"
+   ]
+  },
+  "URU": {
+   "full_name": "Восточная Республика Уругвай",
+   "ideology": "authoritarian",
+   "leader": "Габриэль Терра",
+   "title": "Президент",
+   "population": 2.0,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 2,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ffffff",
+     "#0038a8",
+     "#ffffff",
+     "#0038a8",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "inf": 2
+   },
+   "techs": []
+  },
+  "BRA": {
+   "full_name": "Соединённые Штаты Бразилии",
+   "ideology": "authoritarian",
+   "leader": "Жетулиу Варгас",
+   "title": "Президент",
+   "population": 39.0,
+   "civ": 5,
+   "mil": 1,
+   "divisions": 16,
+   "flag": {
+    "t": "emblem",
+    "c": [
+     "#009c3b",
+     "#ffdf00"
+    ],
+    "emblem": "#002776"
+   },
+   "army": {
+    "inf": 13,
+    "cav": 3
+   },
+   "techs": []
+  },
+  "JAP": {
+   "full_name": "Японская империя",
+   "ideology": "fascism",
+   "leader": "Кэйсукэ Окада",
+   "title": "Премьер-министр",
+   "population": 69.0,
+   "civ": 14,
+   "mil": 9,
+   "divisions": 30,
+   "flag": {
+    "t": "disc",
+    "c": [
+     "#ffffff",
+     "#bc002d"
+    ]
+   },
+   "army": {
+    "inf": 24,
+    "art": 4,
+    "cav": 1,
+    "mnt": 1
+   },
+   "techs": [
+    "mot1",
+    "mnt1"
+   ],
+   "major": true,
+   "colony_divisions": 8,
+   "colony_pop": {
+    "KOR": 14.0,
+    "PRK": 8.0,
+    "TWN": 5.2,
+    "RUS": 0.33,
+    "CHN": 1.3,
+    "FSM": 0.05,
+    "PLW": 0.02,
+    "MHL": 0.01,
+    "MNP": 0.04
+   }
+  },
+  "MAN": {
+   "full_name": "Маньчжоу-го",
+   "ideology": "authoritarian",
+   "leader": "Пу И",
+   "title": "Император",
+   "population": 34.0,
+   "civ": 4,
+   "mil": 2,
+   "divisions": 10,
+   "flag": {
+    "t": "iraq",
+    "c": [
+     "#ffd700",
+     "#ffd700",
+     "#ffd700",
+     "#ffd700"
+    ]
+   },
+   "army": {
+    "inf": 8,
+    "cav": 2
+   },
+   "techs": []
+  },
+  "CHI": {
+   "full_name": "Китайская Республика",
+   "ideology": "authoritarian",
+   "leader": "Чан Кайши",
+   "title": "Председатель Военного совета",
+   "population": 300.0,
+   "civ": 8,
+   "mil": 3,
+   "divisions": 70,
+   "flag": {
+    "t": "canton_sun",
+    "c": [
+     "#fe0000",
+     "#000095",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "inf": 66,
+    "art": 2,
+    "cav": 2
+   },
+   "techs": []
+  },
+  "PRC": {
+   "full_name": "Китайская Советская Республика",
+   "ideology": "communism",
+   "leader": "Мао Цзэдун",
+   "title": "Председатель",
+   "population": 1.5,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 8,
+   "flag": {
+    "t": "canton_star",
+    "c": [
+     "#c8102e",
+     "#ffde00"
+    ]
+   },
+   "army": {
+    "inf": 8
+   },
+   "techs": []
+  },
+  "GXC": {
+   "full_name": "Гуанси",
+   "ideology": "authoritarian",
+   "leader": "Ли Цзунжэнь",
+   "title": "Командующий",
+   "population": 13.0,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 12,
+   "flag": {
+    "t": "canton_sun",
+    "c": [
+     "#fe0000",
+     "#000095",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "inf": 12
+   },
+   "techs": []
+  },
+  "YUN": {
+   "full_name": "Юньнань",
+   "ideology": "authoritarian",
+   "leader": "Лун Юнь",
+   "title": "Председатель провинции",
+   "population": 12.0,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 8,
+   "flag": {
+    "t": "canton_sun",
+    "c": [
+     "#fe0000",
+     "#000095",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "inf": 8
+   },
+   "techs": []
+  },
+  "SHX": {
+   "full_name": "Шаньси",
+   "ideology": "authoritarian",
+   "leader": "Янь Сишань",
+   "title": "Председатель провинции",
+   "population": 11.0,
+   "civ": 2,
+   "mil": 1,
+   "divisions": 10,
+   "flag": {
+    "t": "canton_sun",
+    "c": [
+     "#fe0000",
+     "#000095",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "inf": 10
+   },
+   "techs": []
+  },
+  "XSM": {
+   "full_name": "Клика Ма",
+   "ideology": "authoritarian",
+   "leader": "Ма Буфан",
+   "title": "Командующий",
+   "population": 4.0,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 8,
+   "flag": {
+    "t": "canton_sun",
+    "c": [
+     "#fe0000",
+     "#000095",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "cav": 4,
+    "inf": 4
+   },
+   "techs": []
+  },
+  "SIK": {
+   "full_name": "Синьцзян",
+   "ideology": "authoritarian",
+   "leader": "Шэн Шицай",
+   "title": "Дубань",
+   "population": 4.0,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 4,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ffde00",
+     "#c8102e"
+    ]
+   },
+   "army": {
+    "inf": 2,
+    "cav": 2
+   },
+   "techs": []
+  },
+  "TIB": {
+   "full_name": "Тибет",
+   "ideology": "authoritarian",
+   "leader": "Ретинг-ринпоче",
+   "title": "Регент",
+   "population": 1.2,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 2,
+   "flag": {
+    "t": "disc",
+    "c": [
+     "#002e6d",
+     "#ffd200"
+    ]
+   },
+   "army": {
+    "inf": 2
+   },
+   "techs": [],
+   "neutral": true
+  },
+  "MON": {
+   "full_name": "Монгольская Народная Республика",
+   "ideology": "communism",
+   "leader": "Пэлжидийн Гэндэн",
+   "title": "Председатель Совета министров",
+   "population": 0.75,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 4,
+   "flag": {
+    "t": "v",
+    "c": [
+     "#c4272f",
+     "#015197",
+     "#c4272f"
+    ]
+   },
+   "army": {
+    "cav": 4
+   },
+   "techs": []
+  },
+  "TAN": {
+   "full_name": "Тувинская Народная Республика",
+   "ideology": "communism",
+   "leader": "Салчак Тока",
+   "title": "Генеральный секретарь",
+   "population": 0.07,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 1,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ffffff",
+     "#c4272f",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "cav": 1
+   },
+   "techs": []
+  },
+  "SIA": {
+   "full_name": "Королевство Сиам",
+   "ideology": "authoritarian",
+   "leader": "Пхахон Пхонпхаюхасена",
+   "title": "Премьер-министр",
+   "population": 14.5,
+   "civ": 2,
+   "mil": 1,
+   "divisions": 8,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#a51931",
+     "#f4f5f8",
+     "#2d2a4a",
+     "#2d2a4a",
+     "#f4f5f8",
+     "#a51931"
+    ]
+   },
+   "army": {
+    "inf": 8
+   },
+   "techs": []
+  },
+  "AFG": {
+   "full_name": "Королевство Афганистан",
+   "ideology": "authoritarian",
+   "leader": "Мохаммед Захир-шах",
+   "title": "Король",
+   "population": 10.0,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 6,
+   "flag": {
+    "t": "v",
+    "c": [
+     "#000000",
+     "#d32011",
+     "#007a36"
+    ]
+   },
+   "army": {
+    "inf": 4,
+    "cav": 2
+   },
+   "techs": [],
+   "neutral": true
+  },
+  "NEP": {
+   "full_name": "Королевство Непал",
+   "ideology": "authoritarian",
+   "leader": "Джуддха Шамшер Рана",
+   "title": "Премьер-министр",
+   "population": 6.0,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 3,
+   "flag": {
+    "t": "czech",
+    "c": [
+     "#dc143c",
+     "#dc143c",
+     "#003893"
+    ]
+   },
+   "army": {
+    "mnt": 3
+   },
+   "techs": [],
+   "neutral": true
+  },
+  "BHU": {
+   "full_name": "Королевство Бутан",
+   "ideology": "authoritarian",
+   "leader": "Джигме Вангчук",
+   "title": "Король",
+   "population": 0.3,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 0,
+   "flag": {
+    "t": "czech",
+    "c": [
+     "#ffd520",
+     "#ff4e12",
+     "#ff4e12"
+    ]
+   },
+   "techs": [],
+   "neutral": true
+  },
+  "RAJ": {
+   "full_name": "Британская Индия",
+   "ideology": "democracy",
+   "leader": "Лорд Уиллингдон",
+   "title": "Вице-король",
+   "population": 360.0,
+   "civ": 10,
+   "mil": 1,
+   "divisions": 20,
+   "flag": {
+    "t": "union",
+    "c": [
+     "#012169",
+     "#ffffff",
+     "#c8102e"
+    ]
+   },
+   "army": {
+    "inf": 16,
+    "mnt": 2,
+    "cav": 2
+   },
+   "techs": []
+  },
+  "PHI": {
+   "full_name": "Филиппинское Содружество",
+   "ideology": "democracy",
+   "leader": "Мануэль Кесон",
+   "title": "Президент",
+   "population": 14.5,
+   "civ": 2,
+   "mil": 0,
+   "divisions": 2,
+   "flag": {
+    "t": "triangle",
+    "c": [
+     "#0038a8",
+     "#ce1126",
+     "#ffffff"
+    ]
+   },
+   "army": {
+    "inf": 2
+   },
+   "techs": []
+  },
+  "YEM": {
+   "full_name": "Мутаваккилийское королевство Йемен",
+   "ideology": "authoritarian",
+   "leader": "Яхья Мухаммад Хамид ад-Дин",
+   "title": "Имам",
+   "population": 3.5,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 2,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#ce1126"
+    ]
+   },
+   "army": {
+    "inf": 2
+   },
+   "techs": []
+  },
+  "OMA": {
+   "full_name": "Султанат Маскат и Оман",
+   "ideology": "authoritarian",
+   "leader": "Саид бин Таймур",
+   "title": "Султан",
+   "population": 0.5,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 1,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#c8102e"
+    ]
+   },
+   "army": {
+    "inf": 1
+   },
+   "techs": []
+  },
+  "AST": {
+   "full_name": "Австралийский Союз",
+   "ideology": "democracy",
+   "leader": "Джозеф Лайонс",
+   "title": "Премьер-министр",
+   "population": 6.8,
+   "civ": 5,
+   "mil": 1,
+   "divisions": 4,
+   "flag": {
+    "t": "ensign",
+    "c": [
+     "#012169",
+     "#ffffff"
+    ],
+    "stars": 5
+   },
+   "army": {
+    "inf": 4
+   },
+   "techs": [],
+   "colony_pop": {
+    "PNG": 1.2,
+    "NFK": 0.001,
+    "NRU": 0.003
+   }
+  },
+  "NZL": {
+   "full_name": "Доминион Новая Зеландия",
+   "ideology": "democracy",
+   "leader": "Майкл Сэвидж",
+   "title": "Премьер-министр",
+   "population": 1.6,
+   "civ": 2,
+   "mil": 0,
+   "divisions": 1,
+   "flag": {
+    "t": "ensign",
+    "c": [
+     "#012169",
+     "#c8102e"
+    ],
+    "stars": 4
+   },
+   "army": {
+    "inf": 1
+   },
+   "techs": [],
+   "colony_pop": {
+    "WSM": 0.05,
+    "COK": 0.01,
+    "NIU": 0.004
+   }
+  },
+  "ETH": {
+   "full_name": "Эфиопская империя",
+   "ideology": "authoritarian",
+   "leader": "Хайле Селассие I",
+   "title": "Император",
+   "population": 10.0,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 15,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#078930",
+     "#fcdd09",
+     "#da121a"
+    ]
+   },
+   "army": {
+    "inf": 12,
+    "cav": 3
+   },
+   "techs": []
+  },
+  "LIB": {
+   "full_name": "Республика Либерия",
+   "ideology": "authoritarian",
+   "leader": "Эдвин Баркли",
+   "title": "Президент",
+   "population": 1.5,
+   "civ": 1,
+   "mil": 0,
+   "divisions": 1,
+   "flag": {
+    "t": "stripes_canton",
+    "c": [
+     "#bf0a30",
+     "#ffffff",
+     "#002868"
+    ],
+    "n": 11
+   },
+   "army": {
+    "inf": 1
+   },
+   "techs": []
+  },
+  "SAF": {
+   "full_name": "Южно-Африканский Союз",
+   "ideology": "democracy",
+   "leader": "Джеймс Герцог",
+   "title": "Премьер-министр",
+   "population": 9.6,
+   "civ": 4,
+   "mil": 1,
+   "divisions": 4,
+   "flag": {
+    "t": "h",
+    "c": [
+     "#e06a1f",
+     "#ffffff",
+     "#012a8c"
+    ]
+   },
+   "army": {
+    "inf": 3,
+    "mot": 1
+   },
+   "techs": [
+    "mot1"
+   ],
+   "colony_pop": {
+    "NAM": 0.35
+   }
+  }
+ }
+}

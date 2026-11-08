@@ -10,6 +10,8 @@
 #include <godot_cpp/variant/packed_int64_array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/packed_vector2_array.hpp>
+#include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/classes/random_number_generator.hpp>
 
@@ -95,7 +97,15 @@ public:
 	PackedInt32Array income(const PackedInt32Array &ctrl, const PackedInt32Array &owner, const PackedInt32Array &civ,
 			const PackedInt32Array &mil, const PackedInt32Array &manpower, int nc) const;
 
-	String version() const { return "meowq-core 8"; }
+	PackedInt32Array front_regions(const PackedInt32Array &ctrl, const PackedInt32Array &adj_start,
+			const PackedInt32Array &adj_list, const PackedByteArray &war, int nc, const PackedInt32Array &region, int n) const;
+	PackedByteArray ports_open(const PackedInt32Array &ports, const PackedInt32Array &adj_start,
+			const PackedInt32Array &adj_list, const PackedByteArray &land, const PackedByteArray &zone_has_fleet) const;
+
+	PackedByteArray air_reach(const PackedByteArray &land, const PackedInt32Array &ctrl, const PackedByteArray &ally,
+			int nc, int n, const PackedInt32Array &region, const PackedVector2Array &centers, double range) const;
+
+	String version() const { return "meowq-core 10"; }
 };
 
 } // namespace godot

@@ -260,19 +260,32 @@ func _phase_supply() -> void:
 	var is_land := world.p_land
 	var adj_s := world.adj_start
 	var adj_l := world.adj_list
+	Prof.add("снаб:стороны", _pt0)
 	var zf := world.zone_fleets
 	var sup_memo := {}
-	for p in world.port_list:
+	var plist := world.port_list
+	# блокада возможна, только если во всех соседних морских зонах есть флоты
+	var open_flags := PackedByteArray()
+	if Native.core != null:
+		var zhf := PackedByteArray()
+		zhf.resize(world.prov_count)
+		for z in zf:
+			zhf[z] = 1
+		open_flags = Native.core.call("ports_open", plist, adj_s, adj_l, is_land, zhf)
+	for pi in plist.size():
+		var p := plist[pi]
 		var c := ctl[p]
 		if c < 0 or not rep_index.has(rep[c]):
 			continue
-		# блокада возможна, только если во всех соседних морских зонах есть флоты
 		var open_sea := false
-		for k in range(adj_s[p], adj_s[p + 1]):
-			var q := adj_l[k]
-			if is_land[q] == 0 and not zf.has(q):
-				open_sea = true
-				break
+		if not open_flags.is_empty():
+			open_sea = open_flags[pi] == 1
+		else:
+			for k in range(adj_s[p], adj_s[p + 1]):
+				var q := adj_l[k]
+				if is_land[q] == 0 and not zf.has(q):
+					open_sea = true
+					break
 		if open_sea or not _blockaded(c, p, sup_memo):
 			hubs[rep_index[rep[c]]].append(p)
 	# плацдармы высадок временно работают как порты

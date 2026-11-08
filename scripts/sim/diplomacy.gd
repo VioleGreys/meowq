@@ -428,7 +428,6 @@ static func ai_turn(world: World, n: int, rng: RandomNumberGenerator) -> void:
 	var nat: World.Nation = world.nations[n]
 	if not nat.alive or nat.is_player or nat.overlord >= 0:
 		return
-	var neighbours := world.neighbours_of_nation(n)
 
 	# 1. Фракции
 	if nat.faction < 0 and not nat.neutral:
@@ -616,3 +615,16 @@ static func load_setup(world: World, path: String) -> void:
 		if a >= 0 and b >= 0:
 			world.nations[a].pacts[b] = true
 			world.nations[b].pacts[a] = true
+	# марионетки: [сюзерен, марионетка]
+	for pp in d.get("puppets", []):
+		var a := world.nation_tags.find(pp[0])
+		var b := world.nation_tags.find(pp[1])
+		if a >= 0 and b >= 0:
+			world.nations[b].overlord = a
+	# войны, идущие на начало игры: [нападающий, жертва] (без союзников сторон)
+	for w in d.get("wars", []):
+		var a := world.nation_tags.find(w[0])
+		var b := world.nation_tags.find(w[1])
+		if a >= 0 and b >= 0 and world.nations[a].alive and world.nations[b].alive:
+			world.set_war(a, b)
+			world.nations[a].wargoals[b] = true
