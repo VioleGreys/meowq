@@ -83,6 +83,11 @@ static func make_theme() -> Theme:
 	t.set_color("font_hover_color", "Button", Color(1, 0.96, 0.86))
 	t.set_color("font_pressed_color", "Button", INK)
 	t.set_color("font_disabled_color", "Button", Color(0.48, 0.47, 0.44))
+	t.set_color("icon_normal_color", "Button", BRASS)
+	t.set_color("icon_hover_color", "Button", Color(1, 0.86, 0.55))
+	t.set_color("icon_pressed_color", "Button", INK)
+	t.set_constant("icon_max_width", "Button", 26)
+	t.set_constant("h_separation", "Button", 8)
 	t.set_color("font_color", "Label", CREAM)
 	var bar_bg := _box(Color(0.04, 0.04, 0.035), Color(0.3, 0.26, 0.18), 1, 2, 0)
 	var bar_fill := _box(BRASS, BRASS, 0, 2, 0)
@@ -115,3 +120,31 @@ static func paper_theme() -> Theme:
 static func title(l: Label, size: int = 24) -> void:
 	l.add_theme_font_override("font", title_font(600, 1))
 	l.add_theme_font_size_override("font_size", size)
+
+
+# --- Иконки (game-icons.net, CC BY 3.0; assets/icons/icons.json) -------------
+
+static var _icon_svg := {}
+static var _icon_tex := {}
+
+
+## Белая иконка name размером px×px (перекрашивается через modulate/цвет рисования).
+## null — если иконки нет.
+static func icon(name: String, px: int = 64) -> Texture2D:
+	var key := "%s@%d" % [name, px]
+	if _icon_tex.has(key):
+		return _icon_tex[key]
+	if _icon_svg.is_empty():
+		var path := "res://assets/icons/icons.json"
+		if FileAccess.file_exists(path):
+			var d = JSON.parse_string(FileAccess.get_file_as_string(path))
+			if typeof(d) == TYPE_DICTIONARY:
+				_icon_svg = d.get("icons", {})
+	var tex: Texture2D = null
+	if _icon_svg.has(name):
+		var img := Image.new()
+		if img.load_svg_from_string(_icon_svg[name], px / 512.0) == OK:
+			img.generate_mipmaps()
+			tex = ImageTexture.create_from_image(img)
+	_icon_tex[key] = tex
+	return tex

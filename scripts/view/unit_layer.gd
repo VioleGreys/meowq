@@ -216,11 +216,15 @@ func _draw() -> void:
 				var c := map.world_to_screen(it[1]) + Vector2(0, -counter.y)
 				if not screen.has_point(c):
 					continue
-				var r := 9.0 + sin(Time.get_ticks_msec() * 0.008) * 1.5
+				var r := 10.0 + sin(Time.get_ticks_msec() * 0.008) * 1.5
 				draw_circle(c, r + 2, Color(0.1, 0.05, 0.05, 0.8))
-				draw_circle(c, r, Color(0.85, 0.2, 0.15))
-				draw_line(c + Vector2(-5, -5), c + Vector2(5, 5), Color.WHITE, 2.0)
-				draw_line(c + Vector2(5, -5), c + Vector2(-5, 5), Color.WHITE, 2.0)
+				draw_circle(c, r, Color(0.78, 0.16, 0.12))
+				var btex := UiStyle.icon("battle", 64)
+				if btex != null:
+					draw_texture_rect(btex, Rect2(c - Vector2(7, 7), Vector2(14, 14)), false, Color(1, 0.95, 0.85))
+				else:
+					draw_line(c + Vector2(-5, -5), c + Vector2(5, 5), Color.WHITE, 2.0)
+					draw_line(c + Vector2(5, -5), c + Vector2(-5, 5), Color.WHITE, 2.0)
 			COUNTER:
 				_draw_counter(it, z, counter, font_size, screen)
 			PORT:
@@ -261,7 +265,7 @@ func _draw() -> void:
 					for wpt in wpts:
 						pts.append(map.world_to_screen(wpt))
 					draw_polyline(pts, Color(0.6, 0.9, 1.0), 2.5)
-				_ship_icon(c, it[2], 0.8 if it[3] else 1.0)
+				_ship_icon(c, it[2], 0.8 if it[3] else 1.0, it[3])
 				if it[5]:
 					draw_arc(c, 18, 0, TAU, 20, Color.WHITE, 2.0)
 				draw_string(font, c + Vector2(13, 5), str(it[4]), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
@@ -376,7 +380,16 @@ func _rebuild_labels() -> void:
 
 
 ## Условные знаки родов войск (в духе военных карт).
+const TPL_ICONS := ["inf", "mnt", "cav", "art", "mot", "arm"]
+
+
 func _draw_icon(r: Rect2, tpl: int, col: Color) -> void:
+	# иконка рода войск (game-icons.net); нет файла — условный знак кодом
+	var tex := UiStyle.icon(TPL_ICONS[clampi(tpl, 0, TPL_ICONS.size() - 1)], 64)
+	if tex != null:
+		var s := minf(r.size.x, r.size.y) * 0.95
+		draw_texture_rect(tex, Rect2(r.get_center() - Vector2(s, s) * 0.5, Vector2(s, s)), false, col)
+		return
 	var a := r.position
 	var b := r.position + r.size
 	match tpl:
@@ -406,6 +419,10 @@ func _draw_icon(r: Rect2, tpl: int, col: Color) -> void:
 
 
 func _anchor_icon(c: Vector2) -> void:
+	var tex := UiStyle.icon("anchor", 64)
+	if tex != null:
+		_icon_outlined(tex, c, 18.0, Color(0.7, 0.9, 1.0))
+		return
 	var dark := Color(0.05, 0.05, 0.05, 0.9)
 	var col := Color(0.7, 0.9, 1.0)
 	for pass_i in 2:
@@ -416,7 +433,20 @@ func _anchor_icon(c: Vector2) -> void:
 		draw_arc(c + Vector2(0, 1), 6, 0.2, PI - 0.2, 10, cc, w)
 
 
-func _ship_icon(c: Vector2, col: Color, s: float) -> void:
+## Иконка с тёмной обводкой (тень в 4 стороны) — читается на любой подложке.
+func _icon_outlined(tex: Texture2D, c: Vector2, size: float, col: Color) -> void:
+	var r := Rect2(c - Vector2(size, size) * 0.5, Vector2(size, size))
+	var dark := Color(0.04, 0.04, 0.04, 0.85)
+	for o in [Vector2(-1.5, 0), Vector2(1.5, 0), Vector2(0, -1.5), Vector2(0, 1.5)]:
+		draw_texture_rect(tex, Rect2(r.position + o, r.size), false, dark)
+	draw_texture_rect(tex, r, false, col)
+
+
+func _ship_icon(c: Vector2, col: Color, s: float, sub := false) -> void:
+	var tex := UiStyle.icon("sub" if sub else "fleet", 64)
+	if tex != null:
+		_icon_outlined(tex, c, 26.0 * s, col.lightened(0.25))
+		return
 	var pts := PackedVector2Array([c + Vector2(-12, -2) * s, c + Vector2(12, -2) * s, c + Vector2(8, 5) * s, c + Vector2(-9, 5) * s])
 	draw_colored_polygon(pts, col.darkened(0.2))
 	draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[0]]), Color(0, 0, 0, 0.8), 1.5)
@@ -424,6 +454,12 @@ func _ship_icon(c: Vector2, col: Color, s: float) -> void:
 
 
 func _plane_icon(c: Vector2, col: Color, kind: int, selected_icon: bool) -> void:
+	var tex := UiStyle.icon("fighter" if kind == 0 else "bomber", 64)
+	if tex != null:
+		_icon_outlined(tex, c, 22.0 if kind == 0 else 26.0, col.lightened(0.35))
+		if selected_icon:
+			draw_arc(c, 15, 0, TAU, 20, Color.WHITE, 2.0)
+		return
 	var wing := 9.0 if kind == 0 else 12.0
 	var dark := Color(0.05, 0.05, 0.05, 0.9)
 	draw_line(c + Vector2(0, -8), c + Vector2(0, 8), dark, 5.0)

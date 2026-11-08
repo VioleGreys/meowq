@@ -118,18 +118,26 @@ func _build_side() -> void:
 	side.position = Vector2(10, -272)
 	side.add_theme_constant_override("separation", 4)
 	root.add_child(side)
-	var bs := Vector2(166, 52)
-	side.add_child(_button("Фокусы", func():
-		close_popup()
-		focus_view.open(game, game.world, game.player()), bs))
-	side.add_child(_button("Армия", func(): open_tab("army"), bs))
-	side.add_child(_button("Флот и авиация", func(): open_tab("navy"), bs))
-	side.add_child(_button("Производство", func(): open_tab("production"), bs))
-	side.add_child(_button("Наука", func(): open_tab("research"), bs))
-	side.add_child(_button("Стройка", func(): open_tab("build"), bs))
-	side.add_child(_button("Дипломатия", func(): open_tab("diplomacy"), bs))
-	side.add_child(_button("Все войска", func(): game.select_all(), bs))
-	side.add_child(_button("Режим карты", _cycle_map_mode, bs))
+	var bs := Vector2(176, 52)
+	var items := [
+		["Фокусы", "focus", func():
+			close_popup()
+			focus_view.open(game, game.world, game.player())],
+		["Армия", "army", func(): open_tab("army")],
+		["Флот и авиация", "fleet", func(): open_tab("navy")],
+		["Производство", "factory", func(): open_tab("production")],
+		["Наука", "research", func(): open_tab("research")],
+		["Стройка", "civ", func(): open_tab("build")],
+		["Дипломатия", "diplomacy", func(): open_tab("diplomacy")],
+		["Все войска", "inf", func(): game.select_all()],
+		["Режим карты", "map", _cycle_map_mode],
+	]
+	for it in items:
+		var b := _button(it[0], it[2], bs)
+		b.icon = UiStyle.icon(it[1], 40)
+		b.expand_icon = false
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		side.add_child(b)
 
 
 func _build_info() -> void:

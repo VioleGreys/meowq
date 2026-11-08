@@ -124,6 +124,10 @@
 - Тема интерфейса и шрифты — `scripts/view/ui_style.gd` (`UiStyle`): Oswald
   (заголовки, кнопки, подписи стран), PT Sans (текст), PT Serif (события);
   окна событий — «бумага» (`paper_theme`).
+- Иконки — game-icons.net (CC BY 3.0) из npm-пакета `@iconify-json/game-icons`:
+  `tools/build_icons.py` → `assets/icons/icons.json` (белые SVG), в игре
+  `UiStyle.icon(имя, px)` растеризует и кэширует; `export_presets.cfg`
+  включает `assets/icons/*`. Фишки родов войск, флоты, авиация, порты, бои, меню.
 - Подложка рельефа — `data/world1936/terrain.jpg.bin` (NASA Blue Marble,
   `tools/build_terrain.py --src снимок.jpg`); шейдер `shaders/map.gdshader`
   смешивает её с цветом страны (вблизи сильнее), режим «Местность» — снимок как
