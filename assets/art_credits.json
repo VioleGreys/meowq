@@ -63,6 +63,14 @@
   "article": "Chiang Kai-shek",
   "temporary": true
  },
+ "portraits/COL": {
+  "file": "https://colecciones.banrepcultural.org/media/cache/big/sw-media/63e558e06f0c164503a5eb3c.jpg",
+  "page": "https://colecciones.banrepcultural.org/es/documento/75-aniversario-del-nacimiento-de-alfonso-lpez-pumarejo/63a069175d96b8790f35103f",
+  "license": "неизвестна (поиск картинок)",
+  "artist": "",
+  "article": "Alfonso López Pumarejo",
+  "temporary": true
+ },
  "portraits/CZE": {
   "file": "File:Edvard_Beneš.jpg",
   "page": "https://commons.wikimedia.org/wiki/File:Edvard_Bene%C5%A1.jpg",
@@ -78,6 +86,14 @@
   "artist": "Francis Zachariae (1852–1936)",
   "article": "Thorvald Stauning",
   "temporary": false
+ },
+ "portraits/DNZ": {
+  "file": "https://przystanekhistoria.pl/dokumenty/zalaczniki/166/mini/166-94441_m-d7201.jpg",
+  "page": "https://przystanekhistoria.pl/pa2/tematy/okupacja-niemiecka/29254,Arthur-Greiser-wzorcowy-nazista.html",
+  "license": "неизвестна (поиск картинок)",
+  "artist": "",
+  "article": "Arthur Greiser",
+  "temporary": true
  },
  "portraits/EGY": {
   "file": "[Fuad I, King of Egypt, full portrait, seated in palace.]",
@@ -150,6 +166,14 @@
   "artist": "Magyar Film Iroda",
   "article": "Miklós Horthy",
   "temporary": false
+ },
+ "portraits/ICE": {
+  "file": "https://alchetron.com/cdn/hermann-jnasson-9a2a2c71-9374-462b-a373-a55fafb04f0-resize-750.jpg",
+  "page": "https://alchetron.com/Hermann-J%C3%B3nasson",
+  "license": "неизвестна (поиск картинок)",
+  "artist": "",
+  "article": "Hermann Jónasson",
+  "temporary": true
  },
  "portraits/IRE": {
   "file": "File:De_Valera_LCCN2016822004_(headshot).jpg",
