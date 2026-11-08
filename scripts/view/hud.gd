@@ -267,6 +267,9 @@ func _build_info() -> void:
 # Окно — раскрытая папка-«дело»: левая створка (наклейка дела, фото) и правая
 # с листом, на котором содержимое. События — лист на планшете под зажимом.
 var popup_board: NinePatchRect
+var popup_close: Button
+var cover_card: PanelContainer
+var cover_rows: VBoxContainer
 var popup_sheet: TextureRect
 var popup_sheet_box: MarginContainer
 var popup_content: MarginContainer
@@ -275,6 +278,7 @@ var popup_cover: TextureRect
 var cover_title: Label
 var cover_sub: Label
 var cover_photo: TextureRect
+var cover_photo_holder: Control
 var cover_stamp: TextureRect
 
 const TAB_NAMES := {"army": "Армия", "navy": "Флот и авиация", "production": "Производство",
@@ -319,10 +323,13 @@ func _build_popup() -> void:
 	popup_title = Label.new()
 	popup_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	popup_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	UiStyle.title(popup_title, 30)
+	UiStyle.title(popup_title, 28)
 	popup_title.add_theme_color_override("font_color", UiStyle.INK)
 	head.add_child(popup_title)
-	head.add_child(_button("✕", close_popup, Vector2(52, 48)))
+	popup_close = _button("✕", close_popup, Vector2(40, 40))
+	popup_close.flat = true
+	popup_close.add_theme_font_size_override("font_size", 26)
+	head.add_child(popup_close)
 	var rule := ColorRect.new()
 	rule.color = Color(UiStyle.INK_SOFT, 0.6)
 	rule.custom_minimum_size = Vector2(0, 2)
@@ -365,13 +372,21 @@ func _build_popup() -> void:
 	cover_sub = _label("", 16, UiStyle.INK, true)
 	lv.add_child(cover_sub)
 	lv.add_child(_label("Хранить вечно", 14, UiStyle.RED_INK, true))
-	cover_photo = TextureRect.new()
-	cover_photo.custom_minimum_size = Vector2(180, 240)
-	cover_photo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	cover_photo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	cover_photo.rotation_degrees = -3.0
-	cover_photo.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	cv.add_child(cover_photo)
+	# фото на скрепке и мятая анкета рядом (без пустоты по центру створки)
+	var mid := HBoxContainer.new()
+	mid.add_theme_constant_override("separation", 6)
+	cv.add_child(mid)
+	cover_photo_holder = _clipped_photo(null, Vector2(120, 160))
+	cover_photo = cover_photo_holder.get_child(0).get_child(0)
+	mid.add_child(cover_photo_holder)
+	cover_card = PanelContainer.new()
+	cover_card.add_theme_stylebox_override("panel", UiStyle.sbox("sheet_crumpled.png", 30, 14))
+	cover_card.rotation_degrees = 1.5
+	cover_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cv.add_child(cover_card)
+	cover_rows = VBoxContainer.new()
+	cover_rows.add_theme_constant_override("separation", 2)
+	cover_card.add_child(cover_rows)
 	cover_stamp = TextureRect.new()
 	cover_stamp.texture = UiStyle.ui_tex("stamp_top_secret.png")
 	cover_stamp.custom_minimum_size = Vector2(220, 70)
@@ -455,6 +470,22 @@ func _fill_cover() -> void:
 		cover_photo.texture = pt if pt != null else UiStyle.ui_tex("nophoto.png")
 		cover_stamp.texture = UiStyle.ui_tex("stamp_threat.png") if popup_tab == "nation" and \
 			w.nations[game.player()].at_war.has(nid) else UiStyle.ui_tex("stamp_top_secret.png")
+		# анкета страны
+		_clear(cover_rows)
+		var rows := [["Глава", n.leader], ["Строй", w.ideology_names.get(n.ideology, n.ideology)],
+			["Фракция", Diplomacy.faction_name(w, nid) if Diplomacy.faction_name(w, nid) != "" else "нет"],
+			["Армия", "%d див." % n.division_count], ["Заводы", "%d / %d" % [n.civ, n.mil]]]
+		for r in rows:
+			var line := HBoxContainer.new()
+			var k := _label(String(r[0]) + ":", 14, UiStyle.INK_SOFT, true)
+			k.custom_minimum_size = Vector2(84, 0)
+			k.autowrap_mode = TextServer.AUTOWRAP_OFF
+			line.add_child(k)
+			var vl := _label(String(r[1]), 14, UiStyle.INK, true)
+			vl.add_theme_font_override("font", UiStyle.mono_bold())
+			vl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			line.add_child(vl)
+			cover_rows.add_child(line)
 	cover_sub.text = sub
 
 
@@ -1206,21 +1237,38 @@ func _build_event(w: World) -> void:
 		return
 	var id: String = w.pending_events[0]
 	var ev: Dictionary = w.event_defs.get(id, {})
-	popup_title.text = ev.get("title", id)
-	# окно события — «бумага»: тёмные чернила, текст с засечками
-	var ink := UiStyle.INK
-	var faded := Color(0.38, 0.31, 0.22)
+	popup_title.text = String(ev.get("title", id)).to_upper()
+	var faded := UiStyle.INK_SOFT
+	# шапка телеграммы и штамп
+	var head := HBoxContainer.new()
+	var tg := _label("ТЕЛЕГРАММА · %s" % w.date_string(), 14, faded, true)
+	tg.add_theme_font_override("font", UiStyle.mono_bold())
+	tg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(tg)
+	var st := TextureRect.new()
+	st.texture = UiStyle.ui_tex("stamp_secret.png")
+	st.custom_minimum_size = Vector2(130, 42)
+	st.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	st.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	st.rotation_degrees = -8.0
+	head.add_child(st)
+	popup_body.add_child(head)
+	# фото на скрепке рядом с текстом: картинка события или лидер страны,
+	# к которой событие
 	var art := UiStyle.event_art(id)
+	if art == null:
+		var tgt: int = game.nation_by_tag(String(ev.get("target", ""))) if ev.has("target") else -1
+		if tgt >= 0:
+			art = UiStyle.portrait(w.nations[tgt].tag)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
 	if art != null:
-		var fr := UiStyle.framed(art, Vector2(480, 270), true)
-		fr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		popup_body.add_child(fr)
-	var date_l := _label(w.date_string(), 15, faded)
-	date_l.add_theme_font_override("font", UiStyle.serif_font())
-	popup_body.add_child(date_l)
-	var text_l := _label(ev.get("text", ""), 19, ink)
+		row.add_child(_clipped_photo(art, Vector2(108, 144)))
+	var text_l := _label(ev.get("text", ""), 18, UiStyle.INK, true)
 	text_l.add_theme_font_override("font", UiStyle.serif_font())
-	popup_body.add_child(text_l)
+	text_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(text_l)
+	popup_body.add_child(row)
 	var opts: Array = ev.get("options", [])
 	if opts.size() > 1:
 		popup_body.add_child(_label("★ — так поступили в истории", 14, faded))
@@ -1238,6 +1286,40 @@ func _build_event(w: World) -> void:
 		var et := History.effects_text(w, o.get("effects", []))
 		if et != "":
 			popup_body.add_child(_label("   " + et, 15, faded))
+
+
+## Фото в белой рамке с наклоном и скрепкой сверху.
+func _clipped_photo(tex: Texture2D, size: Vector2) -> Control:
+	var holder := Control.new()
+	holder.custom_minimum_size = size + Vector2(14, 26)
+	var fr := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.97, 0.94, 0.87)
+	sb.set_content_margin_all(6)
+	sb.shadow_color = Color(0, 0, 0, 0.35)
+	sb.shadow_size = 4
+	sb.shadow_offset = Vector2(2, 3)
+	fr.add_theme_stylebox_override("panel", sb)
+	var r := TextureRect.new()
+	r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	r.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	r.texture = tex
+	r.custom_minimum_size = size
+	fr.add_child(r)
+	fr.size = size + Vector2(12, 12)
+	fr.position = Vector2(4, 18)
+	fr.rotation_degrees = -2.0
+	holder.add_child(fr)
+	var clip_r := TextureRect.new()
+	clip_r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	clip_r.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	clip_r.texture = UiStyle.ui_tex("paperclip.png")
+	clip_r.custom_minimum_size = Vector2(30, 44)
+	clip_r.size = Vector2(30, 44)
+	clip_r.position = Vector2(18, 0)
+	clip_r.rotation_degrees = 12.0
+	holder.add_child(clip_r)
+	return holder
 
 
 ## Список всех стран для выбора (экран выбора, игрока ещё нет).
