@@ -36,8 +36,54 @@ int nation(vec4 c) {
 void fragment() {
 	vec2 px = UV * map_size;
 	ivec2 ip = ivec2(floor(px));
-	vec2 f = fract(px);
-	int id = pid(ip);
+	// Сглаженные границы: берём 4 ближайших текселя карты и выбираем провинцию с
+	// наибольшим весом билинейной интерполяции — граница идёт плавной кривой, а не
+	// «лесенкой» пикселей. diff — запас победителя над вторым: 0 на самой границе.
+	// окно 3×3 текселя с гауссовыми весами: ступеньки сглаживаются в наклонные линии
+	int uid[9] = int[](-1, -1, -1, -1, -1, -1, -1, -1, -1);
+	float uw[9] = float[](0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+	int un = 0;
+	// при сильном отдалении (тексель меньше пикселя экрана) сглаживать нечего —
+	// бережём видеокарту телефона
+	// (окно 2×2 вокруг точки: границы остаются, выборок вдвое меньше)
+	bool far = zoom * 2.0 < 1.2;
+	ivec2 base_t = far ? ivec2(floor(px - 0.5)) : ip - ivec2(1);
+	int span = far ? 1 : 2;
+	for (int oy = 0; oy <= span; oy++) {
+		for (int ox = 0; ox <= span; ox++) {
+			ivec2 tp = base_t + ivec2(ox, oy);
+			vec2 d = vec2(tp) + 0.5 - px;
+			float w = exp(-dot(d, d) * 1.4);
+			int cidv = pid(tp);
+			int k = -1;
+			for (int j = 0; j < 9; j++) {
+				if (j < un && uid[j] == cidv) {
+					k = j;
+				}
+			}
+			if (k < 0) {
+				k = un;
+				uid[k] = cidv;
+				un++;
+			}
+			uw[k] += w;
+		}
+	}
+	int top = 0;
+	for (int j = 1; j < 9; j++) {
+		if (j < un && uw[j] > uw[top]) {
+			top = j;
+		}
+	}
+	int sec = -1;
+	for (int j = 0; j < 9; j++) {
+		if (j < un && j != top && (sec < 0 || uw[j] > uw[sec])) {
+			sec = j;
+		}
+	}
+	int id = uid[top];
+	float diff = sec >= 0 ? (uw[top] - uw[sec]) / (uw[top] + uw[sec]) : 1.0;
+	int id2 = sec >= 0 ? uid[sec] : id;
 	vec4 cc = pal(ctrl_tex, id);
 	vec4 oc = pal(owner_tex, id);
 	int ctrl = nation(cc);
@@ -102,36 +148,26 @@ void fragment() {
 		}
 	}
 
-	// Границы: проверяем соседний тексель, только если мы у его края.
-	float prov_w = 0.16;
-	float nat_w = 0.40;
-	float prov_alpha = smoothstep(0.45, 1.3, zoom);
-	float border = 0.0;
-	float coast = 0.0;
-	float provb = 0.0;
-	ivec2 dirs[4] = ivec2[](ivec2(1, 0), ivec2(-1, 0), ivec2(0, 1), ivec2(0, -1));
-	float dist[4] = float[](1.0 - f.x, f.x, 1.0 - f.y, f.y);
-	for (int i = 0; i < 4; i++) {
-		if (dist[i] > nat_w) {
-			continue;
-		}
-		int nid = pid(ip + dirs[i]);
-		if (nid == id) {
-			continue;
-		}
-		int nc = nation(pal(ctrl_tex, nid));
+	// Границы — сглаженные линии постоянной толщины на экране (в пикселях экрана).
+	float dpx = diff / max(fwidth(diff), 1e-4) * 0.5;   // расстояние до границы, пикс. экрана
+	float texel_px = zoom * 2.0;                         // тексель карты на экране (масштаб спрайта 2)
+	if (id2 != id) {
+		int nc = nation(pal(ctrl_tex, id2));
 		bool nland = nc >= 0;
 		if (land != nland) {
-			if (dist[i] < 0.30) coast = 1.0;
+			float w = max(0.9, 0.35 * texel_px);
+			col = mix(col, vec3(0.10, 0.13, 0.17), (1.0 - smoothstep(w - 0.8, w + 0.8, dpx)) * 0.8);
 		} else if (land && nc != ctrl) {
-			border = max(border, 1.0 - dist[i] / nat_w);
-		} else if (land && dist[i] < prov_w) {
-			provb = 1.0;
+			float w = max(1.1, 0.45 * texel_px);
+			col = mix(col, vec3(0.07, 0.06, 0.06), (1.0 - smoothstep(w - 0.9, w + 0.9, dpx)) * 0.9);
+			// мягкий тон своей страны вдоль границы — как цветная кайма на картах
+			col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 3.0 + texel_px, dpx)) * 0.18);
+		} else if (land) {
+			float w = max(0.6, 0.14 * texel_px);
+			float a2 = smoothstep(0.45, 1.3, zoom);
+			col = mix(col, col * 0.6, (1.0 - smoothstep(w - 0.7, w + 0.7, dpx)) * a2);
 		}
 	}
-	col = mix(col, col * 0.62, provb * prov_alpha);
-	col = mix(col, vec3(0.08, 0.07, 0.07), smoothstep(0.0, 0.35, border) * 0.9);
-	col = mix(col, vec3(0.12, 0.16, 0.2), coast * 0.8);
 
 	if (id == selected_id && land) {
 		col = mix(col, vec3(1.0, 0.96, 0.8), 0.28 + 0.08 * sin(TIME * 5.0));

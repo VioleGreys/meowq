@@ -54,6 +54,8 @@ static func _box(bg: Color, border: Color, width: int = 2, radius: int = 3, marg
 	b.set_border_width_all(width)
 	b.set_corner_radius_all(radius)
 	b.set_content_margin_all(margin)
+	b.anti_aliasing = true
+	b.corner_detail = 10
 	return b
 
 
@@ -61,17 +63,17 @@ static func make_theme() -> Theme:
 	var t := Theme.new()
 	t.default_font = text_font()
 	t.default_font_size = 20
-	var panel := _box(Color(0.095, 0.10, 0.085, 0.94), BRASS_DIM, 2, 3, 10)
+	var panel := _box(Color(0.095, 0.10, 0.085, 0.94), BRASS_DIM, 2, 10, 10)
 	panel.shadow_color = Color(0, 0, 0, 0.45)
 	panel.shadow_size = 6
 	t.set_stylebox("panel", "PanelContainer", panel)
 	t.set_stylebox("panel", "Panel", panel)
-	var btn := _box(Color(0.19, 0.19, 0.15), BRASS_DIM, 2, 3, 8)
+	var btn := _box(Color(0.19, 0.19, 0.15), BRASS_DIM, 2, 8, 8)
 	btn.border_width_bottom = 3
-	var hover := _box(Color(0.27, 0.26, 0.20), BRASS, 2, 3, 8)
+	var hover := _box(Color(0.27, 0.26, 0.20), BRASS, 2, 8, 8)
 	hover.border_width_bottom = 3
-	var pressed := _box(Color(0.60, 0.48, 0.25), BRASS, 2, 3, 8)
-	var disabled := _box(Color(0.14, 0.14, 0.13), Color(0.30, 0.29, 0.26), 2, 3, 8)
+	var pressed := _box(Color(0.60, 0.48, 0.25), BRASS, 2, 8, 8)
+	var disabled := _box(Color(0.14, 0.14, 0.13), Color(0.30, 0.29, 0.26), 2, 8, 8)
 	t.set_stylebox("normal", "Button", btn)
 	t.set_stylebox("hover", "Button", hover)
 	t.set_stylebox("pressed", "Button", pressed)
@@ -89,8 +91,8 @@ static func make_theme() -> Theme:
 	t.set_constant("icon_max_width", "Button", 26)
 	t.set_constant("h_separation", "Button", 8)
 	t.set_color("font_color", "Label", CREAM)
-	var bar_bg := _box(Color(0.04, 0.04, 0.035), Color(0.3, 0.26, 0.18), 1, 2, 0)
-	var bar_fill := _box(BRASS, BRASS, 0, 2, 0)
+	var bar_bg := _box(Color(0.04, 0.04, 0.035), Color(0.3, 0.26, 0.18), 1, 5, 0)
+	var bar_fill := _box(BRASS, BRASS, 0, 5, 0)
 	t.set_stylebox("background", "ProgressBar", bar_bg)
 	t.set_stylebox("fill", "ProgressBar", bar_fill)
 	# прокрутка — тонкая латунная
@@ -107,7 +109,7 @@ static func make_theme() -> Theme:
 ## «Бумажная» панель для окон событий: светлая, текст тёмный, шрифт с засечками.
 static func paper_theme() -> Theme:
 	var t := make_theme()
-	var paper := _box(PAPER, Color(0.42, 0.33, 0.20), 3, 2, 14)
+	var paper := _box(PAPER, Color(0.42, 0.33, 0.20), 3, 10, 14)
 	paper.shadow_color = Color(0, 0, 0, 0.55)
 	paper.shadow_size = 10
 	t.set_stylebox("panel", "PanelContainer", paper)

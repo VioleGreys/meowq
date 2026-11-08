@@ -16,14 +16,22 @@ var world: World
 var selected: Array = []        # выбранные дивизии (объекты; читаются только в rebuild)
 var player := -1
 var font: Font
+var bold: Font
 var label_font: Font   # подписи стран — Oswald с разрядкой
 var items: Array = []           # список отрисовки: [тип, данные...]
 var _labels: Array = []         # [мировая позиция, имя, размер, ширина]
 var _labels_day := -1
 
 
+var _sb := StyleBoxFlat.new()   # скруглённые сглаженные плашки фишек (рисуются сразу)
+
+
 func _ready() -> void:
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	_sb.anti_aliasing = true
+	_sb.anti_aliasing_size = 0.8
 	font = UiStyle.text_font()
+	bold = UiStyle.bold_font()
 	label_font = UiStyle.title_font(500, 3)
 
 
@@ -176,7 +184,7 @@ func _draw() -> void:
 	var z := map.zoom_level()
 	var vp := get_viewport_rect().size
 	var screen := Rect2(Vector2.ZERO, vp).grow(40)
-	var counter := Vector2(34, 22) * clampf(0.75 + z * 0.25, 0.8, 1.5)
+	var counter := Vector2(40, 22) * clampf(0.75 + z * 0.25, 0.8, 1.5)
 	var font_size := int(clampf(12 + z * 2, 12, 20))
 	for it in items:
 		match it[0]:
@@ -287,33 +295,50 @@ func _draw_counter(it: Array, z: float, counter: Vector2, font_size: int, screen
 	var nat_col: Color = it[3]
 	if z < 0.55 and not it[11]:
 		if z >= 0.25:   # на масштабе всего мира стопки не рисуем — как в жанре
-			draw_rect(Rect2(base - Vector2(4, 4), Vector2(8, 8)), nat_col.darkened(0.35))
+			draw_circle(base, 4.5, Color(0.05, 0.05, 0.05, 0.7), true, -1.0, true)
+			draw_circle(base, 3.5, nat_col.lightened(0.15), true, -1.0, true)
 		return
-	var pos: Vector2 = base + Vector2(it[2] * (counter.x + 4), 0) - counter * 0.5
+	var pos: Vector2 = base + Vector2(it[2] * (counter.x + 5), 0) - counter * 0.5
 	var any_sel: bool = it[8]
 	var rect := Rect2(pos, counter)
-	draw_rect(Rect2(pos + Vector2(2, 2), counter), Color(0, 0, 0, 0.35))
-	draw_rect(rect, nat_col.darkened(0.15))
-	var icon_rect := Rect2(pos + Vector2(2, 2), Vector2(counter.x * 0.42, counter.y - 4))
-	draw_rect(icon_rect, nat_col.lightened(0.35))
-	_draw_icon(icon_rect, it[5], Color(0.08, 0.08, 0.08))
-	draw_rect(rect, Color.WHITE if any_sel else Color(0.08, 0.08, 0.08), false, 2.5 if any_sel else 1.5)
-	draw_string(font, pos + Vector2(counter.x * 0.44, counter.y * 0.5 + font_size * 0.36), str(it[4]),
-		HORIZONTAL_ALIGNMENT_CENTER, counter.x * 0.56, font_size, Color(0.05, 0.05, 0.05))
+	var rad := int(counter.y * 0.5)
+	# тень
+	_rrect(Rect2(pos + Vector2(1.5, 2.5), counter), Color(0, 0, 0, 0.35), rad)
+	# плашка: цвет страны, справа — число дивизий; слева — круглый знак рода войск
+	_rrect(rect, nat_col.darkened(0.12), rad, Color.WHITE if any_sel else Color(0.06, 0.06, 0.06, 0.85), 2 if any_sel else 1)
+	var badge_r := counter.y * 0.5 - 1.5
+	var bc := pos + Vector2(badge_r + 1.5, counter.y * 0.5)
+	draw_circle(bc, badge_r, nat_col.lightened(0.45), true, -1.0, true)
+	draw_arc(bc, badge_r, 0, TAU, 24, Color(0.06, 0.06, 0.06, 0.6), 1.0, true)
+	_draw_icon(Rect2(bc - Vector2(badge_r, badge_r) * 0.82, Vector2(badge_r, badge_r) * 1.64), it[5], Color(0.1, 0.09, 0.08))
+	var tx := bc.x + badge_r + 1.0
+	draw_string(bold, Vector2(tx, pos.y + counter.y * 0.5 + font_size * 0.36), str(it[4]),
+		HORIZONTAL_ALIGNMENT_CENTER, pos.x + counter.x - tx - 2.0, font_size, Color(0.97, 0.95, 0.9))
 	var grp: Color = it[9]
 	if grp.a > 0.0:
-		draw_rect(Rect2(pos + Vector2(0, -4), Vector2(counter.x, 3)), grp)
+		_rrect(Rect2(pos + Vector2(rad * 0.6, -4), Vector2(counter.x - rad * 1.2, 3)), grp, 1)
 	if it[10]:
 		# нет снабжения: красный восклицательный знак
-		var c2 := pos + Vector2(counter.x + 6, 4)
-		draw_circle(c2, 7, Color(0.85, 0.15, 0.1))
-		draw_string(font, c2 + Vector2(-3, 5), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
-	# полоски: зелёная — сила, жёлтая — организация
-	var bw := counter.x
-	draw_rect(Rect2(pos + Vector2(0, counter.y + 1), Vector2(bw, 3)), Color(0, 0, 0, 0.6))
-	draw_rect(Rect2(pos + Vector2(0, counter.y + 1), Vector2(bw * it[6], 3)), Color(0.35, 0.85, 0.35))
-	draw_rect(Rect2(pos + Vector2(0, counter.y + 4), Vector2(bw, 3)), Color(0, 0, 0, 0.6))
-	draw_rect(Rect2(pos + Vector2(0, counter.y + 4), Vector2(bw * it[7], 3)), Color(0.95, 0.8, 0.25))
+		var c2 := pos + Vector2(counter.x + 5, 3)
+		draw_circle(c2, 6.5, Color(0.85, 0.15, 0.1), true, -1.0, true)
+		draw_string(font, c2 + Vector2(-2.5, 5), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+	# полоски под плашкой: зелёная — сила, жёлтая — организация (со скруглёнными краями)
+	var bx := pos.x + rad * 0.5
+	var bw := counter.x - rad
+	_rrect(Rect2(bx - 1, pos.y + counter.y + 1, bw + 2, 7), Color(0, 0, 0, 0.55), 2)
+	if it[6] > 0.02:
+		_rrect(Rect2(bx, pos.y + counter.y + 2, bw * it[6], 2.5), Color(0.40, 0.85, 0.38), 1)
+	if it[7] > 0.02:
+		_rrect(Rect2(bx, pos.y + counter.y + 5, bw * it[7], 2.5), Color(0.96, 0.80, 0.30), 1)
+
+
+## Скруглённый прямоугольник со сглаживанием (StyleBoxFlat рисуется сразу).
+func _rrect(r: Rect2, fill: Color, radius: int, border := Color(0, 0, 0, 0), bw := 0) -> void:
+	_sb.bg_color = fill
+	_sb.set_corner_radius_all(radius)
+	_sb.border_color = border
+	_sb.set_border_width_all(bw)
+	_sb.draw(get_canvas_item(), r)
 
 
 func _draw_label(l: Array, z: float) -> void:

@@ -129,7 +129,7 @@ func refresh() -> void:
 			col = Color(0.16, 0.16, 0.16)
 		var sb := StyleBoxFlat.new()
 		sb.bg_color = col
-		sb.set_corner_radius_all(6)
+		sb.set_corner_radius_all(10)
 		sb.set_border_width_all(3 if fd["id"] == selected else 1)
 		sb.border_color = Color(1, 0.9, 0.6) if fd["id"] == selected else Color(0.6, 0.53, 0.36)
 		sb.set_content_margin_all(6)
