@@ -69,12 +69,14 @@ func _button(text: String, cb: Callable, min_size := Vector2(0, 56)) -> Button:
 	b.text = text
 	b.custom_minimum_size = min_size
 	# действия игрока меняют мир — выполняем под блокировкой (ждём конца дня)
+	# отложенно (в конце кадра): действие часто пересобирает окно и удаляет саму
+	# кнопку — посреди обработки нажатия это давало ошибки «!is_inside_tree()»
 	b.pressed.connect(func():
 		if game != null:
 			game.world_lock()
 		cb.call()
 		if game != null:
-			game.world_unlock())
+			game.world_unlock(), CONNECT_DEFERRED)
 	return b
 
 
@@ -1076,34 +1078,6 @@ func _build_navy(w: World, me: int) -> void:
 		b.add_theme_font_size_override("font_size", 14)
 		row2.add_child(b)
 	popup_body.add_child(row2)
-	popup_body.add_child(_label("Ограничение кадров", 20))
-	popup_body.add_child(_label("На экранах 90–120 Гц лишние кадры только греют телефон и вызывают замедление от перегрева.", 15, Color(0.75, 0.75, 0.7)))
-	var row3 := HBoxContainer.new()
-	row3.add_theme_constant_override("separation", 8)
-	var cur_f := Settings.fps_cap()
-	for f in 3:
-		var ff := f
-		var b3 := _button(Settings.FPS_NAMES[f], func():
-			Settings.set_fps_cap(ff)
-			_rebuild_popup(), Vector2(0, 52))
-		b3.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b3.toggle_mode = true
-		b3.set_pressed_no_signal(f == cur_f)
-		row3.add_child(b3)
-	popup_body.add_child(row3)
-	var lite := CheckButton.new()
-	lite.text = "Упрощать карту при сдвиге и масштабе"
-	lite.button_pressed = Settings.motion_lite()
-	lite.toggled.connect(func(v: bool):
-		Settings.set_motion_lite(v)
-		game.map_view.motion_lite = v)
-	popup_body.add_child(lite)
-	popup_body.add_child(_label("Пока карту двигают, она рисуется в низком качестве, после остановки — в выбранном.", 15, Color(0.75, 0.75, 0.7)))
-	popup_body.add_child(_label("Отчёт для разработки", 20))
-	popup_body.add_child(_label("Телефон, видеокарта, настройки, замеры за последние 30 секунд и ошибки из журнала (после вылета — и причина). Вставьте его в чат одним сообщением.", 15, Color(0.75, 0.75, 0.7)))
-	popup_body.add_child(_button("Скопировать отчёт", func():
-		DisplayServer.clipboard_set(Report.build(game))
-		toast("Отчёт скопирован в буфер обмена"), Vector2(0, 52)))
 	popup_body.add_child(_section("Морские высадки"))
 	var plans := 0
 	for plan in w.invasions:
