@@ -1,10 +1,90 @@
 {
+ "portraits/BEL": {
+  "file": "File:Paul_van_Zeeland_(1-E-1585)_(cropped).jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Paul_van_Zeeland_(1-E-1585)_(cropped).jpg",
+  "license": "Public domain",
+  "artist": "Unknown author",
+  "article": "Paul van Zeeland",
+  "temporary": false
+ },
+ "portraits/ENG": {
+  "file": "File:Stanley_Baldwin_1932.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Stanley_Baldwin_1932.jpg",
+  "license": "Public domain",
+  "artist": "Bassano Ltd",
+  "article": "Stanley Baldwin",
+  "temporary": false
+ },
+ "portraits/FRA": {
+  "file": "File:Pierre_Laval_a_Meurisse_1931.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Pierre_Laval_a_Meurisse_1931.jpg",
+  "license": "Public domain",
+  "artist": "Agence de presse Meurisse",
+  "article": "Pierre Laval",
+  "temporary": false
+ },
  "portraits/GER": {
   "file": "File:Hitler_portrait_crop_(cropped)(2).jpg",
   "page": "https://commons.wikimedia.org/wiki/File:Hitler_portrait_crop_(cropped)(2).jpg",
   "license": "CC BY-SA 3.0 de",
   "artist": "Heinrich Hoffmann",
   "article": "Adolf Hitler",
+  "temporary": false
+ },
+ "portraits/HOL": {
+  "file": "File:Hendrik_Colijn_(1925).jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Hendrik_Colijn_(1925).jpg",
+  "license": "Public domain",
+  "artist": "Bain News Service, publisher;",
+  "article": "Hendrikus Colijn",
+  "temporary": false
+ },
+ "portraits/ITA": {
+  "file": "File:Mussolini_mezzobusto.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Mussolini_mezzobusto.jpg",
+  "license": "Public domain",
+  "artist": "",
+  "article": "Benito Mussolini",
+  "temporary": false
+ },
+ "portraits/LUX": {
+  "file": "File:Joseph_Bech_1950.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Joseph_Bech_1950.jpg",
+  "license": "Public domain",
+  "artist": "Unknown author",
+  "article": "Joseph Bech",
+  "temporary": false
+ },
+ "portraits/POL": {
+  "file": "File:Ignacy_Mościcki_(-1934).jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Ignacy_Mo%C5%9Bcicki_(-1934).jpg",
+  "license": "Public domain",
+  "artist": "Unknown authorUnknown author",
+  "article": "Ignacy Mościcki",
+  "temporary": false
+ },
+ "portraits/POR": {
+  "file": "File:António_de_Oliveira_Salazar_portrait_(by_Manuel_Alves_San_Payo)_–_Lisboa.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Ant%C3%B3nio_de_Oliveira_Salazar_portrait_(by_Manuel_Alves_San_Payo)_%E2%80%93_Lisboa.jpg",
+  "license": "Public domain",
+  "artist": "Manuel Alves de San Payo",
+  "article": "António de Oliveira Salazar",
+  "temporary": false
+ },
+ "portraits/SOV": {
+  "file": "File:StalinCropped1943.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:StalinCropped1943.jpg",
+  "license": "Public domain",
+  "artist": "Franklin D. Roosevelt Library Public Domain Photographs",
+  "article": "Joseph Stalin",
+  "temporary": false
+ },
+ "portraits/SPR": {
+  "file": "File:Retrato_oficial_de_Niceto_Alcalá-Zamora.png",
+  "page": "https://commons.wikimedia.org/wiki/File:Retrato_oficial_de_Niceto_Alcal%C3%A1-Zamora.png",
+  "license": "Public domain",
+  "artist": "Unknown authorUnknown author",
+  "article": "Niceto Alcalá-Zamora",
   "temporary": false
  }
 }

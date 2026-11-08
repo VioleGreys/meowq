@@ -162,6 +162,8 @@ func _auto_screenshot(path: String) -> void:
 	world_lock()
 	_auto_screenshot_locked()
 	world_unlock()
+	if "--nohud" in OS.get_cmdline_user_args():
+		hud.visible = false   # для макетов оформления: только карта и фишки
 	for i in 10:
 		await get_tree().process_frame
 	world_lock()
