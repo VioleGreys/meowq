@@ -127,6 +127,7 @@ void fragment() {
 	for (int j = 0; j < NS; j++) {
 		nat_c[j] = uid[j] >= 0 ? nation(pal(ctrl_tex, uid[j])) : -2;
 	}
+	bool wide_land = false;   // суша найдена вне окна — границ стран/провинций тут не рисуем
 	bool cov_land = quality > 0 ? cov >= 0.5 : nation(pal(ctrl_tex, uid[top])) >= 0;
 	if (cov_land && nat_c[top] < 0) {
 		int bl = -1;
@@ -138,6 +139,27 @@ void fragment() {
 		if (bl >= 0) {
 			top = bl;
 			id = uid[top];
+		} else {
+			// векторный контур уже суша, а в окне сглаживания одна вода (берег
+			// большого озера-зоны) — ищем ближайшую сушу чуть дальше, иначе тут
+			// остаётся квадратик воды за линией берега
+			float bd = 1e9;
+			for (int oy = -2; oy <= 2; oy++) {
+				for (int ox = -2; ox <= 2; ox++) {
+					ivec2 cp = ip + ivec2(ox, oy);
+					int cid = pid(cp);
+					if (nation(pal(ctrl_tex, cid)) < 0) {
+						continue;
+					}
+					vec2 dd = vec2(cp) + 0.5 - px;
+					float d = dot(dd, dd);
+					if (d < bd) {
+						bd = d;
+						id = cid;
+					}
+				}
+			}
+			wide_land = bd < 1e8;
 		}
 	}
 	vec4 cc = pal(ctrl_tex, id);
@@ -148,17 +170,32 @@ void fragment() {
 
 	vec2 t = 1.0 / map_size;
 	float h = texture(height_tex, UV).r;
-	float hx = texture(height_tex, UV + vec2(t.x, 0.0)).r - texture(height_tex, UV - vec2(t.x, 0.0)).r;
-	float hy = texture(height_tex, UV + vec2(0.0, t.y)).r - texture(height_tex, UV - vec2(0.0, t.y)).r;
+	float h_r = texture(height_tex, UV + vec2(t.x, 0.0)).r;
+	float h_l = texture(height_tex, UV - vec2(t.x, 0.0)).r;
+	float h_d = texture(height_tex, UV + vec2(0.0, t.y)).r;
+	float h_u = texture(height_tex, UV - vec2(0.0, t.y)).r;
+	if (quality > 0) {
+		// у берега растровая высота резко падает к морю — светотень рисовала бы
+		// ступенчатый силуэт пикселей; берег уже дан векторным контуром
+		h_r = max(h_r, 0.5); h_l = max(h_l, 0.5); h_d = max(h_d, 0.5); h_u = max(h_u, 0.5);
+	}
+	float hx = h_r - h_l;
+	float hy = h_d - h_u;
 	vec3 n = normalize(vec3(-hx * 7.0, -hy * 7.0, 1.0));
 	float light = clamp(dot(n, normalize(vec3(-0.55, -0.65, 0.75))), 0.0, 1.0);
 
 	vec3 col;
 	// мелкие озёра входят в провинции суши, но по высоте ниже уровня моря — вода
-	bool lake = land && texture(height_tex, (vec2(ip) + 0.5) / map_size).r < 0.49;
+	// (только на низком качестве: на среднем и высоком озёра — в векторном контуре)
+	bool lake = quality == 0 && land && texture(height_tex, (vec2(ip) + 0.5) / map_size).r < 0.49;
 	if (!land || lake || sea_px) {
 		// вода: мелководье у берегов светлее, глубина темнее, лёгкая рябь
 		float depth = clamp((0.5 - h) * 2.4, 0.0, 1.0);
+		if (quality > 0) {
+			// глубина по растру не доходит до нуля у самого берега (иначе светлая
+			// кайма повторяет пиксели), мелководье — узкой полосой по контуру
+			depth = clamp((0.5 - min(h, 0.45)) * 2.4, 0.0, 1.0) * (1.0 - smoothstep(0.0, 0.5, cov) * 0.7);
+		}
 		col = mix(vec3(0.22, 0.42, 0.50), vec3(0.07, 0.15, 0.25), pow(depth, 0.45));
 		float wave = sin(TIME * 0.7 + px.x * 0.21 + sin(px.y * 0.13 + TIME * 0.3) * 2.0);
 		col += vec3(0.015) * wave * (1.0 - depth * 0.5);
@@ -199,7 +236,18 @@ void fragment() {
 		float river = texture(height_tex, UV).g;
 		col = mix(col, vec3(0.22, 0.42, 0.58), smoothstep(0.25, 0.8, river) * 0.75 * smoothstep(0.35, 0.9, zoom));
 		// лёгкая «бумажная» зернистость
-		col *= 0.97 + 0.03 * fract(sin(dot(vec2(ip), vec2(12.9898, 78.233))) * 43758.5453);
+		if (quality == 0) {
+			col *= 0.97 + 0.03 * fract(sin(dot(vec2(ip), vec2(12.9898, 78.233))) * 43758.5453);
+		} else {
+			// плавный шум (билинейно между узлами) — без квадратиков вблизи
+			vec2 g = floor(px * 0.5);
+			vec2 f = smoothstep(0.0, 1.0, fract(px * 0.5));
+			float n00 = fract(sin(dot(g, vec2(12.9898, 78.233))) * 43758.5453);
+			float n10 = fract(sin(dot(g + vec2(1.0, 0.0), vec2(12.9898, 78.233))) * 43758.5453);
+			float n01 = fract(sin(dot(g + vec2(0.0, 1.0), vec2(12.9898, 78.233))) * 43758.5453);
+			float n11 = fract(sin(dot(g + vec2(1.0, 1.0), vec2(12.9898, 78.233))) * 43758.5453);
+			col *= 0.97 + 0.03 * mix(mix(n00, n10, f.x), mix(n01, n11, f.x), f.y);
+		}
 		if (highlight_nation >= 0 && ctrl != highlight_nation) {
 			col = mix(col, vec3(dot(col, vec3(0.33))), 0.55) * 0.8;
 		}
@@ -273,7 +321,7 @@ void fragment() {
 		col = mix(col, vec3(0.10, 0.13, 0.17), (1.0 - smoothstep(w - 0.8, w + 0.8, dp)) * 0.8);
 	}
 	land = land && !sea_px;
-	if (land && w_other > 0.0) {
+	if (land && !wide_land && w_other > 0.0) {
 		float d1 = abs(w_mine - w_other) / (w_mine + w_other);
 		float dp = d1 / max(fwidth(d1), 1e-4) * 0.5;
 		float w = max(1.1, 0.45 * texel_px);
@@ -281,7 +329,7 @@ void fragment() {
 		// мягкий тон своей страны вдоль границы — как цветная кайма на картах
 		col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 3.0 + texel_px, dp)) * 0.18);
 	}
-	if (land && w_prov2 > 0.0) {
+	if (land && !wide_land && w_prov2 > 0.0) {
 		float d2 = (uw[top] - w_prov2) / (uw[top] + w_prov2);
 		float dp = d2 / max(fwidth(d2), 1e-4) * 0.5;
 		float w = max(0.6, 0.14 * texel_px);
