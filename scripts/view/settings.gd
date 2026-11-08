@@ -85,3 +85,16 @@ static func ui_sound() -> bool:
 static func set_ui_sound(v: bool) -> void:
 	_load().set_value("audio", "ui_sound", v)
 	_cfg.save(PATH)
+
+
+## Строка замеров внизу экрана (FPS, тик, кадр) — для разработки, по умолчанию скрыта.
+static func show_perf() -> bool:
+	for a in OS.get_cmdline_user_args():
+		if a == "--perf":
+			return true
+	return bool(_load().get_value("debug", "show_perf", false))
+
+
+static func set_show_perf(v: bool) -> void:
+	_load().set_value("debug", "show_perf", v)
+	_cfg.save(PATH)

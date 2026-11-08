@@ -342,7 +342,7 @@ func _build_popup() -> void:
 	v.add_child(scroll)
 	popup_body = VBoxContainer.new()
 	popup_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	popup_body.add_theme_constant_override("separation", 8)
+	popup_body.add_theme_constant_override("separation", 6)
 	scroll.add_child(popup_body)
 	popup_clip = _nine("clipboard_clip.png", 1)
 	popup.add_child(popup_clip)
@@ -420,8 +420,8 @@ func _layout_popup(clipboard: bool) -> void:
 		popup.offset_top = 76
 		popup.offset_bottom = -6
 		popup_board.texture = UiStyle.ui_tex("clipboard.png")
-		_set_margins(popup_sheet_box, 34, 34, int(h * 0.12), 26)
-		_set_margins(popup_content, 50, 50, int(h * 0.12) + 34, 40)
+		_set_margins(popup_sheet_box, 34, 34, int(h * 0.10), 26)
+		_set_margins(popup_content, 50, 50, int(h * 0.10) + 52, 40)
 		popup_sheet.texture = UiStyle.ui_tex("sheet_crumpled.png")
 		popup_sheet.rotation_degrees = -1.0
 		popup_clip.texture = UiStyle.ui_tex("clipboard_clip.png")
@@ -532,6 +532,7 @@ func _build_log() -> void:
 	perf_label.add_theme_font_size_override("font_size", 14)
 	perf_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.85, 0.7))
 	perf_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	perf_label.visible = Settings.show_perf()
 	root.add_child(perf_label)
 
 
@@ -1261,14 +1262,15 @@ func _build_event(w: World) -> void:
 	head.add_child(tg)
 	var st := TextureRect.new()
 	st.texture = UiStyle.ui_tex("stamp_secret.png")
-	st.custom_minimum_size = Vector2(140, 46)
+	st.custom_minimum_size = Vector2(150, 50)
 	st.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	st.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	st.rotation_degrees = -8.0
+	st.rotation_degrees = -9.0
 	head.add_child(st)
+	head.add_theme_constant_override("separation", 0)
 	popup_body.add_child(head)
-	var title := _label(String(ev.get("title", id)).to_upper(), 24, UiStyle.INK, true)
-	title.add_theme_font_override("font", UiStyle.title_font(600))
+	var title := _label(String(ev.get("title", id)).to_upper(), 25, UiStyle.INK, true)
+	title.add_theme_font_override("font", UiStyle.title_font(500))
 	popup_body.add_child(title)
 	var rule := ColorRect.new()
 	rule.color = Color(UiStyle.INK_SOFT, 0.7)
@@ -1285,14 +1287,31 @@ func _build_event(w: World) -> void:
 	row.add_theme_constant_override("separation", 16)
 	if art != null:
 		row.add_child(_clipped_photo(art, Vector2(112, 150)))
-	var text_l := _label(ev.get("text", ""), 14, UiStyle.INK, true)
+	# текст как в макете: начало — рядом с фото, продолжение — ниже на всю ширину
+	var full: String = ev.get("text", "")
+	var parts := _split_text(full) if art != null else [full, ""]
+	var text_l := _label(parts[0], 14, UiStyle.INK, true)
 	text_l.add_theme_font_override("font", UiStyle.serif_font())
 	text_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text_l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(text_l)
 	popup_body.add_child(row)
+	if parts[1] != "":
+		var more := _label(parts[1], 14, UiStyle.INK, true)
+		more.add_theme_font_override("font", UiStyle.serif_font())
+		popup_body.add_child(more)
 	var opts: Array = ev.get("options", [])
 	if opts.size() > 1:
-		popup_body.add_child(_label("★ — так поступили в истории", 14, faded))
+		var leg := HBoxContainer.new()
+		var star := _label("★", 13, UiStyle.RED_INK, true)
+		star.autowrap_mode = TextServer.AUTOWRAP_OFF
+		star.add_theme_font_override("font", UiStyle.text_font())
+		leg.add_child(star)
+		var lt := _label("— так поступили в истории", 11, faded, true)
+		lt.autowrap_mode = TextServer.AUTOWRAP_OFF
+		lt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		leg.add_child(lt)
+		popup_body.add_child(leg)
 	var best := 0
 	for i in opts.size():
 		if float(opts[i].get("ai", 0)) > float(opts[best].get("ai", 0)):
@@ -1300,15 +1319,47 @@ func _build_event(w: World) -> void:
 	for i in opts.size():
 		var o: Dictionary = opts[i]
 		var k := i
-		var b := _button(o.get("name", "?") + ("  ★" if i == best and opts.size() > 1 else ""), func():
-			game.resolve_event(k), Vector2(0, 40))
+		# вариант — бумажная карточка с квадратиком слева и красной звездой справа
+		var b := _button(o.get("name", "?"), func(): game.resolve_event(k), Vector2(0, 36))
 		b.add_theme_font_size_override("font_size", 14)
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		b.icon = UiStyle.ui_tex("checkbox.png")
+		b.add_theme_constant_override("icon_max_width", 14)
+		if i == best and opts.size() > 1:
+			var bs := _label("★", 16, UiStyle.RED_INK, true)
+			bs.autowrap_mode = TextServer.AUTOWRAP_OFF
+			bs.add_theme_font_override("font", UiStyle.text_font())
+			bs.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+			bs.position = Vector2(-26, -12)
+			bs.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			b.add_child(bs)
 		popup_body.add_child(b)
 		var et := History.effects_text(w, o.get("effects", []))
+		et = et.trim_prefix("Эффекты: ").trim_prefix("Эффекты:").strip_edges()
 		if et != "":
-			popup_body.add_child(_label("   " + et, 15, faded))
+			var el := _label(et[0].to_upper() + et.substr(1), 11, faded, true)
+			var em := MarginContainer.new()
+			em.add_theme_constant_override("margin_left", 30)
+			em.add_child(el)
+			popup_body.add_child(em)
+
+
+## Текст события делится по предложению примерно пополам: начало — рядом с
+## фото, остальное — ниже (как в макете).
+func _split_text(t: String) -> Array:
+	if t.length() < 140:
+		return [t, ""]
+	var target := int(t.length() * 0.55)
+	var best := -1
+	var i := t.find(". ")
+	while i >= 0:
+		if best < 0 or absi(i - target) < absi(best - target):
+			best = i
+		i = t.find(". ", i + 2)
+	if best < 0:
+		return [t, ""]
+	return [t.substr(0, best + 1), t.substr(best + 2)]
 
 
 ## Фото в белой рамке с наклоном и скрепкой сверху.
@@ -1698,6 +1749,13 @@ func _build_settings() -> void:
 	snd.button_pressed = Settings.ui_sound()
 	snd.toggled.connect(func(v: bool): Settings.set_ui_sound(v))
 	popup_body.add_child(snd)
+	var pf := CheckButton.new()
+	pf.text = "Строка замеров (FPS, тик) внизу экрана"
+	pf.button_pressed = Settings.show_perf()
+	pf.toggled.connect(func(v: bool):
+		Settings.set_show_perf(v)
+		perf_label.visible = v)
+	popup_body.add_child(pf)
 	popup_body.add_child(_label("Отчёт для разработки", 20))
 	popup_body.add_child(_label("Телефон, видеокарта, настройки, замеры за последние 30 секунд и ошибки из журнала (после вылета — и причина). Вставьте его в чат одним сообщением.", 15, Color(0.75, 0.75, 0.7)))
 	popup_body.add_child(_button("Скопировать отчёт", func():
