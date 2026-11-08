@@ -1,8 +1,10 @@
 #!/usr/bin/env python
-# Сборка: положить godot-cpp (ветка 4.3) в native/godot-cpp и выполнить
+# Сборка: положить godot-cpp (master, API 4.7) в native/godot-cpp и выполнить
 #   scons platform=linux target=template_release            (ПК)
 #   scons platform=android arch=arm64 target=template_release (телефон, нужен ANDROID_HOME/NDK)
 # Библиотека появляется в bin/, игра подхватывает её через meowq.gdextension.
+# godot-cpp (master) собирается под API движка 4.7
+ARGUMENTS.setdefault("api_version", "4.7")
 env = SConscript("godot-cpp/SConstruct")
 env.Append(CPPPATH=["src/"])
 # одинаковые результаты с GDScript: без слияния умножения и сложения (FMA)

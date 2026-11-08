@@ -1,6 +1,7 @@
 # Meowq: Фронты — заметки для Claude
 
-Мобильная глобальная стратегия о Второй мировой войне на Godot 4.3+ (GDScript).
+Мобильная глобальная стратегия о Второй мировой войне на Godot 4.7.2 (GDScript;
+до ноября 2026 — 4.3, переход без изменений результатов: подписи и хэши совпали).
 Цели и этапы — в `ROADMAP.md`. Работаем поэтапно: этап заканчивается рабочей
 сборкой, тестами и скриншотами; следующий этап начинаем только после «ок»
 пользователя. Общение и тексты в игре — на русском.
@@ -101,13 +102,14 @@
 - ИИ: экономика сразу, военные планы (`AIPlanner.plan_job`) — в рабочих потоках
   (`Parallel.start/finish`) по глубокой копии таблиц, пока главный поток ведёт
   остальные фазы; приказы применяются в конце дня (`Simulation._finish_ai`).
+- perf_bench на 4.7.2 (ПК, редактор): тик с C++ 9,8 мс, без C++ 22,1 (на 4.3 — 28,4).
 - Замеры (ПК, 4 ядра, сентябрь 1940 г., ~1000 дивизий): тик ~4,5 мс с C++
   (было ~21 мс), ~8 мс без; максимальная скорость ~160 дней/с, кадр ~7 мс.
   Профиль участков: `tests/prof_check.gd` (метки `Prof.add`). Режимы для
   сравнения многоядерности: `-- --single` (всё в одном потоке),
   `-- --no-parallel` (фоновый поток есть, задач внутри дня нет).
 - C++: `native/` — GDExtension `MeowqCore`. Сборка: `pip install scons`,
-  godot-cpp (ветка 4.3) в `native/godot-cpp`, `cd native && scons
+  godot-cpp (master, `api_version=4.7` задан в native/SConstruct) в `native/godot-cpp`, `cd native && scons
   platform=linux|windows|android [arch=arm64] target=template_debug|template_release`;
   после сборки манифест `meowq.gdextension` копируется в корень (в git не
   попадают ни библиотека, ни манифест). Обёртка `scripts/sim/native.gd`: без
@@ -210,12 +212,12 @@
 - APK (release, arm64, Android 7+): `GODOT=<путь к godot> sh tools/build_apk.sh` →
   `export/meowq.apk` (`MODE=debug` — отладочный). На телефоне (метка `.mobile` в
   project.godot): рендерер Compatibility (GLES3). Отдельный поток отрисовки
-  (`thread_model=2`) на телефоне не запускался — не включать. Release-движок: тик без C++ −29%, с C++ −13% (ПК). Нужны шаблоны экспорта 4.3 (с GitHub-релиза Godot, в
-  `~/.local/share/godot/export_templates/4.3.stable`). Android SDK не нужен:
+  (`thread_model=2`) на телефоне с 4.3 не запускался — на 4.7 не проверен. Release-движок: тик без C++ −29%, с C++ −13% (ПК). Нужны шаблоны экспорта 4.7.2 (с GitHub-релиза Godot, в
+  `~/.local/share/godot/export_templates/4.7.2.stable`). Android SDK не нужен:
   скрипт делает минимальный «SDK» с обёрткой apksigner на Google apksig 2.3.0
-  (Maven Central, подпись v2). C++ под Android: NDK r23c (23.2.8568313, dl.google.com
-  открыт) в `/opt/ndk/ndk/23.2.8568313`, `ANDROID_HOME=/opt/ndk scons platform=android
-  arch=arm64 target=template_debug`; `build_apk.sh` кладёт ядро в APK, если библиотека
+  (Maven Central, подпись v2). C++ под Android: NDK r28b (28.1.13356709, dl.google.com
+  открыт) в `/opt/ndk/ndk/28.1.13356709`, `ANDROID_HOME=/opt/ndk scons platform=android
+  arch=arm64 target=template_release`; `build_apk.sh` кладёт ядро в APK, если библиотека
   собрана (иначе APK на GDScript). В нижней строке игры — «C++» или «GDScript».
 - Скриншот без человека: `godot --path . -- --screenshot=out.png --nation=GER --days=120`
   (доп. флаги: `--zoom=1.6 --select --tab=army --pick=1 --mapmode=4 --card=AUS --peace=AUS`;

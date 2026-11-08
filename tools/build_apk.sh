@@ -1,7 +1,7 @@
 #!/bin/sh
 # Сборка отладочного APK без Android SDK (когда dl.google.com недоступен).
-# Нужны: Godot 4.3 (путь в $GODOT), Java 17+, шаблоны экспорта 4.3 в
-# ~/.local/share/godot/export_templates/4.3.stable (android_debug.apk и др.).
+# Нужны: Godot 4.7.2 (путь в $GODOT), Java 17+, шаблоны экспорта 4.7.2 в
+# ~/.local/share/godot/export_templates/4.7.2.stable (android_debug.apk и др.).
 # Подпись — библиотекой Google apksig 2.3.0 с Maven Central (только схема v2:
 # APK ставится на Android 7+). Нативная библиотека (native/) в APK не входит —
 # под Android её собирают с NDK; без неё игра работает на GDScript.
@@ -39,7 +39,7 @@ chmod +x "$BT/apksigner"
 printf '#!/bin/sh\nexit 0\n' > "$SDK/platform-tools/adb"
 chmod +x "$SDK/platform-tools/adb"
 # путь к «SDK» — в настройки редактора Godot
-CFG="$HOME/.config/godot/editor_settings-4.3.tres"
+CFG=$(ls -t "$HOME"/.config/godot/editor_settings-4.*.tres 2>/dev/null | head -1)
 if [ -f "$CFG" ]; then
 	sed -i "s#^export/android/android_sdk_path = .*#export/android/android_sdk_path = \"$SDK\"#" "$CFG"
 fi
