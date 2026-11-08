@@ -18,6 +18,10 @@ uniform bool terrain_mode = false;              // режим «Местност
 // проекция Миллера для сетки широт и долгот (как tools/build_map.py)
 uniform float lon_min = -169.0;
 uniform float lat_top = 80.0;
+// качество карты: 2 — высокое (окно 4×4, B-сплайн), 1 — среднее (2×2 билинейно),
+// 0 — низкое (один тексель, границы по соседям — дёшево для слабых телефонов);
+// берег по векторной доле суши — на среднем и высоком
+uniform int quality = 2;
 
 int pid(ivec2 p) {
 	p = clamp(p, ivec2(0), ivec2(map_size) - 1);
@@ -46,7 +50,14 @@ void fragment() {
 	vec2 q = px - 0.5;
 	ivec2 i0 = ivec2(floor(q));
 	vec2 tf = fract(q);
-	int uid[4] = int[](pid(i0), pid(i0 + ivec2(1, 0)), pid(i0 + ivec2(0, 1)), pid(i0 + ivec2(1, 1)));
+	int uid[4] = int[](-1, -1, -1, -1);
+	float uw[4] = float[](0.0, 0.0, 0.0, 0.0);
+	if (quality == 0) {
+		// низкое качество: провинция ближайшего текселя, без сглаживания (1 выборка)
+		uid[0] = pid(ip);
+		uw[0] = 1.0;
+	} else {
+	uid = int[](pid(i0), pid(i0 + ivec2(1, 0)), pid(i0 + ivec2(0, 1)), pid(i0 + ivec2(1, 1)));
 	// одинаковые соперники — в первый из них (у остальных id -1, вес 0)
 	for (int j = 1; j < 4; j++) {
 		for (int k = 0; k < j; k++) {
@@ -55,8 +66,7 @@ void fragment() {
 			}
 		}
 	}
-	float uw[4] = float[](0.0, 0.0, 0.0, 0.0);
-	bool far = zoom * 2.0 < 1.2;
+	bool far = zoom * 2.0 < 1.2 || quality < 2;
 	vec4 wx;
 	vec4 wy;
 	if (far) {
@@ -94,6 +104,7 @@ void fragment() {
 			}
 		}
 	}
+	}
 	int un = 4;
 	int top = 0;
 	for (int j = 1; j < 4; j++) {
@@ -113,12 +124,12 @@ void fragment() {
 	// Берег — по доле суши из векторных контуров (канал b рельефа, tools/build_map.py):
 	// уровень 0.5 даёт настоящую плавную линию берега. Если победила провинция не той
 	// стихии — берём лучшего соперника нужной (суша) или рисуем воду.
-	float cov = texture(height_tex, UV).b;
+	float cov = quality > 0 ? texture(height_tex, UV).b : 0.5;
 	int nat_c[4];
 	for (int j = 0; j < 4; j++) {
 		nat_c[j] = uid[j] >= 0 ? nation(pal(ctrl_tex, uid[j])) : -2;
 	}
-	bool cov_land = cov >= 0.5;
+	bool cov_land = quality > 0 ? cov >= 0.5 : nation(pal(ctrl_tex, uid[top])) >= 0;
 	if (cov_land && nat_c[top] < 0) {
 		int bl = -1;
 		for (int j = 0; j < 4; j++) {
@@ -234,7 +245,29 @@ void fragment() {
 			w_other = max(w_other, s2);
 		}
 	}
-	if (cov > 0.01 && cov < 0.99) {
+	if (quality == 0) {
+		// низкое качество: границы по соседним текселям (как раньше, дёшево)
+		vec2 f = fract(px);
+		ivec2 dirs[4] = ivec2[](ivec2(1, 0), ivec2(-1, 0), ivec2(0, 1), ivec2(0, -1));
+		float dist[4] = float[](1.0 - f.x, f.x, 1.0 - f.y, f.y);
+		for (int i = 0; i < 4; i++) {
+			if (dist[i] > 0.4) {
+				continue;
+			}
+			int nid = pid(ip + dirs[i]);
+			if (nid == id) {
+				continue;
+			}
+			int nc = nation(pal(ctrl_tex, nid));
+			if ((nc >= 0) != land) {
+				if (dist[i] < 0.3) col = mix(col, vec3(0.10, 0.13, 0.17), 0.8);
+			} else if (land && nc != ctrl) {
+				col = mix(col, vec3(0.07, 0.06, 0.06), smoothstep(0.0, 0.35, 1.0 - dist[i] / 0.4) * 0.9);
+			} else if (land && dist[i] < 0.16) {
+				col = mix(col, col * 0.62, smoothstep(0.45, 1.3, zoom));
+			}
+		}
+	} else if (cov > 0.01 && cov < 0.99) {
 		// береговая линия по векторной доле суши
 		float d0 = abs(cov - 0.5) * 2.0;
 		float dp = d0 / max(fwidth(d0), 1e-4) * 0.5;

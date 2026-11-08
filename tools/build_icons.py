@@ -21,7 +21,7 @@ ICONS = {
     "fleet": "battleship", "sub": "submarine", "fighter": "airplane", "bomber": "bomber",
     "anchor": "anchor", "battle": "crossed-swords", "factory": "factory", "civ": "gears",
     "mil": "gear-hammer", "research": "erlenmeyer", "diplomacy": "shaking-hands",
-    "army": "rifle", "focus": "star-formation", "manpower": "person", "map": "globe",
+    "army": "rifle", "focus": "star-formation", "manpower": "person", "map": "globe", "settings": "cog",
 }
 
 

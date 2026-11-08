@@ -67,6 +67,7 @@ func setup(w: World) -> void:
 	camera.zoom = Vector2.ONE * clampf(fit * 1.05, MIN_ZOOM, MAX_ZOOM)
 	camera.position = world_size() * 0.5
 	update_palette()
+	set_quality(Settings.map_quality())
 	_on_view_changed()
 
 
@@ -101,6 +102,12 @@ func set_selected(prov: int) -> void:
 
 func set_highlight_nation(n: int) -> void:
 	mat.set_shader_parameter("highlight_nation", n)
+
+
+## Качество карты: 0 — низкое, 1 — среднее, 2 — высокое (см. shaders/map.gdshader).
+func set_quality(q: int) -> void:
+	if mat != null:
+		mat.set_shader_parameter("quality", clampi(q, 0, 2))
 
 
 func set_map_mode(m: int) -> void:

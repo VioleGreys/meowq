@@ -131,6 +131,7 @@ func _build_side() -> void:
 		["Дипломатия", "diplomacy", func(): open_tab("diplomacy")],
 		["Все войска", "inf", func(): game.select_all()],
 		["Режим карты", "map", _cycle_map_mode],
+		["Настройки", "settings", func(): open_tab("settings")],
 	]
 	for it in items:
 		var b := _button(it[0], it[2], bs)
@@ -369,7 +370,7 @@ func refresh_top() -> void:
 	var phases := ""
 	for k in game.sim.phase_usec:
 		phases += " %s %.1f" % [k, game.sim.phase_usec[k] / 1000.0]
-	perf_label.text = "Ядер %d · %.1f дн/с · тик %.2f мс ·%s · %d FPS" % [Parallel.thread_count(), game.days_per_sec, game.sim.last_tick_usec / 1000.0, phases, Engine.get_frames_per_second()]
+	perf_label.text = "%d FPS · ядер %d · %.1f дн/с · тик %.2f мс ·%s" % [Engine.get_frames_per_second(), Parallel.thread_count(), game.days_per_sec, game.sim.last_tick_usec / 1000.0, phases]
 	if _toast_t > 0.0:
 		_toast_t -= get_process_delta_time()
 		toast_label.modulate.a = clampf(_toast_t, 0.0, 1.0)
@@ -635,6 +636,8 @@ func _rebuild_popup() -> void:
 			popup_body.add_child(_label("Гражданские фабрики ускоряют стройку и науку. Военные заводы выпускают снаряжение для дивизий. Оккупированные провинции дают половину.", 16, Color(0.75, 0.75, 0.7)))
 		"diplomacy":
 			_build_diplomacy(w, me)
+		"settings":
+			_build_settings()
 		"nation":
 			_build_nation_card(w, me, _card_nation)
 		"peace":
@@ -1181,3 +1184,23 @@ func _update_popup_dynamic() -> void:
 				n.build_progress / Simulation.FACTORY_COST * 100.0, rate]
 			_dynamic["bar"].max_value = Simulation.FACTORY_COST
 			_dynamic["bar"].value = n.build_progress
+
+
+func _build_settings() -> void:
+	popup_title.text = "Настройки"
+	popup_body.add_child(_label("Качество карты", 20))
+	popup_body.add_child(_label("Высокое — самые плавные границы. Среднее — плавный берег и простые границы, легче для телефона. Низкое — без сглаживания, для слабых устройств. Число кадров — внизу экрана (FPS).", 15, Color(0.75, 0.75, 0.7)))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var cur := Settings.map_quality()
+	for q in 3:
+		var qq := q
+		var b := _button(Settings.QUALITY_NAMES[q], func():
+			Settings.set_map_quality(qq)
+			game.map_view.set_quality(qq)
+			_rebuild_popup(), Vector2(0, 52))
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.toggle_mode = true
+		b.set_pressed_no_signal(q == cur)   # выбранное — «нажатая» латунная кнопка
+		row.add_child(b)
+	popup_body.add_child(row)
