@@ -298,6 +298,17 @@ void fragment() {
 			w_other = max(w_other, s2);
 		}
 	}
+	// Производные (fwidth) — только здесь, вне ветвлений: внутри условий они на
+	// части мобильных ГП (OpenGL ES) не определены и давали ложные штрихи
+	// по пиксельной сетке у берегов.
+	float d0 = abs(cov - 0.5) * 2.0;
+	float fw0 = fwidth(d0);
+	float s1 = w_mine + w_other;
+	float d1 = s1 > 0.0 ? abs(w_mine - w_other) / s1 : 1.0;
+	float fw1 = fwidth(d1);
+	float s2 = uw[top] + w_prov2;
+	float d2 = s2 > 0.0 ? (uw[top] - w_prov2) / s2 : 1.0;
+	float fw2 = fwidth(d2);
 	if (quality == 0) {
 		// низкое качество: границы по соседним текселям (как раньше, дёшево)
 		vec2 f = fract(px);
@@ -322,23 +333,20 @@ void fragment() {
 		}
 	} else if (cov > 0.01 && cov < 0.99) {
 		// береговая линия по векторной доле суши
-		float d0 = abs(cov - 0.5) * 2.0;
-		float dp = d0 / max(fwidth(d0), 0.5 / texel_px) * 0.5;
+		float dp = d0 / max(fw0, 0.5 / texel_px) * 0.5;
 		float w = max(lw_min(0.75), 0.2 * texel_px);
 		col = mix(col, vec3(0.10, 0.13, 0.17), (1.0 - smoothstep(w - 0.8, w + 0.8, dp)) * 0.8);
 	}
 	land = land && !sea_px;
 	if (land && !wide_land && w_other > 0.0) {
-		float d1 = abs(w_mine - w_other) / (w_mine + w_other);
-		float dp = d1 / max(fwidth(d1), 0.5 / texel_px) * 0.5;
+		float dp = d1 / max(fw1, 0.5 / texel_px) * 0.5;
 		float w = max(lw_min(1.1), 0.45 * texel_px);
 		col = mix(col, vec3(0.07, 0.06, 0.06), (1.0 - smoothstep(w - 0.9, w + 0.9, dp)) * 0.9);
 		// мягкий тон своей страны вдоль границы — как цветная кайма на картах
 		col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 3.0 + texel_px, dp)) * 0.18);
 	}
 	if (land && !wide_land && w_prov2 > 0.0) {
-		float d2 = (uw[top] - w_prov2) / (uw[top] + w_prov2);
-		float dp = d2 / max(fwidth(d2), 0.5 / texel_px) * 0.5;
+		float dp = d2 / max(fw2, 0.5 / texel_px) * 0.5;
 		float w = max(lw_min(0.6), 0.14 * texel_px);
 		float a2 = smoothstep(0.45, 1.3, zoom);
 		col = mix(col, col * 0.6, (1.0 - smoothstep(w - 0.7, w + 0.7, dp)) * a2);

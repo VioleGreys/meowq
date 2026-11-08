@@ -44,7 +44,23 @@ var draw_count := 0             # для замеров: сколько раз �
 var draw_total_usec := 0
 
 
+## Отметки боёв — отдельный узел поверх фишек: их пульс не перерисовывает
+## весь слой со стрелками и подписями.
+class BattleMarks:
+	extends Node2D
+	var layer: UnitLayer
+
+	func _draw() -> void:
+		layer._draw_battles(self)
+
+
+var _battles: BattleMarks
+
+
 func _ready() -> void:
+	_battles = BattleMarks.new()
+	_battles.layer = self
+	add_child(_battles)
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	font = UiStyle.text_font()
 	bold = UiStyle.bold_font()
@@ -136,12 +152,15 @@ func _process(_dt: float) -> void:
 	if xf != _last_xf:
 		_last_xf = xf
 		_dirty = true
-	elif _has_battles and now - _anim_msec >= 80:
-		_dirty = true
 	if _dirty:
 		_dirty = false
-		_anim_msec = now
 		queue_redraw()
+		_battles.queue_redraw()
+		_anim_msec = now
+	elif _has_battles and now - _anim_msec >= 80:
+		# пульс боёв — только маленький слой отметок, не весь слой фишек
+		_anim_msec = now
+		_battles.queue_redraw()
 
 
 func _wp(p: int) -> Vector2:
@@ -344,8 +363,11 @@ func _draw() -> void:
 				var pts := PackedVector2Array()
 				for wpt in wpts:
 					pts.append(map.world_to_screen(wpt))
+				if not it[3] and not screen.has_point(pts[0]) and not screen.has_point(pts[pts.size() - 1]):
+					continue   # стрелка целиком за экраном
 				var col: Color = it[2]
-				draw_polyline(pts, col, 3.0 if it[3] else 2.0, true)
+				# без сглаживания: сглаженная ломаная — отдельная дорогая сетка на каждую стрелку
+				draw_polyline(pts, col, 3.0 if it[3] else 2.0, false)
 				var tip := pts[pts.size() - 1]
 				var dir := (tip - pts[pts.size() - 2]).normalized()
 				var side := Vector2(-dir.y, dir.x)
@@ -368,18 +390,7 @@ func _draw() -> void:
 				draw_line(c + Vector2(-22, 0), c + Vector2(22, 0), col, 2.0)
 				draw_line(c + Vector2(0, -22), c + Vector2(0, 22), col, 2.0)
 			BATTLE:
-				var c := map.world_to_screen(it[1]) + Vector2(0, -counter.y)
-				if not screen.has_point(c):
-					continue
-				var r := 10.0 + sin(Time.get_ticks_msec() * 0.008) * 1.5
-				draw_circle(c, r + 2, Color(0.1, 0.05, 0.05, 0.8))
-				draw_circle(c, r, Color(0.78, 0.16, 0.12))
-				var btex := UiStyle.icon("battle", 64)
-				if btex != null:
-					draw_texture_rect(btex, Rect2(c - Vector2(7, 7), Vector2(14, 14)), false, Color(1, 0.95, 0.85))
-				else:
-					draw_line(c + Vector2(-5, -5), c + Vector2(5, 5), Color.WHITE, 2.0)
-					draw_line(c + Vector2(5, -5), c + Vector2(-5, 5), Color.WHITE, 2.0)
+				pass   # рисует отдельный слой _battles (пульсирует, не трогая фишки)
 			COUNTER:
 				_draw_counter(it, z, counter, font_size, screen)
 			PORT:
@@ -489,23 +500,39 @@ func _draw_counter(it: Array, z: float, counter: Vector2, font_size: int, screen
 		draw_texture_rect_region(_atlas, Rect2(bx, pos.y + counter.y + 5, bw * it[7], 2.5), _r_white, Color(0.96, 0.80, 0.30))
 
 
+# Подписи стран рисуются шрифтом одного размера LBL_PX и масштабируются
+# преобразованием: буквы растеризуются один раз (раньше каждый новый размер
+# при масштабировании растеризовался заново — до 60 мс на кадр).
+const LBL_PX := 48
+var _lbl_w := {}   # ширина подписи при LBL_PX
+
+
 func _draw_label(l: Array, z: float) -> void:
 	if z > 1.6:
 		return
-	var pos := map.world_to_screen(l[1])
-	var size := int(clampf(l[3] * z, 12, 60))
-	var w := label_font.get_string_size(l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	var text: String = l[2]
+	var bw: float = _lbl_w.get(text, -1.0)
+	if bw < 0.0:
+		bw = label_font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX).x
+		_lbl_w[text] = bw
+	var size := clampf(l[3] * z, 12, 60)
 	var fit: float = l[4] * z * 0.95
+	var w := bw * size / LBL_PX
 	if w > fit and w > 0.0:
-		size = int(size * fit / w)
-		if size < 11:
-			return
-		w = label_font.get_string_size(l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
-	if size < 11:
+		size *= fit / w
+		w = fit
+	if size < 11.0:
+		return
+	var pos := map.world_to_screen(l[1])
+	var vp := get_viewport_rect()
+	if pos.x + w * 0.5 < 0 or pos.x - w * 0.5 > vp.size.x or pos.y + size < 0 or pos.y - size > vp.size.y:
 		return
 	var alpha := clampf((1.6 - z) * 2.0, 0.0, 0.75)
-	draw_string_outline(label_font, pos - Vector2(w * 0.5, 0), l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size, 4, Color(0.95, 0.92, 0.84, alpha * 0.45))
-	draw_string(label_font, pos - Vector2(w * 0.5, 0), l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0.10, 0.08, 0.06, alpha))
+	var k := size / LBL_PX
+	draw_set_transform(pos - Vector2(w * 0.5, 0), 0.0, Vector2(k, k))
+	draw_string_outline(label_font, Vector2.ZERO, text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX, int(4.0 / k), Color(0.95, 0.92, 0.84, alpha * 0.45))
+	draw_string(label_font, Vector2.ZERO, text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX, Color(0.10, 0.08, 0.06, alpha))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 func _rebuild_labels() -> void:
@@ -660,3 +687,27 @@ func _plane_icon(c: Vector2, col: Color, kind: int, selected_icon: bool) -> void
 	draw_line(c + Vector2(-4, 6), c + Vector2(4, 6), col, 2.0)
 	if selected_icon:
 		draw_arc(c, 14, 0, TAU, 20, Color.WHITE, 2.0)
+
+
+func _draw_battles(ci: CanvasItem) -> void:
+	if map == null:
+		return
+	var z := map.zoom_level()
+	var vp := get_viewport_rect().size
+	var screen := Rect2(Vector2.ZERO, vp).grow(40)
+	var counter := Vector2(40, 22) * clampf(0.75 + z * 0.25, 0.8, 1.5)
+	var r := 10.0 + sin(Time.get_ticks_msec() * 0.008) * 1.5
+	var btex := UiStyle.icon("battle", 64)
+	for it in items:
+		if it[0] != BATTLE:
+			continue
+		var c := map.world_to_screen(it[1]) + Vector2(0, -counter.y)
+		if not screen.has_point(c):
+			continue
+		ci.draw_circle(c, r + 2, Color(0.1, 0.05, 0.05, 0.8))
+		ci.draw_circle(c, r, Color(0.78, 0.16, 0.12))
+		if btex != null:
+			ci.draw_texture_rect(btex, Rect2(c - Vector2(7, 7), Vector2(14, 14)), false, Color(1, 0.95, 0.85))
+		else:
+			ci.draw_line(c + Vector2(-5, -5), c + Vector2(5, 5), Color.WHITE, 2.0)
+			ci.draw_line(c + Vector2(5, -5), c + Vector2(-5, 5), Color.WHITE, 2.0)

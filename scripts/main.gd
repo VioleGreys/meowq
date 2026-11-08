@@ -118,6 +118,12 @@ func _bench_realtime(seconds: float) -> void:
 	var total := 0
 	while Time.get_ticks_msec() - t0 < seconds * 1000.0:
 		var f0 := Time.get_ticks_usec()
+		if "--pan" in OS.get_cmdline_user_args():
+			# замер сдвига и масштаба: камера ходит по кругу и «дышит»
+			var tt := frames * 0.05
+			map_view.camera.position += Vector2(cos(tt), sin(tt)) * 6.0 / map_view.camera.zoom.x
+			map_view.camera.zoom = Vector2.ONE * clampf(map_view.camera.zoom.x * (1.0 + 0.01 * sin(tt * 0.7)), 0.3, 4.0)
+			map_view._on_view_changed()
 		await get_tree().process_frame
 		var ft := Time.get_ticks_usec() - f0
 		var vrid := get_viewport().get_viewport_rid()
