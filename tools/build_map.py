@@ -618,6 +618,30 @@ def build_air_regions(provinces, n_land, adj, cx, cy, counts, rng):
     return names
 
 
+COVER_SS = 4   # во сколько раз подробнее рисуем сушу для плавного берега
+
+
+def land_coverage(feats, lakes):
+    """Доля суши в каждом текселе карты: суша (области admin-1) и крупные озёра
+    рисуются в COVER_SS раз подробнее и усредняются. Шейдер проводит берег по
+    уровню 0.5 — это настоящая (векторная) линия берега, а не «лесенка» пикселей."""
+    k = COVER_SS
+    img = Image.new("L", (WIDTH * k, HEIGHT * k), 0)
+    d = ImageDraw.Draw(img)
+    for area, a0, p, rings, tag in feats:
+        for r in rings:
+            pts = [(x * k, y * k) for x, y in poly_px(r)]
+            if len(pts) >= 3:
+                d.polygon(pts, fill=255)
+    for f in lakes:
+        if _rank(f["properties"].get("scalerank")) <= 4:
+            for r in rings_of(f["geometry"]):
+                if in_window(r):
+                    d.polygon([(x * k, y * k) for x, y in poly_px(r)], fill=0)
+    small = img.resize((WIDTH, HEIGHT), Image.BOX)
+    return np.array(small, dtype=np.uint8)
+
+
 def _rank(v):
     """scalerank Natural Earth: 0 — самые крупные объекты (не путать с «нет данных»)."""
     return 9 if v is None else int(v)
@@ -765,6 +789,7 @@ def main():
                 if in_window(r):
                     ld.polygon(poly_px(r), fill=len(lake_names) - 1)
     lake_lab = np.array(lake_img, dtype=np.int32)
+    coverage = land_coverage(feats, lakes)
     region[lake_lab > 0] = 0
 
     land = region > 0
@@ -1181,6 +1206,7 @@ def main():
     rel = np.zeros((HEIGHT, WIDTH, 3), np.uint8)
     rel[..., 0] = np.clip(height * 255, 0, 255).astype(np.uint8)
     rel[..., 1] = rivers
+    rel[..., 2] = coverage   # доля суши в текселе (из векторов, x4) — плавный берег в шейдере
     Image.fromarray(rel, "RGB").save(os.path.join(out, "relief.png.bin"), "PNG", optimize=True)
     meta = {
         "source": "Natural Earth (public domain); границы 1936 г. — tools/build_map.py",

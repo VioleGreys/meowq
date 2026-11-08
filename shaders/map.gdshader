@@ -39,55 +39,103 @@ void fragment() {
 	// Сглаженные границы: берём 4 ближайших текселя карты и выбираем провинцию с
 	// наибольшим весом билинейной интерполяции — граница идёт плавной кривой, а не
 	// «лесенкой» пикселей. diff — запас победителя над вторым: 0 на самой границе.
-	// окно 3×3 текселя с гауссовыми весами: ступеньки сглаживаются в наклонные линии
-	int uid[9] = int[](-1, -1, -1, -1, -1, -1, -1, -1, -1);
-	float uw[9] = float[](0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-	int un = 0;
-	// при сильном отдалении (тексель меньше пикселя экрана) сглаживать нечего —
-	// бережём видеокарту телефона
-	// (окно 2×2 вокруг точки: границы остаются, выборок вдвое меньше)
-	bool far = zoom * 2.0 < 1.2;
-	ivec2 base_t = far ? ivec2(floor(px - 0.5)) : ip - ivec2(1);
-	int span = far ? 1 : 2;
-	for (int oy = 0; oy <= span; oy++) {
-		for (int ox = 0; ox <= span; ox++) {
-			ivec2 tp = base_t + ivec2(ox, oy);
-			vec2 d = vec2(tp) + 0.5 - px;
-			float w = exp(-dot(d, d) * 1.4);
-			int cidv = pid(tp);
-			int k = -1;
-			for (int j = 0; j < 9; j++) {
-				if (j < un && uid[j] == cidv) {
-					k = j;
-				}
+	// Сглаживание: соперники — провинции 4 ближайших текселей; их веса считаются
+	// по окну 4×4 текселя с кубическими B-сплайн весами — граница выходит гладкой
+	// кривой без изломов. Ближайший тексель получает небольшой перевес, чтобы
+	// мелкие острова и узкие перешейки не «таяли» от размытия.
+	vec2 q = px - 0.5;
+	ivec2 i0 = ivec2(floor(q));
+	vec2 tf = fract(q);
+	int uid[4] = int[](pid(i0), pid(i0 + ivec2(1, 0)), pid(i0 + ivec2(0, 1)), pid(i0 + ivec2(1, 1)));
+	// одинаковые соперники — в первый из них (у остальных id -1, вес 0)
+	for (int j = 1; j < 4; j++) {
+		for (int k = 0; k < j; k++) {
+			if (uid[j] >= 0 && uid[j] == uid[k]) {
+				uid[j] = -1;
 			}
-			if (k < 0) {
-				k = un;
-				uid[k] = cidv;
-				un++;
-			}
-			uw[k] += w;
 		}
 	}
+	float uw[4] = float[](0.0, 0.0, 0.0, 0.0);
+	bool far = zoom * 2.0 < 1.2;
+	vec4 wx;
+	vec4 wy;
+	if (far) {
+		// при сильном отдалении — билинейная смесь 2×2 (бережём видеокарту)
+		wx = vec4(0.0, 1.0 - tf.x, tf.x, 0.0);
+		wy = vec4(0.0, 1.0 - tf.y, tf.y, 0.0);
+	} else {
+		vec2 t2 = tf * tf;
+		vec2 t3 = t2 * tf;
+		wx = vec4((1.0 - tf.x) * (1.0 - tf.x) * (1.0 - tf.x), 3.0 * t3.x - 6.0 * t2.x + 4.0,
+			-3.0 * t3.x + 3.0 * t2.x + 3.0 * tf.x + 1.0, t3.x) / 6.0;
+		wy = vec4((1.0 - tf.y) * (1.0 - tf.y) * (1.0 - tf.y), 3.0 * t3.y - 6.0 * t2.y + 4.0,
+			-3.0 * t3.y + 3.0 * t2.y + 3.0 * tf.y + 1.0, t3.y) / 6.0;
+	}
+	int o0 = far ? 1 : 0;
+	int o1 = far ? 3 : 4;
+	for (int oy = o0; oy < o1; oy++) {
+		for (int ox = o0; ox < o1; ox++) {
+			int cidv = pid(i0 + ivec2(ox - 1, oy - 1));
+			float w = wx[ox] * wy[oy];
+			for (int j = 0; j < 4; j++) {
+				if (uid[j] == cidv) {
+					uw[j] += w;
+					break;
+				}
+			}
+		}
+	}
+	if (!far) {
+		// перевес ближайшего текселя: мелкие острова и перешейки не тают
+		int nid = pid(ivec2(floor(px)));
+		for (int j = 0; j < 4; j++) {
+			if (uid[j] == nid) {
+				uw[j] += 0.04;
+			}
+		}
+	}
+	int un = 4;
 	int top = 0;
-	for (int j = 1; j < 9; j++) {
-		if (j < un && uw[j] > uw[top]) {
+	for (int j = 1; j < 4; j++) {
+		if (uw[j] > uw[top]) {
 			top = j;
 		}
 	}
 	int sec = -1;
-	for (int j = 0; j < 9; j++) {
-		if (j < un && j != top && (sec < 0 || uw[j] > uw[sec])) {
+	for (int j = 0; j < 4; j++) {
+		if (j != top && uid[j] >= 0 && (sec < 0 || uw[j] > uw[sec])) {
 			sec = j;
 		}
 	}
 	int id = uid[top];
 	float diff = sec >= 0 ? (uw[top] - uw[sec]) / (uw[top] + uw[sec]) : 1.0;
 	int id2 = sec >= 0 ? uid[sec] : id;
+	// Берег — по доле суши из векторных контуров (канал b рельефа, tools/build_map.py):
+	// уровень 0.5 даёт настоящую плавную линию берега. Если победила провинция не той
+	// стихии — берём лучшего соперника нужной (суша) или рисуем воду.
+	float cov = texture(height_tex, UV).b;
+	int nat_c[4];
+	for (int j = 0; j < 4; j++) {
+		nat_c[j] = uid[j] >= 0 ? nation(pal(ctrl_tex, uid[j])) : -2;
+	}
+	bool cov_land = cov >= 0.5;
+	if (cov_land && nat_c[top] < 0) {
+		int bl = -1;
+		for (int j = 0; j < 4; j++) {
+			if (nat_c[j] >= 0 && (bl < 0 || uw[j] > uw[bl])) {
+				bl = j;
+			}
+		}
+		if (bl >= 0) {
+			top = bl;
+			id = uid[top];
+		}
+	}
 	vec4 cc = pal(ctrl_tex, id);
 	vec4 oc = pal(owner_tex, id);
 	int ctrl = nation(cc);
 	bool land = ctrl >= 0;
+	bool sea_px = !cov_land && land;   // суша по провинции, но по контуру — уже вода
 
 	vec2 t = 1.0 / map_size;
 	float h = texture(height_tex, UV).r;
@@ -99,7 +147,7 @@ void fragment() {
 	vec3 col;
 	// мелкие озёра входят в провинции суши, но по высоте ниже уровня моря — вода
 	bool lake = land && texture(height_tex, (vec2(ip) + 0.5) / map_size).r < 0.49;
-	if (!land || lake) {
+	if (!land || lake || sea_px) {
 		// вода: мелководье у берегов светлее, глубина темнее, лёгкая рябь
 		float depth = clamp((0.5 - h) * 2.4, 0.0, 1.0);
 		col = mix(vec3(0.22, 0.42, 0.50), vec3(0.07, 0.15, 0.25), pow(depth, 0.45));
@@ -148,25 +196,66 @@ void fragment() {
 		}
 	}
 
-	// Границы — сглаженные линии постоянной толщины на экране (в пикселях экрана).
-	float dpx = diff / max(fwidth(diff), 1e-4) * 0.5;   // расстояние до границы, пикс. экрана
+	// Границы — сглаженные линии постоянной толщины на экране. Каждый вид
+	// границы считается по своей группировке весов соперников: берег — суша
+	// против воды, граница стран — своя страна против лучшей чужой, граница
+	// провинций — победитель против второго в своей стране. Так на стыке
+	// двух провинций и моря берег не пропадает.
 	float texel_px = zoom * 2.0;                         // тексель карты на экране (масштаб спрайта 2)
-	if (id2 != id) {
-		int nc = nation(pal(ctrl_tex, id2));
-		bool nland = nc >= 0;
-		if (land != nland) {
-			float w = max(0.9, 0.35 * texel_px);
-			col = mix(col, vec3(0.10, 0.13, 0.17), (1.0 - smoothstep(w - 0.8, w + 0.8, dpx)) * 0.8);
-		} else if (land && nc != ctrl) {
-			float w = max(1.1, 0.45 * texel_px);
-			col = mix(col, vec3(0.07, 0.06, 0.06), (1.0 - smoothstep(w - 0.9, w + 0.9, dpx)) * 0.9);
-			// мягкий тон своей страны вдоль границы — как цветная кайма на картах
-			col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 3.0 + texel_px, dpx)) * 0.18);
-		} else if (land) {
-			float w = max(0.6, 0.14 * texel_px);
-			float a2 = smoothstep(0.45, 1.3, zoom);
-			col = mix(col, col * 0.6, (1.0 - smoothstep(w - 0.7, w + 0.7, dpx)) * a2);
+	float w_land = 0.0;
+	float w_water = 0.0;
+	float w_mine = 0.0;      // страна победителя
+	float w_other = 0.0;     // лучшая другая страна (суша)
+	float w_prov2 = 0.0;     // лучшая другая провинция той же страны
+	for (int j = 0; j < 4; j++) {
+		if (uid[j] < 0) {
+			continue;
 		}
+		if (nat_c[j] >= 0) {
+			w_land += uw[j];
+		} else {
+			w_water += uw[j];
+		}
+		if (nat_c[j] == ctrl) {
+			w_mine += uw[j];
+			if (j != top) {
+				w_prov2 = max(w_prov2, uw[j]);
+			}
+		}
+	}
+	for (int j = 0; j < 4; j++) {
+		if (uid[j] >= 0 && nat_c[j] >= 0 && nat_c[j] != ctrl) {
+			float s2 = 0.0;
+			for (int k = 0; k < 4; k++) {
+				if (uid[k] >= 0 && nat_c[k] == nat_c[j]) {
+					s2 += uw[k];
+				}
+			}
+			w_other = max(w_other, s2);
+		}
+	}
+	if (cov > 0.01 && cov < 0.99) {
+		// береговая линия по векторной доле суши
+		float d0 = abs(cov - 0.5) * 2.0;
+		float dp = d0 / max(fwidth(d0), 1e-4) * 0.5;
+		float w = max(0.75, 0.2 * texel_px);
+		col = mix(col, vec3(0.10, 0.13, 0.17), (1.0 - smoothstep(w - 0.8, w + 0.8, dp)) * 0.8);
+	}
+	land = land && !sea_px;
+	if (land && w_other > 0.0) {
+		float d1 = abs(w_mine - w_other) / (w_mine + w_other);
+		float dp = d1 / max(fwidth(d1), 1e-4) * 0.5;
+		float w = max(1.1, 0.45 * texel_px);
+		col = mix(col, vec3(0.07, 0.06, 0.06), (1.0 - smoothstep(w - 0.9, w + 0.9, dp)) * 0.9);
+		// мягкий тон своей страны вдоль границы — как цветная кайма на картах
+		col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 3.0 + texel_px, dp)) * 0.18);
+	}
+	if (land && w_prov2 > 0.0) {
+		float d2 = (uw[top] - w_prov2) / (uw[top] + w_prov2);
+		float dp = d2 / max(fwidth(d2), 1e-4) * 0.5;
+		float w = max(0.6, 0.14 * texel_px);
+		float a2 = smoothstep(0.45, 1.3, zoom);
+		col = mix(col, col * 0.6, (1.0 - smoothstep(w - 0.7, w + 0.7, dp)) * a2);
 	}
 
 	if (id == selected_id && land) {
