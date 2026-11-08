@@ -17,6 +17,13 @@ void MeowqCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("march", "alive", "transit", "next", "owner", "prov", "prog", "spd", "org", "morg", "sup", "land", "ctrl", "war", "nc", "move_mult"), &MeowqCore::march);
 	ClassDB::bind_method(D_METHOD("snapshot", "next", "battle", "transit", "resv", "inv", "str", "org", "morg", "atk", "eq", "sup", "prov", "prov_count", "day"), &MeowqCore::snapshot);
 	ClassDB::bind_method(D_METHOD("plan_military", "tables", "nid", "divs", "mode", "enemy", "objective", "allowed", "ratio", "capital", "enemies", "rng"), &MeowqCore::plan_military);
+	ClassDB::bind_method(D_METHOD("relink", "alive", "transit", "prov", "owner", "prov_count", "nation_count"), &MeowqCore::relink);
+	ClassDB::bind_method(D_METHOD("sea_bfs", "adj_start", "adj_list", "land", "from"), &MeowqCore::sea_bfs);
+	ClassDB::bind_method(D_METHOD("sea_path", "adj_start", "adj_list", "land", "from", "to"), &MeowqCore::sea_path);
+	ClassDB::bind_method(D_METHOD("own_reach", "adj_start", "adj_list", "land", "ctrl", "n", "start", "nation_count"), &MeowqCore::own_reach);
+	ClassDB::bind_method(D_METHOD("place_factory", "owner", "ctrl", "civ", "mil", "pop", "terrain", "nid", "max_factories", "t_urban"), &MeowqCore::place_factory);
+	ClassDB::bind_method(D_METHOD("combat", "provs", "att_start", "att_list", "seeds", "str", "org", "eq", "def", "atk", "ent", "landing", "sup", "tpl", "hard", "owner", "battle", "pl_head", "d_nx", "war", "nc", "def_mult", "terrain", "region", "cas", "tmul"), &MeowqCore::combat);
+	ClassDB::bind_method(D_METHOD("income", "ctrl", "owner", "civ", "mil", "manpower", "nc"), &MeowqCore::income);
 	ClassDB::bind_method(D_METHOD("version"), &MeowqCore::version);
 }
 

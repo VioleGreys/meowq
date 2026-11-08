@@ -91,7 +91,7 @@ static func plan_job(t: Dictionary, args: Array, rng: RandomNumberGenerator) -> 
 ## enemy — номер страны или -1 (все противники); objective — провинция-цель
 ## наступления (-1 — нет); allowed_list — допустимые провинции фронта (пусто —
 ## весь фронт); ratio — нужный перевес для атаки; enemies — с кем страна воюет.
-## Возвращает {"orders": [[id дивизии, путь]], "fronts": пары (наша, чужая)}.
+## Возвращает {"orders": [[индекс в снимке (слот), путь]], "fronts": пары (наша, чужая)}.
 static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int, enemy: int, objective: int,
 		allowed_list: PackedInt32Array, ratio: float, capital: int, enemies: PackedInt32Array,
 		rng: RandomNumberGenerator) -> Dictionary:
@@ -118,7 +118,6 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var vp: PackedInt32Array = tb["vp"]
 	var coastal: PackedByteArray = tb["coastal"]
 	var owners: PackedInt32Array = tb["owner"]
-	var dv_id: PackedInt32Array = tb["dv_id"]
 	var dv_owner: PackedInt32Array = tb["dv_owner"]
 	var dv_prov: PackedInt32Array = tb["dv_prov"]
 	var dv_flags: PackedInt32Array = tb["dv_flags"]
@@ -271,7 +270,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			if power > need and not chosen.is_empty():
 				for i in chosen:
 					used[i] = true
-					orders.append([dv_id[i], PackedInt32Array([t])])
+					orders.append([i, PackedInt32Array([t])])
 			else:
 				for i in chosen:
 					left[dv_prov[i]] = int(left[dv_prov[i]]) + 1
@@ -316,7 +315,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		per_front[dest] = int(per_front.get(dest, 0)) + 1
 		if fronts.has(pv):
 			per_front[pv] = int(per_front.get(pv, 0)) - 1
-		orders.append([dv_id[i], path])
+		orders.append([i, path])
 	result["orders"] = orders
 	return result
 

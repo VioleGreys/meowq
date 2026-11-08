@@ -74,7 +74,7 @@ func _init() -> void:
 			w.p_controller[q] = GER
 	sim.tick()
 	var trapped: Array = []
-	for d in w.prov_divs[pocket]:
+	for d in w.divs_in(pocket):
 		if d.owner == POL:
 			trapped.append(d)
 	check(not trapped.is_empty() and trapped[0].supply == 0.0, "дивизии в котле без снабжения (%s)" % w.p_name[pocket])

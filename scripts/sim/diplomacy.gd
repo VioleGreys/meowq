@@ -521,6 +521,11 @@ static func reachable_neighbours(world: World, n: int) -> Dictionary:
 	var cap: int = world.nations[n].capital
 	if world.p_controller[cap] != n:
 		return res
+	if Native.core != null:
+		var r := Forces.own_reach(world, n, cap)
+		for c in r[1]:
+			res[c] = true
+		return res
 	var seen := {cap: true}
 	var stack := [cap]
 	while not stack.is_empty():

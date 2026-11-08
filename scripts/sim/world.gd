@@ -364,6 +364,8 @@ var pd_list := PackedInt32Array()                 # страна -> [день, �
 var cas_mult := PackedFloat32Array()      # region*nation_count + n: множитель боя от авиации
 var air_sup := PackedFloat32Array()       # region*nation_count + n: превосходство в воздухе 0..1
 var invasions: Array = []                 # Array[InvasionPlan]
+var naval_bases := PackedInt32Array()    # кэш Forces.base_list
+var port_list := PackedInt32Array()      # провинции-порты (Forces.refresh_ports)
 var p_naval_base := PackedByteArray()     # 1 — военно-морская база (стоянка и ремонт флота)
 var p_port := PackedByteArray()           # 1 — постоянный порт (город vp≥3 на побережье или база)
 var beachheads := {}                      # провинция -> последний день временного порта на плацдарме
@@ -394,7 +396,14 @@ var d_land := PackedByteArray()
 var divisions: Array = []
 var next_div_id := 1
 var day := 0
-var prov_divs: Array = []   # province -> Array[Division]
+# Кто стоит в провинции: двусвязные списки по слотам дивизий (живые и не в
+# море). Обновляются сами в ds_prov/ds_transit/ds_alive; раз в день —
+# пересборка в порядке слотов (rebuild_prov_divs). Читать — divs_in(p).
+var pl_head := PackedInt32Array()
+var pl_tail := PackedInt32Array()
+var d_nx := PackedInt32Array()
+var d_pv := PackedInt32Array()
+var d_inl := PackedByteArray()
 var events: Array = []      # строки для журнала, забирает UI
 var palette_dirty := true
 var game_over := ""
@@ -554,6 +563,12 @@ func compute_income(nid: int) -> Array:
 
 ## То же для всех стран за один проход: Array из [гражд., воен., призывники, провинций].
 func compute_all_income() -> Array:
+	if Native.core != null:
+		var r: PackedInt32Array = Native.core.call("income", p_controller, p_owner, p_civ, p_mil, p_manpower, nation_count)
+		var out: Array = []
+		for n in nation_count:
+			out.append([r[n * 4], r[n * 4 + 1], r[n * 4 + 2], r[n * 4 + 3]])
+		return out
 	var civ := PackedInt32Array()
 	var mil := PackedInt32Array()
 	var mp := PackedInt32Array()
@@ -582,10 +597,70 @@ func compute_all_income() -> Array:
 
 
 func has_enemies(nation: int, prov: int) -> bool:
-	for d in prov_divs[prov]:
-		if d.alive and is_at_war(nation, d.owner):
+	var h := pl_head[prov]
+	while h >= 0:
+		if is_at_war(nation, d_owner[h]):
 			return true
+		h = d_nx[h]
 	return false
+
+
+## Дивизии в провинции (живые, не в море) — новый массив, порядок списка.
+func divs_in(p: int) -> Array:
+	var res: Array = []
+	var h := pl_head[p]
+	while h >= 0:
+		res.append(divisions[h])
+		h = d_nx[h]
+	return res
+
+
+func divs_count(p: int) -> int:
+	var n := 0
+	var h := pl_head[p]
+	while h >= 0:
+		n += 1
+		h = d_nx[h]
+	return n
+
+
+func _link(i: int) -> void:
+	var p := d_prov[i]
+	var t := pl_tail[p]
+	d_pv[i] = t
+	d_nx[i] = -1
+	if t >= 0:
+		d_nx[t] = i
+	else:
+		pl_head[p] = i
+	pl_tail[p] = i
+	d_inl[i] = 1
+
+
+func _unlink(i: int) -> void:
+	var p := d_prov[i]
+	var a := d_pv[i]
+	var b := d_nx[i]
+	if a >= 0:
+		d_nx[a] = b
+	else:
+		pl_head[p] = b
+	if b >= 0:
+		d_pv[b] = a
+	else:
+		pl_tail[p] = a
+	d_inl[i] = 0
+
+
+## Членство в списке провинции: живая и не в море.
+func _sync_link(i: int) -> void:
+	if pl_head.size() != prov_count:
+		return   # списков ещё нет (или это «запись мёртвых»)
+	var want := d_alive[i] == 1 and d_transit[i] <= 0
+	if want and d_inl[i] == 0:
+		_link(i)
+	elif not want and d_inl[i] == 1:
+		_unlink(i)
 
 
 func terrain_of(p: int) -> int:
@@ -634,22 +709,44 @@ func division_speed(n: int) -> float:
 
 # --- Изменения (только из главного потока) ---------------------------------
 
+## Уплотнить массивы дивизий и пересобрать списки провинций в порядке слотов.
 func rebuild_prov_divs() -> void:
-	if prov_divs.size() != prov_count:
-		prov_divs.resize(prov_count)
-		for p in prov_count:
-			prov_divs[p] = []
-	for list in prov_divs:   # переиспользуем массивы — без тысячи выделений памяти в день
-		list.clear()
 	compact_divisions()
-	var counts := PackedInt32Array()
-	counts.resize(nations.size())
-	for i in divisions.size():
-		if d_transit[i] <= 0:   # в море — не стоит в провинции
-			prov_divs[d_prov[i]].append(divisions[i])
-		counts[d_owner[i]] += 1
+	var counts := k_relink()
 	for n in nations:
 		n.division_count = counts[n.id]
+
+
+## Пересборка списков провинций (ядро; C++ — MeowqCore.relink). Возвращает
+## число дивизий по странам.
+func k_relink() -> PackedInt32Array:
+	if Native.core != null:
+		var r: Array = Native.core.call("relink", d_alive, d_transit, d_prov, d_owner, prov_count, nations.size())
+		pl_head = r[0]
+		pl_tail = r[1]
+		d_nx = r[2]
+		d_pv = r[3]
+		d_inl = r[4]
+		return r[5]
+	pl_head.resize(prov_count)
+	pl_head.fill(-1)
+	pl_tail.resize(prov_count)
+	pl_tail.fill(-1)
+	var n := d_id.size()
+	d_nx.resize(n)
+	d_pv.resize(n)
+	d_inl.resize(n)
+	var counts := PackedInt32Array()
+	counts.resize(nations.size())
+	for i in n:
+		counts[d_owner[i]] += 1
+		if d_alive[i] == 1 and d_transit[i] <= 0:
+			_link(i)
+		else:
+			d_inl[i] = 0
+			d_nx[i] = -1
+			d_pv[i] = -1
+	return counts
 
 
 func spawn_division(owner: int, prov: int, tpl: int = 0) -> Division:
@@ -665,7 +762,7 @@ func spawn_division(owner: int, prov: int, tpl: int = 0) -> Division:
 	Military.refresh_division(self, d)
 	d.org = d.max_org
 	divisions.append(d)
-	prov_divs[prov].append(d)
+	_sync_link(d.slot)
 	nations[owner].division_count += 1
 	return d
 
@@ -762,7 +859,12 @@ func ds_owner(i: int, v) -> void:
 
 
 func ds_prov(i: int, v) -> void:
-	d_prov[i] = v
+	if d_inl[i] == 1 and d_prov[i] != v:
+		_unlink(i)
+		d_prov[i] = v
+		_link(i)
+	else:
+		d_prov[i] = v
 
 
 func ds_tpl(i: int, v) -> void:
@@ -771,6 +873,7 @@ func ds_tpl(i: int, v) -> void:
 
 func ds_transit(i: int, v) -> void:
 	d_transit[i] = v
+	_sync_link(i)
 
 
 func ds_resv(i: int, v) -> void:
@@ -791,6 +894,7 @@ func ds_id(i: int, v) -> void:
 
 func ds_alive(i: int, v) -> void:
 	d_alive[i] = v
+	_sync_link(i)
 
 
 func ds_battle(i: int, v) -> void:
@@ -825,21 +929,30 @@ func _d_append() -> int:
 	d_alive.append(1)
 	d_battle.append(0)
 	d_land.append(0)
+	d_nx.append(-1)
+	d_pv.append(-1)
+	d_inl.append(0)
 	return d_id.size() - 1
 
 
 ## Убрать погибшие дивизии из списка и массивов (порядок живых сохраняется).
 func compact_divisions() -> void:
-	var keep := PackedInt32Array()
-	var alive_list: Array = []
-	for d in divisions:
-		if d_alive[d.slot] == 1:
-			keep.append(d.slot)
-			alive_list.append(d)
-		else:
-			_bury(d)
-	if alive_list.size() == divisions.size() and keep.size() == d_id.size():
+	var n := d_alive.size()
+	var dead := d_alive.count(0)
+	if dead == 0:
 		return
+	var keep := PackedInt32Array()
+	keep.resize(n - dead)
+	var alive_list: Array = []
+	alive_list.resize(n - dead)
+	var j := 0
+	for i in n:
+		if d_alive[i] == 1:
+			keep[j] = i
+			alive_list[j] = divisions[i]
+			j += 1
+		else:
+			_bury(divisions[i])
 	d_str = Native.gather_f64(d_str, keep)
 	d_org = Native.gather_f64(d_org, keep)
 	d_eq = Native.gather_f64(d_eq, keep)
@@ -862,12 +975,20 @@ func compact_divisions() -> void:
 	d_alive = Native.gather_u8(d_alive, keep)
 	d_battle = Native.gather_u8(d_battle, keep)
 	d_land = Native.gather_u8(d_land, keep)
-	for j in alive_list.size():
-		alive_list[j].slot = j
+	for k in alive_list.size():
+		alive_list[k].slot = k
 	divisions = alive_list
+
 
 func clear_divisions() -> void:
 	divisions.clear()
+	d_nx = PackedInt32Array()
+	d_pv = PackedInt32Array()
+	d_inl = PackedByteArray()
+	pl_head.resize(prov_count)
+	pl_head.fill(-1)
+	pl_tail.resize(prov_count)
+	pl_tail.fill(-1)
 	d_str = PackedFloat64Array()
 	d_org = PackedFloat64Array()
 	d_eq = PackedFloat64Array()
@@ -897,7 +1018,6 @@ func dispose() -> void:
 	for d in divisions:
 		d.w = null
 	divisions.clear()
-	prov_divs.clear()
 
 
 static var _grave: World = null
@@ -1125,3 +1245,83 @@ func k_snapshot() -> void:
 			var p := d_prov[i]
 			pd_list[fill[p]] = i
 			fill[p] += 1
+
+
+## Бои: provs — провинции сражений по порядку, att_start/att_list — атакующие
+## (слоты) каждой; seeds — зерно ГСЧ сражения. Сначала потери считаются по
+## состоянию до боя, потом применяются по порядку провинций.
+func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: PackedInt32Array, seeds: PackedInt64Array) -> void:
+	if Native.core != null:
+		var r: Array = Native.core.call("combat", provs, att_start, att_list, seeds, d_str, d_org, d_eq, d_def, d_atk,
+				d_ent, d_land, d_sup, d_tpl, d_hard, d_owner, d_battle, pl_head, d_nx, war, nation_count, p_def_mult,
+				p_terrain, p_region, cas_mult, tpl_terrain)
+		d_org = r[0]
+		d_str = r[1]
+		d_eq = r[2]
+		d_battle = r[3]
+		return
+	var nc := nation_count
+	var all_deltas: Array = []
+	for b in provs.size():
+		var p := provs[b]
+		var a0 := att_start[b]
+		var a1 := att_start[b + 1]
+		var att_owner := d_owner[att_list[a0]]
+		var defenders := PackedInt32Array()
+		var h := pl_head[p]
+		while h >= 0:
+			var eo := d_owner[h]
+			if att_owner >= 0 and eo >= 0 and att_owner != eo and war[att_owner * nc + eo] == 1:
+				defenders.append(h)
+			h = d_nx[h]
+		if defenders.is_empty():
+			all_deltas.append(PackedFloat64Array())
+			continue
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seeds[b]
+		var terrain_def: float = p_def_mult[p]
+		var terr: int = p_terrain[p]
+		var sa := _side_power(att_list.slice(a0, a1), terr, false)
+		var sd := _side_power(defenders, terr, true)
+		var reg := p_region[p]
+		var att_power: float = sa[0] * cas_mult[reg * nc + att_owner]
+		var att_hard: float = sa[1]
+		var def_power: float = sd[0] * cas_mult[reg * nc + d_owner[defenders[0]]]
+		var def_hard: float = sd[1]
+		att_power *= rng.randf_range(0.8, 1.2) * (1.0 - terrain_def * 0.6)
+		def_power *= rng.randf_range(0.8, 1.2)
+		att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard)
+		def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard)
+		var to_def := att_power / defenders.size()
+		var to_att := def_power / (a1 - a0)
+		var dl := PackedFloat64Array()
+		for e in defenders:
+			dl.append(e)
+			dl.append(to_def * 0.55)
+			dl.append(to_def * 0.12)
+		for k in range(a0, a1):
+			dl.append(att_list[k])
+			dl.append(to_att * 0.5)
+			dl.append(to_att * 0.10)
+		all_deltas.append(dl)
+	for dl: PackedFloat64Array in all_deltas:
+		for j in range(0, dl.size(), 3):
+			var i := int(dl[j])
+			d_battle[i] = 1
+			d_org[i] = maxf(0.0, d_org[i] - dl[j + 1])
+			d_str[i] = maxf(0.0, d_str[i] - dl[j + 2])
+			d_eq[i] = maxf(0.0, d_eq[i] - dl[j + 2] / 100.0 * 0.9)   # потери техники
+
+
+## Сила стороны (как Military.side_power, по массивам): [сила, бронированность].
+func _side_power(slots: PackedInt32Array, terr: int, defending: bool) -> PackedFloat64Array:
+	var power := 0.0
+	var hard := 0.0
+	var wsum := 0.0
+	for i in slots:
+		var w: float = d_str[i] / 100.0
+		var base: float = d_def[i] * (1.0 + 0.3 * d_ent[i]) if defending else d_atk[i] * (0.5 if d_land[i] == 1 else 1.0)
+		power += base * w * (0.4 + 0.6 * d_eq[i]) * (0.5 + 0.5 * d_sup[i]) * tpl_terrain[d_tpl[i] * 8 + terr]
+		hard += d_hard[i] * w
+		wsum += w
+	return PackedFloat64Array([power, hard / maxf(wsum, 0.01)])

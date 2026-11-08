@@ -467,7 +467,7 @@ func _province_text(p: int) -> String:
 	s += "\nФабрики: %d гражд. / %d воен. · Население: %s · Резерв: %dк · Очки победы: %d" % [
 		w.p_civ[p], w.p_mil[p], _fmt_pop(w.p_population[p]), w.p_manpower[p], w.p_vp[p]]
 	var counts := {}
-	for d in w.prov_divs[p]:
+	for d in w.divs_in(p):
 		if d.alive:
 			counts[d.owner] = int(counts.get(d.owner, 0)) + 1
 	for k in counts:

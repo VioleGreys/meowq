@@ -219,7 +219,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 				for (int32_t i : chosen) {
 					used[i] = 1;
 					Array o;
-					o.push_back(dv_id[i]);
+					o.push_back(i);
 					PackedInt32Array path;
 					path.push_back(t);
 					o.push_back(path);
@@ -297,7 +297,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		per_front[found] += 1;
 		if (fronts.has[pv]) per_front[pv] -= 1;
 		Array o;
-		o.push_back(dv_id[i]);
+		o.push_back(i);
 		o.push_back(path);
 		orders.push_back(o);
 	}

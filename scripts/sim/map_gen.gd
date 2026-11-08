@@ -431,9 +431,7 @@ static func _make_nations(world: World, rng: RandomNumberGenerator, count: int) 
 
 	# Стартовые армии.
 	world.build_caches()
-	world.prov_divs.resize(n_prov)
-	for p in n_prov:
-		world.prov_divs[p] = []
+	world.clear_divisions()
 	for nat in world.nations:
 		var owned: Array = []
 		for p in n_prov:

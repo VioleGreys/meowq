@@ -151,31 +151,53 @@ static func refresh_ports(world: World) -> void:
 	for p in world.prov_count:
 		var base := world.p_naval_base.size() > p and world.p_naval_base[p] == 1
 		world.p_port[p] = 1 if world.p_land[p] == 1 and world.p_coastal[p] == 1 and (world.p_vp[p] >= 3 or base) else 0
+	world.port_list = PackedInt32Array()
+	for p in world.prov_count:
+		if world.p_port[p] == 1:
+			world.port_list.append(p)
 
 
 ## Ближайшая военно-морская база стороны страны n (морская зона рядом с ней).
 static func base_zone(world: World, n: int, from_zone: int) -> int:
-	var dist := sea_dist(world, from_zone) if from_zone >= 0 else {}
+	var dist := sea_dist(world, from_zone) if from_zone >= 0 else PackedInt32Array()
 	var best := -1
 	var best_d := 1 << 20
-	for p in world.prov_count:
-		if world.p_naval_base.size() <= p or world.p_naval_base[p] == 0:
-			continue
-		var c := world.p_controller[p]
+	var ctrl := world.p_controller
+	var land := world.p_land
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	for p in base_list(world):
+		var c := ctrl[p]
 		if c < 0 or (c != n and world.ally[n * world.nation_count + c] == 0):
 			continue
-		for q in world.p_adj[p]:
-			if world.p_land[q] == 0:
-				var d: int = dist.get(q, 1 << 19) if from_zone >= 0 else 0
+		for k in range(a_start[p], a_start[p + 1]):
+			var q := a_list[k]
+			if land[q] == 0:
+				var d: int = 0
+				if from_zone >= 0:
+					d = dist[q] if dist[q] >= 0 else 1 << 19
 				if d < best_d:
 					best_d = d
 					best = q
 	return best
 
 
+## Провинции с военно-морскими базами по возрастанию номера (кэш).
+static func base_list(world: World) -> PackedInt32Array:
+	if world.naval_bases.is_empty() and world.p_naval_base.size() > 0:
+		for p in world.p_naval_base.size():
+			if world.p_naval_base[p] == 1:
+				world.naval_bases.append(p)
+	return world.naval_bases
+
+
 static func at_base(world: World, f: World.Fleet) -> bool:
-	for q in world.p_adj[f.zone]:
-		if world.p_land[q] == 1 and world.p_naval_base.size() > q and world.p_naval_base[q] == 1:
+	var nb := world.p_naval_base
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	for k in range(a_start[f.zone], a_start[f.zone + 1]):
+		var q := a_list[k]
+		if world.p_land[q] == 1 and nb.size() > q and nb[q] == 1:
 			var c := world.p_controller[q]
 			if c == f.owner or (c >= 0 and world.ally[f.owner * world.nation_count + c] == 1):
 				return true
@@ -257,7 +279,10 @@ static func supremacy(world: World, n: int, zone: int) -> float:
 # --- Ежедневный ход: флот ----------------------------------------------------------
 
 static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
+	var _pt := Time.get_ticks_usec()
 	_build_ships(world)
+	Prof.add("флот:верфи", _pt)
+	_pt = Time.get_ticks_usec()
 	# движение: зона в день; готовность восстанавливается на базе
 	for f in world.fleets:
 		if not f.alive:
@@ -270,6 +295,8 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 		else:
 			f.readiness = minf(1.0, f.readiness + 0.002)
 		# база потеряна — приписываем флот к ближайшей своей
+		Prof.add("флот:движение-база", _pt)
+		_pt = Time.get_ticks_usec()
 		if world.day % 7 == f.id % 7 and f.home >= 0:
 			var home_ok := false
 			for q in world.p_adj[f.home]:
@@ -281,6 +308,10 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 				var b := base_zone(world, f.owner, f.zone)
 				if b >= 0:
 					f.home = b
+		Prof.add("флот:движение-дом", _pt)
+		_pt = Time.get_ticks_usec()
+	Prof.add("флот:движение", _pt)
+	_pt = Time.get_ticks_usec()
 	_refresh_cache(world)
 	# морские бои
 	for f in world.fleets:
@@ -321,8 +352,11 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 			f.readiness = maxf(0.0, f.readiness - db / maxf(1.0, pb) * 0.6)
 		_retreat_if_beaten(world, side_a, pb)
 		_retreat_if_beaten(world, side_b, pa)
+	Prof.add("флот:сражения", _pt)
+	_pt = Time.get_ticks_usec()
 	_trade_war(world, rng)
 	_refresh_cache(world)
+	Prof.add("флот:торговля", _pt)
 
 
 static func _take_losses(world: World, side: Array, dmg: float, rng: RandomNumberGenerator) -> void:
@@ -435,19 +469,28 @@ static func _build_ships(world: World) -> void:
 static func sea_path(world: World, from: int, to: int) -> PackedInt32Array:
 	if from == to or from < 0 or to < 0:
 		return PackedInt32Array()
-	var parent := {from: from}
-	var queue := [from]
+	if Native.core != null:
+		return Native.core.call("sea_path", world.adj_start, world.adj_list, world.p_land, from, to)
+	var land := world.p_land
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	var parent := PackedInt32Array()
+	parent.resize(world.prov_count)
+	parent.fill(-1)
+	parent[from] = from
+	var queue := PackedInt32Array([from])
 	var head := 0
 	while head < queue.size():
-		var p: int = queue[head]
+		var p := queue[head]
 		head += 1
 		if p == to:
 			break
-		for q in world.p_adj[p]:
-			if world.p_land[q] == 0 and not parent.has(q):
+		for k in range(a_start[p], a_start[p + 1]):
+			var q := a_list[k]
+			if land[q] == 0 and parent[q] < 0:
 				parent[q] = p
 				queue.append(q)
-	if not parent.has(to):
+	if parent[to] < 0:
 		return PackedInt32Array()
 	var path := PackedInt32Array()
 	var cur := to
@@ -458,19 +501,64 @@ static func sea_path(world: World, from: int, to: int) -> PackedInt32Array:
 	return path
 
 
-## Расстояния по морю от зоны до всех зон (один проход в ширину).
-static func sea_dist(world: World, from: int) -> Dictionary:
-	var dist := {from: 0}
-	var queue := [from]
+## Расстояния по морю от зоны from (в зонах); -1 — недостижимо.
+static func sea_dist(world: World, from: int) -> PackedInt32Array:
+	if Native.core != null:
+		return Native.core.call("sea_bfs", world.adj_start, world.adj_list, world.p_land, from)
+	var land := world.p_land
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	var dist := PackedInt32Array()
+	dist.resize(world.prov_count)
+	dist.fill(-1)
+	if from < 0:
+		return dist
+	dist[from] = 0
+	var queue := PackedInt32Array([from])
 	var head := 0
 	while head < queue.size():
-		var p: int = queue[head]
+		var p := queue[head]
 		head += 1
-		for q in world.p_adj[p]:
-			if world.p_land[q] == 0 and not dist.has(q):
-				dist[q] = int(dist[p]) + 1
+		for k in range(a_start[p], a_start[p + 1]):
+			var q := a_list[k]
+			if land[q] == 0 and dist[q] < 0:
+				dist[q] = dist[p] + 1
 				queue.append(q)
 	return dist
+
+
+## Своя территория страны n, связанная по суше с провинцией start (start —
+## всегда), и страны-соседи этой территории в порядке первой встречи.
+static func own_reach(world: World, n: int, start: int) -> Array:
+	if Native.core != null:
+		return Native.core.call("own_reach", world.adj_start, world.adj_list, world.p_land, world.p_controller, n, start, world.nation_count)
+	var land := world.p_land
+	var ctrl := world.p_controller
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	var mask := PackedByteArray()
+	mask.resize(world.prov_count)
+	var neigh := PackedInt32Array()
+	var seen := PackedByteArray()
+	seen.resize(world.nation_count)
+	mask[start] = 1
+	var stack := PackedInt32Array([start])
+	while not stack.is_empty():
+		var p := stack[stack.size() - 1]
+		stack.resize(stack.size() - 1)
+		for k in range(a_start[p], a_start[p + 1]):
+			var q := a_list[k]
+			if land[q] == 0:
+				continue
+			var c := ctrl[q]
+			if c == n:
+				if mask[q] == 0:
+					mask[q] = 1
+					stack.append(q)
+			elif c >= 0 and seen[c] == 0:
+				seen[c] = 1
+				neigh.append(c)
+	return [mask, neigh]
 
 
 ## ИИ: главный флот ищет более слабого противника рядом, подлодки — торговлю врага.
@@ -494,7 +582,8 @@ static func ai_fleets(world: World, n: int) -> void:
 			var from_home := sea_dist(world, f.home)
 			var near_enemy := 0.0
 			for z in world.zone_fleets:
-				if int(from_home.get(z, 99)) > 8:
+				var fh: int = from_home[z]
+				if fh < 0 or fh > 8:
 					continue
 				for o in world.zone_fleets[z]:
 					if world.is_at_war(n, o.owner) and o.mission != "raid":
@@ -509,14 +598,14 @@ static func ai_fleets(world: World, n: int) -> void:
 		if f.mission == "raid":
 			for e in nat.at_war:
 				for z in trade_zones(world, e):
-					var l: int = from_here.get(z, 1 << 20)
+					var l: int = from_here[z] if from_here[z] >= 0 else 1 << 20
 					if l < best_len and l <= 12:
 						best_len = l
 						best = z
 		else:
 			var mine := fleet_power(f)
 			for z in world.zone_fleets:
-				var l: int = from_here.get(z, 1 << 20)
+				var l: int = from_here[z] if from_here[z] >= 0 else 1 << 20
 				if l > 8 or l >= best_len:
 					continue
 				var enemy := 0.0
@@ -634,32 +723,31 @@ static func ai_transfers(world: World, n: int) -> void:
 	if nat.at_war.is_empty():
 		return
 	# провинции, связанные со столицей по суше
-	var home := {}
-	var stack := [nat.capital]
-	home[nat.capital] = true
-	while not stack.is_empty():
-		var p: int = stack.pop_back()
-		for q in world.p_adj[p]:
-			if world.p_land[q] == 1 and world.p_controller[q] == n and not home.has(q):
-				home[q] = true
-				stack.append(q)
+	var home: PackedByteArray = own_reach(world, n, nat.capital)[0]
 	# заморский порт на фронте, где мало наших войск
 	var dest := -1
 	var dest_need := 0
+	var ctrl := world.p_controller
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	var war := world.war
+	var nc := world.nation_count
 	for p in world.prov_count:
-		if world.p_controller[p] != n or home.has(p) or not is_port(world, p):
+		if ctrl[p] != n or home[p] == 1 or not is_port(world, p):
 			continue
 		var enemies := 0
-		for q in world.p_adj[p]:
-			var c := world.p_controller[q]
-			if c >= 0 and world.is_at_war(n, c):
+		for k in range(a_start[p], a_start[p + 1]):
+			var c := ctrl[a_list[k]]
+			if c >= 0 and c != n and war[n * nc + c] == 1:
 				enemies += 1
 		if enemies == 0:
 			continue
 		var mine := 0
-		for d in world.prov_divs[p]:
-			if d.owner == n:
+		var h := world.pl_head[p]
+		while h >= 0:
+			if world.d_owner[h] == n:
 				mine += 1
+			h = world.d_nx[h]
 		var need := 3 + enemies - mine
 		if need > dest_need:
 			dest_need = need
@@ -668,10 +756,21 @@ static func ai_transfers(world: World, n: int) -> void:
 		return
 	# свободные дивизии в домашних портах
 	var by_port := {}
-	for d in world.divisions:
-		if d.alive and d.owner == n and home.has(d.prov) and is_port(world, d.prov) and d.path.is_empty() \
-				and not d.in_battle and d.transit_days == 0 and d.inv_plan < 0 and d.reserved_until < world.day \
-				and not _at_front(world, d):
+	var own := world.d_owner
+	var dprov := world.d_prov
+	var alive := world.d_alive
+	var nxt := world.d_next
+	var tr := world.d_transit
+	var inv := world.d_inv
+	var resv := world.d_resv
+	var bt := world.d_battle
+	var day := world.day
+	for i in own.size():
+		if own[i] != n or alive[i] == 0 or home[dprov[i]] == 0 or nxt[i] >= 0 or tr[i] != 0 or inv[i] >= 0 \
+				or resv[i] >= day or bt[i] != 0 or not is_port(world, dprov[i]):
+			continue
+		var d: World.Division = world.divisions[i]
+		if not _at_front(world, d):
 			if not by_port.has(d.prov):
 				by_port[d.prov] = []
 			by_port[d.prov].append(d)
@@ -909,6 +1008,7 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 		world.air_sup.resize(world.region_count * nc)
 	world.cas_mult.fill(1.0)
 	world.air_sup.fill(0.5)
+	var _pt := Time.get_ticks_usec()
 	# пополнение крыльев из резерва, новые крылья ИИ (крылья заранее по странам)
 	var by_owner := {}
 	for w in world.wings:
@@ -937,6 +1037,8 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 				nw.planes = minf(WING_MAX, nat.stock[eq])
 				nat.stock[eq] -= nw.planes
 				nw.mission = "sup" if kind == 0 else "cas"
+	Prof.add("авиа:пополнение", _pt)
+	_pt = Time.get_ticks_usec()
 	# районы с авиацией
 	var by_region := {}
 	for w in world.wings:
@@ -944,43 +1046,68 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 			if not by_region.has(w.region):
 				by_region[w.region] = []
 			by_region[w.region].append(w)
+	var ally := world.ally
+	var war := world.war
+	var air_sup := world.air_sup
+	var cas_mult := world.cas_mult
 	for r in by_region:
 		var here: Array = by_region[r]
+		# снимок полей крыльев района в локальные массивы
+		var cnt := here.size()
+		var ow := PackedInt32Array()
+		var kd := PackedInt32Array()
+		var pl := PackedFloat64Array()
+		var cas_m := PackedByteArray()
+		ow.resize(cnt)
+		kd.resize(cnt)
+		pl.resize(cnt)
+		cas_m.resize(cnt)
+		for j in cnt:
+			var w: World.AirWing = here[j]
+			ow[j] = w.owner
+			kd[j] = w.kind
+			pl[j] = w.planes
+			cas_m[j] = 1 if w.mission == "cas" else 0
 		# для каждой страны: свои и вражеские истребители в районе
 		var owners := {}
-		for w in here:
-			owners[w.owner] = true
+		for j in cnt:
+			owners[ow[j]] = true
 		for n in owners:
 			var own_f := 0.0
 			var en_f := 0.0
 			var own_b := 0.0
-			for w in here:
-				if w.kind == 0:
-					if world.ally[n * nc + w.owner] == 1:
-						own_f += w.planes
-					elif world.is_at_war(n, w.owner):
-						en_f += w.planes
-				elif w.mission == "cas" and world.ally[n * nc + w.owner] == 1:
-					own_b += w.planes
+			for j in cnt:
+				var o := ow[j]
+				if kd[j] == 0:
+					if ally[n * nc + o] == 1:
+						own_f += pl[j]
+					elif n != o and war[n * nc + o] == 1:
+						en_f += pl[j]
+				elif cas_m[j] == 1 and ally[n * nc + o] == 1:
+					own_b += pl[j]
 			var sup := 0.5 if own_f + en_f <= 0.0 else own_f / (own_f + en_f)
-			world.air_sup[r * nc + n] = sup
+			air_sup[r * nc + n] = sup
 			var m := 1.0 + minf(0.4, own_b * sup / 600.0)
 			if sup < 0.3:
 				m -= 0.15   # противник господствует в воздухе
-			world.cas_mult[r * nc + n] = m
+			cas_mult[r * nc + n] = m
 		# воздушные бои: потери от вражеских истребителей
-		for w in here:
+		for j in cnt:
+			var w: World.AirWing = here[j]
 			var en_f := 0.0
 			var own_f := 0.0
-			for o in here:
-				if o.kind == 0:
-					if world.is_at_war(w.owner, o.owner):
-						en_f += o.planes
-					elif world.ally[w.owner * nc + o.owner] == 1:
-						own_f += o.planes
+			var wo := w.owner
+			for k in cnt:
+				if kd[k] == 0:
+					var o := ow[k]
+					var p_k: float = here[k].planes   # уже с потерями этого дня, как раньше
+					if wo != o and war[wo * nc + o] == 1:
+						en_f += p_k
+					elif ally[wo * nc + o] == 1:
+						own_f += p_k
 			if en_f <= 0.0:
 				continue
-			var rate := 0.004 if w.kind == 0 else 0.008 * en_f / (en_f + own_f + 1.0)
+			var rate := 0.004 if kd[j] == 0 else 0.008 * en_f / (en_f + own_f + 1.0)
 			w.planes = maxf(0.0, w.planes - en_f * rate * rng.randf_range(0.6, 1.4) * (WING_MAX / maxf(WING_MAX, en_f + own_f)) * 3.0)
 			if w.planes < 1.0:
 				w.alive = false
@@ -990,7 +1117,7 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 		for w in here:
 			if w.kind != 1:
 				continue
-			var sup: float = world.air_sup[r * nc + w.owner]
+			var sup: float = air_sup[r * nc + w.owner]
 			if w.mission == "bomb":
 				_bomb_factories(world, w, r, sup, rng)
 			elif w.mission == "naval":
@@ -1004,6 +1131,8 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 							targets.append(f)
 					if not targets.is_empty():
 						_take_losses(world, targets, dmg, rng)
+	world.air_sup = air_sup
+	world.cas_mult = cas_mult
 
 
 static func _bomb_factories(world: World, w: World.AirWing, r: int, sup: float, rng: RandomNumberGenerator) -> void:
@@ -1135,7 +1264,7 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 			if world.p_controller[p] != enemy or world.p_coastal[p] == 0:
 				continue
 			# порты в приоритете: без порта плацдарм останется без снабжения
-			var score: float = world.prov_divs[p].size() * 25.0 - world.p_vp[p] * 2.0 - (8.0 if world.p_vp[p] >= 3 else 0.0) + rng.randf()
+			var score: float = world.divs_count(p) * 25.0 - world.p_vp[p] * 2.0 - (8.0 if world.p_vp[p] >= 3 else 0.0) + rng.randf()
 			if score < best_score:
 				best_score = score
 				best = p

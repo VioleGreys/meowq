@@ -248,9 +248,6 @@ static func _allocate(target: PackedInt32Array, list: Array, weights: PackedFloa
 ## Армии 1936 г.: столица и крупные города + граница с соседями; часть — в колониях.
 static func _spawn_armies(world: World, rng: RandomNumberGenerator, data: Dictionary) -> void:
 	world.clear_divisions()
-	world.prov_divs.resize(world.prov_count)
-	for p in world.prov_count:
-		world.prov_divs[p] = []
 	for nat in world.nations:
 		var d: Dictionary = data.get(nat.tag, {})
 		var home: Array = []

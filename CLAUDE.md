@@ -76,16 +76,25 @@
   `d_next`), не на месте. Погибшие убираются `compact_divisions()` раз в день,
   ссылки на них уходят в «запись мёртвых» (`World._bury`). Новый мир —
   `world.dispose()` (цикл мир ↔ дивизия).
+- Кто стоит в провинции — двусвязные списки по слотам (`pl_head`, `d_nx`, `d_pv`),
+  обновляются сами в `ds_prov/ds_transit/ds_alive`; читать `world.divs_in(p)`,
+  `divs_count(p)`, `has_enemies`. Раз в день — уплотнение и пересборка
+  (`rebuild_prov_divs` → `k_relink`).
 - Горячие фазы — ядра `World.k_*` (восстановление, снабжение, сбор боёв и шаг
-  движения, снимок для ИИ) и военный план ИИ `AIPlanner._plan`: каждое в двух
+  движения, бои, снимок для ИИ, списки провинций), доход стран, место под
+  завод, поиск по морю и по своей территории (`Forces.sea_dist/sea_path/own_reach`)
+  и военный план ИИ `AIPlanner._plan`: каждое в двух
   вариантах — GDScript и C++ (`native/src/kernels.cpp`, `ai.cpp`), результаты
   совпадают до бита (порядок обхода, double, без FMA: `-ffp-contract=off`;
   сортировки — с однозначной развязкой при равенстве).
 - ИИ: экономика сразу, военные планы (`AIPlanner.plan_job`) — в рабочих потоках
   (`Parallel.start/finish`) по глубокой копии таблиц, пока главный поток ведёт
   остальные фазы; приказы применяются в конце дня (`Simulation._finish_ai`).
-- Замеры (ПК, 4 ядра, сентябрь 1940 г., ~970 дивизий): тик ~8 мс с C++
-  (было ~21 мс), ~14 мс без; максимальная скорость ~120 дней/с, кадр ~7 мс.
+- Замеры (ПК, 4 ядра, сентябрь 1940 г., ~1000 дивизий): тик ~4,5 мс с C++
+  (было ~21 мс), ~8 мс без; максимальная скорость ~160 дней/с, кадр ~7 мс.
+  Профиль участков: `tests/prof_check.gd` (метки `Prof.add`). Режимы для
+  сравнения многоядерности: `-- --single` (всё в одном потоке),
+  `-- --no-parallel` (фоновый поток есть, задач внутри дня нет).
 - C++: `native/` — GDExtension `MeowqCore`. Сборка: `pip install scons`,
   godot-cpp (ветка 4.3) в `native/godot-cpp`, `cd native && scons
   platform=linux|windows|android [arch=arm64] target=template_debug|template_release`;
@@ -116,6 +125,7 @@
 - Военная система: `godot --headless --path . --script res://tests/military_check.gd`
 - Дипломатия (правила + прогон лет): `godot --headless --path . --script res://tests/diplomacy_check.gd -- --years=3`
 - Проверка стартовых данных: `godot --headless --path . --script res://tests/data_check.gd`
+- Профиль участков кода: `godot --headless --path . --script res://tests/prof_check.gd`
 - Производительность: `godot --headless --path . --script res://tests/perf_bench.gd`
   (разгон до 1940 г., тик по фазам, один поток против многих); в реальном
   времени: `godot --headless --path . -- --bench_rt=15 [--nation=SWE]`.

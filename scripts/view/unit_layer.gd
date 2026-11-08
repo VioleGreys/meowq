@@ -75,9 +75,9 @@ func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
 		out.append([BATTLE, _wp(p)])
 	# фишки: по одной на (провинция, страна)
 	for p in world.prov_count:
-		var list: Array = world.prov_divs[p]
-		if list.is_empty():
+		if world.pl_head[p] < 0:
 			continue
+		var list: Array = world.divs_in(p)
 		var groups := {}
 		var order: Array = []
 		for d in list:

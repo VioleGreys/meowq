@@ -49,7 +49,9 @@ func tick() -> void:
 	var t0 := Time.get_ticks_usec()
 	world.day += 1
 	_timed("подготовка", func():
+		var _pt := Time.get_ticks_usec()
 		world.rebuild_prov_divs()
+		Prof.add("подг:prov_divs", _pt)
 		world.refresh_stats()
 		# характеристики дивизий меняются только с новыми технологиями
 		var dirty := false
@@ -89,7 +91,9 @@ func _timed(label: String, fn: Callable) -> void:
 func _phase_economy() -> void:
 	var n_count := world.nations.size()
 	# один проход по всем провинциям дешевле, чем по проходу на каждую страну
+	var _pt := Time.get_ticks_usec()
 	var results := world.compute_all_income()
+	Prof.add("эк:доход", _pt)
 
 	for i in n_count:
 		var nat: World.Nation = world.nations[i]
@@ -103,10 +107,13 @@ func _phase_economy() -> void:
 		nat.daily_research = (1.0 + nat.civ * 0.05) * (1.0 + nat.b("research"))
 		nat.manpower += nat.daily_manpower
 		# производство снаряжения: свободные заводы ИИ сам раскладывает по линиям
+		_pt = Time.get_ticks_usec()
 		Military.trim_lines(nat)
 		if not nat.is_player:
 			Military.assign_free_factories(nat, Military.default_split(nat))
 		Military.produce(nat)
+		Prof.add("эк:производство", _pt)
+		_pt = Time.get_ticks_usec()
 
 		# наука
 		if nat.current_research != "":
@@ -127,6 +134,8 @@ func _phase_economy() -> void:
 			else:
 				nat.build_progress = FACTORY_COST
 
+		Prof.add("эк:наука+стройка", _pt)
+		_pt = Time.get_ticks_usec()
 		# подготовка дивизий
 		var still: Array = []
 		for entry in nat.training:
@@ -139,21 +148,31 @@ func _phase_economy() -> void:
 			else:
 				still.append([int(entry[0]) - 1, int(entry[1])])
 		nat.training = still
+		Prof.add("эк:подготовка", _pt)
 
 
 func _place_factory(nid: int, mode: String) -> bool:
 	var best := -1
-	var best_score := INF
-	for p in world.prov_count:
-		if world.p_owner[p] != nid or world.p_controller[p] != nid:
-			continue
-		var total := world.p_civ[p] + world.p_mil[p]
-		if total >= factory_slots(world, p):
-			continue
-		var score := float(total) - (2.0 if world.p_terrain[p] == World.T_URBAN else 0.0) + float(p % 7) * 0.01
-		if score < best_score:
-			best_score = score
-			best = p
+	if Native.core != null:
+		best = Native.core.call("place_factory", world.p_owner, world.p_controller, world.p_civ, world.p_mil,
+				world.p_population, world.p_terrain, nid, MAX_FACTORIES, World.T_URBAN)
+	else:
+		var best_score := INF
+		var owner := world.p_owner
+		var ctrl := world.p_controller
+		var civ := world.p_civ
+		var mil := world.p_mil
+		var terrain := world.p_terrain
+		for p in world.prov_count:
+			if owner[p] != nid or ctrl[p] != nid:
+				continue
+			var total := civ[p] + mil[p]
+			if total >= factory_slots(world, p):
+				continue
+			var score := float(total) - (2.0 if terrain[p] == World.T_URBAN else 0.0) + float(p % 7) * 0.01
+			if score < best_score:
+				best_score = score
+				best = p
 	if best < 0:
 		return false
 	if mode == "civ":
@@ -210,15 +229,17 @@ func _refresh_sides() -> void:
 ## провинции под её контролем; расстояние в переходах от ближайшего узла.
 ## Вне сети — окружение: дивизия не пополняется и теряет силы.
 func _phase_supply() -> void:
+	var _pt0 := Time.get_ticks_usec()
 	var nc := world.nation_count
 	# стороны: представитель — наименьший номер союзной страны
 	var rep := PackedInt32Array()
 	rep.resize(nc)
 	var reps: Array = []
+	var ally0 := world.ally
 	for a in nc:
 		rep[a] = a
 		for b in a:
-			if world.ally[a * nc + b] == 1:
+			if ally0[a * nc + b] == 1:
 				rep[a] = rep[b]
 				break
 		if rep[a] == a and world.nations[a].alive:
@@ -227,10 +248,10 @@ func _phase_supply() -> void:
 	hubs.resize(reps.size())
 	var rep_index := {}
 	for i in reps.size():
-		hubs[i] = PackedInt32Array()
+		hubs[i] = []   # Array: append без копирования; в Packed — после сбора
 		rep_index[reps[i]] = i
 	var ctl := world.p_controller
-	if world.p_port.size() != world.prov_count:
+	if world.p_port.size() != world.prov_count or world.port_list.is_empty():
 		Forces.refresh_ports(world)
 	for nat in world.nations:
 		if nat.alive and ctl[nat.capital] == nat.id and rep_index.has(rep[nat.id]):
@@ -241,9 +262,7 @@ func _phase_supply() -> void:
 	var adj_l := world.adj_list
 	var zf := world.zone_fleets
 	var sup_memo := {}
-	for p in world.prov_count:
-		if port[p] == 0:
-			continue
+	for p in world.port_list:
 		var c := ctl[p]
 		if c < 0 or not rep_index.has(rep[c]):
 			continue
@@ -264,6 +283,9 @@ func _phase_supply() -> void:
 		var c := ctl[p]
 		if c >= 0 and rep_index.has(rep[c]):
 			hubs[rep_index[rep[c]]].append(p)
+	Prof.add("снаб:узлы", _pt0)
+	for i in reps.size():
+		hubs[i] = PackedInt32Array(hubs[i])
 	var results: Array = []
 	results.resize(reps.size())
 	var native: Object = Native.core
@@ -304,6 +326,7 @@ func _phase_supply() -> void:
 	for a in nc:
 		var idx := reps.find(rep[a])
 		world.supply_dist[a] = results[idx] if idx >= 0 else PackedInt32Array()
+	Prof.add("снаб:сети", _pt0)
 	# нагрузка на провинции и итоговое снабжение каждой дивизии (ядро по массивам)
 	var side_of := PackedInt32Array()
 	side_of.resize(nc)
@@ -390,6 +413,7 @@ func _phase_ai() -> void:
 	# глубокая копия: часть записей в массивы мира идёт на месте, без
 	# копирования при записи, — потоки должны читать замороженное состояние
 	var tables := AIPlanner.ai_tables(world).duplicate(true)
+	_ai_tables = tables
 	_ai_jobs = jobs
 	_ai_plans = []
 	_ai_plans.resize(jobs.size())
@@ -401,6 +425,7 @@ func _phase_ai() -> void:
 
 
 var _ai_jobs: Array = []
+var _ai_tables := {}
 var _ai_plans: Array = []
 var _ai_gid := -1
 
@@ -413,9 +438,11 @@ func _finish_ai() -> void:
 	_ai_gid = -1
 	var jobs := _ai_jobs
 	_ai_jobs = []
+	# приказ — [слот в снимке, путь]; слоты до конца дня не меняются (уплотнение —
+	# в начале следующего), но проверяем id: снимок хранит dv_id
+	var snap_id: PackedInt32Array = _ai_tables["dv_id"]
+	var divs := world.divisions
 	var by_id := {}
-	for d in world.divisions:
-		by_id[d.id] = d
 	for i in jobs.size():
 		var plan: Dictionary = _ai_plans[i]
 		var job: Dictionary = jobs[i]
@@ -423,7 +450,16 @@ func _finish_ai() -> void:
 			var g: World.ArmyGroup = world.groups[job["group"]]
 			g.front_pairs = plan["fronts"]
 		for order in plan["orders"]:
-			var d = by_id.get(order[0])
+			var slot: int = order[0]
+			var d: World.Division = null
+			if slot < divs.size() and world.d_id[slot] == snap_id[slot]:
+				d = divs[slot]
+			else:
+				# слоты сдвинулись (аннексия уплотнила массивы) — ищем по id
+				if by_id.is_empty():
+					for x in divs:
+						by_id[x.id] = x
+				d = by_id.get(snap_id[slot])
 			if d != null and d.alive and d.transit_days <= 0:
 				d.path = order[1]
 				d.progress = 0.0
@@ -447,8 +483,12 @@ func _phase_navy() -> void:
 			ta += Time.get_ticks_usec() - t2
 			if (world.day + nat.id) % 10 == 0:
 				t2 = Time.get_ticks_usec()
+				var _pt := Time.get_ticks_usec()
 				Forces.ai_invasion(world, nat.id, Parallel.rng(world.seed_value, world.day, 6100 + nat.id))
+				Prof.add("высадки:ai_invasion", _pt)
+				_pt = Time.get_ticks_usec()
 				Forces.ai_transfers(world, nat.id)
+				Prof.add("высадки:ai_transfers", _pt)
 				ti += Time.get_ticks_usec() - t2
 	phase_usec["флот:ИИ"] = Time.get_ticks_usec() - t - ta - ti
 	phase_usec["авиа:ИИ"] = ta
@@ -614,9 +654,7 @@ func _phase_movement(_battles: Dictionary) -> void:
 		if not world.can_enter(d.owner, t) or world.has_enemies(d.owner, t):
 			d.progress = 0.99
 			continue
-		world.prov_divs[d.prov].erase(d)
-		d.prov = t
-		world.prov_divs[t].append(d)
+		d.prov = t   # список провинции обновляется сам (World.ds_prov)
 		d.path = d.path.slice(1)
 		d.progress = 0.0
 		if d.landing:
@@ -643,59 +681,17 @@ func _phase_combat(battles: Dictionary) -> void:
 	var provs: Array = battles.keys()
 	if provs.is_empty():
 		return
-	var results: Array = []
-	results.resize(provs.size())
-	var day := world.day
-	var seed_value := world.seed_value
-	var task := func(i: int) -> void:
-		var p: int = provs[i]
-		var attackers: Array = battles[p]
-		var att_owner: int = attackers[0].owner
-		var defenders: Array = []
-		for e in world.prov_divs[p]:
-			if e.alive and world.is_at_war(att_owner, e.owner):
-				defenders.append(e)
-		if defenders.is_empty():
-			results[i] = []
-			return
-		var rng := Parallel.rng(seed_value, day, p)
-		var terrain_def: float = world.p_def_mult[p]
-		var terr: int = world.p_terrain[p]
-		var tmul := world.tpl_terrain
-		# сила стороны: атака/оборона шаблона x сила x укомплектованность x
-		# снабжение x местность; бронированность — доля танков
-		var sa: Array = Military.side_power(attackers, terr, tmul, false)
-		var sd: Array = Military.side_power(defenders, terr, tmul, true)
-		var reg: int = world.p_region[p]
-		var nc2: int = world.nation_count
-		var cas := world.cas_mult
-		var att_power: float = sa[0] * cas[reg * nc2 + att_owner]
-		var att_hard: float = sa[1]
-		var def_power: float = sd[0] * cas[reg * nc2 + defenders[0].owner]
-		var def_hard: float = sd[1]
-		att_power *= rng.randf_range(0.8, 1.2) * (1.0 - terrain_def * 0.6)
-		def_power *= rng.randf_range(0.8, 1.2)
-		# броня гасит урон, если у противника мало своей брони (нечем пробивать)
-		att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard)
-		def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard)
-		var deltas: Array = []
-		var to_def := att_power / defenders.size()
-		var to_att := def_power / attackers.size()
-		for e in defenders:
-			deltas.append([e, to_def * 0.55, to_def * 0.12])
-		for a in attackers:
-			deltas.append([a, to_att * 0.5, to_att * 0.10])
-		results[i] = deltas
-	Parallel.run(provs.size(), task, "combat", 12)
-
-	for i in provs.size():
-		var deltas: Array = results[i]
-		for dl in deltas:
-			var d: World.Division = dl[0]
-			d.in_battle = true
-			d.org = maxf(0.0, d.org - dl[1])
-			d.strength = maxf(0.0, d.strength - dl[2])
-			d.eq = maxf(0.0, d.eq - dl[2] / 100.0 * 0.9)   # потери техники
+	# сражения в плоском виде для ядра World.k_combat
+	var pv := PackedInt32Array(provs)
+	var att_start := PackedInt32Array([0])
+	var att_list := PackedInt32Array()
+	var seeds := PackedInt64Array()
+	for p in provs:
+		for a in battles[p]:
+			att_list.append(a.slot)
+		att_start.append(att_list.size())
+		seeds.append(hash([world.seed_value, world.day, p]))   # как Parallel.rng
+	world.k_combat(pv, att_start, att_list, seeds)
 	# последствия: разбитые атакующие останавливаются, защитники отступают
 	for i in provs.size():
 		var p: int = provs[i]
@@ -706,7 +702,7 @@ func _phase_combat(battles: Dictionary) -> void:
 				if a.strength <= 5.0:
 					_destroy(a, "разбита")
 		var att_owner: int = battles[p][0].owner
-		for e in world.prov_divs[p].duplicate():
+		for e in world.divs_in(p):
 			if not e.alive or not world.is_at_war(att_owner, e.owner):
 				continue
 			if e.org <= 0.5 or e.strength <= 5.0:
@@ -719,16 +715,14 @@ func _retreat(d: World.Division) -> void:
 	for q in world.p_adj[d.prov]:  # главный поток — можно без CSR
 		if world.p_land[q] == 0 or world.p_controller[q] != d.owner or world.has_enemies(d.owner, q):
 			continue
-		var score := float(world.prov_divs[q].size()) + float(q % 5) * 0.01
+		var score := float(world.divs_count(q)) + float(q % 5) * 0.01
 		if score > best_score:
 			best_score = score
 			best = q
 	if best < 0 or d.strength <= 5.0:
 		_destroy(d, "окружена и уничтожена" if best < 0 else "разбита")
 		return
-	world.prov_divs[d.prov].erase(d)
 	d.prov = best
-	world.prov_divs[best].append(d)
 	d.path = PackedInt32Array()
 	d.progress = 0.0
 
@@ -737,7 +731,6 @@ func _destroy(d: World.Division, why: String) -> void:
 	if not d.alive:
 		return
 	d.alive = false
-	world.prov_divs[d.prov].erase(d)
 	if world.nations[d.owner].is_player:
 		world.log_event("Наша дивизия %s: %s" % [why, world.p_name[d.prov]])
 
@@ -861,11 +854,17 @@ func resolve_peace(mode: String) -> void:
 func _phase_diplomacy() -> void:
 	if not world.diplomacy:
 		return
+	var _pt := Time.get_ticks_usec()
 	Diplomacy.daily(world)
+	Prof.add("дип:daily", _pt)
+	_pt = Time.get_ticks_usec()
 	History.daily(world, Parallel.rng(world.seed_value, world.day, 7777))
+	Prof.add("дип:история", _pt)
+	_pt = Time.get_ticks_usec()
 	for nat in world.nations:
 		if nat.alive and not nat.is_player and (world.day + nat.id) % 7 == 0:
 			Diplomacy.ai_turn(world, nat.id, Parallel.rng(world.seed_value, world.day, 1000 + nat.id))
+	Prof.add("дип:ИИ", _pt)
 
 
 func _fix_capitals() -> void:

@@ -7,6 +7,7 @@ const SPEEDS := [0.0, 0.5, 1.0, 2.0, 4.0, INF]
 # Симуляция идёт в фоновом потоке; очередь не больше MAX_PENDING дней: если
 # телефон не успевает, игра идёт медленнее, а картинка остаётся плавной.
 const MAX_PENDING := 3
+const MAX_PENDING_INF := 8   # на максимальной скорости
 
 var world: World
 var sim: Simulation
@@ -58,8 +59,13 @@ func _ready() -> void:
 	add_child(hud)
 	map_view.province_tapped.connect(_on_province_tapped)
 	procedural = "--procedural" in OS.get_cmdline_user_args()
-	sim_thread = Thread.new()
-	sim_thread.start(_sim_loop)
+	# -- --single: всё в одном потоке (для сравнения с многоядерным режимом)
+	single_thread = "--single" in OS.get_cmdline_user_args()
+	if single_thread or "--no-parallel" in OS.get_cmdline_user_args():
+		Parallel.enabled = false   # --no-parallel: фоновый поток есть, задачи внутри дня — нет
+	if not single_thread:
+		sim_thread = Thread.new()
+		sim_thread.start(_sim_loop)
 	await new_world(randi() % 100000 if _arg("seed") == "" else int(_arg("seed")))
 	if _arg("screenshot") != "":
 		_auto_screenshot(_arg("screenshot"))
@@ -287,7 +293,8 @@ func _sim_loop() -> void:
 		if _quitting:
 			return
 		sim_mutex.lock()
-		if state == "play" and sim != null:
+		# на паузе заказанные дни сбрасываются — остановка сразу
+		if state == "play" and sim != null and speed > 0:
 			sim.tick()
 			ticks_done += 1
 		sim_mutex.unlock()
@@ -296,7 +303,21 @@ func _sim_loop() -> void:
 		_pending_mutex.unlock()
 
 
+var single_thread := false
+const SINGLE_BUDGET_USEC := 8000   # однопоточный режим: время симуляции на кадр
+
+
 func _request_days(n: int) -> void:
+	if single_thread:
+		# без фонового потока: дни считаются прямо в кадре, пока есть бюджет
+		var t0 := Time.get_ticks_usec()
+		for i in n:
+			if state == "play" and sim != null:
+				sim.tick()
+				ticks_done += 1
+			if Time.get_ticks_usec() - t0 > SINGLE_BUDGET_USEC:
+				break
+		return
 	_pending_mutex.lock()
 	_pending += n
 	_pending_mutex.unlock()
@@ -319,8 +340,11 @@ func _process(dt: float) -> void:
 		var unlimited: bool = SPEEDS[speed] == INF
 		var pending := _pending_days()
 		if unlimited:
-			if pending < 2:
-				_request_days(2 - pending)
+			if single_thread:
+				_request_days(1000)   # до исчерпания бюджета кадра
+			elif pending < MAX_PENDING_INF:
+				# с запасом: фоновый поток не должен простаивать до следующего кадра
+				_request_days(MAX_PENDING_INF - pending)
 		else:
 			_accum += dt * SPEEDS[speed]
 			var want := int(_accum)
@@ -483,7 +507,7 @@ func _on_province_tapped_locked(p: int) -> void:
 	selected_prov = p
 	map_view.set_selected(p)
 	selected_divs.clear()
-	for d in world.prov_divs[p]:
+	for d in world.divs_in(p):
 		if d.alive and d.owner == me:
 			selected_divs.append(d)
 	if selected_divs.is_empty():

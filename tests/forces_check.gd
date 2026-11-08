@@ -128,7 +128,7 @@ func _init() -> void:
 	Forces._refresh_cache(w)
 	var target := -1
 	for p in w.prov_count:
-		if w.p_owner[p] == NOR and w.p_coastal[p] == 1 and w.prov_divs[p].is_empty():
+		if w.p_owner[p] == NOR and w.p_coastal[p] == 1 and w.divs_count(p) == 0:
 			target = p
 			break
 	var coast := -1

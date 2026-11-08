@@ -7,6 +7,7 @@
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_float64_array.hpp>
+#include <godot_cpp/variant/packed_int64_array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -68,7 +69,33 @@ public:
 			int objective, const PackedInt32Array &allowed_list, double ratio, int capital,
 			const PackedInt32Array &nat_enemies, const Ref<RandomNumberGenerator> &rng) const;
 
-	String version() const { return "meowq-core 4"; }
+	Array relink(const PackedByteArray &alive, const PackedInt32Array &transit, const PackedInt32Array &prov,
+			const PackedInt32Array &owner, int prov_count, int nation_count) const;
+
+	PackedInt32Array sea_bfs(const PackedInt32Array &adj_start, const PackedInt32Array &adj_list,
+			const PackedByteArray &land, int from) const;
+	PackedInt32Array sea_path(const PackedInt32Array &adj_start, const PackedInt32Array &adj_list,
+			const PackedByteArray &land, int from, int to) const;
+	Array own_reach(const PackedInt32Array &adj_start, const PackedInt32Array &adj_list,
+			const PackedByteArray &land, const PackedInt32Array &ctrl, int n, int start, int nation_count) const;
+
+	int place_factory(const PackedInt32Array &owner, const PackedInt32Array &ctrl, const PackedInt32Array &civ,
+			const PackedInt32Array &mil, const PackedInt32Array &pop, const PackedByteArray &terrain, int nid,
+			int max_factories, int t_urban) const;
+
+	Array combat(const PackedInt32Array &provs, const PackedInt32Array &att_start, const PackedInt32Array &att_list,
+			const PackedInt64Array &seeds, const PackedFloat64Array &str, const PackedFloat64Array &org,
+			const PackedFloat64Array &eq, const PackedFloat64Array &def, const PackedFloat64Array &atk,
+			const PackedFloat64Array &ent, const PackedByteArray &landing, const PackedFloat64Array &sup,
+			const PackedInt32Array &tpl, const PackedFloat64Array &hard, const PackedInt32Array &owner,
+			const PackedByteArray &battle, const PackedInt32Array &pl_head, const PackedInt32Array &d_nx,
+			const PackedByteArray &war, int nc, const PackedFloat32Array &def_mult, const PackedByteArray &terrain,
+			const PackedInt32Array &region, const PackedFloat32Array &cas, const PackedFloat32Array &tmul) const;
+
+	PackedInt32Array income(const PackedInt32Array &ctrl, const PackedInt32Array &owner, const PackedInt32Array &civ,
+			const PackedInt32Array &mil, const PackedInt32Array &manpower, int nc) const;
+
+	String version() const { return "meowq-core 8"; }
 };
 
 } // namespace godot
