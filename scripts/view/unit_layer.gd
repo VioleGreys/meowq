@@ -22,6 +22,8 @@ var items: Array = []           # список отрисовки: [тип, да
 var _labels: Array = []         # [мировая позиция, имя, размер, ширина]
 var _labels_day := -1
 var _labels_pv := -1
+var _ports: Array = []          # отметки портов (кэш, см. _rebuild_navy_air)
+var _ports_key := ""
 
 
 
@@ -285,16 +287,23 @@ func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
 
 func _rebuild_navy_air(out: Array, sel_fleet: int, sel_wing: int) -> void:
 	# порты и военно-морские базы (свои и союзные)
+	# список меняется со сменой владельцев (палитра) и плацдармами — пересчёт
+	# по всем прибрежным провинциям раз в 10 дней или при смене владельцев
 	if player >= 0 and world.p_naval_base.size() == world.prov_count:
-		for p in world.prov_count:
-			if world.p_land[p] == 0 or world.p_coastal[p] == 0:
-				continue
-			var c := world.p_controller[p]
-			if c < 0 or (c != player and world.ally[player * world.nation_count + c] == 0):
-				continue
-			var base := world.p_naval_base[p] == 1
-			if base or Forces.is_port(world, p):
-				out.append([PORT, _wp(p), base])
+		var key := "%d/%d/%d" % [player, map.palette_version if map != null else 0, world.day / 10]
+		if key != _ports_key:
+			_ports_key = key
+			_ports.clear()
+			for p in world.prov_count:
+				if world.p_land[p] == 0 or world.p_coastal[p] == 0:
+					continue
+				var c := world.p_controller[p]
+				if c < 0 or (c != player and world.ally[player * world.nation_count + c] == 0):
+					continue
+				var base := world.p_naval_base[p] == 1
+				if base or Forces.is_port(world, p):
+					_ports.append([PORT, _wp(p), base])
+		out.append_array(_ports)
 	# планы высадок и войска в море
 	for plan in world.invasions:
 		if plan.alive and plan.owner == player:
@@ -540,6 +549,21 @@ func _rebuild_labels() -> void:
 	# уезжает в Африку, «Дания» — в Гренландию), без столицы — по самому большому.
 	_labels_day = world.day
 	_labels.clear()
+	if Native.core != null:
+		# то же в C++ (MeowqCore.label_regions): заливка по всем провинциям
+		var caps0 := PackedInt32Array()
+		for nn in world.nations:
+			caps0.append(nn.capital)
+		var r: PackedFloat64Array = Native.core.call("label_regions", world.p_controller, world.p_land,
+			world.adj_start, world.adj_list, world.p_pixels, world.p_center, caps0)
+		for c in world.nations.size():
+			if r[c * 8 + 7] == 0.0 or not world.nations[c].alive:
+				continue
+			var px0 := r[c * 8]
+			var center0 := Vector2(r[c * 8 + 1], r[c * 8 + 2]) / maxf(1.0, px0)
+			var span0 := (Vector2(r[c * 8 + 5], r[c * 8 + 6]) - Vector2(r[c * 8 + 3], r[c * 8 + 4])) * MapView.SCALE
+			_labels.append([center0 * MapView.SCALE, world.nations[c].name.to_upper(), sqrt(px0) * 0.5, maxf(span0.x, span0.y * 0.8)])
+		return
 	var comp := PackedInt32Array()
 	comp.resize(world.prov_count)
 	comp.fill(-1)

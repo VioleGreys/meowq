@@ -147,6 +147,7 @@ func _bench_realtime(seconds: float) -> void:
 		seconds, days, days / seconds, frames, total / 1000.0 / maxi(1, frames), worst / 1000.0, Parallel.thread_count()])
 	print("  интерфейс: обновлений %d (%.1f в с), самая долгая пауза %.0f мс" % [_ui_count, _ui_count / seconds, _ui_gap_max / 1000.0])
 	print("  отрисовка экрана: ЦП %.2f мс, ГП %.2f мс в среднем за кадр" % [_rt_cpu / maxi(1, frames), _rt_gpu / maxi(1, frames)])
+	print("  карта: разрешение %d%%, цена полной перерисовки %.1f мс" % [int(map_view.res_scale * 100), map_view.last_cost_ms])
 	print("  палитра обновлялась %d раз; слой фишек рисовался %d раз, в среднем %.2f мс" % [map_view.palette_version,
 		unit_layer.draw_count, unit_layer.draw_total_usec / 1000.0 / maxi(1, unit_layer.draw_count)])
 	var names := ["панели дня", "палитра", "список фишек", "верхняя строка"]

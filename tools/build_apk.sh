@@ -55,8 +55,12 @@ elif [ -f meowq.gdextension ]; then
 	echo "C++-ядро: нет сборки под Android, APK на GDScript"
 fi
 cp project.godot "$WORK/project.godot.bak"
+cp export_presets.cfg "$WORK/export_presets.cfg.bak"
 if [ "$THREADS" = separate ]; then
-	sed -i 's#^\[rendering\]$#[rendering]\n\ndriver/threads/thread_model=2#' project.godot
+	# пробная сборка — отдельное приложение рядом с основным: если не запустится,
+	# основное остаётся как было
+	sed -i 's#^package/unique_name=.*#package/unique_name="com.meowq.fronts.thread"#; s#^package/name=.*#package/name="Meowq (поток)"#' export_presets.cfg
+	sed -i 's#^\[rendering\]$#[rendering]\n\ndriver/threads/thread_model=2\ndriver/threads/thread_model.mobile=2#' project.godot
 	echo "Отрисовка: отдельный поток"
 fi
 if [ "$RENDERER" = compat ]; then
@@ -74,5 +78,6 @@ else
 	"$GODOT" --headless --path . --export-debug "Android" "$OUT" 2>&1 | grep -E "Signed|ERROR|export: end" || true
 fi
 cp "$WORK/project.godot.bak" project.godot
+cp "$WORK/export_presets.cfg.bak" export_presets.cfg
 if [ "$MANIFEST_MOVED" = 1 ]; then mv "$WORK/meowq.gdextension" meowq.gdextension; fi
 ls -la "$OUT"

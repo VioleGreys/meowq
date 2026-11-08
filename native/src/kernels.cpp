@@ -666,3 +666,65 @@ Array MeowqCore::counters(const PackedInt32Array &head, const PackedInt32Array &
 	r.push_back(o_sup);
 	return r;
 }
+
+PackedFloat64Array MeowqCore::label_regions(const PackedInt32Array &ctrl, const PackedByteArray &land,
+		const PackedInt32Array &adj_start, const PackedInt32Array &adj_list, const PackedInt32Array &pixels,
+		const PackedVector2Array &centers, const PackedInt32Array &caps) const {
+	const int64_t pc = ctrl.size();
+	const int64_t nc = caps.size();
+	PackedFloat64Array out;
+	out.resize(nc * 8);
+	double *o = out.ptrw();
+	for (int64_t i = 0; i < nc * 8; i++) o[i] = 0.0;
+	std::vector<int64_t> best_score(nc, -1);
+	std::vector<int32_t> comp(pc, -1);
+	std::vector<int32_t> stack;
+	const int32_t *ct = ctrl.ptr(), *as = adj_start.ptr(), *al = adj_list.ptr(), *px = pixels.ptr(), *cp = caps.ptr();
+	const uint8_t *ld = land.ptr();
+	const Vector2 *ce = centers.ptr();
+	for (int64_t p = 0; p < pc; p++) {
+		const int32_t c = ct[p];
+		if (c < 0 || c >= nc || ld[p] == 0 || comp[p] >= 0) continue;
+		comp[p] = int32_t(p);
+		stack.clear();
+		stack.push_back(int32_t(p));
+		int64_t n = 0;
+		double sx = 0.0, sy = 0.0;
+		double lx = 1e30, ly = 1e30, hx = -1e30, hy = -1e30;
+		bool has_cap = false;
+		while (!stack.empty()) {
+			const int32_t q = stack.back();
+			stack.pop_back();
+			if (q == cp[c]) has_cap = true;
+			const double w = px[q];
+			n += px[q];
+			sx += ce[q].x * w;
+			sy += ce[q].y * w;
+			lx = std::min(lx, double(ce[q].x));
+			ly = std::min(ly, double(ce[q].y));
+			hx = std::max(hx, double(ce[q].x));
+			hy = std::max(hy, double(ce[q].y));
+			for (int32_t k = as[q]; k < as[q + 1]; k++) {
+				const int32_t r = al[k];
+				if (comp[r] < 0 && ld[r] == 1 && ct[r] == c) {
+					comp[r] = int32_t(p);
+					stack.push_back(r);
+				}
+			}
+		}
+		const int64_t score = n + (has_cap ? (int64_t(1) << 30) : 0);
+		if (score > best_score[c]) {
+			best_score[c] = score;
+			double *b = o + c * 8;
+			b[0] = double(n);
+			b[1] = sx;
+			b[2] = sy;
+			b[3] = lx;
+			b[4] = ly;
+			b[5] = hx;
+			b[6] = hy;
+			b[7] = 1.0;
+		}
+	}
+	return out;
+}

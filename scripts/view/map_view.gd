@@ -165,6 +165,7 @@ func redraw() -> void:
 const AUTO_TARGET_MS := 14.0
 var res_auto := false
 var _auto_pending := false     # последняя перерисовка — полная, замер ещё не учтён
+var last_cost_ms := 0.0        # оценка цены полной перерисовки карты (для нижней строки)
 
 
 func set_res_scale(s: float) -> void:
@@ -173,17 +174,33 @@ func set_res_scale(s: float) -> void:
 	redraw()
 
 
-func _auto_adjust() -> void:
+var _base_dt := 0.0          # обычное время кадра без перерисовки карты, с
+var _drawn_last := false     # в прошлом кадре карта перерисовывалась полностью
+
+
+## Подбор разрешения. Где видеокарта отдаёт время отрисовки (Vulkan) — по нему;
+## в OpenGL ES (Compatibility) этого замера нет — по времени кадра: сколько кадр
+## с полной перерисовкой карты длиннее обычного.
+func _auto_adjust(dt: float) -> void:
+	var drawn := _drawn_last
+	_drawn_last = false
+	if not drawn:
+		if not _auto_pending:
+			_base_dt = dt if _base_dt == 0.0 else lerpf(_base_dt, dt, 0.1)
+		return
 	if not _auto_pending:
 		return
-	var gpu := RenderingServer.viewport_get_measured_render_time_gpu(map_vp.get_viewport_rid())
-	if gpu <= 0.0:
-		return
 	_auto_pending = false
+	var cost := RenderingServer.viewport_get_measured_render_time_gpu(map_vp.get_viewport_rid())
+	if cost <= 0.0:
+		if _base_dt <= 0.0:
+			return
+		cost = maxf(0.0, (dt - _base_dt) * 1000.0)
+	last_cost_ms = cost
 	var old := res_scale
-	if gpu > AUTO_TARGET_MS * 1.3:
-		res_scale = maxf(0.5, res_scale * sqrt(AUTO_TARGET_MS / gpu))
-	elif gpu < AUTO_TARGET_MS * 0.6:
+	if cost > AUTO_TARGET_MS * 1.3:
+		res_scale = maxf(0.5, res_scale * sqrt(AUTO_TARGET_MS / cost))
+	elif cost < AUTO_TARGET_MS * 0.6:
 		res_scale = minf(1.0, res_scale * 1.1)
 	if absf(res_scale - old) > 0.02:
 		redraw()
@@ -193,7 +210,7 @@ func _auto_adjust() -> void:
 
 func _process(dt: float) -> void:
 	if res_auto and map_vp != null:
-		_auto_adjust()
+		_auto_adjust(dt)
 	if _moving > 0.0:
 		_moving -= dt
 		if _moving <= 0.0 and _lite_drawn:
@@ -217,6 +234,7 @@ func _process(dt: float) -> void:
 	mat.set_shader_parameter("res_k", rk)
 	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	_auto_pending = not lite
+	_drawn_last = not lite
 	redraws += 1
 
 

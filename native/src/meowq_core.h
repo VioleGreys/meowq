@@ -77,6 +77,13 @@ public:
 			const PackedInt32Array &owner, const PackedFloat64Array &str, const PackedFloat64Array &org,
 			const PackedFloat64Array &morg, const PackedFloat64Array &sup, const PackedInt32Array &tpl) const;
 
+	// подписи стран (UnitLayer._rebuild_labels): для каждой страны — связный кусок
+	// её территории (лучше со столицей, иначе самый большой): по 8 чисел
+	// [пиксели, сумма x, сумма y, мин x, мин y, макс x, макс y, есть] на страну
+	PackedFloat64Array label_regions(const PackedInt32Array &ctrl, const PackedByteArray &land,
+			const PackedInt32Array &adj_start, const PackedInt32Array &adj_list, const PackedInt32Array &pixels,
+			const PackedVector2Array &centers, const PackedInt32Array &caps) const;
+
 	Array relink(const PackedByteArray &alive, const PackedInt32Array &transit, const PackedInt32Array &prov,
 			const PackedInt32Array &owner, int prov_count, int nation_count) const;
 
@@ -111,7 +118,7 @@ public:
 	PackedByteArray air_reach(const PackedByteArray &land, const PackedInt32Array &ctrl, const PackedByteArray &ally,
 			int nc, int n, const PackedInt32Array &region, const PackedVector2Array &centers, double range) const;
 
-	String version() const { return "meowq-core 11"; }
+	String version() const { return "meowq-core 12"; }
 };
 
 } // namespace godot

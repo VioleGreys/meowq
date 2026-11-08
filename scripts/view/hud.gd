@@ -379,6 +379,8 @@ func refresh_top() -> void:
 	if OS.has_feature("mobile"):
 		phases = ""   # на телефоне без фаз — они закрывали бы карту
 	var gpu: Vector2 = game.map_view.gpu_ms()
+	if gpu.x <= 0.0:
+		gpu.x = game.map_view.last_cost_ms   # OpenGL ES: оценка по времени кадра
 	Report.sample(Engine.get_frames_per_second(), game.sim.last_tick_usec / 1000.0,
 		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, game.unit_layer.draw_usec / 1000.0,
 		gpu.x, game.days_per_sec)
