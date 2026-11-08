@@ -33,7 +33,40 @@ var _card_nation := -1
 var focus_view: FocusView
 
 
+# Звук нажатия: все кнопки интерфейса (и созданные позже) щёлкают сами —
+# подключаемся к каждой новой кнопке в дереве.
+var _click: AudioStreamPlayer
+var _toggle_snd: AudioStreamPlayer
+
+
+func _setup_sounds() -> void:
+	_click = AudioStreamPlayer.new()
+	_click.stream = load("res://assets/sounds/click.wav")
+	_click.volume_db = -8.0
+	add_child(_click)
+	_toggle_snd = AudioStreamPlayer.new()
+	_toggle_snd.stream = load("res://assets/sounds/toggle.wav")
+	_toggle_snd.volume_db = -8.0
+	add_child(_toggle_snd)
+	get_tree().node_added.connect(_hook_button)
+
+
+func _hook_button(n: Node) -> void:
+	if n is BaseButton and not n.has_meta("snd"):
+		n.set_meta("snd", true)
+		n.pressed.connect(_play_click.bind(n))
+
+
+func _play_click(b: BaseButton) -> void:
+	if not Settings.ui_sound():
+		return
+	var p := _toggle_snd if b is CheckButton else _click
+	if p != null and p.stream != null:
+		p.play()
+
+
 func _ready() -> void:
+	_setup_sounds()
 	layer = 2
 	root = Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -279,6 +312,9 @@ func show_select(nid: int) -> void:
 				mil += w.p_mil[p]
 		var head := HBoxContainer.new()
 		head.add_theme_constant_override("separation", 12)
+		var pt := UiStyle.portrait(n.tag)
+		if pt != null:
+			head.add_child(UiStyle.framed(pt, Vector2(72, 96)))
 		head.add_child(Flag.make(n.flag, Vector2(66, 44)))
 		var names := VBoxContainer.new()
 		names.add_theme_constant_override("separation", 0)
@@ -787,6 +823,9 @@ func _build_nation_card(w: World, me: int, oid: int) -> void:
 		_rebuild_popup(), Vector2(0, 44)))
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 10)
+	var pt := UiStyle.portrait(o.tag)
+	if pt != null:
+		head.add_child(UiStyle.framed(pt, Vector2(66, 88)))
 	head.add_child(Flag.make(o.flag, Vector2(60, 40)))
 	var names := VBoxContainer.new()
 	names.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -903,6 +942,11 @@ func _build_event(w: World) -> void:
 	# окно события — «бумага»: тёмные чернила, текст с засечками
 	var ink := UiStyle.INK
 	var faded := Color(0.38, 0.31, 0.22)
+	var art := UiStyle.event_art(id)
+	if art != null:
+		var fr := UiStyle.framed(art, Vector2(480, 270), true)
+		fr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		popup_body.add_child(fr)
 	var date_l := _label(w.date_string(), 15, faded)
 	date_l.add_theme_font_override("font", UiStyle.serif_font())
 	popup_body.add_child(date_l)
@@ -1275,7 +1319,12 @@ func _build_settings() -> void:
 		Settings.set_motion_lite(v)
 		game.map_view.motion_lite = v)
 	popup_body.add_child(lite)
-	popup_body.add_child(_label("Пока карту двигают, она рисуется в низком качестве, после остановки — в выбранном.", 15, Color(0.75, 0.75, 0.7)))
+	popup_body.add_child(_label("Пока карту двигают, она рисуется упрощённо и плавно переходит в выбранное качество после остановки.", 15, Color(0.75, 0.75, 0.7)))
+	var snd := CheckButton.new()
+	snd.text = "Звук нажатия кнопок"
+	snd.button_pressed = Settings.ui_sound()
+	snd.toggled.connect(func(v: bool): Settings.set_ui_sound(v))
+	popup_body.add_child(snd)
 	popup_body.add_child(_label("Отчёт для разработки", 20))
 	popup_body.add_child(_label("Телефон, видеокарта, настройки, замеры за последние 30 секунд и ошибки из журнала (после вылета — и причина). Вставьте его в чат одним сообщением.", 15, Color(0.75, 0.75, 0.7)))
 	popup_body.add_child(_button("Скопировать отчёт", func():

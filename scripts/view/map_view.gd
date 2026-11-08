@@ -28,6 +28,19 @@ var map_mode := MapMode.POLITICAL
 var map_vp: SubViewport
 var sub_cam: Camera2D
 var view_sprite: Sprite2D
+var lite_vp: SubViewport
+var lite_cam: Camera2D
+var lite_sprite: Sprite2D
+const FADE_OUT := 0.35        # за сколько растворяется сдвигаемый полный кадр, с
+const FADE_IN := 0.25         # за сколько проявляется новый полный кадр, с
+var _full_alpha := 1.0
+var _full_cam := Vector2.ZERO  # камера (позиция, масштаб), с которой нарисован буфер
+var _full_zoom := 1.0
+var _full_size := Vector2.ONE
+var _lite_cam := Vector2.ZERO
+var _lite_zoom := 1.0
+var _lite_size := Vector2.ONE
+var _fading_in := false
 var res_scale := 1.0
 var _dirty := true
 # Пока карту двигают, она рисуется упрощённо (низкое качество, 50%), а через
@@ -77,11 +90,36 @@ func setup(w: World) -> void:
 	var layer := CanvasLayer.new()
 	layer.layer = -1
 	add_child(layer)
+	# второй буфер — упрощённая карта при движении (под основным): основной кадр
+	# полного качества сдвигается вместе с картой и плавно растворяется, после
+	# остановки новый полный кадр плавно проявляется (без резкой смены графики)
+	lite_vp = SubViewport.new()
+	lite_vp.disable_3d = true
+	lite_vp.transparent_bg = false
+	lite_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	add_child(lite_vp)
+	var lite_map := Sprite2D.new()
+	lite_map.centered = false
+	lite_map.texture = sprite.texture
+	lite_map.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	lite_map.scale = sprite.scale
+	lite_map.material = mat
+	lite_vp.add_child(lite_map)
+	lite_cam = Camera2D.new()
+	lite_vp.add_child(lite_cam)
+	lite_cam.make_current()
+	lite_sprite = Sprite2D.new()
+	lite_sprite.centered = false
+	lite_sprite.texture = lite_vp.get_texture()
+	lite_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	lite_sprite.visible = false
+	layer.add_child(lite_sprite)
 	view_sprite = Sprite2D.new()
 	view_sprite.centered = false
 	view_sprite.texture = map_vp.get_texture()
 	view_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	layer.add_child(view_sprite)
+	_full_alpha = 1.0
 	RenderingServer.viewport_set_measure_render_time(map_vp.get_viewport_rid(), true)
 	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
 	if not get_viewport().size_changed.is_connected(redraw):
@@ -215,27 +253,72 @@ func _process(dt: float) -> void:
 		_moving -= dt
 		if _moving <= 0.0 and _lite_drawn:
 			_dirty = true   # остановились — перерисовать в полном качестве
-	if not _dirty or map_vp == null:
+	if map_vp == null:
 		return
-	_dirty = false
-	var lite := motion_lite and _moving > 0.0 and (quality > 0 or res_scale > 0.5)
-	_lite_drawn = lite
-	mat.set_shader_parameter("quality", 0 if lite else quality)
-	var rs := 0.5 if lite else res_scale
+	if _dirty:
+		_dirty = false
+		var lite := motion_lite and _moving > 0.0 and (quality > 0 or res_scale > 0.5)
+		var was_lite := _lite_drawn
+		_lite_drawn = lite
+		mat.set_shader_parameter("quality", 0 if lite else quality)
+		var rs := 0.5 if lite else res_scale
+		var logical := get_viewport_rect().size
+		var phys := Vector2(get_window().size)
+		var size := Vector2i(maxi(1, int(phys.x * rs)), maxi(1, int(phys.y * rs)))
+		var rk := float(size.x) / maxf(1.0, logical.x)  # пикселей буфера на логический
+		mat.set_shader_parameter("res_k", rk)
+		if lite:
+			if lite_vp.size != size:
+				lite_vp.size = size
+			lite_cam.position = camera.position
+			lite_cam.zoom = camera.zoom * rk
+			lite_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+			_lite_cam = camera.position
+			_lite_zoom = camera.zoom.x
+			_lite_size = Vector2(size)
+			lite_sprite.visible = true
+			_fading_in = false
+		else:
+			if map_vp.size != size:
+				map_vp.size = size
+			sub_cam.position = camera.position
+			sub_cam.zoom = camera.zoom * rk
+			map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+			_full_cam = camera.position
+			_full_zoom = camera.zoom.x
+			_full_size = Vector2(size)
+			if was_lite:
+				_full_alpha = 0.0   # после движения — проявляем новый кадр плавно
+				_fading_in = true
+			_auto_pending = true
+			_drawn_last = true
+		redraws += 1
+	# прозрачность полного кадра: при движении растворяется, после — проявляется
+	if _lite_drawn and _moving > 0.0:
+		_full_alpha = maxf(0.0, _full_alpha - dt / FADE_OUT)
+	elif _fading_in:
+		_full_alpha = minf(1.0, _full_alpha + dt / FADE_IN)
+		if _full_alpha >= 1.0:
+			_fading_in = false
+	if not motion_lite:
+		_full_alpha = 1.0
+	if _full_alpha >= 1.0 and not _lite_drawn:
+		lite_sprite.visible = false
+	view_sprite.modulate.a = _full_alpha
+	_place(view_sprite, _full_cam, _full_zoom, _full_size)
+	if lite_sprite.visible:
+		_place(lite_sprite, _lite_cam, _lite_zoom, _lite_size)
+
+
+## Показ буфера, нарисованного с камеры (c_b, z_b), при текущей камере: старый
+## кадр сдвигается и масштабируется вместе с картой, пока не придёт новый.
+func _place(spr: Sprite2D, c_b: Vector2, z_b: float, size: Vector2) -> void:
 	var logical := get_viewport_rect().size
-	var phys := Vector2(get_window().size)
-	var size := Vector2i(maxi(1, int(phys.x * rs)), maxi(1, int(phys.y * rs)))
-	if map_vp.size != size:
-		map_vp.size = size
-	var rk := float(size.x) / maxf(1.0, logical.x)  # пикселей буфера на логический
-	sub_cam.position = camera.position
-	sub_cam.zoom = camera.zoom * rk
-	view_sprite.scale = logical / Vector2(size)
-	mat.set_shader_parameter("res_k", rk)
-	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
-	_auto_pending = not lite
-	_drawn_last = not lite
-	redraws += 1
+	var half := logical * 0.5
+	var z_n := camera.zoom.x
+	var r := z_n / maxf(1e-6, z_b)
+	spr.scale = logical / size * r
+	spr.position = half - half * r + (c_b - camera.position) * z_n
 
 
 ## Время отрисовки последнего кадра на видеокарте (мс): карта и весь экран.

@@ -162,3 +162,49 @@ static func icon(name: String, px: int = 64) -> Texture2D:
 			tex = ImageTexture.create_from_image(img)
 	_icon_tex[key] = tex
 	return tex
+
+
+# --- Портреты и картинки событий (tools/build_portraits.py, лицензии —
+# assets/art_credits.json) -------------------------------------------------
+
+static var _art := {}
+
+
+static func _art_tex(path: String) -> Texture2D:
+	if _art.has(path):
+		return _art[path]
+	var t: Texture2D = load(path) if ResourceLoader.exists(path) else null
+	_art[path] = t
+	return t
+
+
+## Портрет лидера страны по тегу (null — нет).
+static func portrait(tag: String) -> Texture2D:
+	return _art_tex("res://assets/portraits/%s.jpg" % tag)
+
+
+## Картинка события по id (null — нет).
+static func event_art(id: String) -> Texture2D:
+	return _art_tex("res://assets/events/%s.jpg" % id)
+
+
+## Картинка в рамке: латунная рамка на тёмной подложке (или тёмная — на бумаге).
+static func framed(tex: Texture2D, size: Vector2, on_paper := false) -> Control:
+	var frame := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.1, 0.08, 0.06)
+	sb.border_color = INK if on_paper else BRASS
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(4)
+	sb.anti_aliasing = true
+	sb.set_content_margin_all(2)
+	frame.add_theme_stylebox_override("panel", sb)
+	var r := TextureRect.new()
+	r.texture = tex
+	r.custom_minimum_size = size
+	r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	r.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	r.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	frame.add_child(r)
+	frame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	return frame

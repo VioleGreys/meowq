@@ -75,3 +75,13 @@ static func set_fps_cap(i: int) -> void:
 
 static func apply_fps_cap() -> void:
 	Engine.max_fps = FPS_CAPS[clampi(fps_cap(), 0, 2)]
+
+
+## Звук нажатия кнопок (по умолчанию включён).
+static func ui_sound() -> bool:
+	return bool(_load().get_value("audio", "ui_sound", true))
+
+
+static func set_ui_sound(v: bool) -> void:
+	_load().set_value("audio", "ui_sound", v)
+	_cfg.save(PATH)
