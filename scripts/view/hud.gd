@@ -199,8 +199,12 @@ func _build_log() -> void:
 	perf_label = Label.new()
 	perf_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	perf_label.offset_top = -26
+	perf_label.offset_left = 10
 	perf_label.offset_right = -10
 	perf_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	# на узком экране фазы переносятся вверх, главное (FPS, тик) — всегда в нижней строке
+	perf_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	perf_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	perf_label.add_theme_font_size_override("font_size", 14)
 	perf_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.85, 0.7))
 	perf_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -370,7 +374,9 @@ func refresh_top() -> void:
 	var phases := ""
 	for k in game.sim.phase_usec:
 		phases += " %s %.1f" % [k, game.sim.phase_usec[k] / 1000.0]
-	perf_label.text = "%d FPS · %s · ядер %d · %.1f дн/с · тик %.2f мс ·%s" % [Engine.get_frames_per_second(), "C++" if Native.available() else "GDScript", Parallel.thread_count(), game.days_per_sec, game.sim.last_tick_usec / 1000.0, phases]
+	if OS.has_feature("mobile"):
+		phases = ""   # на телефоне только главное — фазы закрывали бы карту
+	perf_label.text = "%s\n%d FPS · %s · ядер %d · %.1f дн/с · тик %.2f мс" % [phases.strip_edges(), Engine.get_frames_per_second(), "C++" if Native.available() else "GDScript", Parallel.thread_count(), game.days_per_sec, game.sim.last_tick_usec / 1000.0]
 	if _toast_t > 0.0:
 		_toast_t -= get_process_delta_time()
 		toast_label.modulate.a = clampf(_toast_t, 0.0, 1.0)
