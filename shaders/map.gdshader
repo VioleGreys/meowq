@@ -12,6 +12,12 @@ uniform int selected_id = -1;
 uniform int highlight_nation = -1;
 uniform bool show_occupation = true;
 uniform float zoom = 1.0;
+uniform sampler2D terrain_tex : filter_linear;  // спутниковая подложка (NASA Blue Marble), только суша
+uniform bool has_terrain = false;
+uniform bool terrain_mode = false;              // режим «Местность»: подложка без цветов стран
+// проекция Миллера для сетки широт и долгот (как tools/build_map.py)
+uniform float lon_min = -169.0;
+uniform float lat_top = 80.0;
 
 int pid(ivec2 p) {
 	p = clamp(p, ivec2(0), ivec2(map_size) - 1);
@@ -48,10 +54,22 @@ void fragment() {
 	// мелкие озёра входят в провинции суши, но по высоте ниже уровня моря — вода
 	bool lake = land && texture(height_tex, (vec2(ip) + 0.5) / map_size).r < 0.49;
 	if (!land || lake) {
+		// вода: мелководье у берегов светлее, глубина темнее, лёгкая рябь
 		float depth = clamp((0.5 - h) * 2.4, 0.0, 1.0);
-		col = mix(vec3(0.26, 0.43, 0.52), vec3(0.09, 0.18, 0.29), sqrt(depth));
+		col = mix(vec3(0.22, 0.42, 0.50), vec3(0.07, 0.15, 0.25), pow(depth, 0.45));
 		float wave = sin(TIME * 0.7 + px.x * 0.21 + sin(px.y * 0.13 + TIME * 0.3) * 2.0);
-		col += vec3(0.018) * wave * (1.0 - depth * 0.5);
+		col += vec3(0.015) * wave * (1.0 - depth * 0.5);
+		// сетка широт и долгот через 15° — как на штабной карте
+		float s_px = map_size.x / 6.2831853;
+		float lon = degrees(px.x / s_px) + lon_min;
+		float y_top = 1.25 * log(tan(0.78539816 + 0.4 * radians(lat_top)));
+		float yy = y_top - px.y / s_px;
+		float lat = degrees(2.5 * atan(exp(0.8 * yy)) - 1.9634954);
+		float gl = abs(fract(lon / 15.0 + 0.5) - 0.5) * 15.0;
+		float ga = abs(fract(lat / 15.0 + 0.5) - 0.5) * 15.0;
+		float pxdeg = 360.0 / map_size.x;   // градусов долготы в пикселе карты
+		float line = max(1.0 - smoothstep(0.0, pxdeg * 1.2, gl), 1.0 - smoothstep(0.0, pxdeg * 1.2, ga));
+		col = mix(col, vec3(0.55, 0.68, 0.74), line * 0.18 * smoothstep(0.15, 0.5, zoom));
 	} else {
 		vec3 base = cc.rgb;
 		int own = nation(oc);
@@ -59,7 +77,22 @@ void fragment() {
 			float s = step(0.5, fract((px.x + px.y) * 0.28));
 			base = mix(base, oc.rgb, s * 0.75);
 		}
-		col = base * (0.70 + 0.48 * light);
+		if (has_terrain) {
+			vec3 terr = texture(terrain_tex, UV).rgb;
+			float tl = dot(terr, vec3(0.299, 0.587, 0.114));
+			if (terrain_mode) {
+				col = terr * (0.85 + 0.35 * light);
+			} else {
+				// цвет страны поверх рельефа: яркость и фактура — от снимка, оттенок — от
+				// страны; вблизи местность проступает сильнее (как на картах жанра)
+				float k = smoothstep(0.6, 2.5, zoom);
+				col = base * (0.55 + 0.85 * tl);
+				col = mix(col, terr * (0.55 + 0.6 * base), 0.18 + 0.27 * k);
+				col *= 0.82 + 0.32 * light;
+			}
+		} else {
+			col = base * (0.70 + 0.48 * light);
+		}
 		float river = texture(height_tex, UV).g;
 		col = mix(col, vec3(0.22, 0.42, 0.58), smoothstep(0.25, 0.8, river) * 0.75 * smoothstep(0.35, 0.9, zoom));
 		// лёгкая «бумажная» зернистость

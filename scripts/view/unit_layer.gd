@@ -16,13 +16,15 @@ var world: World
 var selected: Array = []        # выбранные дивизии (объекты; читаются только в rebuild)
 var player := -1
 var font: Font
+var label_font: Font   # подписи стран — Oswald с разрядкой
 var items: Array = []           # список отрисовки: [тип, данные...]
 var _labels: Array = []         # [мировая позиция, имя, размер, ширина]
 var _labels_day := -1
 
 
 func _ready() -> void:
-	font = ThemeDB.fallback_font
+	font = UiStyle.text_font()
+	label_font = UiStyle.title_font(500, 3)
 
 
 func _process(_dt: float) -> void:
@@ -315,18 +317,18 @@ func _draw_label(l: Array, z: float) -> void:
 		return
 	var pos := map.world_to_screen(l[1])
 	var size := int(clampf(l[3] * z, 12, 60))
-	var w := font.get_string_size(l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	var w := label_font.get_string_size(l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
 	var fit: float = l[4] * z * 0.95
 	if w > fit and w > 0.0:
 		size = int(size * fit / w)
 		if size < 11:
 			return
-		w = font.get_string_size(l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+		w = label_font.get_string_size(l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
 	if size < 11:
 		return
 	var alpha := clampf((1.6 - z) * 2.0, 0.0, 0.75)
-	draw_string_outline(font, pos - Vector2(w * 0.5, 0), l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size, 4, Color(1, 1, 1, alpha * 0.4))
-	draw_string(font, pos - Vector2(w * 0.5, 0), l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0.08, 0.07, 0.06, alpha))
+	draw_string_outline(label_font, pos - Vector2(w * 0.5, 0), l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size, 4, Color(0.95, 0.92, 0.84, alpha * 0.45))
+	draw_string(label_font, pos - Vector2(w * 0.5, 0), l[2], HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0.10, 0.08, 0.06, alpha))
 
 
 func _rebuild_labels() -> void:

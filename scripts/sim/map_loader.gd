@@ -32,6 +32,11 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	world.height = int(meta["height"])
 	world.id_image = id_img
 	world.height_image = rel_img
+	# подложка рельефа (спутниковый снимок NASA, tools/build_terrain.py) — только для вида
+	if FileAccess.file_exists(dir + "/terrain.jpg.bin"):
+		var t_img := Image.new()
+		if t_img.load_jpg_from_buffer(FileAccess.get_file_as_bytes(dir + "/terrain.jpg.bin")) == OK:
+			world.terrain_image = t_img
 	world.province_ids = PackedInt32Array()
 	world.ai_wars = false
 

@@ -289,6 +289,7 @@ var width := 0
 var height := 0
 var id_image: Image
 var height_image: Image
+var terrain_image: Image                # подложка рельефа (может не быть)
 var province_ids := PackedInt32Array()  # width*height (только процедурная карта)
 var ai_wars := true                     # ИИ сам объявляет войны (на исторической карте — нет до этапов 3/5)
 var nation_tags := PackedStringArray()

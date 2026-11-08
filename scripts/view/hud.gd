@@ -61,45 +61,7 @@ func _ready() -> void:
 
 
 func _make_theme() -> Theme:
-	var t := Theme.new()
-	t.default_font_size = 20
-	var panel := StyleBoxFlat.new()
-	panel.bg_color = Color(0.11, 0.12, 0.13, 0.92)
-	panel.border_color = Color(0.55, 0.47, 0.32)
-	panel.set_border_width_all(2)
-	panel.set_corner_radius_all(8)
-	panel.set_content_margin_all(10)
-	t.set_stylebox("panel", "PanelContainer", panel)
-	var btn := StyleBoxFlat.new()
-	btn.bg_color = Color(0.24, 0.23, 0.2)
-	btn.border_color = Color(0.62, 0.53, 0.36)
-	btn.set_border_width_all(2)
-	btn.set_corner_radius_all(6)
-	btn.set_content_margin_all(8)
-	var hover := btn.duplicate()
-	hover.bg_color = Color(0.33, 0.31, 0.26)
-	var pressed := btn.duplicate()
-	pressed.bg_color = Color(0.5, 0.42, 0.25)
-	var disabled := btn.duplicate()
-	disabled.bg_color = Color(0.17, 0.17, 0.17)
-	disabled.border_color = Color(0.3, 0.3, 0.3)
-	t.set_stylebox("normal", "Button", btn)
-	t.set_stylebox("hover", "Button", hover)
-	t.set_stylebox("pressed", "Button", pressed)
-	t.set_stylebox("disabled", "Button", disabled)
-	t.set_stylebox("focus", "Button", StyleBoxEmpty.new())
-	t.set_color("font_color", "Button", Color(0.93, 0.89, 0.8))
-	t.set_color("font_disabled_color", "Button", Color(0.5, 0.5, 0.5))
-	t.set_color("font_color", "Label", Color(0.93, 0.9, 0.82))
-	var bar_bg := StyleBoxFlat.new()
-	bar_bg.bg_color = Color(0.05, 0.05, 0.05)
-	bar_bg.set_corner_radius_all(4)
-	var bar_fill := StyleBoxFlat.new()
-	bar_fill.bg_color = Color(0.75, 0.6, 0.3)
-	bar_fill.set_corner_radius_all(4)
-	t.set_stylebox("background", "ProgressBar", bar_bg)
-	t.set_stylebox("fill", "ProgressBar", bar_fill)
-	return t
+	return UiStyle.make_theme()
 
 
 func _button(text: String, cb: Callable, min_size := Vector2(0, 56)) -> Button:
@@ -131,7 +93,7 @@ func _build_top_bar() -> void:
 	swatch = Flag.make({}, Vector2(48, 32))
 	h.add_child(swatch)
 	nation_label = Label.new()
-	nation_label.add_theme_font_size_override("font_size", 22)
+	UiStyle.title(nation_label, 24)
 	h.add_child(nation_label)
 	res_label = Label.new()
 	res_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -204,7 +166,7 @@ func _build_popup() -> void:
 	v.add_child(head)
 	popup_title = Label.new()
 	popup_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	popup_title.add_theme_font_size_override("font_size", 24)
+	UiStyle.title(popup_title, 26)
 	head.add_child(popup_title)
 	head.add_child(_button("✕", close_popup, Vector2(56, 52)))
 	var scroll := ScrollContainer.new()
@@ -580,6 +542,8 @@ func _update_selection_text() -> void:
 
 func open_tab(tab: String) -> void:
 	popup_tab = tab
+	# события — на «бумаге», остальные окна — в общей тёмной теме
+	popup.theme = UiStyle.paper_theme() if tab == "event" else null
 	_rebuild_popup()
 	popup.show()
 	log_box.hide()
@@ -892,11 +856,18 @@ func _build_event(w: World) -> void:
 	var id: String = w.pending_events[0]
 	var ev: Dictionary = w.event_defs.get(id, {})
 	popup_title.text = ev.get("title", id)
-	popup_body.add_child(_label(w.date_string(), 15, Color(0.75, 0.7, 0.6)))
-	popup_body.add_child(_label(ev.get("text", ""), 18))
+	# окно события — «бумага»: тёмные чернила, текст с засечками
+	var ink := UiStyle.INK
+	var faded := Color(0.38, 0.31, 0.22)
+	var date_l := _label(w.date_string(), 15, faded)
+	date_l.add_theme_font_override("font", UiStyle.serif_font())
+	popup_body.add_child(date_l)
+	var text_l := _label(ev.get("text", ""), 19, ink)
+	text_l.add_theme_font_override("font", UiStyle.serif_font())
+	popup_body.add_child(text_l)
 	var opts: Array = ev.get("options", [])
 	if opts.size() > 1:
-		popup_body.add_child(_small("★ — так поступили в истории"))
+		popup_body.add_child(_label("★ — так поступили в истории", 14, faded))
 	var best := 0
 	for i in opts.size():
 		if float(opts[i].get("ai", 0)) > float(opts[best].get("ai", 0)):
@@ -910,7 +881,7 @@ func _build_event(w: World) -> void:
 		popup_body.add_child(b)
 		var et := History.effects_text(w, o.get("effects", []))
 		if et != "":
-			popup_body.add_child(_small("   " + et))
+			popup_body.add_child(_label("   " + et, 15, faded))
 
 
 ## Список всех стран для выбора (экран выбора, игрока ещё нет).

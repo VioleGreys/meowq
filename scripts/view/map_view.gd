@@ -52,6 +52,11 @@ func setup(w: World) -> void:
 	mat.set_shader_parameter("ctrl_tex", ctrl_tex)
 	mat.set_shader_parameter("owner_tex", owner_tex)
 	mat.set_shader_parameter("height_tex", ImageTexture.create_from_image(world.height_image))
+	if world.terrain_image != null:
+		mat.set_shader_parameter("terrain_tex", ImageTexture.create_from_image(world.terrain_image))
+		mat.set_shader_parameter("has_terrain", true)
+	else:
+		mat.set_shader_parameter("has_terrain", false)
 	mat.set_shader_parameter("map_size", Vector2(world.width, world.height))
 
 	camera = Camera2D.new()
@@ -101,6 +106,7 @@ func set_highlight_nation(n: int) -> void:
 func set_map_mode(m: int) -> void:
 	map_mode = m
 	mat.set_shader_parameter("show_occupation", m == MapMode.POLITICAL)
+	mat.set_shader_parameter("terrain_mode", m == MapMode.TERRAIN)
 	update_palette()
 
 
