@@ -99,6 +99,9 @@ func _bench_realtime(seconds: float) -> void:
 			sim.tick()
 		world.events.clear()
 	world_unlock()
+	if _arg("zoom") != "":
+		map_view.camera.zoom = Vector2.ONE * float(_arg("zoom"))
+		map_view.center_on(world.nations[me].capital)
 	speed = SPEEDS.size() - 1 if _arg("speed") == "" else int(_arg("speed"))
 	var bench_speed := speed
 	_ui_last = 0
