@@ -26,8 +26,10 @@ pointing/emulate_touch_from_mouse=true
 
 [rendering]
 
+driver/threads/thread_model.mobile=2
+
 renderer/rendering_method="mobile"
-renderer/rendering_method.mobile="mobile"
+renderer/rendering_method.mobile="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
 
 [threading]

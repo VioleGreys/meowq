@@ -71,6 +71,12 @@ public:
 			int objective, const PackedInt32Array &allowed_list, double ratio, int capital,
 			const PackedInt32Array &nat_enemies, const Ref<RandomNumberGenerator> &rng) const;
 
+	// стопки фишек для отрисовки (UnitLayer.rebuild): по провинциям, страны в
+	// порядке первого появления в списке провинции
+	Array counters(const PackedInt32Array &head, const PackedInt32Array &nx, const PackedByteArray &alive,
+			const PackedInt32Array &owner, const PackedFloat64Array &str, const PackedFloat64Array &org,
+			const PackedFloat64Array &morg, const PackedFloat64Array &sup, const PackedInt32Array &tpl) const;
+
 	Array relink(const PackedByteArray &alive, const PackedInt32Array &transit, const PackedInt32Array &prov,
 			const PackedInt32Array &owner, int prov_count, int nation_count) const;
 
@@ -105,7 +111,7 @@ public:
 	PackedByteArray air_reach(const PackedByteArray &land, const PackedInt32Array &ctrl, const PackedByteArray &ally,
 			int nc, int n, const PackedInt32Array &region, const PackedVector2Array &centers, double range) const;
 
-	String version() const { return "meowq-core 10"; }
+	String version() const { return "meowq-core 11"; }
 };
 
 } // namespace godot

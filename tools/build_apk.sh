@@ -6,9 +6,19 @@
 # APK ставится на Android 7+). Нативная библиотека (native/) в APK не входит —
 # под Android её собирают с NDK; без неё игра работает на GDScript.
 #   GODOT=/путь/к/godot sh tools/build_apk.sh  →  export/meowq.apk
+# По умолчанию — release (GDScript быстрее на ~30%; подпись тем же отладочным
+# ключом, чтобы ставилось поверх); MODE=debug — отладочный. Рендерер и поток
+# отрисовки на телефоне заданы в project.godot (метка .mobile: Compatibility,
+# отдельный поток); для сравнения: RENDERER=compat — принудительно GLES3,
+# THREADS=separate (отрисовка в отдельном потоке — разгружает главный поток),
+# OUT=export/имя.apk.
 set -e
 cd "$(dirname "$0")/.."
 GODOT=${GODOT:-godot}
+MODE=${MODE:-release}
+RENDERER=${RENDERER:-mobile}
+THREADS=${THREADS:-safe}
+OUT=${OUT:-export/meowq.apk}
 WORK=${WORK:-/tmp/meowq-apk}
 SDK="$WORK/android-sdk"
 BT="$SDK/build-tools/34.0.0"
@@ -44,7 +54,25 @@ elif [ -f meowq.gdextension ]; then
 	mv meowq.gdextension "$WORK/meowq.gdextension"; MANIFEST_MOVED=1
 	echo "C++-ядро: нет сборки под Android, APK на GDScript"
 fi
+cp project.godot "$WORK/project.godot.bak"
+if [ "$THREADS" = separate ]; then
+	sed -i 's#^\[rendering\]$#[rendering]\n\ndriver/threads/thread_model=2#' project.godot
+	echo "Отрисовка: отдельный поток"
+fi
+if [ "$RENDERER" = compat ]; then
+	sed -i 's#^renderer/rendering_method=.*#renderer/rendering_method="gl_compatibility"#; s#^renderer/rendering_method.mobile=.*#renderer/rendering_method.mobile="gl_compatibility"#' project.godot
+	echo "Рендерер: Compatibility (OpenGL ES 3)"
+fi
 "$GODOT" --headless --editor --quit --path . >/dev/null 2>&1 || true
-"$GODOT" --headless --path . --export-debug "Android" export/meowq.apk 2>&1 | grep -E "Signed|ERROR|export: end" || true
+if [ "$MODE" = release ]; then
+	KS="$HOME/.local/share/godot/keystores/debug.keystore"
+	export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$KS"
+	export GODOT_ANDROID_KEYSTORE_RELEASE_USER=androiddebugkey
+	export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=android
+	"$GODOT" --headless --path . --export-release "Android" "$OUT" 2>&1 | grep -E "Signed|ERROR|export: end" || true
+else
+	"$GODOT" --headless --path . --export-debug "Android" "$OUT" 2>&1 | grep -E "Signed|ERROR|export: end" || true
+fi
+cp "$WORK/project.godot.bak" project.godot
 if [ "$MANIFEST_MOVED" = 1 ]; then mv "$WORK/meowq.gdextension" meowq.gdextension; fi
-ls -la export/meowq.apk
+ls -la "$OUT"

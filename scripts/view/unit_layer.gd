@@ -29,11 +29,19 @@ var _labels_pv := -1
 # плашка — белая заливка с тёмной каймой (окрашивается цветом страны), обводка
 # выделения, тень, круглый знак. Одна текстура вместо 6–8 сглаженных фигур.
 const TEX_K := 3
-var _t_plate: Texture2D
-var _t_sel: Texture2D
-var _t_shadow: Texture2D
-var _t_badge: Texture2D
-var _t_bars: Texture2D
+# Все части фишки и знаки родов войск — в одном атласе: рисовка идёт пачкой
+# без смены текстуры; числа рисуются отдельным проходом после всех плашек.
+var _atlas: Texture2D
+var _r_plate: Rect2
+var _r_sel: Rect2
+var _r_shadow: Rect2
+var _r_badge: Rect2
+var _r_bars: Rect2
+var _r_white: Rect2
+var _r_icons: Array = []        # Rect2 по шаблону дивизии (пустой — нет иконки)
+var _texts: Array = []          # отложенные числа фишек: [позиция, текст, ширина, размер]
+var draw_count := 0             # для замеров: сколько раз рисовался слой
+var draw_total_usec := 0
 
 
 func _ready() -> void:
@@ -41,19 +49,62 @@ func _ready() -> void:
 	font = UiStyle.text_font()
 	bold = UiStyle.bold_font()
 	label_font = UiStyle.title_font(500, 3)
+	_build_atlas()
+
+
+func _build_atlas() -> void:
 	var cw := 40 * TEX_K
 	var ch := 22 * TEX_K
 	var r := ch * 0.5
-	_t_plate = _rr_tex(cw, ch, r, TEX_K * 1.0, Color(1, 1, 1), Color(0.06, 0.06, 0.06, 0.9), 0.0)
-	_t_sel = _rr_tex(cw, ch, r, TEX_K * 2.0, Color(1, 1, 1, 0), Color(1, 1, 1), 0.0)
-	_t_shadow = _rr_tex(cw, ch, r, 0.0, Color(0, 0, 0, 0.35), Color(0, 0, 0, 0.35), TEX_K * 1.5)
-	_t_badge = _rr_tex(ch, ch, r, TEX_K * 1.0, Color(1, 1, 1), Color(0.06, 0.06, 0.06, 0.6), 0.0)
-	_t_bars = _rr_tex(cw, 7 * TEX_K, 2.0 * TEX_K, 0.0, Color(0, 0, 0, 0.55), Color(0, 0, 0, 0.55), 0.0)
+	var parts := [
+		_rr_img(cw, ch, r, TEX_K * 1.0, Color(1, 1, 1), Color(0.06, 0.06, 0.06, 0.9), 0.0),
+		_rr_img(cw, ch, r, TEX_K * 2.0, Color(1, 1, 1, 0), Color(1, 1, 1), 0.0),
+		_rr_img(cw, ch, r, 0.0, Color(0, 0, 0, 0.35), Color(0, 0, 0, 0.35), TEX_K * 1.5),
+		_rr_img(ch, ch, r, TEX_K * 1.0, Color(1, 1, 1), Color(0.06, 0.06, 0.06, 0.6), 0.0),
+		_rr_img(cw, 7 * TEX_K, 2.0 * TEX_K, 0.0, Color(0, 0, 0, 0.55), Color(0, 0, 0, 0.55), 0.0),
+	]
+	var white := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	white.fill(Color.WHITE)
+	parts.append(white)
+	for name in TPL_ICONS:
+		var ic := UiStyle.icon_image(name, 64)
+		parts.append(ic if ic != null else Image.create(1, 1, false, Image.FORMAT_RGBA8))
+	# раскладка по строкам с полями 4 пикс. (чтобы мипмапы не смешивали соседей)
+	var pad := 4
+	var w := 512
+	var x := pad
+	var y := pad
+	var row_h := 0
+	var rects: Array = []
+	for im: Image in parts:
+		if x + im.get_width() + pad > w:
+			x = pad
+			y += row_h + pad
+			row_h = 0
+		rects.append(Rect2(x, y, im.get_width(), im.get_height()))
+		x += im.get_width() + pad
+		row_h = maxi(row_h, im.get_height())
+	var atlas := Image.create(w, y + row_h + pad, false, Image.FORMAT_RGBA8)
+	for i in parts.size():
+		var im: Image = parts[i]
+		atlas.blit_rect(im, Rect2i(0, 0, im.get_width(), im.get_height()), Vector2i(rects[i].position))
+	atlas.generate_mipmaps()
+	_atlas = ImageTexture.create_from_image(atlas)
+	_r_plate = rects[0]
+	_r_sel = rects[1]
+	_r_shadow = rects[2]
+	_r_badge = rects[3]
+	_r_bars = rects[4]
+	_r_white = Rect2(rects[5].position + Vector2(2, 2), Vector2(4, 4))
+	_r_icons.clear()
+	for i in TPL_ICONS.size():
+		var rr: Rect2 = rects[6 + i]
+		_r_icons.append(rr if rr.size.x > 1 else Rect2())
 
 
 ## Скруглённый прямоугольник в текстуру: заливка, кайма шириной bw, мягкость
 ## края soft (для тени). Сглаживание — по расстоянию до края.
-static func _rr_tex(w: int, h: int, rad: float, bw: float, fill: Color, border: Color, soft: float) -> Texture2D:
+static func _rr_img(w: int, h: int, rad: float, bw: float, fill: Color, border: Color, soft: float) -> Image:
 	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
 	var half := Vector2(w, h) * 0.5
 	var inner := half - Vector2(rad, rad)
@@ -66,8 +117,7 @@ static func _rr_tex(w: int, h: int, rad: float, bw: float, fill: Color, border: 
 			if bw > 0.0:
 				c = fill.lerp(border, clampf(d + bw + 0.5, 0.0, 1.0))
 			img.set_pixel(x, y, Color(c.r, c.g, c.b, c.a * a))
-	img.generate_mipmaps()
-	return ImageTexture.create_from_image(img)
+	return img
 
 
 # Слой перерисовывается только при изменениях: сдвиг/масштаб карты, новый
@@ -172,69 +222,43 @@ func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
 	for p in battle_provs:
 		out.append([BATTLE, _wp(p)])
 	_has_battles = not battle_provs.is_empty()
-	# фишки: по одной на (провинция, страна); стопка — подряд идущие в списке
-	# провинции дивизии одной страны собираются по владельцу
-	var head := world.pl_head
-	var nxt := world.d_nx
-	var g_owner := PackedInt32Array()
-	var g_n := PackedInt32Array()
-	var g_str := PackedFloat64Array()
-	var g_org := PackedFloat64Array()
-	var g_sup := PackedFloat64Array()
-	var g_sel := PackedByteArray()
-	var g_tplc: Array = []
-	var g_grp: Array = []
-	for p in world.prov_count:
-		var h := head[p]
-		if h < 0:
-			continue
-		g_owner.clear()
-		g_n.clear()
-		g_str.clear()
-		g_org.clear()
-		g_sup.clear()
-		g_sel.clear()
-		g_tplc.clear()
-		g_grp.clear()
-		while h >= 0:
-			if a_alive[h] != 0:
-				var o := a_owner[h]
-				var k := g_owner.find(o)
-				if k < 0:
-					k = g_owner.size()
-					g_owner.append(o)
-					g_n.append(0)
-					g_str.append(0.0)
-					g_org.append(0.0)
-					g_sup.append(1.0)
-					g_sel.append(0)
-					g_tplc.append(PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0]))
-					g_grp.append(Color(0, 0, 0, 0))
-				g_n[k] += 1
-				g_str[k] += a_str[h]
-				g_org[k] += a_org[h] / maxf(1.0, a_morg[h])
-				g_sup[k] = minf(g_sup[k], a_sup[h])
-				var tc: PackedInt32Array = g_tplc[k]
-				tc[clampi(a_tpl[h], 0, 7)] += 1
-				g_tplc[k] = tc
-				if o == player:
-					var gc: Color = g_grp[k]
-					if gc.a == 0.0:
-						var grp: int = divs[h].group
-						if grp >= 0:
-							g_grp[k] = world.groups[grp].color
-				if sel.has(h):
-					g_sel[k] = 1
-			h = nxt[h]
-		for k in g_owner.size():
-			var tc: PackedInt32Array = g_tplc[k]
-			var main_tpl := 0
-			for t in 8:
-				if tc[t] > tc[main_tpl]:
-					main_tpl = t
-			var n := g_n[k]
-			out.append([COUNTER, centers[p] * sc, k, nat_cols[g_owner[k]], n, main_tpl,
-				g_str[k] / (100.0 * n), g_org[k] / n, g_sel[k] == 1, g_grp[k], g_sup[k] < 0.3, g_owner[k] == player])
+	# фишки: по одной на (провинция, страна) — стопки считает ядро World.k_counters
+	# (C++ или GDScript); выделение и цвет армии игрока — здесь, по ключу
+	# провинция·страна
+	var marks := {}      # ключ -> [выделена, цвет армии]
+	for slot in sel:
+		var key: int = a_prov[slot] * 1024 + a_owner[slot]
+		marks[key] = [true, Color(0, 0, 0, 0)]
+	if player >= 0:
+		for i in n_div:
+			if a_owner[i] != player or a_alive[i] == 0 or a_transit[i] > 0:
+				continue
+			var grp: int = divs[i].group
+			if grp < 0:
+				continue
+			var key: int = a_prov[i] * 1024 + player
+			var m: Array = marks.get(key, [false, Color(0, 0, 0, 0)])
+			var gc: Color = m[1]
+			if gc.a == 0.0:
+				m[1] = world.groups[grp].color
+				marks[key] = m
+	var cs: Array = world.k_counters()
+	var c_prov: PackedInt32Array = cs[0]
+	var c_owner: PackedInt32Array = cs[1]
+	var c_n: PackedInt32Array = cs[2]
+	var c_tpl: PackedInt32Array = cs[3]
+	var c_str: PackedFloat64Array = cs[4]
+	var c_org: PackedFloat64Array = cs[5]
+	var c_sup: PackedFloat64Array = cs[6]
+	var k := 0
+	for ci in c_prov.size():
+		var p := c_prov[ci]
+		k = k + 1 if ci > 0 and c_prov[ci - 1] == p else 0
+		var o := c_owner[ci]
+		var n := c_n[ci]
+		var m: Array = marks.get(p * 1024 + o, [false, Color(0, 0, 0, 0)])
+		out.append([COUNTER, centers[p] * sc, k, nat_cols[o], n, c_tpl[ci],
+			c_str[ci] / (100.0 * n), c_org[ci] / n, m[0], m[1], c_sup[ci] < 0.3, o == player])
 	_rebuild_navy_air(out, sel_fleet, sel_wing)
 	items = out
 	_dirty = true
@@ -303,6 +327,7 @@ func _draw() -> void:
 	if map == null:
 		return
 	var t0 := Time.get_ticks_usec()
+	_texts.clear()
 	var z := map.zoom_level()
 	var vp := get_viewport_rect().size
 	var screen := Rect2(Vector2.ZERO, vp).grow(40)
@@ -408,7 +433,11 @@ func _draw() -> void:
 				_plane_icon(c, it[2], it[3], it[4])
 				draw_string_outline(font, c + Vector2(14, 5), str(it[5]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, 3, Color.BLACK)
 				draw_string(font, c + Vector2(14, 5), str(it[5]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+	for tx in _texts:
+		draw_string(bold, tx[0], tx[1], HORIZONTAL_ALIGNMENT_CENTER, tx[2], tx[3], Color(0.97, 0.95, 0.9))
 	draw_usec = Time.get_ticks_usec() - t0
+	draw_count += 1
+	draw_total_usec += draw_usec
 
 
 func _draw_counter(it: Array, z: float, counter: Vector2, font_size: int, screen: Rect2) -> void:
@@ -426,20 +455,25 @@ func _draw_counter(it: Array, z: float, counter: Vector2, font_size: int, screen
 	var rect := Rect2(pos, counter)
 	var rad := int(counter.y * 0.5)
 	# тень, плашка цвета страны с тёмной каймой, обводка выделения, круглый знак
-	draw_texture_rect(_t_shadow, Rect2(pos + Vector2(1.5, 2.5), counter), false)
-	draw_texture_rect(_t_plate, rect, false, nat_col.darkened(0.12))
+	draw_texture_rect_region(_atlas, Rect2(pos + Vector2(1.5, 2.5), counter), _r_shadow)
+	draw_texture_rect_region(_atlas, rect, _r_plate, nat_col.darkened(0.12))
 	if any_sel:
-		draw_texture_rect(_t_sel, rect, false)
+		draw_texture_rect_region(_atlas, rect, _r_sel)
 	var badge_r := counter.y * 0.5 - 1.5
 	var bc := pos + Vector2(badge_r + 1.5, counter.y * 0.5)
-	draw_texture_rect(_t_badge, Rect2(bc - Vector2(badge_r, badge_r), Vector2(badge_r, badge_r) * 2.0), false, nat_col.lightened(0.45))
-	_draw_icon(Rect2(bc - Vector2(badge_r, badge_r) * 0.82, Vector2(badge_r, badge_r) * 1.64), it[5], Color(0.1, 0.09, 0.08))
+	draw_texture_rect_region(_atlas, Rect2(bc - Vector2(badge_r, badge_r), Vector2(badge_r, badge_r) * 2.0), _r_badge, nat_col.lightened(0.45))
+	var ir: Rect2 = _r_icons[clampi(it[5], 0, _r_icons.size() - 1)]
+	if ir.size.x > 0:
+		var isz := badge_r * 1.56
+		draw_texture_rect_region(_atlas, Rect2(bc - Vector2(isz, isz) * 0.5, Vector2(isz, isz)), ir, Color(0.1, 0.09, 0.08))
+	else:
+		_draw_icon(Rect2(bc - Vector2(badge_r, badge_r) * 0.82, Vector2(badge_r, badge_r) * 1.64), it[5], Color(0.1, 0.09, 0.08))
 	var tx := bc.x + badge_r + 1.0
-	draw_string(bold, Vector2(tx, pos.y + counter.y * 0.5 + font_size * 0.36), str(it[4]),
-		HORIZONTAL_ALIGNMENT_CENTER, pos.x + counter.x - tx - 2.0, font_size, Color(0.97, 0.95, 0.9))
+	# число — отдельным проходом (другая текстура — шрифт)
+	_texts.append([Vector2(tx, pos.y + counter.y * 0.5 + font_size * 0.36), str(it[4]), pos.x + counter.x - tx - 2.0, font_size])
 	var grp: Color = it[9]
 	if grp.a > 0.0:
-		draw_rect(Rect2(pos + Vector2(rad * 0.6, -4), Vector2(counter.x - rad * 1.2, 3)), grp)
+		draw_texture_rect_region(_atlas, Rect2(pos + Vector2(rad * 0.6, -4), Vector2(counter.x - rad * 1.2, 3)), _r_white, grp)
 	if it[10]:
 		# нет снабжения: красный восклицательный знак
 		var c2 := pos + Vector2(counter.x + 5, 3)
@@ -448,11 +482,11 @@ func _draw_counter(it: Array, z: float, counter: Vector2, font_size: int, screen
 	# полоски под плашкой: зелёная — сила, жёлтая — организация (со скруглёнными краями)
 	var bx := pos.x + rad * 0.5
 	var bw := counter.x - rad
-	draw_texture_rect(_t_bars, Rect2(bx - 1, pos.y + counter.y + 1, bw + 2, 7), false)
+	draw_texture_rect_region(_atlas, Rect2(bx - 1, pos.y + counter.y + 1, bw + 2, 7), _r_bars)
 	if it[6] > 0.02:
-		draw_rect(Rect2(bx, pos.y + counter.y + 2, bw * it[6], 2.5), Color(0.40, 0.85, 0.38))
+		draw_texture_rect_region(_atlas, Rect2(bx, pos.y + counter.y + 2, bw * it[6], 2.5), _r_white, Color(0.40, 0.85, 0.38))
 	if it[7] > 0.02:
-		draw_rect(Rect2(bx, pos.y + counter.y + 5, bw * it[7], 2.5), Color(0.96, 0.80, 0.30))
+		draw_texture_rect_region(_atlas, Rect2(bx, pos.y + counter.y + 5, bw * it[7], 2.5), _r_white, Color(0.96, 0.80, 0.30))
 
 
 func _draw_label(l: Array, z: float) -> void:

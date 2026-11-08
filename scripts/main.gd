@@ -87,6 +87,10 @@ func _arg(name: String) -> String:
 ## Отладка/CI: godot -- --screenshot=out.png [--days=N] [--zoom=Z] [--select]
 ## Замер в реальном времени: игра на максимальной скорости, время кадра главного
 ## потока (без отрисовки) и дни в секунду. -- --bench_rt=15 [--nation=GER] [--from=1939-09-01]
+var _rt_cpu := 0.0
+var _rt_gpu := 0.0
+
+
 func _bench_realtime(seconds: float) -> void:
 	var me := nation_by_tag(_arg("nation")) if _arg("nation") != "" else 0
 	world_lock()
@@ -116,6 +120,9 @@ func _bench_realtime(seconds: float) -> void:
 		var f0 := Time.get_ticks_usec()
 		await get_tree().process_frame
 		var ft := Time.get_ticks_usec() - f0
+		var vrid := get_viewport().get_viewport_rid()
+		_rt_cpu += RenderingServer.viewport_get_measured_render_time_cpu(vrid)
+		_rt_gpu += RenderingServer.viewport_get_measured_render_time_gpu(vrid)
 		frames += 1
 		total += ft
 		worst = maxi(worst, ft)
@@ -133,7 +140,9 @@ func _bench_realtime(seconds: float) -> void:
 	print("BENCH_RT: %.1f с, дней %d (%.1f дн/с), кадров %d, средний кадр %.2f мс, худший %.2f мс, ядер %d" % [
 		seconds, days, days / seconds, frames, total / 1000.0 / maxi(1, frames), worst / 1000.0, Parallel.thread_count()])
 	print("  интерфейс: обновлений %d (%.1f в с), самая долгая пауза %.0f мс" % [_ui_count, _ui_count / seconds, _ui_gap_max / 1000.0])
-	print("  палитра обновлялась %d раз" % map_view.palette_version)
+	print("  отрисовка экрана: ЦП %.2f мс, ГП %.2f мс в среднем за кадр" % [_rt_cpu / maxi(1, frames), _rt_gpu / maxi(1, frames)])
+	print("  палитра обновлялась %d раз; слой фишек рисовался %d раз, в среднем %.2f мс" % [map_view.palette_version,
+		unit_layer.draw_count, unit_layer.draw_total_usec / 1000.0 / maxi(1, unit_layer.draw_count)])
 	var names := ["панели дня", "палитра", "список фишек", "верхняя строка"]
 	for i in 4:
 		print("  %s: всего %.0f мс за прогон, худшее %.1f мс" % [names[i], ui_prof_sum[i] / 1000.0, ui_prof_max[i] / 1000.0])

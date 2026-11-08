@@ -86,7 +86,8 @@ func setup(w: World) -> void:
 	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
 	if not get_viewport().size_changed.is_connected(redraw):
 		get_viewport().size_changed.connect(redraw)
-	res_scale = Settings.RES_SCALES[Settings.map_res()]
+	set_res_scale(Settings.RES_SCALES[Settings.map_res()])
+	Settings.apply_fps_cap()
 	motion_lite = Settings.motion_lite()
 
 	var rows := int(ceil(world.prov_count / 64.0))
@@ -157,13 +158,42 @@ func redraw() -> void:
 	_dirty = true
 
 
-## Разрешение буфера карты: доля пикселей экрана (0.5–1).
+## Разрешение буфера карты: доля пикселей экрана (0.5–1); 0 — авто: после
+## каждой полной перерисовки подстраивается так, чтобы карта рисовалась на
+## видеокарте за ~AUTO_TARGET_MS (масштаб разрешения — самое действенное
+## средство против нагрузки и нагрева ГП на телефоне).
+const AUTO_TARGET_MS := 14.0
+var res_auto := false
+var _auto_pending := false     # последняя перерисовка — полная, замер ещё не учтён
+
+
 func set_res_scale(s: float) -> void:
-	res_scale = clampf(s, 0.25, 1.0)
+	res_auto = s <= 0.0
+	res_scale = 0.75 if res_auto else clampf(s, 0.25, 1.0)
 	redraw()
 
 
+func _auto_adjust() -> void:
+	if not _auto_pending:
+		return
+	var gpu := RenderingServer.viewport_get_measured_render_time_gpu(map_vp.get_viewport_rid())
+	if gpu <= 0.0:
+		return
+	_auto_pending = false
+	var old := res_scale
+	if gpu > AUTO_TARGET_MS * 1.3:
+		res_scale = maxf(0.5, res_scale * sqrt(AUTO_TARGET_MS / gpu))
+	elif gpu < AUTO_TARGET_MS * 0.6:
+		res_scale = minf(1.0, res_scale * 1.1)
+	if absf(res_scale - old) > 0.02:
+		redraw()
+	else:
+		res_scale = old
+
+
 func _process(dt: float) -> void:
+	if res_auto and map_vp != null:
+		_auto_adjust()
 	if _moving > 0.0:
 		_moving -= dt
 		if _moving <= 0.0 and _lite_drawn:
@@ -186,6 +216,7 @@ func _process(dt: float) -> void:
 	view_sprite.scale = logical / Vector2(size)
 	mat.set_shader_parameter("res_k", rk)
 	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	_auto_pending = not lite
 	redraws += 1
 
 

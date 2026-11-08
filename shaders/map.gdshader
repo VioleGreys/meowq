@@ -188,10 +188,10 @@ void fragment() {
 	}
 	float hx = h_r - h_l;
 	float hy = h_d - h_u;
-	vec3 n = normalize(vec3(-hx * 7.0, -hy * 7.0, 1.0));
-	float light = clamp(dot(n, normalize(vec3(-0.55, -0.65, 0.75))), 0.0, 1.0);
+	mediump vec3 n = normalize(vec3(-hx * 7.0, -hy * 7.0, 1.0));
+	mediump float light = clamp(dot(n, normalize(vec3(-0.55, -0.65, 0.75))), 0.0, 1.0);
 
-	vec3 col;
+	mediump vec3 col;   // цвет — в половинной точности (дешевле на мобильных ГП)
 	// мелкие озёра входят в провинции суши, но по высоте ниже уровня моря — вода
 	// (только на низком качестве: на среднем и высоком озёра — в векторном контуре)
 	bool lake = quality == 0 && land && texture(height_tex, (vec2(ip) + 0.5) / map_size).r < 0.49;
@@ -218,15 +218,15 @@ void fragment() {
 		float line = max(1.0 - smoothstep(0.0, pxdeg * 1.2, gl), 1.0 - smoothstep(0.0, pxdeg * 1.2, ga));
 		col = mix(col, vec3(0.55, 0.68, 0.74), line * 0.18 * smoothstep(0.15, 0.5, zoom));
 	} else {
-		vec3 base = cc.rgb;
+		mediump vec3 base = cc.rgb;
 		int own = nation(oc);
 		if (show_occupation && own != ctrl) {
 			float s = step(0.5, fract((px.x + px.y) * 0.28));
 			base = mix(base, oc.rgb, s * 0.75);
 		}
 		if (has_terrain) {
-			vec3 terr = texture(terrain_tex, UV).rgb;
-			float tl = dot(terr, vec3(0.299, 0.587, 0.114));
+			mediump vec3 terr = texture(terrain_tex, UV).rgb;
+			mediump float tl = dot(terr, vec3(0.299, 0.587, 0.114));
 			if (terrain_mode) {
 				col = terr * (0.85 + 0.35 * light);
 			} else {

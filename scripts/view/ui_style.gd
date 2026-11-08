@@ -132,6 +132,18 @@ static var _icon_tex := {}
 
 ## Белая иконка name размером px×px (перекрашивается через modulate/цвет рисования).
 ## null — если иконки нет.
+## Иконка картинкой (RGBA, белая) — для сборки атласов; null, если нет.
+static func icon_image(name: String, px: int = 64) -> Image:
+	icon(name, px)   # загрузит набор SVG
+	if not _icon_svg.has(name):
+		return null
+	var img := Image.new()
+	if img.load_svg_from_string(_icon_svg[name], px / 512.0) != OK:
+		return null
+	img.convert(Image.FORMAT_RGBA8)
+	return img
+
+
 static func icon(name: String, px: int = 64) -> Texture2D:
 	var key := "%s@%d" % [name, px]
 	if _icon_tex.has(key):

@@ -4,8 +4,10 @@ extends RefCounted
 
 const PATH := "user://settings.cfg"
 const QUALITY_NAMES := ["Низкое", "Среднее", "Высокое"]
-const RES_SCALES := [0.5, 0.75, 1.0]
-const RES_NAMES := ["50%", "75%", "100%"]
+const RES_SCALES := [0.5, 0.75, 1.0, 0.0]   # 0 — авто
+const RES_NAMES := ["50%", "75%", "100%", "Авто"]
+const FPS_CAPS := [30, 60, 0]
+const FPS_NAMES := ["30", "60", "Без огр."]
 
 static var _cfg: ConfigFile = null
 
@@ -32,18 +34,18 @@ static func set_map_quality(q: int) -> void:
 	_cfg.save(PATH)
 
 
-## Разрешение карты (доля пикселей экрана): 0 — 50%, 1 — 75%, 2 — 100%.
-## По умолчанию на телефоне — 75%, на ПК — 100%.
+## Разрешение карты (доля пикселей экрана): 0 — 50%, 1 — 75%, 2 — 100%,
+## 3 — авто (подбирается по времени отрисовки). По умолчанию: телефон — авто, ПК — 100%.
 static func map_res() -> int:
 	for a in OS.get_cmdline_user_args():   # для замеров: -- --mapres=0|1|2
 		if a.begins_with("--mapres="):
-			return clampi(int(a.split("=")[1]), 0, 2)
-	var def := 1 if OS.has_feature("mobile") else 2
+			return clampi(int(a.split("=")[1]), 0, 3)
+	var def := 3 if OS.has_feature("mobile") else 2
 	return int(_load().get_value("graphics", "map_res", def))
 
 
 static func set_map_res(r: int) -> void:
-	_load().set_value("graphics", "map_res", clampi(r, 0, 2))
+	_load().set_value("graphics", "map_res", clampi(r, 0, 3))
 	_cfg.save(PATH)
 
 
@@ -56,3 +58,20 @@ static func motion_lite() -> bool:
 static func set_motion_lite(v: bool) -> void:
 	_load().set_value("graphics", "motion_lite", v)
 	_cfg.save(PATH)
+
+
+## Ограничение кадров: 0 — 30, 1 — 60, 2 — без ограничения (по частоте экрана).
+## На экранах 90–120 Гц лишние кадры только греют телефон.
+static func fps_cap() -> int:
+	var def := 1 if OS.has_feature("mobile") else 2
+	return int(_load().get_value("graphics", "fps_cap", def))
+
+
+static func set_fps_cap(i: int) -> void:
+	_load().set_value("graphics", "fps_cap", clampi(i, 0, 2))
+	_cfg.save(PATH)
+	apply_fps_cap()
+
+
+static func apply_fps_cap() -> void:
+	Engine.max_fps = FPS_CAPS[clampi(fps_cap(), 0, 2)]

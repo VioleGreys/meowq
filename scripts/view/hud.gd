@@ -377,9 +377,9 @@ func refresh_top() -> void:
 	if OS.has_feature("mobile"):
 		phases = ""   # на телефоне без фаз — они закрывали бы карту
 	var gpu: Vector2 = game.map_view.gpu_ms()
-	phases += "\nкадр: логика %.1f · фишки %.1f · ГП карта %.1f · ГП экран %.1f мс · карта %d раз/с\nдень (макс. за с): панели %.1f · палитра %.1f · список %.1f · строка %.1f мс" % [
+	phases += "\nкадр: логика %.1f · фишки %.1f · ГП карта %.1f (%d%%) · ГП экран %.1f мс · карта %d раз/с\nдень (макс. за с): панели %.1f · палитра %.1f · список %.1f · строка %.1f мс" % [
 		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, game.unit_layer.draw_usec / 1000.0,
-		gpu.x, gpu.y, _redraw_rate(), game.ui_prof[0] / 1000.0, game.ui_prof[1] / 1000.0,
+		gpu.x, int(game.map_view.res_scale * 100), gpu.y, _redraw_rate(), game.ui_prof[0] / 1000.0, game.ui_prof[1] / 1000.0,
 		game.ui_prof[2] / 1000.0, game.ui_prof[3] / 1000.0]
 	perf_label.text = "%s\n%d FPS · %s · ядер %d · %.1f дн/с · тик %.2f мс" % [phases.strip_edges(), Engine.get_frames_per_second(), "C++" if Native.available() else "GDScript", Parallel.thread_count(), game.days_per_sec, game.sim.last_tick_usec / 1000.0]
 	if _toast_t > 0.0:
@@ -1073,6 +1073,21 @@ func _build_navy(w: World, me: int) -> void:
 		b.add_theme_font_size_override("font_size", 14)
 		row2.add_child(b)
 	popup_body.add_child(row2)
+	popup_body.add_child(_label("Ограничение кадров", 20))
+	popup_body.add_child(_label("На экранах 90–120 Гц лишние кадры только греют телефон и вызывают замедление от перегрева.", 15, Color(0.75, 0.75, 0.7)))
+	var row3 := HBoxContainer.new()
+	row3.add_theme_constant_override("separation", 8)
+	var cur_f := Settings.fps_cap()
+	for f in 3:
+		var ff := f
+		var b3 := _button(Settings.FPS_NAMES[f], func():
+			Settings.set_fps_cap(ff)
+			_rebuild_popup(), Vector2(0, 52))
+		b3.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b3.toggle_mode = true
+		b3.set_pressed_no_signal(f == cur_f)
+		row3.add_child(b3)
+	popup_body.add_child(row3)
 	var lite := CheckButton.new()
 	lite.text = "Упрощать карту при сдвиге и масштабе"
 	lite.button_pressed = Settings.motion_lite()
@@ -1239,11 +1254,11 @@ func _build_settings() -> void:
 		row.add_child(b)
 	popup_body.add_child(row)
 	popup_body.add_child(_label("Разрешение карты", 20))
-	popup_body.add_child(_label("Ниже разрешение — быстрее сдвиг и масштаб на слабом телефоне; границы чуть мягче, надписи и фишки остаются чёткими.", 15, Color(0.75, 0.75, 0.7)))
+	popup_body.add_child(_label("Ниже разрешение — быстрее сдвиг и масштаб на слабом телефоне; границы чуть мягче, надписи и фишки остаются чёткими. «Авто» подбирает разрешение по скорости видеокарты.", 15, Color(0.75, 0.75, 0.7)))
 	var row2 := HBoxContainer.new()
 	row2.add_theme_constant_override("separation", 8)
 	var cur_r := Settings.map_res()
-	for r in 3:
+	for r in 4:
 		var rr := r
 		var b2 := _button(Settings.RES_NAMES[r], func():
 			Settings.set_map_res(rr)
@@ -1254,6 +1269,21 @@ func _build_settings() -> void:
 		b2.set_pressed_no_signal(r == cur_r)
 		row2.add_child(b2)
 	popup_body.add_child(row2)
+	popup_body.add_child(_label("Ограничение кадров", 20))
+	popup_body.add_child(_label("На экранах 90–120 Гц лишние кадры только греют телефон и вызывают замедление от перегрева.", 15, Color(0.75, 0.75, 0.7)))
+	var row3 := HBoxContainer.new()
+	row3.add_theme_constant_override("separation", 8)
+	var cur_f := Settings.fps_cap()
+	for f in 3:
+		var ff := f
+		var b3 := _button(Settings.FPS_NAMES[f], func():
+			Settings.set_fps_cap(ff)
+			_rebuild_popup(), Vector2(0, 52))
+		b3.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b3.toggle_mode = true
+		b3.set_pressed_no_signal(f == cur_f)
+		row3.add_child(b3)
+	popup_body.add_child(row3)
 	var lite := CheckButton.new()
 	lite.text = "Упрощать карту при сдвиге и масштабе"
 	lite.button_pressed = Settings.motion_lite()

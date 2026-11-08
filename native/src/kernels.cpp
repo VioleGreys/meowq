@@ -602,3 +602,67 @@ PackedByteArray MeowqCore::air_reach(const PackedByteArray &land, const PackedIn
 	}
 	return out;
 }
+
+Array MeowqCore::counters(const PackedInt32Array &head, const PackedInt32Array &nx, const PackedByteArray &alive,
+		const PackedInt32Array &owner, const PackedFloat64Array &str, const PackedFloat64Array &org,
+		const PackedFloat64Array &morg, const PackedFloat64Array &sup, const PackedInt32Array &tpl) const {
+	PackedInt32Array o_prov, o_owner, o_n, o_tpl;
+	PackedFloat64Array o_str, o_org, o_sup;
+	const int32_t *hd = head.ptr(), *x = nx.ptr(), *ow = owner.ptr(), *tp = tpl.ptr();
+	const uint8_t *al = alive.ptr();
+	const double *st = str.ptr(), *og = org.ptr(), *mo = morg.ptr(), *su = sup.ptr();
+	const int64_t pc = head.size();
+	// стопки одной провинции — небольшой локальный набор
+	int32_t g_owner[64], g_n[64], g_tc[64][8];
+	double g_str[64], g_org[64], g_sup[64];
+	for (int64_t p = 0; p < pc; p++) {
+		int32_t h = hd[p];
+		if (h < 0) continue;
+		int gn = 0;
+		while (h >= 0) {
+			if (al[h] != 0) {
+				const int32_t o = ow[h];
+				int k = 0;
+				while (k < gn && g_owner[k] != o) k++;
+				if (k == gn) {
+					if (gn == 64) { h = x[h]; continue; }
+					g_owner[k] = o;
+					g_n[k] = 0;
+					g_str[k] = 0.0;
+					g_org[k] = 0.0;
+					g_sup[k] = 1.0;
+					for (int t = 0; t < 8; t++) g_tc[k][t] = 0;
+					gn++;
+				}
+				g_n[k] += 1;
+				g_str[k] += st[h];
+				g_org[k] += og[h] / (mo[h] > 1.0 ? mo[h] : 1.0);
+				if (su[h] < g_sup[k]) g_sup[k] = su[h];
+				int t = tp[h];
+				t = t < 0 ? 0 : (t > 7 ? 7 : t);
+				g_tc[k][t] += 1;
+			}
+			h = x[h];
+		}
+		for (int k = 0; k < gn; k++) {
+			int main_t = 0;
+			for (int t = 1; t < 8; t++) if (g_tc[k][t] > g_tc[k][main_t]) main_t = t;
+			o_prov.push_back(int32_t(p));
+			o_owner.push_back(g_owner[k]);
+			o_n.push_back(g_n[k]);
+			o_tpl.push_back(main_t);
+			o_str.push_back(g_str[k]);
+			o_org.push_back(g_org[k]);
+			o_sup.push_back(g_sup[k]);
+		}
+	}
+	Array r;
+	r.push_back(o_prov);
+	r.push_back(o_owner);
+	r.push_back(o_n);
+	r.push_back(o_tpl);
+	r.push_back(o_str);
+	r.push_back(o_org);
+	r.push_back(o_sup);
+	return r;
+}

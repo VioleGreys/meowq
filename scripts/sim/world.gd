@@ -722,6 +722,68 @@ func rebuild_prov_divs() -> void:
 
 ## Пересборка списков провинций (ядро; C++ — MeowqCore.relink). Возвращает
 ## число дивизий по странам.
+## Стопки фишек для отрисовки: по провинциям, страны в порядке первого
+## появления в списке провинции. [prov, owner, n, tpl, str_sum, org_sum, min_sup]
+## (org — сумма org/max_org). C++ — MeowqCore.counters, результаты совпадают.
+func k_counters() -> Array:
+	if Native.core != null:
+		return Native.core.call("counters", pl_head, d_nx, d_alive, d_owner, d_str, d_org, d_morg, d_sup, d_tpl)
+	var o_prov := PackedInt32Array()
+	var o_owner := PackedInt32Array()
+	var o_n := PackedInt32Array()
+	var o_tpl := PackedInt32Array()
+	var o_str := PackedFloat64Array()
+	var o_org := PackedFloat64Array()
+	var o_sup := PackedFloat64Array()
+	var g_owner := PackedInt32Array()
+	var g_n := PackedInt32Array()
+	var g_str := PackedFloat64Array()
+	var g_org := PackedFloat64Array()
+	var g_sup := PackedFloat64Array()
+	var g_tc := PackedInt32Array()
+	for p in prov_count:
+		var h := pl_head[p]
+		if h < 0:
+			continue
+		g_owner.clear()
+		g_n.clear()
+		g_str.clear()
+		g_org.clear()
+		g_sup.clear()
+		g_tc.clear()
+		while h >= 0:
+			if d_alive[h] != 0:
+				var o := d_owner[h]
+				var k := g_owner.find(o)
+				if k < 0:
+					k = g_owner.size()
+					g_owner.append(o)
+					g_n.append(0)
+					g_str.append(0.0)
+					g_org.append(0.0)
+					g_sup.append(1.0)
+					g_tc.resize(g_tc.size() + 8)
+				g_n[k] += 1
+				g_str[k] += d_str[h]
+				g_org[k] += d_org[h] / maxf(1.0, d_morg[h])
+				g_sup[k] = minf(g_sup[k], d_sup[h])
+				g_tc[k * 8 + clampi(d_tpl[h], 0, 7)] += 1
+			h = d_nx[h]
+		for k in g_owner.size():
+			var main_t := 0
+			for t in range(1, 8):
+				if g_tc[k * 8 + t] > g_tc[k * 8 + main_t]:
+					main_t = t
+			o_prov.append(p)
+			o_owner.append(g_owner[k])
+			o_n.append(g_n[k])
+			o_tpl.append(main_t)
+			o_str.append(g_str[k])
+			o_org.append(g_org[k])
+			o_sup.append(g_sup[k])
+	return [o_prov, o_owner, o_n, o_tpl, o_str, o_org, o_sup]
+
+
 func k_relink() -> PackedInt32Array:
 	if Native.core != null:
 		var r: Array = Native.core.call("relink", d_alive, d_transit, d_prov, d_owner, prov_count, nations.size())
