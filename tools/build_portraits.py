@@ -2,8 +2,10 @@
 """Портреты лидеров и картинки событий из Википедии/Викисклада.
 
 Берётся иллюстрация статьи английской Википедии (файл на Викискладе), его
-лицензия проверяется по метаданным: допускаются общественное достояние, CC0,
-CC BY и CC BY-SA (с указанием автора). Картинки тонируются в сепию, портреты
+лицензия записывается из метаданных. Свободные (общественное достояние, CC0,
+CC BY, CC BY-SA) — как есть; остальные берутся ВРЕМЕННО (решение пользователя:
+черновое оформление) и помечаются "temporary": true — до выпуска заменить.
+Нет иллюстрации в Википедии — запасной источник: Библиотека Конгресса США. Картинки тонируются в сепию, портреты
 обрезаются до 3:4 (240×320), события — до 16:9 (640×360).
 
   python3 tools/build_portraits.py [--only portraits|events] [--force]
@@ -175,9 +177,48 @@ def fit(img: Image.Image, w: int, h: int, top_bias: float) -> Image.Image:
     return img.resize((w, h), Image.LANCZOS)
 
 
+CPATH = os.path.join(ROOT, "assets", "art_credits.json")
+
+
+def save_credits(credits: dict) -> None:
+    with open(CPATH, "w", encoding="utf-8") as fh:
+        json.dump(dict(sorted(credits.items())), fh, ensure_ascii=False, indent=1)
+
+
+def loc_fallback(kind, key, title, out_dir, size, top_bias, credits) -> bool:
+    """Библиотека Конгресса: первая фотография по имени (статья без уточнений)."""
+    q = re.sub(r"\s*\(.*\)", "", title)
+    try:
+        d = get("https://www.loc.gov/pictures/search/?" + urllib.parse.urlencode({"q": q, "fo": "json", "c": 5}))
+    except Exception:
+        return False
+    for r in d.get("results", []):
+        img = r.get("image", {})
+        url = img.get("full") or img.get("square") or img.get("thumb")
+        if not url:
+            continue
+        if url.startswith("//"):
+            url = "https:" + url
+        try:
+            data = get(url, binary=True)
+            pic = Image.open(io.BytesIO(data)).convert("RGB")
+        except Exception:
+            continue
+        pic = sepia(fit(pic, size[0], size[1], top_bias))
+        pic.save(os.path.join(out_dir, key + ".jpg"), quality=84, optimize=True)
+        credits[f"{kind}/{key}"] = {"file": r.get("title", ""), "page": r.get("links", {}).get("item", ""),
+                                    "license": "Библиотека Конгресса США (проверить права)", "artist": r.get("creator", ""),
+                                    "article": title, "temporary": True}
+        save_credits(credits)
+        print(f"  {key}: Библиотека Конгресса — {r.get('title', '')[:60]}", flush=True)
+        return True
+    return False
+
+
 def build(kind: str, table: dict, out_dir: str, size: tuple, top_bias: float, force: bool, credits: dict):
     os.makedirs(out_dir, exist_ok=True)
-    todo = {k: t for k, t in table.items() if force or not os.path.exists(os.path.join(out_dir, k + ".jpg"))}
+    todo = {k: t for k, t in table.items() if force or not os.path.exists(os.path.join(out_dir, k + ".jpg"))
+            or f"{kind}/{k}" not in credits}
     if not todo:
         print(f"{kind}: всё уже есть")
         return
@@ -187,12 +228,12 @@ def build(kind: str, table: dict, out_dir: str, size: tuple, top_bias: float, fo
         f = imgs.get(title)
         info = infos.get(f) if f else None
         if not info:
-            print(f"  {key}: нет иллюстрации у «{title}»")
+            if loc_fallback(kind, key, title, out_dir, size, top_bias, credits):
+                continue
+            print(f"  {key}: нет иллюстрации у «{title}»", flush=True)
             continue
         lic = info["license"]
-        if not OK_LICENSE.search(lic):
-            print(f"  {key}: пропуск — лицензия «{lic}» ({f})")
-            continue
+        temporary = not OK_LICENSE.search(lic)
         try:
             data = get(info["thumb"], binary=True)
         except Exception as e:
@@ -202,9 +243,10 @@ def build(kind: str, table: dict, out_dir: str, size: tuple, top_bias: float, fo
         img = sepia(fit(img, size[0], size[1], top_bias))
         img.save(os.path.join(out_dir, key + ".jpg"), quality=84, optimize=True)
         credits[f"{kind}/{key}"] = {"file": f, "page": info["page"], "license": lic, "artist": info["artist"],
-                                    "article": title}
-        print(f"  {key}: {f} — {lic}")
-        time.sleep(1)
+                                    "article": title, "temporary": temporary}
+        save_credits(credits)
+        print(f"  {key}: {f} — {lic}{' (ВРЕМЕННО)' if temporary else ''}", flush=True)
+        time.sleep(5)
 
 
 def main():
@@ -212,14 +254,13 @@ def main():
     ap.add_argument("--only", choices=["portraits", "events"])
     ap.add_argument("--force", action="store_true")
     a = ap.parse_args()
-    cpath = os.path.join(ROOT, "assets", "art_credits.json")
+    cpath = CPATH
     credits = json.load(open(cpath, encoding="utf-8")) if os.path.exists(cpath) else {}
     if a.only in (None, "portraits"):
         build("portraits", LEADERS, os.path.join(ROOT, "assets", "portraits"), (240, 320), 0.15, a.force, credits)
     if a.only in (None, "events"):
         build("events", EVENTS, os.path.join(ROOT, "assets", "events"), (640, 360), 0.35, a.force, credits)
-    with open(cpath, "w", encoding="utf-8") as fh:
-        json.dump(dict(sorted(credits.items())), fh, ensure_ascii=False, indent=1)
+    save_credits(credits)
     print("готово:", len(credits), "картинок в", cpath)
 
 
