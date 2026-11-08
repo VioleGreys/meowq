@@ -45,3 +45,14 @@ static func map_res() -> int:
 static func set_map_res(r: int) -> void:
 	_load().set_value("graphics", "map_res", clampi(r, 0, 2))
 	_cfg.save(PATH)
+
+
+## Упрощать карту, пока её двигают (быстрее сдвиг на слабом телефоне).
+## По умолчанию: телефон — да, ПК — нет.
+static func motion_lite() -> bool:
+	return bool(_load().get_value("graphics", "motion_lite", OS.has_feature("mobile")))
+
+
+static func set_motion_lite(v: bool) -> void:
+	_load().set_value("graphics", "motion_lite", v)
+	_cfg.save(PATH)

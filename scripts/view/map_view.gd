@@ -30,7 +30,19 @@ var sub_cam: Camera2D
 var view_sprite: Sprite2D
 var res_scale := 1.0
 var _dirty := true
+# Пока карту двигают, она рисуется упрощённо (низкое качество, 50%), а через
+# MOTION_SETTLE после остановки — в выбранном качестве (Settings.map_motion_lite).
+const MOTION_SETTLE := 0.15
+var quality := 2
+var motion_lite := true
+var _moving := 0.0           # сколько ещё считать карту «в движении», с
+var _lite_drawn := false
+var _wheel := false          # масштаб колесом/жестом тачпада — тоже движение     # последний кадр карты нарисован упрощённо
 var redraws := 0             # сколько раз перерисована карта (для замеров)
+var palette_version := 0     # растёт при каждом обновлении палитры (смена владельцев)
+var _pal_ctrl := PackedInt32Array()   # чем покрашена провинция в палитре (политическая карта)
+var _pal_own := PackedInt32Array()
+var _pal_mode := -1
 
 var _touches := {}           # index -> Vector2 (экранные координаты)
 var _gesture_moved := 0.0
@@ -40,6 +52,9 @@ var _pinch_dist := 0.0
 
 func setup(w: World) -> void:
 	world = w
+	_pal_ctrl.clear()
+	_pal_own.clear()
+	_pal_mode = -1
 	for c in get_children():
 		c.queue_free()
 	sprite = Sprite2D.new()
@@ -72,6 +87,7 @@ func setup(w: World) -> void:
 	if not get_viewport().size_changed.is_connected(redraw):
 		get_viewport().size_changed.connect(redraw)
 	res_scale = Settings.RES_SCALES[Settings.map_res()]
+	motion_lite = Settings.motion_lite()
 
 	var rows := int(ceil(world.prov_count / 64.0))
 	ctrl_img = Image.create(64, rows, false, Image.FORMAT_RGBA8)
@@ -147,13 +163,21 @@ func set_res_scale(s: float) -> void:
 	redraw()
 
 
-func _process(_dt: float) -> void:
+func _process(dt: float) -> void:
+	if _moving > 0.0:
+		_moving -= dt
+		if _moving <= 0.0 and _lite_drawn:
+			_dirty = true   # остановились — перерисовать в полном качестве
 	if not _dirty or map_vp == null:
 		return
 	_dirty = false
+	var lite := motion_lite and _moving > 0.0 and (quality > 0 or res_scale > 0.5)
+	_lite_drawn = lite
+	mat.set_shader_parameter("quality", 0 if lite else quality)
+	var rs := 0.5 if lite else res_scale
 	var logical := get_viewport_rect().size
 	var phys := Vector2(get_window().size)
-	var size := Vector2i(maxi(1, int(phys.x * res_scale)), maxi(1, int(phys.y * res_scale)))
+	var size := Vector2i(maxi(1, int(phys.x * rs)), maxi(1, int(phys.y * rs)))
 	if map_vp.size != size:
 		map_vp.size = size
 	var rk := float(size.x) / maxf(1.0, logical.x)  # пикселей буфера на логический
@@ -175,8 +199,9 @@ func gpu_ms() -> Vector2:
 
 ## Качество карты: 0 — низкое, 1 — среднее, 2 — высокое (см. shaders/map.gdshader).
 func set_quality(q: int) -> void:
+	quality = clampi(q, 0, 2)
 	if mat != null:
-		mat.set_shader_parameter("quality", clampi(q, 0, 2))
+		mat.set_shader_parameter("quality", quality)
 		redraw()
 
 
@@ -191,11 +216,29 @@ func set_map_mode(m: int) -> void:
 func update_palette() -> void:
 	if world == null:
 		return
+	# политическая карта: перекрашиваем только провинции со сменой владельца
+	# (полный проход по всем — при смене режима или первом показе)
+	var incremental := map_mode == MapMode.POLITICAL and _pal_mode == MapMode.POLITICAL \
+		and _pal_ctrl.size() == world.prov_count
+	_pal_mode = map_mode
+	if map_mode == MapMode.POLITICAL and _pal_ctrl.size() != world.prov_count:
+		_pal_ctrl.resize(world.prov_count)
+		_pal_own.resize(world.prov_count)
 	var max_ind := 1
 	if map_mode == MapMode.INDUSTRY:
 		for p in world.prov_count:
 			max_ind = maxi(max_ind, world.p_civ[p] + world.p_mil[p])
+	var pc := world.p_controller
+	var po := world.p_owner
+	var changed := 0
 	for p in world.prov_count:
+		if incremental:
+			if _pal_ctrl[p] == pc[p] and _pal_own[p] == po[p]:
+				continue
+		changed += 1
+		if map_mode == MapMode.POLITICAL:
+			_pal_ctrl[p] = pc[p]
+			_pal_own[p] = po[p]
 		var x := p % 64
 		var y := p / 64
 		if world.p_land[p] == 0:
@@ -236,9 +279,12 @@ func update_palette() -> void:
 		var oc: Color = world.nations[o].color
 		oc.a = (o + 1) / 255.0
 		owner_img.set_pixel(x, y, oc)
+	world.palette_dirty = false
+	if changed == 0:
+		return   # владельцы не менялись — ни текстуры, ни перерисовки
 	ctrl_tex.update(ctrl_img)
 	owner_tex.update(owner_img)
-	world.palette_dirty = false
+	palette_version += 1
 	redraw()
 
 
@@ -290,6 +336,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		_zoom_at(event.position, event.factor)
 	elif event is InputEventPanGesture:
 		camera.position += event.delta * 8.0 / camera.zoom.x
+		_wheel = true
 		_on_view_changed()
 
 
@@ -304,6 +351,7 @@ func _pinch_center() -> Vector2:
 
 
 func _zoom_at(screen_pos: Vector2, factor: float) -> void:
+	_wheel = true
 	var before := screen_to_world(screen_pos)
 	camera.zoom = Vector2.ONE * clampf(camera.zoom.x * factor, MIN_ZOOM, MAX_ZOOM)
 	camera.force_update_scroll()
@@ -327,5 +375,8 @@ func _on_view_changed() -> void:
 	var hi := Vector2(maxf(ws.x - half.x, ws.x * 0.5), maxf(ws.y - half.y, ws.y * 0.5))
 	camera.position = camera.position.clamp(lo, hi)
 	mat.set_shader_parameter("zoom", camera.zoom.x)
+	if not _touches.is_empty() or _wheel:
+		_moving = MOTION_SETTLE
+	_wheel = false
 	redraw()
 	view_changed.emit()

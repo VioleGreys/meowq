@@ -21,6 +21,7 @@ var label_font: Font   # подписи стран — Oswald с разрядк�
 var items: Array = []           # список отрисовки: [тип, данные...]
 var _labels: Array = []         # [мировая позиция, имя, размер, ширина]
 var _labels_day := -1
+var _labels_pv := -1
 
 
 
@@ -104,24 +105,61 @@ func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
 		items = out
 		_dirty = true
 		return
-	if _labels_day < 0 or world.day - _labels_day >= 5 or world.day < _labels_day:
+	# подписи стран пересчитываются (заливка по провинциям) только когда менялись
+	# владельцы — не чаще раза в 5 дней
+	var pv := map.palette_version if map != null else 0
+	if _labels_day < 0 or world.day < _labels_day or (pv != _labels_pv and world.day - _labels_day >= 5):
+		_labels_pv = pv
 		_rebuild_labels()
 	for l in _labels:
 		out.append([LABEL, l[0], l[1], l[2], l[3]])
+	# Читаем плоские массивы дивизий напрямую (свойства Division — обёртки с
+	# вызовом на каждое чтение; список пересобирается каждый игровой день).
 	var sel := {}
 	for d in selected:
-		sel[d] = true
-	# стрелки движения
-	for d in world.divisions:
-		if not d.alive or d.path.is_empty() or d.transit_days > 0:
+		if d.alive and d.slot >= 0:
+			sel[d.slot] = d
+	var divs: Array = world.divisions
+	var n_div := divs.size()
+	var a_alive := world.d_alive
+	var a_owner := world.d_owner
+	var a_prov := world.d_prov
+	var a_next := world.d_next
+	var a_transit := world.d_transit
+	var a_prog := world.d_prog
+	var a_battle := world.d_battle
+	var a_str := world.d_str
+	var a_org := world.d_org
+	var a_morg := world.d_morg
+	var a_sup := world.d_sup
+	var a_tpl := world.d_tpl
+	var centers := world.p_center
+	var nat_cols: Array = []
+	var arrow_cols: Array = []
+	for nn in world.nations:
+		nat_cols.append(nn.color)
+		arrow_cols.append(Color(nn.color.darkened(0.5), 0.7))
+	var sc := MapView.SCALE
+	# стрелки движения и бои
+	var battle_provs := {}
+	for i in n_div:
+		if a_alive[i] == 0 or a_next[i] < 0 or a_transit[i] > 0:
 			continue
-		var is_sel: bool = sel.has(d)
-		var pts := PackedVector2Array([_wp(d.prov)])
-		var limit: int = d.path.size() if is_sel else 1
-		for i in limit:
-			pts.append(_wp(d.path[i]))
-		var col := Color(1, 1, 1, 0.85) if is_sel else Color(world.nations[d.owner].color.darkened(0.5), 0.7)
-		out.append([ARROW, pts, col, is_sel, clampf(d.progress, 0.0, 1.0), d.owner == player])
+		var nx := a_next[i]
+		if a_battle[i] != 0:
+			battle_provs[nx] = true
+		var pts := PackedVector2Array([centers[a_prov[i]] * sc])
+		var col: Color
+		var is_sel := sel.has(i)
+		if is_sel:
+			var path: PackedInt32Array = divs[i].path
+			for q in path:
+				pts.append(centers[q] * sc)
+			col = Color(1, 1, 1, 0.85)
+		else:
+			pts.append(centers[nx] * sc)
+			col = arrow_cols[a_owner[i]]
+		out.append([ARROW, pts, col, is_sel, clampf(a_prog[i], 0.0, 1.0), a_owner[i] == player])
 	# фронты и цели армий игрока
 	for g in world.groups:
 		if not g.alive or g.owner != player:
@@ -131,54 +169,72 @@ func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
 			out.append([FRONT, _wp(fp[i]), _wp(fp[i + 1]), g.color])
 		if g.objective >= 0 and g.mode == "attack":
 			out.append([OBJECTIVE, _wp(g.objective), g.color])
-	# бои
-	var battle_provs := {}
-	for d in world.divisions:
-		if d.alive and d.in_battle and not d.path.is_empty() and d.transit_days <= 0:
-			battle_provs[d.path[0]] = true
 	for p in battle_provs:
 		out.append([BATTLE, _wp(p)])
 	_has_battles = not battle_provs.is_empty()
-	# фишки: по одной на (провинция, страна)
+	# фишки: по одной на (провинция, страна); стопка — подряд идущие в списке
+	# провинции дивизии одной страны собираются по владельцу
+	var head := world.pl_head
+	var nxt := world.d_nx
+	var g_owner := PackedInt32Array()
+	var g_n := PackedInt32Array()
+	var g_str := PackedFloat64Array()
+	var g_org := PackedFloat64Array()
+	var g_sup := PackedFloat64Array()
+	var g_sel := PackedByteArray()
+	var g_tplc: Array = []
+	var g_grp: Array = []
 	for p in world.prov_count:
-		if world.pl_head[p] < 0:
+		var h := head[p]
+		if h < 0:
 			continue
-		var list: Array = world.divs_in(p)
-		var groups := {}
-		var order: Array = []
-		for d in list:
-			if d.alive:
-				if not groups.has(d.owner):
-					groups[d.owner] = []
-					order.append(d.owner)
-				groups[d.owner].append(d)
-		var k := 0
-		for owner in order:
-			var g: Array = groups[owner]
-			var any_sel := false
-			var tpl_count := {}
-			var min_supply := 1.0
-			var grp_color := Color(0, 0, 0, 0)
-			var str_sum := 0.0
-			var org_sum := 0.0
-			for d in g:
-				str_sum += d.strength
-				org_sum += d.org / maxf(1.0, d.max_org)
-				tpl_count[d.tpl] = int(tpl_count.get(d.tpl, 0)) + 1
-				min_supply = minf(min_supply, d.supply)
-				if d.group >= 0 and grp_color.a == 0.0 and owner == player:
-					grp_color = world.groups[d.group].color
-				if sel.has(d):
-					any_sel = true
+		g_owner.clear()
+		g_n.clear()
+		g_str.clear()
+		g_org.clear()
+		g_sup.clear()
+		g_sel.clear()
+		g_tplc.clear()
+		g_grp.clear()
+		while h >= 0:
+			if a_alive[h] != 0:
+				var o := a_owner[h]
+				var k := g_owner.find(o)
+				if k < 0:
+					k = g_owner.size()
+					g_owner.append(o)
+					g_n.append(0)
+					g_str.append(0.0)
+					g_org.append(0.0)
+					g_sup.append(1.0)
+					g_sel.append(0)
+					g_tplc.append(PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0]))
+					g_grp.append(Color(0, 0, 0, 0))
+				g_n[k] += 1
+				g_str[k] += a_str[h]
+				g_org[k] += a_org[h] / maxf(1.0, a_morg[h])
+				g_sup[k] = minf(g_sup[k], a_sup[h])
+				var tc: PackedInt32Array = g_tplc[k]
+				tc[clampi(a_tpl[h], 0, 7)] += 1
+				g_tplc[k] = tc
+				if o == player:
+					var gc: Color = g_grp[k]
+					if gc.a == 0.0:
+						var grp: int = divs[h].group
+						if grp >= 0:
+							g_grp[k] = world.groups[grp].color
+				if sel.has(h):
+					g_sel[k] = 1
+			h = nxt[h]
+		for k in g_owner.size():
+			var tc: PackedInt32Array = g_tplc[k]
 			var main_tpl := 0
-			var best := -1
-			for t in tpl_count:
-				if tpl_count[t] > best:
-					best = tpl_count[t]
+			for t in 8:
+				if tc[t] > tc[main_tpl]:
 					main_tpl = t
-			out.append([COUNTER, _wp(p), k, world.nations[owner].color, g.size(), main_tpl,
-				str_sum / (100.0 * g.size()), org_sum / g.size(), any_sel, grp_color, min_supply < 0.3, owner == player])
-			k += 1
+			var n := g_n[k]
+			out.append([COUNTER, centers[p] * sc, k, nat_cols[g_owner[k]], n, main_tpl,
+				g_str[k] / (100.0 * n), g_org[k] / n, g_sel[k] == 1, g_grp[k], g_sup[k] < 0.3, g_owner[k] == player])
 	_rebuild_navy_air(out, sel_fleet, sel_wing)
 	items = out
 	_dirty = true
@@ -200,10 +256,15 @@ func _rebuild_navy_air(out: Array, sel_fleet: int, sel_wing: int) -> void:
 	for plan in world.invasions:
 		if plan.alive and plan.owner == player:
 			out.append([PLAN, _wp(plan.port), _wp(plan.target), plan.days_left])
-	for d in world.divisions:
-		if d.alive and d.transit_days > 0:
-			var t := 1.0 - float(d.transit_days) / maxf(1.0, d.transit_total)
-			out.append([TRANSIT, _wp(d.transit_from), _wp(d.transit_target), t, world.nations[d.owner].color, d.owner == player])
+	var a_alive := world.d_alive
+	var a_transit := world.d_transit
+	var a_owner := world.d_owner
+	var divs: Array = world.divisions
+	for i in divs.size():
+		if a_alive[i] != 0 and a_transit[i] > 0:
+			var d: World.Division = divs[i]
+			var t := 1.0 - float(a_transit[i]) / maxf(1.0, d.transit_total)
+			out.append([TRANSIT, _wp(d.transit_from), _wp(d.transit_target), t, world.nations[a_owner[i]].color, a_owner[i] == player])
 	# флоты
 	for f in world.fleets:
 		if not f.alive or f.zone < 0:
@@ -421,28 +482,44 @@ func _rebuild_labels() -> void:
 	var comp := PackedInt32Array()
 	comp.resize(world.prov_count)
 	comp.fill(-1)
-	var best := {}   # нация -> [пиксели, сумма центров, мин, макс]
+	var pc := world.p_controller
+	var land := world.p_land
+	var pix := world.p_pixels
+	var cen := world.p_center
+	var a_s := world.adj_start
+	var a_l := world.adj_list
+	var caps := PackedInt32Array()
+	for nn in world.nations:
+		caps.append(nn.capital)
+	var stack := PackedInt32Array()
+	var best := {}   # нация -> [пиксели, сумма центров, мин, макс, счёт]
 	for p in world.prov_count:
-		var c := world.p_controller[p]
-		if c < 0 or world.p_land[p] == 0 or comp[p] >= 0:
+		var c := pc[p]
+		if c < 0 or land[p] == 0 or comp[p] >= 0:
 			continue
 		comp[p] = p
-		var stack := [p]
+		stack.clear()
+		stack.append(p)
 		var px := 0
 		var sum := Vector2.ZERO
 		var lo := Vector2(INF, INF)
 		var hi := Vector2(-INF, -INF)
 		var has_cap := false
+		var cap := caps[c]
 		while not stack.is_empty():
-			var q: int = stack.pop_back()
-			if q == world.nations[c].capital:
+			var q := stack[stack.size() - 1]
+			stack.resize(stack.size() - 1)
+			if q == cap:
 				has_cap = true
-			px += world.p_pixels[q]
-			sum += world.p_center[q] * world.p_pixels[q]
-			lo = lo.min(world.p_center[q])
-			hi = hi.max(world.p_center[q])
-			for r in world.p_adj[q]:
-				if comp[r] < 0 and world.p_land[r] == 1 and world.p_controller[r] == c:
+			var w := pix[q]
+			var cq := cen[q]
+			px += w
+			sum += cq * w
+			lo = lo.min(cq)
+			hi = hi.max(cq)
+			for k in range(a_s[q], a_s[q + 1]):
+				var r := a_l[k]
+				if comp[r] < 0 and land[r] == 1 and pc[r] == c:
 					comp[r] = p
 					stack.append(r)
 		var score := px + (1 << 30 if has_cap else 0)

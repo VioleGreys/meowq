@@ -133,6 +133,10 @@ func _bench_realtime(seconds: float) -> void:
 	print("BENCH_RT: %.1f с, дней %d (%.1f дн/с), кадров %d, средний кадр %.2f мс, худший %.2f мс, ядер %d" % [
 		seconds, days, days / seconds, frames, total / 1000.0 / maxi(1, frames), worst / 1000.0, Parallel.thread_count()])
 	print("  интерфейс: обновлений %d (%.1f в с), самая долгая пауза %.0f мс" % [_ui_count, _ui_count / seconds, _ui_gap_max / 1000.0])
+	print("  палитра обновлялась %d раз" % map_view.palette_version)
+	var names := ["панели дня", "палитра", "список фишек", "верхняя строка"]
+	for i in 4:
+		print("  %s: всего %.0f мс за прогон, худшее %.1f мс" % [names[i], ui_prof_sum[i] / 1000.0, ui_prof_max[i] / 1000.0])
 	speed = 0
 	_shutdown()
 	get_tree().quit()
@@ -427,16 +431,47 @@ func _ui_update() -> void:
 			_accum = 0.0
 			hud.open_tab("peace")
 	var new_day := ticks_done != _ticks_seen
+	var t0 := Time.get_ticks_usec()
 	if new_day:
 		_ticks_seen = ticks_done
 		_prune_selection()
 		hud.on_tick()
+	var t1 := Time.get_ticks_usec()
 	if world.palette_dirty:
 		map_view.update_palette()
+	var t2 := Time.get_ticks_usec()
 	if new_day or _layer_dirty:
 		unit_layer.rebuild(selected_fleet, selected_wing)
 		_layer_dirty = false
+	var t3 := Time.get_ticks_usec()
 	hud.refresh_top()
+	var t4 := Time.get_ticks_usec()
+	_ui_prof_note(0, t1 - t0)
+	_ui_prof_note(1, t2 - t1)
+	_ui_prof_note(2, t3 - t2)
+	_ui_prof_note(3, t4 - t3)
+
+
+# Худшее время участков обновления интерфейса за последнюю секунду (мкс):
+# панели дня, палитра карты, список фишек, верхняя строка — для нижней строки.
+var ui_prof := PackedInt32Array([0, 0, 0, 0])
+var _ui_prof_cur := PackedInt32Array([0, 0, 0, 0])
+var _ui_prof_msec := 0
+
+
+var ui_prof_sum := PackedInt64Array([0, 0, 0, 0])
+var ui_prof_max := PackedInt32Array([0, 0, 0, 0])
+
+
+func _ui_prof_note(i: int, usec: int) -> void:
+	_ui_prof_cur[i] = maxi(_ui_prof_cur[i], usec)
+	ui_prof_sum[i] += usec
+	ui_prof_max[i] = maxi(ui_prof_max[i], usec)
+	var now := Time.get_ticks_msec()
+	if i == 3 and now - _ui_prof_msec >= 1000:
+		_ui_prof_msec = now
+		ui_prof = _ui_prof_cur.duplicate()
+		_ui_prof_cur.fill(0)
 
 
 func _prune_selection() -> void:

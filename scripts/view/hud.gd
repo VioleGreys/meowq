@@ -377,9 +377,10 @@ func refresh_top() -> void:
 	if OS.has_feature("mobile"):
 		phases = ""   # на телефоне без фаз — они закрывали бы карту
 	var gpu: Vector2 = game.map_view.gpu_ms()
-	phases += "\nкадр: логика %.1f · фишки %.1f · ГП карта %.1f · ГП экран %.1f мс · карта %d раз/с" % [
+	phases += "\nкадр: логика %.1f · фишки %.1f · ГП карта %.1f · ГП экран %.1f мс · карта %d раз/с\nдень (макс. за с): панели %.1f · палитра %.1f · список %.1f · строка %.1f мс" % [
 		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, game.unit_layer.draw_usec / 1000.0,
-		gpu.x, gpu.y, _redraw_rate()]
+		gpu.x, gpu.y, _redraw_rate(), game.ui_prof[0] / 1000.0, game.ui_prof[1] / 1000.0,
+		game.ui_prof[2] / 1000.0, game.ui_prof[3] / 1000.0]
 	perf_label.text = "%s\n%d FPS · %s · ядер %d · %.1f дн/с · тик %.2f мс" % [phases.strip_edges(), Engine.get_frames_per_second(), "C++" if Native.available() else "GDScript", Parallel.thread_count(), game.days_per_sec, game.sim.last_tick_usec / 1000.0]
 	if _toast_t > 0.0:
 		_toast_t -= get_process_delta_time()
@@ -1072,6 +1073,14 @@ func _build_navy(w: World, me: int) -> void:
 		b.add_theme_font_size_override("font_size", 14)
 		row2.add_child(b)
 	popup_body.add_child(row2)
+	var lite := CheckButton.new()
+	lite.text = "Упрощать карту при сдвиге и масштабе"
+	lite.button_pressed = Settings.motion_lite()
+	lite.toggled.connect(func(v: bool):
+		Settings.set_motion_lite(v)
+		game.map_view.motion_lite = v)
+	popup_body.add_child(lite)
+	popup_body.add_child(_label("Пока карту двигают, она рисуется в низком качестве, после остановки — в выбранном.", 15, Color(0.75, 0.75, 0.7)))
 	popup_body.add_child(_section("Морские высадки"))
 	var plans := 0
 	for plan in w.invasions:
@@ -1245,3 +1254,11 @@ func _build_settings() -> void:
 		b2.set_pressed_no_signal(r == cur_r)
 		row2.add_child(b2)
 	popup_body.add_child(row2)
+	var lite := CheckButton.new()
+	lite.text = "Упрощать карту при сдвиге и масштабе"
+	lite.button_pressed = Settings.motion_lite()
+	lite.toggled.connect(func(v: bool):
+		Settings.set_motion_lite(v)
+		game.map_view.motion_lite = v)
+	popup_body.add_child(lite)
+	popup_body.add_child(_label("Пока карту двигают, она рисуется в низком качестве, после остановки — в выбранном.", 15, Color(0.75, 0.75, 0.7)))
