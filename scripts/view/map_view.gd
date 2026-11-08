@@ -22,6 +22,15 @@ var owner_img: Image
 var ctrl_tex: ImageTexture
 var owner_tex: ImageTexture
 var map_mode := MapMode.POLITICAL
+# Карта рисуется во внутренний буфер (SubViewport) и только при изменениях:
+# сдвиг, масштаб, новый день (палитра), выбор. В остальные кадры экран
+# просто показывает готовую картинку — шейдер не пересчитывает каждый пиксель.
+var map_vp: SubViewport
+var sub_cam: Camera2D
+var view_sprite: Sprite2D
+var res_scale := 1.0
+var _dirty := true
+var redraws := 0             # сколько раз перерисована карта (для замеров)
 
 var _touches := {}           # index -> Vector2 (экранные координаты)
 var _gesture_moved := 0.0
@@ -41,7 +50,28 @@ func setup(w: World) -> void:
 	mat = ShaderMaterial.new()
 	mat.shader = load("res://shaders/map.gdshader")
 	sprite.material = mat
-	add_child(sprite)
+	map_vp = SubViewport.new()
+	map_vp.disable_3d = true
+	map_vp.transparent_bg = false
+	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	add_child(map_vp)
+	map_vp.add_child(sprite)
+	sub_cam = Camera2D.new()
+	map_vp.add_child(sub_cam)
+	sub_cam.make_current()
+	var layer := CanvasLayer.new()
+	layer.layer = -1
+	add_child(layer)
+	view_sprite = Sprite2D.new()
+	view_sprite.centered = false
+	view_sprite.texture = map_vp.get_texture()
+	view_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	layer.add_child(view_sprite)
+	RenderingServer.viewport_set_measure_render_time(map_vp.get_viewport_rid(), true)
+	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
+	if not get_viewport().size_changed.is_connected(redraw):
+		get_viewport().size_changed.connect(redraw)
+	res_scale = Settings.RES_SCALES[Settings.map_res()]
 
 	var rows := int(ceil(world.prov_count / 64.0))
 	ctrl_img = Image.create(64, rows, false, Image.FORMAT_RGBA8)
@@ -98,16 +128,56 @@ func center_on(p: int) -> void:
 
 func set_selected(prov: int) -> void:
 	mat.set_shader_parameter("selected_id", prov)
+	redraw()
 
 
 func set_highlight_nation(n: int) -> void:
 	mat.set_shader_parameter("highlight_nation", n)
+	redraw()
+
+
+## Перерисовать карту в ближайшем кадре.
+func redraw() -> void:
+	_dirty = true
+
+
+## Разрешение буфера карты: доля пикселей экрана (0.5–1).
+func set_res_scale(s: float) -> void:
+	res_scale = clampf(s, 0.25, 1.0)
+	redraw()
+
+
+func _process(_dt: float) -> void:
+	if not _dirty or map_vp == null:
+		return
+	_dirty = false
+	var logical := get_viewport_rect().size
+	var phys := Vector2(get_window().size)
+	var size := Vector2i(maxi(1, int(phys.x * res_scale)), maxi(1, int(phys.y * res_scale)))
+	if map_vp.size != size:
+		map_vp.size = size
+	var rk := float(size.x) / maxf(1.0, logical.x)  # пикселей буфера на логический
+	sub_cam.position = camera.position
+	sub_cam.zoom = camera.zoom * rk
+	view_sprite.scale = logical / Vector2(size)
+	mat.set_shader_parameter("res_k", rk)
+	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	redraws += 1
+
+
+## Время отрисовки последнего кадра на видеокарте (мс): карта и весь экран.
+func gpu_ms() -> Vector2:
+	if map_vp == null:
+		return Vector2.ZERO
+	return Vector2(RenderingServer.viewport_get_measured_render_time_gpu(map_vp.get_viewport_rid()),
+		RenderingServer.viewport_get_measured_render_time_gpu(get_viewport().get_viewport_rid()))
 
 
 ## Качество карты: 0 — низкое, 1 — среднее, 2 — высокое (см. shaders/map.gdshader).
 func set_quality(q: int) -> void:
 	if mat != null:
 		mat.set_shader_parameter("quality", clampi(q, 0, 2))
+		redraw()
 
 
 func set_map_mode(m: int) -> void:
@@ -115,6 +185,7 @@ func set_map_mode(m: int) -> void:
 	mat.set_shader_parameter("show_occupation", m == MapMode.POLITICAL)
 	mat.set_shader_parameter("terrain_mode", m == MapMode.TERRAIN)
 	update_palette()
+	redraw()
 
 
 func update_palette() -> void:
@@ -168,6 +239,7 @@ func update_palette() -> void:
 	ctrl_tex.update(ctrl_img)
 	owner_tex.update(owner_img)
 	world.palette_dirty = false
+	redraw()
 
 
 
@@ -255,4 +327,5 @@ func _on_view_changed() -> void:
 	var hi := Vector2(maxf(ws.x - half.x, ws.x * 0.5), maxf(ws.y - half.y, ws.y * 0.5))
 	camera.position = camera.position.clamp(lo, hi)
 	mat.set_shader_parameter("zoom", camera.zoom.x)
+	redraw()
 	view_changed.emit()

@@ -375,11 +375,30 @@ func refresh_top() -> void:
 	for k in game.sim.phase_usec:
 		phases += " %s %.1f" % [k, game.sim.phase_usec[k] / 1000.0]
 	if OS.has_feature("mobile"):
-		phases = ""   # на телефоне только главное — фазы закрывали бы карту
+		phases = ""   # на телефоне без фаз — они закрывали бы карту
+	var gpu: Vector2 = game.map_view.gpu_ms()
+	phases += "\nкадр: логика %.1f · фишки %.1f · ГП карта %.1f · ГП экран %.1f мс · карта %d раз/с" % [
+		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, game.unit_layer.draw_usec / 1000.0,
+		gpu.x, gpu.y, _redraw_rate()]
 	perf_label.text = "%s\n%d FPS · %s · ядер %d · %.1f дн/с · тик %.2f мс" % [phases.strip_edges(), Engine.get_frames_per_second(), "C++" if Native.available() else "GDScript", Parallel.thread_count(), game.days_per_sec, game.sim.last_tick_usec / 1000.0]
 	if _toast_t > 0.0:
 		_toast_t -= get_process_delta_time()
 		toast_label.modulate.a = clampf(_toast_t, 0.0, 1.0)
+
+
+var _rd_last := 0
+var _rd_time := 0
+var _rd_rate := 0
+
+
+## Сколько раз в секунду перерисовывается карта (для нижней строки).
+func _redraw_rate() -> int:
+	var now := Time.get_ticks_msec()
+	if now - _rd_time >= 1000:
+		_rd_rate = int((game.map_view.redraws - _rd_last) * 1000.0 / maxf(1.0, now - _rd_time))
+		_rd_last = game.map_view.redraws
+		_rd_time = now
+	return _rd_rate
 
 
 func on_tick() -> void:
@@ -1210,3 +1229,19 @@ func _build_settings() -> void:
 		b.set_pressed_no_signal(q == cur)   # выбранное — «нажатая» латунная кнопка
 		row.add_child(b)
 	popup_body.add_child(row)
+	popup_body.add_child(_label("Разрешение карты", 20))
+	popup_body.add_child(_label("Ниже разрешение — быстрее сдвиг и масштаб на слабом телефоне; границы чуть мягче, надписи и фишки остаются чёткими.", 15, Color(0.75, 0.75, 0.7)))
+	var row2 := HBoxContainer.new()
+	row2.add_theme_constant_override("separation", 8)
+	var cur_r := Settings.map_res()
+	for r in 3:
+		var rr := r
+		var b2 := _button(Settings.RES_NAMES[r], func():
+			Settings.set_map_res(rr)
+			game.map_view.set_res_scale(Settings.RES_SCALES[rr])
+			_rebuild_popup(), Vector2(0, 52))
+		b2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b2.toggle_mode = true
+		b2.set_pressed_no_signal(r == cur_r)
+		row2.add_child(b2)
+	popup_body.add_child(row2)

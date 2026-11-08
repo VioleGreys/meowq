@@ -23,20 +23,74 @@ var _labels: Array = []         # [мировая позиция, имя, раз
 var _labels_day := -1
 
 
-var _sb := StyleBoxFlat.new()   # скруглённые сглаженные плашки фишек (рисуются сразу)
+
+# Готовые текстуры фишки (рисуются один раз при запуске, в 3× размере):
+# плашка — белая заливка с тёмной каймой (окрашивается цветом страны), обводка
+# выделения, тень, круглый знак. Одна текстура вместо 6–8 сглаженных фигур.
+const TEX_K := 3
+var _t_plate: Texture2D
+var _t_sel: Texture2D
+var _t_shadow: Texture2D
+var _t_badge: Texture2D
+var _t_bars: Texture2D
 
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-	_sb.anti_aliasing = true
-	_sb.anti_aliasing_size = 0.8
 	font = UiStyle.text_font()
 	bold = UiStyle.bold_font()
 	label_font = UiStyle.title_font(500, 3)
+	var cw := 40 * TEX_K
+	var ch := 22 * TEX_K
+	var r := ch * 0.5
+	_t_plate = _rr_tex(cw, ch, r, TEX_K * 1.0, Color(1, 1, 1), Color(0.06, 0.06, 0.06, 0.9), 0.0)
+	_t_sel = _rr_tex(cw, ch, r, TEX_K * 2.0, Color(1, 1, 1, 0), Color(1, 1, 1), 0.0)
+	_t_shadow = _rr_tex(cw, ch, r, 0.0, Color(0, 0, 0, 0.35), Color(0, 0, 0, 0.35), TEX_K * 1.5)
+	_t_badge = _rr_tex(ch, ch, r, TEX_K * 1.0, Color(1, 1, 1), Color(0.06, 0.06, 0.06, 0.6), 0.0)
+	_t_bars = _rr_tex(cw, 7 * TEX_K, 2.0 * TEX_K, 0.0, Color(0, 0, 0, 0.55), Color(0, 0, 0, 0.55), 0.0)
+
+
+## Скруглённый прямоугольник в текстуру: заливка, кайма шириной bw, мягкость
+## края soft (для тени). Сглаживание — по расстоянию до края.
+static func _rr_tex(w: int, h: int, rad: float, bw: float, fill: Color, border: Color, soft: float) -> Texture2D:
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	var half := Vector2(w, h) * 0.5
+	var inner := half - Vector2(rad, rad)
+	for y in h:
+		for x in w:
+			var q := (Vector2(x + 0.5, y + 0.5) - half).abs() - inner
+			var d := Vector2(maxf(q.x, 0.0), maxf(q.y, 0.0)).length() + minf(maxf(q.x, q.y), 0.0) - rad
+			var a := clampf(0.5 - d / maxf(1.0, soft), 0.0, 1.0) if soft > 0.0 else clampf(0.5 - d, 0.0, 1.0)
+			var c := fill
+			if bw > 0.0:
+				c = fill.lerp(border, clampf(d + bw + 0.5, 0.0, 1.0))
+			img.set_pixel(x, y, Color(c.r, c.g, c.b, c.a * a))
+	img.generate_mipmaps()
+	return ImageTexture.create_from_image(img)
+
+
+# Слой перерисовывается только при изменениях: сдвиг/масштаб карты, новый
+# список отрисовки; бои пульсируют — тогда не чаще 12 раз в секунду.
+var _dirty := true
+var _last_xf := Transform2D()
+var _has_battles := false
+var _anim_msec := 0
 
 
 func _process(_dt: float) -> void:
-	queue_redraw()
+	var xf := get_viewport().get_canvas_transform()
+	if map != null and map.camera != null:
+		xf = map.get_viewport().get_canvas_transform()
+	var now := Time.get_ticks_msec()
+	if xf != _last_xf:
+		_last_xf = xf
+		_dirty = true
+	elif _has_battles and now - _anim_msec >= 80:
+		_dirty = true
+	if _dirty:
+		_dirty = false
+		_anim_msec = now
+		queue_redraw()
 
 
 func _wp(p: int) -> Vector2:
@@ -48,6 +102,7 @@ func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
 	var out: Array = []
 	if world == null:
 		items = out
+		_dirty = true
 		return
 	if _labels_day < 0 or world.day - _labels_day >= 5 or world.day < _labels_day:
 		_rebuild_labels()
@@ -83,6 +138,7 @@ func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
 			battle_provs[d.path[0]] = true
 	for p in battle_provs:
 		out.append([BATTLE, _wp(p)])
+	_has_battles = not battle_provs.is_empty()
 	# фишки: по одной на (провинция, страна)
 	for p in world.prov_count:
 		if world.pl_head[p] < 0:
@@ -125,6 +181,7 @@ func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
 			k += 1
 	_rebuild_navy_air(out, sel_fleet, sel_wing)
 	items = out
+	_dirty = true
 
 
 func _rebuild_navy_air(out: Array, sel_fleet: int, sel_wing: int) -> void:
@@ -178,9 +235,13 @@ func _rebuild_navy_air(out: Array, sel_fleet: int, sel_wing: int) -> void:
 			g[2], g[4], int(g[3]), mine])
 
 
+var draw_usec := 0   # время последней отрисовки слоя (для нижней строки)
+
+
 func _draw() -> void:
 	if map == null:
 		return
+	var t0 := Time.get_ticks_usec()
 	var z := map.zoom_level()
 	var vp := get_viewport_rect().size
 	var screen := Rect2(Vector2.ZERO, vp).grow(40)
@@ -286,6 +347,7 @@ func _draw() -> void:
 				_plane_icon(c, it[2], it[3], it[4])
 				draw_string_outline(font, c + Vector2(14, 5), str(it[5]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, 3, Color.BLACK)
 				draw_string(font, c + Vector2(14, 5), str(it[5]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+	draw_usec = Time.get_ticks_usec() - t0
 
 
 func _draw_counter(it: Array, z: float, counter: Vector2, font_size: int, screen: Rect2) -> void:
@@ -302,21 +364,21 @@ func _draw_counter(it: Array, z: float, counter: Vector2, font_size: int, screen
 	var any_sel: bool = it[8]
 	var rect := Rect2(pos, counter)
 	var rad := int(counter.y * 0.5)
-	# тень
-	_rrect(Rect2(pos + Vector2(1.5, 2.5), counter), Color(0, 0, 0, 0.35), rad)
-	# плашка: цвет страны, справа — число дивизий; слева — круглый знак рода войск
-	_rrect(rect, nat_col.darkened(0.12), rad, Color.WHITE if any_sel else Color(0.06, 0.06, 0.06, 0.85), 2 if any_sel else 1)
+	# тень, плашка цвета страны с тёмной каймой, обводка выделения, круглый знак
+	draw_texture_rect(_t_shadow, Rect2(pos + Vector2(1.5, 2.5), counter), false)
+	draw_texture_rect(_t_plate, rect, false, nat_col.darkened(0.12))
+	if any_sel:
+		draw_texture_rect(_t_sel, rect, false)
 	var badge_r := counter.y * 0.5 - 1.5
 	var bc := pos + Vector2(badge_r + 1.5, counter.y * 0.5)
-	draw_circle(bc, badge_r, nat_col.lightened(0.45), true, -1.0, true)
-	draw_arc(bc, badge_r, 0, TAU, 24, Color(0.06, 0.06, 0.06, 0.6), 1.0, true)
+	draw_texture_rect(_t_badge, Rect2(bc - Vector2(badge_r, badge_r), Vector2(badge_r, badge_r) * 2.0), false, nat_col.lightened(0.45))
 	_draw_icon(Rect2(bc - Vector2(badge_r, badge_r) * 0.82, Vector2(badge_r, badge_r) * 1.64), it[5], Color(0.1, 0.09, 0.08))
 	var tx := bc.x + badge_r + 1.0
 	draw_string(bold, Vector2(tx, pos.y + counter.y * 0.5 + font_size * 0.36), str(it[4]),
 		HORIZONTAL_ALIGNMENT_CENTER, pos.x + counter.x - tx - 2.0, font_size, Color(0.97, 0.95, 0.9))
 	var grp: Color = it[9]
 	if grp.a > 0.0:
-		_rrect(Rect2(pos + Vector2(rad * 0.6, -4), Vector2(counter.x - rad * 1.2, 3)), grp, 1)
+		draw_rect(Rect2(pos + Vector2(rad * 0.6, -4), Vector2(counter.x - rad * 1.2, 3)), grp)
 	if it[10]:
 		# нет снабжения: красный восклицательный знак
 		var c2 := pos + Vector2(counter.x + 5, 3)
@@ -325,20 +387,11 @@ func _draw_counter(it: Array, z: float, counter: Vector2, font_size: int, screen
 	# полоски под плашкой: зелёная — сила, жёлтая — организация (со скруглёнными краями)
 	var bx := pos.x + rad * 0.5
 	var bw := counter.x - rad
-	_rrect(Rect2(bx - 1, pos.y + counter.y + 1, bw + 2, 7), Color(0, 0, 0, 0.55), 2)
+	draw_texture_rect(_t_bars, Rect2(bx - 1, pos.y + counter.y + 1, bw + 2, 7), false)
 	if it[6] > 0.02:
-		_rrect(Rect2(bx, pos.y + counter.y + 2, bw * it[6], 2.5), Color(0.40, 0.85, 0.38), 1)
+		draw_rect(Rect2(bx, pos.y + counter.y + 2, bw * it[6], 2.5), Color(0.40, 0.85, 0.38))
 	if it[7] > 0.02:
-		_rrect(Rect2(bx, pos.y + counter.y + 5, bw * it[7], 2.5), Color(0.96, 0.80, 0.30), 1)
-
-
-## Скруглённый прямоугольник со сглаживанием (StyleBoxFlat рисуется сразу).
-func _rrect(r: Rect2, fill: Color, radius: int, border := Color(0, 0, 0, 0), bw := 0) -> void:
-	_sb.bg_color = fill
-	_sb.set_corner_radius_all(radius)
-	_sb.border_color = border
-	_sb.set_border_width_all(bw)
-	_sb.draw(get_canvas_item(), r)
+		draw_rect(Rect2(bx, pos.y + counter.y + 5, bw * it[7], 2.5), Color(0.96, 0.80, 0.30))
 
 
 func _draw_label(l: Array, z: float) -> void:

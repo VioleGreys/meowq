@@ -12,6 +12,7 @@ uniform int selected_id = -1;
 uniform int highlight_nation = -1;
 uniform bool show_occupation = true;
 uniform float zoom = 1.0;
+uniform float res_k = 1.0;   // пикселей буфера карты на логический пиксель экрана
 uniform sampler2D terrain_tex : filter_linear;  // спутниковая подложка (NASA Blue Marble), только суша
 uniform bool has_terrain = false;
 uniform bool terrain_mode = false;              // режим «Местность»: подложка без цветов стран
@@ -23,7 +24,13 @@ uniform float lat_top = 80.0;
 // берег по векторной доле суши — на среднем и высоком
 uniform int quality = 2;
 
-const int NS = 8;   // сколько разных провинций учитываем в окне сглаживания
+const int NS = 8;
+
+// минимальная полуширина линии в пикселях буфера: в пониженном разрешении
+// тоньше пикселя линия рвётся пунктиром
+float lw_min(float w) {
+	return res_k < 0.99 ? max(w, 1.15) : w;
+}   // сколько разных провинций учитываем в окне сглаживания
 
 int pid(ivec2 p) {
 	p = clamp(p, ivec2(0), ivec2(map_size) - 1);
@@ -197,7 +204,7 @@ void fragment() {
 			depth = clamp((0.5 - min(h, 0.45)) * 2.4, 0.0, 1.0) * (1.0 - smoothstep(0.0, 0.5, cov) * 0.7);
 		}
 		col = mix(vec3(0.22, 0.42, 0.50), vec3(0.07, 0.15, 0.25), pow(depth, 0.45));
-		float wave = sin(TIME * 0.7 + px.x * 0.21 + sin(px.y * 0.13 + TIME * 0.3) * 2.0);
+		float wave = sin(px.x * 0.21 + sin(px.y * 0.13) * 2.0);   // рябь (неподвижная: карта рисуется по изменениям)
 		col += vec3(0.015) * wave * (1.0 - depth * 0.5);
 		// сетка широт и долгот через 15° — как на штабной карте
 		float s_px = map_size.x / 6.2831853;
@@ -258,7 +265,7 @@ void fragment() {
 	// против воды, граница стран — своя страна против лучшей чужой, граница
 	// провинций — победитель против второго в своей стране. Так на стыке
 	// двух провинций и моря берег не пропадает.
-	float texel_px = zoom * 2.0;                         // тексель карты на экране (масштаб спрайта 2)
+	float texel_px = zoom * 2.0 * res_k;                        // тексель карты на экране (масштаб спрайта 2)
 	float w_land = 0.0;
 	float w_water = 0.0;
 	float w_mine = 0.0;      // страна победителя
@@ -316,29 +323,29 @@ void fragment() {
 	} else if (cov > 0.01 && cov < 0.99) {
 		// береговая линия по векторной доле суши
 		float d0 = abs(cov - 0.5) * 2.0;
-		float dp = d0 / max(fwidth(d0), 1e-4) * 0.5;
-		float w = max(0.75, 0.2 * texel_px);
+		float dp = d0 / max(fwidth(d0), 0.5 / texel_px) * 0.5;
+		float w = max(lw_min(0.75), 0.2 * texel_px);
 		col = mix(col, vec3(0.10, 0.13, 0.17), (1.0 - smoothstep(w - 0.8, w + 0.8, dp)) * 0.8);
 	}
 	land = land && !sea_px;
 	if (land && !wide_land && w_other > 0.0) {
 		float d1 = abs(w_mine - w_other) / (w_mine + w_other);
-		float dp = d1 / max(fwidth(d1), 1e-4) * 0.5;
-		float w = max(1.1, 0.45 * texel_px);
+		float dp = d1 / max(fwidth(d1), 0.5 / texel_px) * 0.5;
+		float w = max(lw_min(1.1), 0.45 * texel_px);
 		col = mix(col, vec3(0.07, 0.06, 0.06), (1.0 - smoothstep(w - 0.9, w + 0.9, dp)) * 0.9);
 		// мягкий тон своей страны вдоль границы — как цветная кайма на картах
 		col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 3.0 + texel_px, dp)) * 0.18);
 	}
 	if (land && !wide_land && w_prov2 > 0.0) {
 		float d2 = (uw[top] - w_prov2) / (uw[top] + w_prov2);
-		float dp = d2 / max(fwidth(d2), 1e-4) * 0.5;
-		float w = max(0.6, 0.14 * texel_px);
+		float dp = d2 / max(fwidth(d2), 0.5 / texel_px) * 0.5;
+		float w = max(lw_min(0.6), 0.14 * texel_px);
 		float a2 = smoothstep(0.45, 1.3, zoom);
 		col = mix(col, col * 0.6, (1.0 - smoothstep(w - 0.7, w + 0.7, dp)) * a2);
 	}
 
 	if (id == selected_id && land) {
-		col = mix(col, vec3(1.0, 0.96, 0.8), 0.28 + 0.08 * sin(TIME * 5.0));
+		col = mix(col, vec3(1.0, 0.96, 0.8), 0.3);
 	}
 	COLOR = vec4(col, 1.0);
 }
