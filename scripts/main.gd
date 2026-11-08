@@ -189,6 +189,14 @@ func _auto_screenshot_locked() -> void:
 			map_view.center_on(world.nations[me].capital)
 		if _arg("center") != "" and nation_by_tag(_arg("center")) >= 0:
 			map_view.center_on(world.nations[nation_by_tag(_arg("center"))].capital)
+		if _arg("at") != "":   # -- --at=долгота,широта: центр на ближайшей провинции
+			var ll := _arg("at").split(",")
+			var target := Vector2(float(ll[0]), float(ll[1]))
+			var best := 0
+			for p in world.prov_count:
+				if world.p_lonlat[p].distance_squared_to(target) < world.p_lonlat[best].distance_squared_to(target):
+					best = p
+			map_view.center_on(best)
 		if _arg("sel") == "fleet":
 			for f in world.fleets:
 				if f.alive and f.owner == me:

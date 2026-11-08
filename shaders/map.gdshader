@@ -23,6 +23,8 @@ uniform float lat_top = 80.0;
 // берег по векторной доле суши — на среднем и высоком
 uniform int quality = 2;
 
+const int NS = 8;   // сколько разных провинций учитываем в окне сглаживания
+
 int pid(ivec2 p) {
 	p = clamp(p, ivec2(0), ivec2(map_size) - 1);
 	vec4 c = texelFetch(id_tex, p, 0);
@@ -50,29 +52,23 @@ void fragment() {
 	vec2 q = px - 0.5;
 	ivec2 i0 = ivec2(floor(q));
 	vec2 tf = fract(q);
-	int uid[4] = int[](-1, -1, -1, -1);
-	float uw[4] = float[](0.0, 0.0, 0.0, 0.0);
+	// до NS разных провинций в окне; веса непрерывны при сдвиге окна (вклад
+	// B-сплайна / билинейный на краях окна плавно уходит в ноль) — без ложных полос
+	int uid[NS] = int[](-1, -1, -1, -1, -1, -1, -1, -1);
+	float uw[NS] = float[](0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
 	if (quality == 0) {
 		// низкое качество: провинция ближайшего текселя, без сглаживания (1 выборка)
 		uid[0] = pid(ip);
 		uw[0] = 1.0;
 	} else {
-	uid = int[](pid(i0), pid(i0 + ivec2(1, 0)), pid(i0 + ivec2(0, 1)), pid(i0 + ivec2(1, 1)));
-	// одинаковые соперники — в первый из них (у остальных id -1, вес 0)
-	for (int j = 1; j < 4; j++) {
-		for (int k = 0; k < j; k++) {
-			if (uid[j] >= 0 && uid[j] == uid[k]) {
-				uid[j] = -1;
-			}
-		}
-	}
 	bool far = zoom * 2.0 < 1.2 || quality < 2;
 	vec4 wx;
 	vec4 wy;
+	vec4 bx = vec4(0.0, 1.0 - tf.x, tf.x, 0.0);   // билинейные веса (перевес ближних)
+	vec4 by = vec4(0.0, 1.0 - tf.y, tf.y, 0.0);
 	if (far) {
-		// при сильном отдалении — билинейная смесь 2×2 (бережём видеокарту)
-		wx = vec4(0.0, 1.0 - tf.x, tf.x, 0.0);
-		wy = vec4(0.0, 1.0 - tf.y, tf.y, 0.0);
+		wx = bx;
+		wy = by;
 	} else {
 		vec2 t2 = tf * tf;
 		vec2 t3 = t2 * tf;
@@ -80,40 +76,42 @@ void fragment() {
 			-3.0 * t3.x + 3.0 * t2.x + 3.0 * tf.x + 1.0, t3.x) / 6.0;
 		wy = vec4((1.0 - tf.y) * (1.0 - tf.y) * (1.0 - tf.y), 3.0 * t3.y - 6.0 * t2.y + 4.0,
 			-3.0 * t3.y + 3.0 * t2.y + 3.0 * tf.y + 1.0, t3.y) / 6.0;
+		// плавный перевес ближних текселей: мелкие острова и перешейки не тают
+		wx = wx + bx * 0.35;
+		wy = wy + by * 0.35;
 	}
 	int o0 = far ? 1 : 0;
 	int o1 = far ? 3 : 4;
+	int un = 0;
 	for (int oy = o0; oy < o1; oy++) {
 		for (int ox = o0; ox < o1; ox++) {
 			int cidv = pid(i0 + ivec2(ox - 1, oy - 1));
 			float w = wx[ox] * wy[oy];
-			for (int j = 0; j < 4; j++) {
-				if (uid[j] == cidv) {
-					uw[j] += w;
-					break;
+			int k = -1;
+			for (int j = 0; j < NS; j++) {
+				if (j < un && uid[j] == cidv) {
+					k = j;
 				}
 			}
-		}
-	}
-	if (!far) {
-		// перевес ближайшего текселя: мелкие острова и перешейки не тают
-		int nid = pid(ivec2(floor(px)));
-		for (int j = 0; j < 4; j++) {
-			if (uid[j] == nid) {
-				uw[j] += 0.04;
+			if (k < 0 && un < NS) {
+				k = un;
+				uid[k] = cidv;
+				un++;
+			}
+			if (k >= 0) {
+				uw[k] += w;
 			}
 		}
 	}
 	}
-	int un = 4;
 	int top = 0;
-	for (int j = 1; j < 4; j++) {
+	for (int j = 1; j < NS; j++) {
 		if (uw[j] > uw[top]) {
 			top = j;
 		}
 	}
 	int sec = -1;
-	for (int j = 0; j < 4; j++) {
+	for (int j = 0; j < NS; j++) {
 		if (j != top && uid[j] >= 0 && (sec < 0 || uw[j] > uw[sec])) {
 			sec = j;
 		}
@@ -125,14 +123,14 @@ void fragment() {
 	// уровень 0.5 даёт настоящую плавную линию берега. Если победила провинция не той
 	// стихии — берём лучшего соперника нужной (суша) или рисуем воду.
 	float cov = quality > 0 ? texture(height_tex, UV).b : 0.5;
-	int nat_c[4];
-	for (int j = 0; j < 4; j++) {
+	int nat_c[NS];
+	for (int j = 0; j < NS; j++) {
 		nat_c[j] = uid[j] >= 0 ? nation(pal(ctrl_tex, uid[j])) : -2;
 	}
 	bool cov_land = quality > 0 ? cov >= 0.5 : nation(pal(ctrl_tex, uid[top])) >= 0;
 	if (cov_land && nat_c[top] < 0) {
 		int bl = -1;
-		for (int j = 0; j < 4; j++) {
+		for (int j = 0; j < NS; j++) {
 			if (nat_c[j] >= 0 && (bl < 0 || uw[j] > uw[bl])) {
 				bl = j;
 			}
@@ -218,7 +216,7 @@ void fragment() {
 	float w_mine = 0.0;      // страна победителя
 	float w_other = 0.0;     // лучшая другая страна (суша)
 	float w_prov2 = 0.0;     // лучшая другая провинция той же страны
-	for (int j = 0; j < 4; j++) {
+	for (int j = 0; j < NS; j++) {
 		if (uid[j] < 0) {
 			continue;
 		}
@@ -234,10 +232,10 @@ void fragment() {
 			}
 		}
 	}
-	for (int j = 0; j < 4; j++) {
+	for (int j = 0; j < NS; j++) {
 		if (uid[j] >= 0 && nat_c[j] >= 0 && nat_c[j] != ctrl) {
 			float s2 = 0.0;
-			for (int k = 0; k < 4; k++) {
+			for (int k = 0; k < NS; k++) {
 				if (uid[k] >= 0 && nat_c[k] == nat_c[j]) {
 					s2 += uw[k];
 				}
