@@ -1,4 +1,20 @@
 {
+ "portraits/ALB": {
+  "file": "File:King_Zog_I.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:King_Zog_I.jpg",
+  "license": "Public domain",
+  "artist": "The original uploader was J.J. at English Wikipedia. (see en:Wikipedia:Upload log archive/April 2003); Tonysmith at zh.w",
+  "article": "Zog I",
+  "temporary": false
+ },
+ "portraits/AUS": {
+  "file": "File:KurtVonSchuschnigg1936-3.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:KurtVonSchuschnigg1936-3.jpg",
+  "license": "Copyrighted free use",
+  "artist": "KurtVonSchuschnigg1936.jpg: Not stated by seller, may be unknown\nderivative work: Mario Link2012-07-20 09:22 (UTC)",
+  "article": "Kurt Schuschnigg",
+  "temporary": true
+ },
  "portraits/BEL": {
   "file": "File:Paul_van_Zeeland_(1-E-1585)_(cropped).jpg",
   "page": "https://commons.wikimedia.org/wiki/File:Paul_van_Zeeland_(1-E-1585)_(cropped).jpg",
@@ -7,12 +23,92 @@
   "article": "Paul van Zeeland",
   "temporary": false
  },
+ "portraits/BHU": {
+  "file": "Portrait of the 2nd King of Bhutan, Jigme Wangchuck Portrait des 2. Königs von Bhutan, Jigme Wangchuck",
+  "page": "https://www.europeana.eu/item/15504/VO_187174?utm_source=api&utm_medium=api&utm_campaign=api2demo",
+  "license": "Europeana · http://creativecommons.org/licenses/by-nc-sa/4.0/",
+  "artist": "",
+  "article": "Jigme Wangchuck",
+  "temporary": true
+ },
+ "portraits/BRA": {
+  "file": "Porträt Präsident Brasilien Getulio Vargas",
+  "page": "https://www.europeana.eu/item/2022037/11088_75672628_D32F_4EA4_BEBF_06704C10A6BE?utm_source=api&utm_medium=api&utm_campaign=api2demo",
+  "license": "Europeana · http://rightsstatements.org/vocab/CNE/1.0/",
+  "artist": "",
+  "article": "Getúlio Vargas",
+  "temporary": true
+ },
+ "portraits/BUL": {
+  "file": "File:BASA-3K-7-342-28-Boris_III_of_Bulgaria.jpeg",
+  "page": "https://commons.wikimedia.org/wiki/File:BASA-3K-7-342-28-Boris_III_of_Bulgaria.jpeg",
+  "license": "Public domain",
+  "artist": "Dimitar Karastoyanov",
+  "article": "Boris III of Bulgaria",
+  "temporary": false
+ },
+ "portraits/CAN": {
+  "file": "[Winston Churchill (right) and Mackenzie King, three-quarter length portrait, both seated in chairs, facing left at conf",
+  "page": "https://www.loc.gov/pictures/item/00652622/",
+  "license": "Библиотека Конгресса США",
+  "artist": "",
+  "article": "William Lyon Mackenzie King",
+  "temporary": true
+ },
+ "portraits/CHI": {
+  "file": "[Generalissimo Chiang Kai-shek, half-length portrait, standing at microphone, facing left]",
+  "page": "https://www.loc.gov/pictures/item/92522223/",
+  "license": "Библиотека Конгресса США",
+  "artist": "",
+  "article": "Chiang Kai-shek",
+  "temporary": true
+ },
+ "portraits/CZE": {
+  "file": "File:Edvard_Beneš.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Edvard_Bene%C5%A1.jpg",
+  "license": "Public domain",
+  "artist": "UnknownUnknown . Transfer; United States. Office of War Information. Overseas Picture Division. Washington Division; 194",
+  "article": "Edvard Beneš",
+  "temporary": false
+ },
+ "portraits/DEN": {
+  "file": "File:Stauning_i1920-erne.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Stauning_i1920-erne.jpg",
+  "license": "Public domain",
+  "artist": "Francis Zachariae (1852–1936)",
+  "article": "Thorvald Stauning",
+  "temporary": false
+ },
+ "portraits/EGY": {
+  "file": "[Fuad I, King of Egypt, full portrait, seated in palace.]",
+  "page": "https://www.loc.gov/pictures/item/2005685183/",
+  "license": "Библиотека Конгресса США",
+  "artist": "",
+  "article": "Fuad I of Egypt",
+  "temporary": true
+ },
  "portraits/ENG": {
   "file": "File:Stanley_Baldwin_1932.jpg",
   "page": "https://commons.wikimedia.org/wiki/File:Stanley_Baldwin_1932.jpg",
   "license": "Public domain",
   "artist": "Bassano Ltd",
   "article": "Stanley Baldwin",
+  "temporary": false
+ },
+ "portraits/EST": {
+  "file": "File:Konstantin_Päts.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Konstantin_P%C3%A4ts.jpg",
+  "license": "Public domain",
+  "artist": "Unknown authorUnknown author",
+  "article": "Konstantin Päts",
+  "temporary": false
+ },
+ "portraits/FIN": {
+  "file": "File:Pehr_Evind_Svinhufvud_(cropped).jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Pehr_Evind_Svinhufvud_(cropped).jpg",
+  "license": "Public domain",
+  "artist": "Unknown authorUnknown author",
+  "article": "Pehr Evind Svinhufvud",
   "temporary": false
  },
  "portraits/FRA": {
@@ -31,6 +127,14 @@
   "article": "Adolf Hitler",
   "temporary": false
  },
+ "portraits/GRE": {
+  "file": "File:Georgeiiofgreece.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Georgeiiofgreece.jpg",
+  "license": "Public domain",
+  "artist": "United States Office of War Information, Overseas Picture Division, Washington Division.",
+  "article": "George II of Greece",
+  "temporary": false
+ },
  "portraits/HOL": {
   "file": "File:Hendrik_Colijn_(1925).jpg",
   "page": "https://commons.wikimedia.org/wiki/File:Hendrik_Colijn_(1925).jpg",
@@ -38,6 +142,30 @@
   "artist": "Bain News Service, publisher;",
   "article": "Hendrikus Colijn",
   "temporary": false
+ },
+ "portraits/HUN": {
+  "file": "File:TF_62_2304_Nr001.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:TF_62_2304_Nr001.jpg",
+  "license": "Public domain",
+  "artist": "Magyar Film Iroda",
+  "article": "Miklós Horthy",
+  "temporary": false
+ },
+ "portraits/IRE": {
+  "file": "File:De_Valera_LCCN2016822004_(headshot).jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:De_Valera_LCCN2016822004_(headshot).jpg",
+  "license": "Public domain",
+  "artist": "National Photo Company Collection",
+  "article": "Éamon de Valera",
+  "temporary": false
+ },
+ "portraits/IRQ": {
+  "file": "100 fils Ghazi d'Iraq",
+  "page": "https://www.europeana.eu/item/2058206/10970_objects_H570859?utm_source=api&utm_medium=api&utm_campaign=api2demo",
+  "license": "Europeana · http://creativecommons.org/licenses/by-nc/4.0/",
+  "artist": "",
+  "article": "Ghazi of Iraq",
+  "temporary": true
  },
  "portraits/ITA": {
   "file": "File:Mussolini_mezzobusto.jpg",
@@ -47,6 +175,30 @@
   "article": "Benito Mussolini",
   "temporary": false
  },
+ "portraits/LAT": {
+  "file": "File:K._Ulmakis_LCCN2014712518_(cropped).jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:K._Ulmakis_LCCN2014712518_(cropped).jpg",
+  "license": "Public domain",
+  "artist": "Bain News Service, publisher",
+  "article": "Kārlis Ulmanis",
+  "temporary": false
+ },
+ "portraits/LIB": {
+  "file": "[William Tubman and Edwin J. Barclay, half-length portrait, standing]",
+  "page": "https://www.loc.gov/pictures/item/98514611/",
+  "license": "Библиотека Конгресса США",
+  "artist": "",
+  "article": "Edwin Barclay",
+  "temporary": true
+ },
+ "portraits/LIT": {
+  "file": "File:Antanas_Smetona_2.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Antanas_Smetona_2.jpg",
+  "license": "CC BY-SA 2.5",
+  "artist": "Owned by the National Museum of Lithuania",
+  "article": "Antanas Smetona",
+  "temporary": false
+ },
  "portraits/LUX": {
   "file": "File:Joseph_Bech_1950.jpg",
   "page": "https://commons.wikimedia.org/wiki/File:Joseph_Bech_1950.jpg",
@@ -54,6 +206,30 @@
   "artist": "Unknown author",
   "article": "Joseph Bech",
   "temporary": false
+ },
+ "portraits/MEX": {
+  "file": "[Lázaro Cárdenas, former Mexican president, half-length portrait, standing, holding hat, flanked by two men]",
+  "page": "https://www.loc.gov/pictures/item/98502913/",
+  "license": "Библиотека Конгресса США",
+  "artist": "",
+  "article": "Lázaro Cárdenas",
+  "temporary": true
+ },
+ "portraits/NOR": {
+  "file": "File:Johan_Nygaardsvold_1934.jpeg",
+  "page": "https://commons.wikimedia.org/wiki/File:Johan_Nygaardsvold_1934.jpeg",
+  "license": "CC BY-SA 4.0",
+  "artist": "Ernest Rude",
+  "article": "Johan Nygaardsvold",
+  "temporary": false
+ },
+ "portraits/NSP": {
+  "file": "Portrait Francisco Franco y Bahamonde",
+  "page": "https://www.europeana.eu/item/180/10622_D947CEFC_36C0_4779_ACAE_954A0915D58F_cho?utm_source=api&utm_medium=api&utm_campaign=api2demo",
+  "license": "Europeana · http://rightsstatements.org/vocab/InC/1.0/",
+  "artist": "",
+  "article": "Francisco Franco",
+  "temporary": true
  },
  "portraits/POL": {
   "file": "File:Ignacy_Mościcki_(-1934).jpg",
@@ -71,6 +247,30 @@
   "article": "António de Oliveira Salazar",
   "temporary": false
  },
+ "portraits/PRC": {
+  "file": "[Mao Zedong and wife Qing Jiang, full-length portrait, standing, facing each other]",
+  "page": "https://www.loc.gov/pictures/item/00649691/",
+  "license": "Библиотека Конгресса США",
+  "artist": "",
+  "article": "Mao Zedong",
+  "temporary": true
+ },
+ "portraits/ROM": {
+  "file": "File:Carol_II_of_Romania.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Carol_II_of_Romania.jpg",
+  "license": "Public domain",
+  "artist": "Unknown authorUnknown author",
+  "article": "Carol II of Romania",
+  "temporary": false
+ },
+ "portraits/SAF": {
+  "file": "Gen. J.B.M. Hertzog",
+  "page": "https://www.loc.gov/pictures/item/2014717634/",
+  "license": "Библиотека Конгресса США",
+  "artist": "",
+  "article": "J. B. M. Hertzog",
+  "temporary": true
+ },
  "portraits/SOV": {
   "file": "File:StalinCropped1943.jpg",
   "page": "https://commons.wikimedia.org/wiki/File:StalinCropped1943.jpg",
@@ -85,6 +285,54 @@
   "license": "Public domain",
   "artist": "Unknown authorUnknown author",
   "article": "Niceto Alcalá-Zamora",
+  "temporary": false
+ },
+ "portraits/SWE": {
+  "file": "File:Per_Albin_Hansson,_statsminister,_porträttbild_1935.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Per_Albin_Hansson,_statsminister,_portr%C3%A4ttbild_1935.jpg",
+  "license": "Public domain",
+  "artist": "Jan de Meyere",
+  "article": "Per Albin Hansson",
+  "temporary": false
+ },
+ "portraits/SWI": {
+  "file": "File:Albert_Meyer.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Albert_Meyer.jpg",
+  "license": "Public domain",
+  "artist": "Unknown authorUnknown author",
+  "article": "Albert Meyer (politician)",
+  "temporary": false
+ },
+ "portraits/TUR": {
+  "file": "File:Ataturk1930s.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Ataturk1930s.jpg",
+  "license": "Public domain",
+  "artist": "Unknown authorUnknown author",
+  "article": "Mustafa Kemal Atatürk",
+  "temporary": false
+ },
+ "portraits/USA": {
+  "file": "[President Franklin D. Roosevelt, bust portrait, facing front]",
+  "page": "https://www.loc.gov/pictures/item/00651287/",
+  "license": "Библиотека Конгресса США",
+  "artist": "",
+  "article": "Franklin D. Roosevelt",
+  "temporary": true
+ },
+ "portraits/VIC": {
+  "file": "[Henri Philippe Pétain, French military officer, head-and-shoulders portrait, facing front]",
+  "page": "https://www.loc.gov/pictures/item/89714091/",
+  "license": "Библиотека Конгресса США",
+  "artist": "",
+  "article": "Philippe Pétain",
+  "temporary": true
+ },
+ "portraits/YUG": {
+  "file": "File:Prince_Paul_of_Yugoslavia.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Prince_Paul_of_Yugoslavia.jpg",
+  "license": "Public domain",
+  "artist": "Royal Palace",
+  "article": "Prince Paul of Yugoslavia",
   "temporary": false
  }
 }
