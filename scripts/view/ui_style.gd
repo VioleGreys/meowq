@@ -66,7 +66,7 @@ static func make_theme() -> Theme:
 	# текст — машинопись (IBM Plex Mono) тёмными чернилами (assets/ui, tools/build_ui.py)
 	var t := Theme.new()
 	t.default_font = mono_font()
-	t.default_font_size = 19
+	t.default_font_size = 15
 	var sheet := sbox("sheet.png", 46, 26)
 	t.set_stylebox("panel", "PanelContainer", sheet)
 	t.set_stylebox("panel", "Panel", sheet)

@@ -329,6 +329,32 @@ def build_dossier():
             d.line((x0, yy, x0 - dirn * 90, yy + 18), fill=(236, 226, 204, 255), width=9)
             d.line((x0, yy, x0 - dirn * 90, yy + 18), fill=(188, 176, 148, 255), width=3)
         save(p, name)
+    # цельный разворот (как в макете): две створки встык, сгиб посередине, завязки
+    SW, SH = 1520, 980
+    sp = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
+    for k in range(2):
+        half = cardboard((SW // 2, SH), (186, 150, 96), 0.35, 0.9 if k == 0 else 0.96, 70 + k)
+        # скруглены только внешние углы: створки сходятся встык без щели
+        m = Image.new("L", (SW // 2, SH), 0)
+        ImageDraw.Draw(m).rounded_rectangle((0, 0, SW // 2 - 1, SH - 1), 8, fill=255,
+                                            corners=(k == 0, k == 1, k == 1, k == 0))
+        half.putalpha(m)
+        half = age(half, 9 + k * 11, 0.5, 0.5, 14, (222, 196, 150), (52, 36, 18))
+        sp.alpha_composite(half, (k * SW // 2, 0))
+    # сгиб — отдельным слоем поверх (раньше линии затирали прозрачность)
+    hx = SW // 2
+    fold = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
+    fd = ImageDraw.Draw(fold)
+    for i in range(16):
+        fd.line((hx - 8 + i, 0, hx - 8 + i, SH), fill=(30, 20, 10, int(100 * (1 - abs(i - 8) / 8))))
+    fd.line((hx + 2, 0, hx + 2, SH), fill=(240, 220, 180, 70), width=2)
+    sp.alpha_composite(fold)
+    d = ImageDraw.Draw(sp)
+    for x0, dirn in ((6, -1), (SW - 6, 1)):
+        for yy in (SH * 0.42, SH * 0.58):
+            d.line((x0, yy, x0 - dirn * 90, yy + 18), fill=(236, 226, 204, 255), width=9)
+            d.line((x0, yy, x0 - dirn * 90, yy + 18), fill=(188, 176, 148, 255), width=3)
+    save(sp, "dossier_spread.png")
     # наклейка «ДЕЛО №» — текст пишет игра
     lab = sheet(520, 200)
     d = ImageDraw.Draw(lab)

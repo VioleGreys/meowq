@@ -268,6 +268,7 @@ func _build_info() -> void:
 # с листом, на котором содержимое. События — лист на планшете под зажимом.
 var popup_board: NinePatchRect
 var popup_close: Button
+var popup_rule: ColorRect
 var cover_card: PanelContainer
 var cover_rows: VBoxContainer
 var popup_sheet: TextureRect
@@ -279,6 +280,7 @@ var cover_title: Label
 var cover_sub: Label
 var cover_photo: TextureRect
 var cover_photo_holder: Control
+var cover_box: MarginContainer
 var cover_stamp: TextureRect
 
 const TAB_NAMES := {"army": "Армия", "navy": "Флот и авиация", "production": "Производство",
@@ -323,17 +325,17 @@ func _build_popup() -> void:
 	popup_title = Label.new()
 	popup_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	popup_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	UiStyle.title(popup_title, 28)
+	UiStyle.title(popup_title, 26)
 	popup_title.add_theme_color_override("font_color", UiStyle.INK)
 	head.add_child(popup_title)
 	popup_close = _button("✕", close_popup, Vector2(40, 40))
 	popup_close.flat = true
 	popup_close.add_theme_font_size_override("font_size", 26)
 	head.add_child(popup_close)
-	var rule := ColorRect.new()
-	rule.color = Color(UiStyle.INK_SOFT, 0.6)
-	rule.custom_minimum_size = Vector2(0, 2)
-	v.add_child(rule)
+	popup_rule = ColorRect.new()
+	popup_rule.color = Color(UiStyle.INK_SOFT, 0.6)
+	popup_rule.custom_minimum_size = Vector2(0, 2)
+	v.add_child(popup_rule)
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -344,60 +346,60 @@ func _build_popup() -> void:
 	scroll.add_child(popup_body)
 	popup_clip = _nine("clipboard_clip.png", 1)
 	popup.add_child(popup_clip)
-	# левая створка — отдельно, слева от окна
+	# разворот папки-«дела» целиком (как в макете): левая створка с наклейкой,
+	# фото и анкетой, правая — под листом окна; лежит позади окна
 	popup_cover = TextureRect.new()
-	popup_cover.texture = UiStyle.ui_tex("dossier_left.png")
+	popup_cover.texture = UiStyle.ui_tex("dossier_spread.png")
 	popup_cover.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	popup_cover.stretch_mode = TextureRect.STRETCH_SCALE
 	root.add_child(popup_cover)
-	var cm := MarginContainer.new()
-	cm.set_anchors_preset(Control.PRESET_FULL_RECT)
-	for side_name in ["left", "right", "top", "bottom"]:
-		cm.add_theme_constant_override("margin_" + side_name, 30)
-	popup_cover.add_child(cm)
+	root.move_child(popup_cover, popup.get_index())
+	cover_box = MarginContainer.new()
+	cover_box.set_anchors_preset(Control.PRESET_FULL_RECT)
+	popup_cover.add_child(cover_box)
 	var cv := VBoxContainer.new()
-	cv.add_theme_constant_override("separation", 16)
-	cm.add_child(cv)
+	cv.add_theme_constant_override("separation", 10)
+	cover_box.add_child(cv)
 	var lab := PanelContainer.new()
-	lab.add_theme_stylebox_override("panel", UiStyle.sbox("dossier_label.png", 20, 16))
-	lab.rotation_degrees = 1.2
+	lab.add_theme_stylebox_override("panel", UiStyle.sbox("dossier_label.png", 20, 12))
+	lab.rotation_degrees = 1.0
 	cv.add_child(lab)
 	var lv := VBoxContainer.new()
+	lv.add_theme_constant_override("separation", 0)
 	lab.add_child(lv)
-	var org := _label("НАРОДНЫЙ КОМИССАРИАТ · АРХИВ", 12, UiStyle.INK_SOFT, true)
-	lv.add_child(org)
-	cover_title = _label("ДЕЛО № 07", 34, UiStyle.INK, true)
+	lv.add_child(_label("НАРОДНЫЙ КОМИССАРИАТ ИНОСТРАННЫХ ДЕЛ", 10, UiStyle.INK_SOFT, true))
+	cover_title = _label("ДЕЛО № 07", 30, UiStyle.INK, true)
 	cover_title.add_theme_font_override("font", UiStyle.title_font(600))
 	lv.add_child(cover_title)
-	cover_sub = _label("", 16, UiStyle.INK, true)
+	cover_sub = _label("", 12, UiStyle.INK, true)
 	lv.add_child(cover_sub)
-	lv.add_child(_label("Хранить вечно", 14, UiStyle.RED_INK, true))
-	# фото на скрепке и мятая анкета рядом (без пустоты по центру створки)
+	lv.add_child(_label("Начато 1936 г.   Хранить вечно", 11, UiStyle.RED_INK, true))
+	# фото на скрепке и мятая анкета рядом
 	var mid := HBoxContainer.new()
-	mid.add_theme_constant_override("separation", 6)
+	mid.add_theme_constant_override("separation", 10)
 	cv.add_child(mid)
-	cover_photo_holder = _clipped_photo(null, Vector2(120, 160))
+	cover_photo_holder = _clipped_photo(null, Vector2(118, 158))
 	cover_photo = cover_photo_holder.get_child(0).get_child(0)
 	mid.add_child(cover_photo_holder)
 	cover_card = PanelContainer.new()
 	cover_card.add_theme_stylebox_override("panel", UiStyle.sbox("sheet_crumpled.png", 30, 14))
-	cover_card.rotation_degrees = 1.5
+	cover_card.rotation_degrees = 1.8
 	cover_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cv.add_child(cover_card)
+	cover_card.size_flags_vertical = Control.SIZE_SHRINK_END
+	mid.add_child(cover_card)
 	cover_rows = VBoxContainer.new()
-	cover_rows.add_theme_constant_override("separation", 2)
+	cover_rows.add_theme_constant_override("separation", 4)
 	cover_card.add_child(cover_rows)
-	cover_stamp = TextureRect.new()
-	cover_stamp.texture = UiStyle.ui_tex("stamp_top_secret.png")
-	cover_stamp.custom_minimum_size = Vector2(220, 70)
-	cover_stamp.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	cover_stamp.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	cover_stamp.rotation_degrees = -7.0
-	cover_stamp.size_flags_vertical = Control.SIZE_SHRINK_END
-	cover_stamp.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	cv.add_child(spacer)
+	cover_stamp = TextureRect.new()
+	cover_stamp.texture = UiStyle.ui_tex("stamp_top_secret.png")
+	cover_stamp.custom_minimum_size = Vector2(190, 60)
+	cover_stamp.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	cover_stamp.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	cover_stamp.rotation_degrees = -6.0
+	cover_stamp.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	cv.add_child(cover_stamp)
 	_layout_popup(false)
 	popup.hide()
@@ -419,31 +421,33 @@ func _layout_popup(clipboard: bool) -> void:
 		popup.offset_bottom = -6
 		popup_board.texture = UiStyle.ui_tex("clipboard.png")
 		_set_margins(popup_sheet_box, 34, 34, int(h * 0.12), 26)
-		_set_margins(popup_content, 60, 60, int(h * 0.12) + 46, 46)
+		_set_margins(popup_content, 50, 50, int(h * 0.12) + 34, 40)
 		popup_sheet.texture = UiStyle.ui_tex("sheet_crumpled.png")
 		popup_sheet.rotation_degrees = -1.0
 		popup_clip.texture = UiStyle.ui_tex("clipboard_clip.png")
 		popup_clip.show()
 		popup_cover.hide()
 	else:
-		popup.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-		var w := clampf(view.x * 0.33, 420.0, 520.0)
-		popup.offset_left = -w - 10.0
-		popup.offset_right = -10
-		popup.offset_top = 80
-		popup.offset_bottom = -8
-		popup_board.texture = UiStyle.ui_tex("dossier_right.png")
-		_set_margins(popup_sheet_box, 20, 26, 18, 18)
-		_set_margins(popup_content, 46, 46, 34, 34)
-		popup_sheet.texture = UiStyle.ui_tex("sheet.png")
-		popup_sheet.rotation_degrees = -0.7
-		popup_clip.hide()
+		# разворот справа: ширина ~62% экрана, правая половина — окно с листом
+		var sw := clampf(view.x * 0.62, 760.0, 1180.0)
+		var top := 80.0
 		popup_cover.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-		var cw := clampf(view.x * 0.22, 260.0, 360.0)
-		popup_cover.offset_right = popup.offset_left + 6.0
-		popup_cover.offset_left = popup_cover.offset_right - cw
-		popup_cover.offset_top = 80
+		popup_cover.offset_right = -10
+		popup_cover.offset_left = -10 - sw
+		popup_cover.offset_top = top
 		popup_cover.offset_bottom = -8
+		_set_margins(cover_box, 40, int(sw * 0.5) + 24, 28, 22)
+		popup.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+		popup.offset_left = -10 - sw * 0.5 + 8.0
+		popup.offset_right = -10
+		popup.offset_top = top
+		popup.offset_bottom = -8
+		popup_board.texture = null
+		_set_margins(popup_sheet_box, 18, 30, 22, 22)
+		_set_margins(popup_content, 42, 52, 40, 38)
+		popup_sheet.texture = UiStyle.ui_tex("sheet.png")
+		popup_sheet.rotation_degrees = -1.0
+		popup_clip.hide()
 	popup_sheet.pivot_offset = popup_sheet.size * 0.5
 
 
@@ -477,11 +481,11 @@ func _fill_cover() -> void:
 			["Армия", "%d див." % n.division_count], ["Заводы", "%d / %d" % [n.civ, n.mil]]]
 		for r in rows:
 			var line := HBoxContainer.new()
-			var k := _label(String(r[0]) + ":", 14, UiStyle.INK_SOFT, true)
-			k.custom_minimum_size = Vector2(84, 0)
+			var k := _label(String(r[0]) + ":", 12, UiStyle.INK_SOFT, true)
+			k.custom_minimum_size = Vector2(70, 0)
 			k.autowrap_mode = TextServer.AUTOWRAP_OFF
 			line.add_child(k)
-			var vl := _label(String(r[1]), 14, UiStyle.INK, true)
+			var vl := _label(String(r[1]), 12, UiStyle.INK, true)
 			vl.add_theme_font_override("font", UiStyle.mono_bold())
 			vl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			line.add_child(vl)
@@ -503,7 +507,7 @@ func _animate_open(clipboard: bool) -> void:
 		tw.parallel().tween_property(popup, "modulate:a", 1.0, 0.2)
 	else:
 		popup.modulate.a = 0.0
-		popup_cover.pivot_offset = Vector2(popup_cover.size.x, popup_cover.size.y * 0.5)
+		popup_cover.pivot_offset = Vector2(popup_cover.size.x * 0.5, popup_cover.size.y * 0.5)
 		popup_cover.scale = Vector2(0.05, 1.0)
 		tw.tween_property(popup, "modulate:a", 1.0, 0.18)
 		tw.parallel().tween_property(popup_cover, "scale:x", 1.0, 0.32)
@@ -555,7 +559,8 @@ func _label(text: String, size := 20, color := Color(0.93, 0.9, 0.82), raw := fa
 	var l := Label.new()
 	l.text = text
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.add_theme_font_size_override("font_size", size)
+	# в окнах-листах текст мельче (как в макете): 0.75 от прежних размеров
+	l.add_theme_font_size_override("font_size", size if raw else maxi(10, int(round(size * 0.75))))
 	l.add_theme_color_override("font_color", color if raw else UiStyle.ink(color))
 	return l
 
@@ -943,6 +948,10 @@ func _cycle_map_mode() -> void:
 
 
 func _rebuild_popup() -> void:
+	popup_title.add_theme_font_size_override("font_size", 26)
+	popup_title.show()
+	popup_close.show()
+	popup_rule.show()
 	_clear(popup_body)
 	_dynamic.clear()
 	if popup_tab != "event" and popup_cover != null and game != null and game.world != null:
@@ -1237,22 +1246,34 @@ func _build_event(w: World) -> void:
 		return
 	var id: String = w.pending_events[0]
 	var ev: Dictionary = w.event_defs.get(id, {})
-	popup_title.text = String(ev.get("title", id)).to_upper()
+	# как в макете: шапка телеграммы и штамп сверху, под ними заголовок,
+	# крестика нет — решение обязательно
+	popup_title.text = ""
+	popup_title.hide()
+	popup_close.hide()
+	popup_rule.hide()
 	var faded := UiStyle.INK_SOFT
-	# шапка телеграммы и штамп
 	var head := HBoxContainer.new()
-	var tg := _label("ТЕЛЕГРАММА · %s" % w.date_string(), 14, faded, true)
+	var tg := _label("ТЕЛЕГРАММА · %s" % w.date_short(), 12, faded, true)
 	tg.add_theme_font_override("font", UiStyle.mono_bold())
 	tg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tg.size_flags_vertical = Control.SIZE_SHRINK_END
 	head.add_child(tg)
 	var st := TextureRect.new()
 	st.texture = UiStyle.ui_tex("stamp_secret.png")
-	st.custom_minimum_size = Vector2(130, 42)
+	st.custom_minimum_size = Vector2(140, 46)
 	st.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	st.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	st.rotation_degrees = -8.0
 	head.add_child(st)
 	popup_body.add_child(head)
+	var title := _label(String(ev.get("title", id)).to_upper(), 24, UiStyle.INK, true)
+	title.add_theme_font_override("font", UiStyle.title_font(600))
+	popup_body.add_child(title)
+	var rule := ColorRect.new()
+	rule.color = Color(UiStyle.INK_SOFT, 0.7)
+	rule.custom_minimum_size = Vector2(0, 2)
+	popup_body.add_child(rule)
 	# фото на скрепке рядом с текстом: картинка события или лидер страны,
 	# к которой событие
 	var art := UiStyle.event_art(id)
@@ -1263,8 +1284,8 @@ func _build_event(w: World) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 16)
 	if art != null:
-		row.add_child(_clipped_photo(art, Vector2(108, 144)))
-	var text_l := _label(ev.get("text", ""), 18, UiStyle.INK, true)
+		row.add_child(_clipped_photo(art, Vector2(112, 150)))
+	var text_l := _label(ev.get("text", ""), 14, UiStyle.INK, true)
 	text_l.add_theme_font_override("font", UiStyle.serif_font())
 	text_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(text_l)
@@ -1280,7 +1301,9 @@ func _build_event(w: World) -> void:
 		var o: Dictionary = opts[i]
 		var k := i
 		var b := _button(o.get("name", "?") + ("  ★" if i == best and opts.size() > 1 else ""), func():
-			game.resolve_event(k), Vector2(0, 56))
+			game.resolve_event(k), Vector2(0, 40))
+		b.add_theme_font_size_override("font_size", 14)
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		popup_body.add_child(b)
 		var et := History.effects_text(w, o.get("effects", []))

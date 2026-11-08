@@ -446,6 +446,21 @@ func day_of(date: String) -> int:
 	return total + d
 
 
+## Короткая дата «29.IX.1938» (для телеграмм и документов).
+func date_short() -> String:
+	var d := day
+	var year := START_YEAR
+	while d >= _year_days(year):
+		d -= _year_days(year)
+		year += 1
+	var m := 0
+	while d >= _month_days(m, year):
+		d -= _month_days(m, year)
+		m += 1
+	var roman := ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"]
+	return "%d.%s.%d" % [d + 1, roman[m], year]
+
+
 func date_string() -> String:
 	var d := day
 	var year := START_YEAR
