@@ -105,35 +105,126 @@ class Faction:
 
 class Division:
 	extends RefCounted
+	## Числовое состояние дивизии живёт в плоских массивах мира (World.d_*,
+	## индекс — slot): горячие фазы дня считаются по массивам (и в C++), а
+	## свойства объекта — удобный доступ для остального кода.
+	var w: World
+	var slot := -1
 	var id := 0
-	var owner := 0
-	var prov := 0
-	var path := PackedInt32Array()  # следующие провинции, path[0] — ближайшая
-	var progress := 0.0             # 0..1 — сколько пройдено к path[0]
-	var strength := 100.0           # 0..100
-	var org := 40.0
-	var alive := true
-	var in_battle := false
-	# Этап 4: шаблон, укомплектованность, снабжение, армия
-	var tpl := 0                    # Military.T_*
-	var eq := 1.0                   # укомплектованность снаряжением 0..1
-	var supply := 1.0               # снабжение 0..1 (0 — окружена)
 	var group := -1                 # армия игрока (World.groups), -1 — нет
-	var entrench := 0.0             # окапывание 0..1: растёт, пока дивизия стоит на месте
-	var transit_days := 0           # > 0 — в море (высадка), см. Forces
 	var transit_total := 0
 	var transit_from := -1
 	var transit_target := -1
-	var landing := false            # высаживается с моря: атака ослаблена
 	var transfer := false           # переправа между своими портами (не штурм)
-	var reserved_until := 0         # ИИ держит дивизию под десант до этого дня
-	var inv_plan := -1              # участвует в плане высадки (World.invasions)
-	# кэш характеристик (Military.refresh_division), читается из потоков
-	var atk := 10.0
-	var def := 12.0
-	var max_org := 40.0
-	var spd := 0.28
-	var hard := 0.0
+	var _path := PackedInt32Array()
+	## следующие провинции, path[0] — ближайшая. Менять только присваиванием
+	## (d.path = ...), не на месте: зеркалится в World.d_next.
+	var path: PackedInt32Array:
+		get:
+			return _path
+		set(v):
+			_path = v
+			w.ds_next(slot, v[0] if v.size() > 0 else -1)
+	var strength: float:  # 0..100
+		get:
+			return w.d_str[slot]
+		set(v):
+			w.ds_str(slot, v)
+	var org: float:
+		get:
+			return w.d_org[slot]
+		set(v):
+			w.ds_org(slot, v)
+	var eq: float:  # укомплектованность снаряжением 0..1
+		get:
+			return w.d_eq[slot]
+		set(v):
+			w.ds_eq(slot, v)
+	var supply: float:  # снабжение 0..1 (0 — окружена)
+		get:
+			return w.d_sup[slot]
+		set(v):
+			w.ds_sup(slot, v)
+	var entrench: float:  # окапывание 0..1
+		get:
+			return w.d_ent[slot]
+		set(v):
+			w.ds_ent(slot, v)
+	var progress: float:  # 0..1 — сколько пройдено к path[0]
+		get:
+			return w.d_prog[slot]
+		set(v):
+			w.ds_prog(slot, v)
+	var max_org: float:  # кэш характеристик (Military.refresh_division)
+		get:
+			return w.d_morg[slot]
+		set(v):
+			w.ds_morg(slot, v)
+	var atk: float:
+		get:
+			return w.d_atk[slot]
+		set(v):
+			w.ds_atk(slot, v)
+	var def: float:
+		get:
+			return w.d_def[slot]
+		set(v):
+			w.ds_def(slot, v)
+	var spd: float:
+		get:
+			return w.d_spd[slot]
+		set(v):
+			w.ds_spd(slot, v)
+	var hard: float:
+		get:
+			return w.d_hard[slot]
+		set(v):
+			w.ds_hard(slot, v)
+	var owner: int:
+		get:
+			return w.d_owner[slot]
+		set(v):
+			w.ds_owner(slot, v)
+	var prov: int:
+		get:
+			return w.d_prov[slot]
+		set(v):
+			w.ds_prov(slot, v)
+	var tpl: int:  # Military.T_*
+		get:
+			return w.d_tpl[slot]
+		set(v):
+			w.ds_tpl(slot, v)
+	var transit_days: int:  # > 0 — в море (высадка), см. Forces
+		get:
+			return w.d_transit[slot]
+		set(v):
+			w.ds_transit(slot, v)
+	var reserved_until: int:  # ИИ держит дивизию под десант до этого дня
+		get:
+			return w.d_resv[slot]
+		set(v):
+			w.ds_resv(slot, v)
+	var inv_plan: int:  # участвует в плане высадки (World.invasions)
+		get:
+			return w.d_inv[slot]
+		set(v):
+			w.ds_inv(slot, v)
+	var alive: bool:
+		get:
+			return w.d_alive[slot] == 1
+		set(v):
+			w.ds_alive(slot, 1 if v else 0)
+	var in_battle: bool:
+		get:
+			return w.d_battle[slot] == 1
+		set(v):
+			w.ds_battle(slot, 1 if v else 0)
+	var landing: bool:  # высаживается с моря: атака ослаблена
+		get:
+			return w.d_land[slot] == 1
+		set(v):
+			w.ds_land(slot, 1 if v else 0)
 
 
 ## Флот: корабли по типам (Forces.SHIP_*), стоит в морской зоне (провинция-море).
@@ -239,6 +330,8 @@ var n_attack := PackedFloat32Array()
 var n_defense := PackedFloat32Array()
 var n_org := PackedFloat32Array()
 var n_speed := PackedFloat32Array()
+var tpl_eq := PackedFloat64Array()       # Military.TEMPLATES[t]["eq"][k] — шаблон*7 + k
+var tpl_men := PackedFloat64Array()
 var tpl_terrain := PackedFloat32Array()   # Military.TERRAIN_MULT построчно (шаблон*8 + местность)
 var p_coastal := PackedByteArray()
 var p_supply_cap := PackedFloat32Array()  # пропускная способность снабжения провинции (дивизий)
@@ -256,7 +349,7 @@ var region_anchor := PackedInt32Array()   # главная провинция р
 var region_provs: Array = []              # район -> PackedInt32Array провинций
 var trade_cache := {}
 var air_range_cache := {}
-# Снимок дивизий для параллельных фаз (World.snapshot_divisions): плоские
+# Снимок дивизий для параллельных фаз (World.k_snapshot): плоские
 # массивы вместо объектов — потоки не дерутся за счётчики ссылок.
 var dv_id := PackedInt32Array()
 var dv_owner := PackedInt32Array()
@@ -275,6 +368,29 @@ var p_naval_base := PackedByteArray()     # 1 — военно-морская б
 var p_port := PackedByteArray()           # 1 — постоянный порт (город vp≥3 на побережье или база)
 var beachheads := {}                      # провинция -> последний день временного порта на плацдарме
 var zone_fleets := {}                     # морская зона -> Array[Fleet] (кэш на день)
+# Состояние дивизий (SoA, индекс — Division.slot, порядок = world.divisions).
+var d_str := PackedFloat64Array()
+var d_org := PackedFloat64Array()
+var d_eq := PackedFloat64Array()
+var d_sup := PackedFloat64Array()
+var d_ent := PackedFloat64Array()
+var d_prog := PackedFloat64Array()
+var d_morg := PackedFloat64Array()
+var d_atk := PackedFloat64Array()
+var d_def := PackedFloat64Array()
+var d_spd := PackedFloat64Array()
+var d_hard := PackedFloat64Array()
+var d_owner := PackedInt32Array()
+var d_prov := PackedInt32Array()
+var d_tpl := PackedInt32Array()
+var d_transit := PackedInt32Array()
+var d_resv := PackedInt32Array()
+var d_inv := PackedInt32Array()
+var d_next := PackedInt32Array()      # path[0] или -1
+var d_id := PackedInt32Array()
+var d_alive := PackedByteArray()
+var d_battle := PackedByteArray()
+var d_land := PackedByteArray()
 var divisions: Array = []
 var next_div_id := 1
 var day := 0
@@ -525,68 +641,23 @@ func rebuild_prov_divs() -> void:
 			prov_divs[p] = []
 	for list in prov_divs:   # переиспользуем массивы — без тысячи выделений памяти в день
 		list.clear()
-	var alive_list: Array = []
-	for d in divisions:
-		if d.alive:
-			alive_list.append(d)
-			if d.transit_days <= 0:   # в море — не стоит в провинции
-				prov_divs[d.prov].append(d)
-	divisions = alive_list
-	for n in nations:
-		n.division_count = 0
-	for d in divisions:
-		nations[d.owner].division_count += 1
-
-
-## Снимок дивизий в плоские массивы (главный поток, раз в день).
-func snapshot_divisions() -> void:
-	var n := divisions.size()
-	dv_id.resize(n)
-	dv_owner.resize(n)
-	dv_prov.resize(n)
-	dv_flags.resize(n)
-	dv_str.resize(n)
-	dv_org.resize(n)
-	dv_power.resize(n)
-	dv_defw.resize(n)
+	compact_divisions()
 	var counts := PackedInt32Array()
-	counts.resize(prov_count + 1)
-	for i in n:
-		var d: Division = divisions[i]
-		dv_id[i] = d.id
-		dv_owner[i] = d.owner
-		dv_prov[i] = d.prov
-		var f := 0
-		if d.path.is_empty() and not d.in_battle and d.transit_days <= 0 and d.reserved_until < day and d.inv_plan < 0:
-			f |= 1
-		if d.in_battle:
-			f |= 2
-		if d.transit_days > 0:
-			f |= 4
-		dv_flags[i] = f
-		dv_str[i] = d.strength
-		var orgf := clampf(d.org / maxf(1.0, d.max_org), 0.0, 1.0)
-		dv_org[i] = orgf
-		dv_power[i] = d.strength * (d.atk / 10.0) * (0.4 + 0.6 * d.eq) * (0.5 + 0.5 * d.supply)
-		dv_defw[i] = d.strength * orgf * (0.4 + 0.6 * d.eq)
-		if d.transit_days <= 0:
-			counts[d.prov + 1] += 1
-	pd_start.resize(prov_count + 1)
-	pd_start[0] = 0
-	for p in prov_count:
-		pd_start[p + 1] = pd_start[p] + counts[p + 1]
-	pd_list.resize(pd_start[prov_count])
-	var fill := pd_start.duplicate()
-	for i in n:
-		if dv_flags[i] & 4 == 0:
-			var p := dv_prov[i]
-			pd_list[fill[p]] = i
-			fill[p] += 1
+	counts.resize(nations.size())
+	for i in divisions.size():
+		if d_transit[i] <= 0:   # в море — не стоит в провинции
+			prov_divs[d_prov[i]].append(divisions[i])
+		counts[d_owner[i]] += 1
+	for n in nations:
+		n.division_count = counts[n.id]
 
 
 func spawn_division(owner: int, prov: int, tpl: int = 0) -> Division:
 	var d := Division.new()
+	d.w = self
+	d.slot = _d_append()
 	d.id = next_div_id
+	d_id[d.slot] = d.id
 	next_div_id += 1
 	d.owner = owner
 	d.prov = prov
@@ -638,3 +709,419 @@ func player_nation() -> int:
 		if n.is_player:
 			return n.id
 	return -1
+
+
+# --- Доступ к состоянию дивизий (запись в свой массив — без копирования) ---
+
+func ds_str(i: int, v) -> void:
+	d_str[i] = v
+
+
+func ds_org(i: int, v) -> void:
+	d_org[i] = v
+
+
+func ds_eq(i: int, v) -> void:
+	d_eq[i] = v
+
+
+func ds_sup(i: int, v) -> void:
+	d_sup[i] = v
+
+
+func ds_ent(i: int, v) -> void:
+	d_ent[i] = v
+
+
+func ds_prog(i: int, v) -> void:
+	d_prog[i] = v
+
+
+func ds_morg(i: int, v) -> void:
+	d_morg[i] = v
+
+
+func ds_atk(i: int, v) -> void:
+	d_atk[i] = v
+
+
+func ds_def(i: int, v) -> void:
+	d_def[i] = v
+
+
+func ds_spd(i: int, v) -> void:
+	d_spd[i] = v
+
+
+func ds_hard(i: int, v) -> void:
+	d_hard[i] = v
+
+
+func ds_owner(i: int, v) -> void:
+	d_owner[i] = v
+
+
+func ds_prov(i: int, v) -> void:
+	d_prov[i] = v
+
+
+func ds_tpl(i: int, v) -> void:
+	d_tpl[i] = v
+
+
+func ds_transit(i: int, v) -> void:
+	d_transit[i] = v
+
+
+func ds_resv(i: int, v) -> void:
+	d_resv[i] = v
+
+
+func ds_inv(i: int, v) -> void:
+	d_inv[i] = v
+
+
+func ds_next(i: int, v) -> void:
+	d_next[i] = v
+
+
+func ds_id(i: int, v) -> void:
+	d_id[i] = v
+
+
+func ds_alive(i: int, v) -> void:
+	d_alive[i] = v
+
+
+func ds_battle(i: int, v) -> void:
+	d_battle[i] = v
+
+
+func ds_land(i: int, v) -> void:
+	d_land[i] = v
+
+
+## Новая запись дивизии в массивах (значения по умолчанию).
+func _d_append() -> int:
+	d_str.append(100.0)
+	d_org.append(40.0)
+	d_eq.append(1.0)
+	d_sup.append(1.0)
+	d_ent.append(0.0)
+	d_prog.append(0.0)
+	d_morg.append(40.0)
+	d_atk.append(10.0)
+	d_def.append(12.0)
+	d_spd.append(0.28)
+	d_hard.append(0.0)
+	d_owner.append(0)
+	d_prov.append(0)
+	d_tpl.append(0)
+	d_transit.append(0)
+	d_resv.append(0)
+	d_inv.append(-1)
+	d_next.append(-1)
+	d_id.append(0)
+	d_alive.append(1)
+	d_battle.append(0)
+	d_land.append(0)
+	return d_id.size() - 1
+
+
+## Убрать погибшие дивизии из списка и массивов (порядок живых сохраняется).
+func compact_divisions() -> void:
+	var keep := PackedInt32Array()
+	var alive_list: Array = []
+	for d in divisions:
+		if d_alive[d.slot] == 1:
+			keep.append(d.slot)
+			alive_list.append(d)
+		else:
+			_bury(d)
+	if alive_list.size() == divisions.size() and keep.size() == d_id.size():
+		return
+	d_str = Native.gather_f64(d_str, keep)
+	d_org = Native.gather_f64(d_org, keep)
+	d_eq = Native.gather_f64(d_eq, keep)
+	d_sup = Native.gather_f64(d_sup, keep)
+	d_ent = Native.gather_f64(d_ent, keep)
+	d_prog = Native.gather_f64(d_prog, keep)
+	d_morg = Native.gather_f64(d_morg, keep)
+	d_atk = Native.gather_f64(d_atk, keep)
+	d_def = Native.gather_f64(d_def, keep)
+	d_spd = Native.gather_f64(d_spd, keep)
+	d_hard = Native.gather_f64(d_hard, keep)
+	d_owner = Native.gather_i32(d_owner, keep)
+	d_prov = Native.gather_i32(d_prov, keep)
+	d_tpl = Native.gather_i32(d_tpl, keep)
+	d_transit = Native.gather_i32(d_transit, keep)
+	d_resv = Native.gather_i32(d_resv, keep)
+	d_inv = Native.gather_i32(d_inv, keep)
+	d_next = Native.gather_i32(d_next, keep)
+	d_id = Native.gather_i32(d_id, keep)
+	d_alive = Native.gather_u8(d_alive, keep)
+	d_battle = Native.gather_u8(d_battle, keep)
+	d_land = Native.gather_u8(d_land, keep)
+	for j in alive_list.size():
+		alive_list[j].slot = j
+	divisions = alive_list
+
+func clear_divisions() -> void:
+	divisions.clear()
+	d_str = PackedFloat64Array()
+	d_org = PackedFloat64Array()
+	d_eq = PackedFloat64Array()
+	d_sup = PackedFloat64Array()
+	d_ent = PackedFloat64Array()
+	d_prog = PackedFloat64Array()
+	d_morg = PackedFloat64Array()
+	d_atk = PackedFloat64Array()
+	d_def = PackedFloat64Array()
+	d_spd = PackedFloat64Array()
+	d_hard = PackedFloat64Array()
+	d_owner = PackedInt32Array()
+	d_prov = PackedInt32Array()
+	d_tpl = PackedInt32Array()
+	d_transit = PackedInt32Array()
+	d_resv = PackedInt32Array()
+	d_inv = PackedInt32Array()
+	d_next = PackedInt32Array()
+	d_id = PackedInt32Array()
+	d_alive = PackedByteArray()
+	d_battle = PackedByteArray()
+	d_land = PackedByteArray()
+
+
+## Разорвать ссылки дивизий на мир (иначе цикл «мир ↔ дивизия» не освобождается).
+func dispose() -> void:
+	for d in divisions:
+		d.w = null
+	divisions.clear()
+	prov_divs.clear()
+
+
+static var _grave: World = null
+
+
+## Погибшая дивизия после уплотнения массивов: ссылки на неё (выбор в
+## интерфейсе, списки боёв) читают отдельную запись «мёртвых», а не чужой слот.
+func _bury(d: Division) -> void:
+	if _grave == null:
+		_grave = World.new()
+	var g := _grave
+	var s := d.slot
+	var k := g._d_append()
+	g.ds_str(k, d_str[s])
+	g.ds_org(k, d_org[s])
+	g.ds_eq(k, d_eq[s])
+	g.ds_owner(k, d_owner[s])
+	g.ds_prov(k, d_prov[s])
+	g.ds_tpl(k, d_tpl[s])
+	g.ds_id(k, d_id[s])
+	g.ds_alive(k, 0)
+	d.w = g
+	d.slot = k
+
+
+# --- Горячие фазы дня по массивам дивизий (ядра) -----------------------------
+# Каждое ядро есть в двух вариантах: здесь (GDScript, меняет массивы мира на
+# месте) и в C++ (MeowqCore, native/src/kernels.cpp — возвращает новые массивы).
+# Формулы и порядок обхода обязаны совпадать до бита: sim_bench сравнивает.
+
+## Восстановление: организация, окапывание, окружение, пополнение со складов.
+## stock — склады стран подряд (страна*7 + тип), manpower — призывники стран.
+## Возвращает слоты дивизий, погибших в окружении.
+func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus: PackedFloat64Array) -> Array:
+	if Native.core != null:
+		var r: Array = Native.core.call("recovery", d_alive, d_transit, d_sup, d_org, d_morg, d_str, d_eq, d_ent,
+				d_next, d_battle, d_owner, d_prov, d_tpl, p_controller, ally, nation_count, stock, manpower, rbonus,
+				tpl_eq, tpl_men)
+		d_org = r[0]
+		d_str = r[1]
+		d_eq = r[2]
+		d_ent = r[3]
+		return [r[4], r[5], r[6]]
+	var dead := PackedInt32Array()
+	var nc := nation_count
+	for i in d_id.size():
+		if d_alive[i] == 0 or d_transit[i] > 0:
+			continue
+		var sup := d_sup[i]
+		if sup <= 0.0:
+			# окружение: организация не восстанавливается, части тают
+			d_org[i] = maxf(0.0, d_org[i] - d_morg[i] * 0.02)
+			d_str[i] = maxf(0.0, d_str[i] - 0.6)
+			d_eq[i] = maxf(0.0, d_eq[i] - 0.004)
+			if d_str[i] <= 5.0:
+				dead.append(i)
+			continue
+		d_ent[i] = minf(1.0, d_ent[i] + 0.05) if d_next[i] < 0 else 0.0
+		if d_battle[i] != 0:
+			continue
+		var rate := 0.06 if d_next[i] < 0 else 0.03
+		d_org[i] = minf(d_morg[i], d_org[i] + d_morg[i] * rate * (0.3 + 0.7 * sup))
+		var o := d_owner[i]
+		var c := p_controller[d_prov[i]]
+		if c != o and ally[o * nc + c] != 1:
+			continue
+		# пополнение (Military.reinforce)
+		if sup < 0.3 or (d_eq[i] >= 1.0 and d_str[i] >= 100.0):
+			continue
+		var t := d_tpl[i]
+		var rr := 0.04 * (1.0 + rbonus[o]) * sup
+		if d_eq[i] < 1.0:
+			var want := minf(1.0 - d_eq[i], rr)
+			for k in 7:
+				var e := tpl_eq[t * 7 + k]
+				if e > 0:
+					want = minf(want, stock[o * 7 + k] / e)
+			if want > 0.0:
+				for k in 7:
+					stock[o * 7 + k] -= tpl_eq[t * 7 + k] * want
+				d_eq[i] += want
+		if d_str[i] < 100.0:
+			var add := minf(100.0 - d_str[i], rr * 100.0)
+			var men := add / 100.0 * tpl_men[t]
+			if manpower[o] >= men:
+				manpower[o] -= men
+				d_str[i] += add
+	return [stock, manpower, dead]
+
+
+## Снабжение дивизий: side_of — номер стороны страны (-1 — нет сети),
+## dist — расстояния до узлов по сторонам подряд (сторона*prov_count + p).
+func k_supply(side_of: PackedInt32Array, dist: PackedInt32Array, t_mot: int) -> void:
+	if Native.core != null:
+		d_sup = Native.core.call("supply_apply", d_alive, d_sup, d_prov, d_tpl, d_owner, side_of, dist, p_supply_cap, prov_count, t_mot)
+		return
+	var demand := PackedFloat32Array()
+	demand.resize(prov_count)
+	var n := d_id.size()
+	for i in n:
+		if d_alive[i] == 1:
+			demand[d_prov[i]] += 1.5 if d_tpl[i] >= t_mot else 1.0
+	for i in n:
+		if d_alive[i] == 0:
+			continue
+		var s := side_of[d_owner[i]]
+		var p := d_prov[i]
+		var h: int = dist[s * prov_count + p] if s >= 0 else -1
+		if h < 0:
+			d_sup[i] = 0.0
+			continue
+		var reach := 1.0 if h <= 5 else maxf(0.35, 1.0 - (h - 5) * 0.06)
+		var cap := minf(1.0, p_supply_cap[p] / maxf(1.0, demand[p]))
+		d_sup[i] = reach * cap
+
+
+## Сбор боёв и шаг движения. Сбрасывает «в бою», считает новый прогресс
+## идущих дивизий. Возвращает [пути сброшены (нельзя войти), атакующие по
+## порядку, идущие по порядку].
+func k_march() -> Array:
+	if Native.core != null:
+		var r: Array = Native.core.call("march", d_alive, d_transit, d_next, d_owner, d_prov, d_prog, d_spd, d_org,
+				d_morg, d_sup, p_land, p_controller, war, nation_count, p_move_mult)
+		d_battle.fill(0)
+		d_prog = r[0]
+		d_next = r[1]
+		return [r[2], r[3], r[4]]
+	d_battle.fill(0)
+	var n := d_id.size()
+	var nc := nation_count
+	# кто стоит в провинциях: CSR по слотам
+	var start := PackedInt32Array()
+	start.resize(prov_count + 1)
+	for i in n:
+		if d_alive[i] == 1 and d_transit[i] <= 0:
+			start[d_prov[i] + 1] += 1
+	for p in prov_count:
+		start[p + 1] += start[p]
+	var list := PackedInt32Array()
+	list.resize(start[prov_count])
+	var fill := start.duplicate()
+	for i in n:
+		if d_alive[i] == 1 and d_transit[i] <= 0:
+			list[fill[d_prov[i]]] = i
+			fill[d_prov[i]] += 1
+	var cleared := PackedInt32Array()
+	var attackers := PackedInt32Array()
+	var movers := PackedInt32Array()
+	for i in n:
+		var t := d_next[i]
+		if t < 0 or d_transit[i] > 0:
+			continue
+		var o := d_owner[i]
+		var c := p_controller[t]
+		if p_land[t] == 0 or (c != o and (c < 0 or o < 0 or c == o or war[o * nc + c] == 0)):
+			cleared.append(i)
+			d_next[i] = -1
+			d_prog[i] = 0.0
+			continue
+		var hostile := false
+		for k in range(start[t], start[t + 1]):
+			var e := d_owner[list[k]]
+			if o >= 0 and e >= 0 and e != o and war[o * nc + e] == 1:
+				hostile = true
+				break
+		if hostile:
+			attackers.append(i)
+			continue
+		movers.append(i)
+		var speed: float = d_spd[i] * p_move_mult[t]
+		var org_factor := 0.5 + 0.5 * clampf(d_org[i] / maxf(1.0, d_morg[i]), 0.0, 1.0)
+		d_prog[i] = d_prog[i] + speed * org_factor * (0.5 + 0.5 * d_sup[i])
+	return [cleared, attackers, movers]
+
+
+## Снимок для ИИ (dv_*, CSR pd_start/pd_list) прямо из массивов дивизий.
+func k_snapshot() -> void:
+	dv_id = d_id
+	dv_owner = d_owner
+	dv_prov = d_prov
+	if Native.core != null:
+		var r: Array = Native.core.call("snapshot", d_next, d_battle, d_transit, d_resv, d_inv, d_str, d_org, d_morg,
+				d_atk, d_eq, d_sup, d_prov, prov_count, day)
+		dv_flags = r[0]
+		dv_str = r[1]
+		dv_org = r[2]
+		dv_power = r[3]
+		dv_defw = r[4]
+		pd_start = r[5]
+		pd_list = r[6]
+		return
+	var n := d_id.size()
+	dv_flags.resize(n)
+	dv_str.resize(n)
+	dv_org.resize(n)
+	dv_power.resize(n)
+	dv_defw.resize(n)
+	var counts := PackedInt32Array()
+	counts.resize(prov_count + 1)
+	for i in n:
+		var f := 0
+		if d_next[i] < 0 and d_battle[i] == 0 and d_transit[i] <= 0 and d_resv[i] < day and d_inv[i] < 0:
+			f |= 1
+		if d_battle[i] != 0:
+			f |= 2
+		if d_transit[i] > 0:
+			f |= 4
+		dv_flags[i] = f
+		var st := d_str[i]
+		dv_str[i] = st
+		var orgf := clampf(d_org[i] / maxf(1.0, d_morg[i]), 0.0, 1.0)
+		dv_org[i] = orgf
+		dv_power[i] = st * (d_atk[i] / 10.0) * (0.4 + 0.6 * d_eq[i]) * (0.5 + 0.5 * d_sup[i])
+		dv_defw[i] = st * orgf * (0.4 + 0.6 * d_eq[i])
+		if d_transit[i] <= 0:
+			counts[d_prov[i] + 1] += 1
+	pd_start.resize(prov_count + 1)
+	pd_start[0] = 0
+	for p in prov_count:
+		pd_start[p + 1] = pd_start[p] + counts[p + 1]
+	pd_list.resize(pd_start[prov_count])
+	var fill := pd_start.duplicate()
+	for i in n:
+		if dv_flags[i] & 4 == 0:
+			var p := d_prov[i]
+			pd_list[fill[p]] = i
+			fill[p] += 1

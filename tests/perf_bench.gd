@@ -22,7 +22,14 @@ func _init() -> void:
 		w.events.clear()
 	print("Разгон до %s: %d мс; дивизий %d, флотов %d, крыльев %d, провинций %d" % [w.date_string(), Time.get_ticks_msec() - t0,
 		w.divisions.size(), w.fleets.filter(func(f): return f.alive).size(), w.wings.filter(func(x): return x.alive).size(), w.prov_count])
-	for mode in [false, true]:
+	# подпись состояния: с C++ и без (-- --no-native) обязана совпадать
+	var strs := PackedFloat64Array()
+	for d in w.divisions:
+		strs.append(d.strength)
+		strs.append(d.org)
+	print("Подпись: дивизий %d, хэш карты %d, хэш дивизий %d" % [w.divisions.size(), hash(w.p_controller), hash(strs)])
+	var modes := [true, false] if OS.get_cmdline_user_args().has("--multi-first") else [false, true]
+	for mode in modes:
 		Parallel.enabled = mode
 		var sums := {}
 		var total := 0
@@ -42,4 +49,5 @@ func _init() -> void:
 		for k in keys:
 			parts.append("%s %.1f" % [k, sums[k] / 1000.0 / days])
 		print("%s: тик %.1f мс | %s" % ["многопоточно" if mode else "один поток ", total / 1000.0 / days, ", ".join(parts)])
+	w.dispose()
 	quit()

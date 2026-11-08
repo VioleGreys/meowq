@@ -52,9 +52,13 @@ func tick() -> void:
 		world.rebuild_prov_divs()
 		world.refresh_stats()
 		# характеристики дивизий меняются только с новыми технологиями
-		for d in world.divisions:
-			if world.nations[d.owner].stats_dirty:
-				Military.refresh_division(world, d)
+		var dirty := false
+		for nat in world.nations:
+			dirty = dirty or nat.stats_dirty
+		if dirty:
+			for d in world.divisions:
+				if world.nations[d.owner].stats_dirty:
+					Military.refresh_division(world, d)
 		for nat in world.nations:
 			nat.stats_dirty = false
 		_refresh_sides())
@@ -70,6 +74,7 @@ func tick() -> void:
 	_timed("восстановление", _phase_recovery)
 	_timed("дипломатия", _phase_diplomacy)
 	_timed("капитуляции", _check_capitulation)
+	_timed("ИИ:ожидание", _finish_ai)
 	last_tick_usec = Time.get_ticks_usec() - t0
 
 
@@ -230,9 +235,26 @@ func _phase_supply() -> void:
 	for nat in world.nations:
 		if nat.alive and ctl[nat.capital] == nat.id and rep_index.has(rep[nat.id]):
 			hubs[rep_index[rep[nat.id]]].append(nat.capital)
+	var port := world.p_port
+	var is_land := world.p_land
+	var adj_s := world.adj_start
+	var adj_l := world.adj_list
+	var zf := world.zone_fleets
+	var sup_memo := {}
 	for p in world.prov_count:
+		if port[p] == 0:
+			continue
 		var c := ctl[p]
-		if c >= 0 and world.p_port[p] == 1 and rep_index.has(rep[c]) and not Forces.port_blockaded(world, c, p):
+		if c < 0 or not rep_index.has(rep[c]):
+			continue
+		# блокада возможна, только если во всех соседних морских зонах есть флоты
+		var open_sea := false
+		for k in range(adj_s[p], adj_s[p + 1]):
+			var q := adj_l[k]
+			if is_land[q] == 0 and not zf.has(q):
+				open_sea = true
+				break
+		if open_sea or not _blockaded(c, p, sup_memo):
 			hubs[rep_index[rep[c]]].append(p)
 	# плацдармы высадок временно работают как порты
 	for p in world.beachheads.keys():
@@ -276,38 +298,48 @@ func _phase_supply() -> void:
 				dist[q] = dist[p] + 1
 				queue.append(q)
 		results[i] = dist
-	Parallel.run(reps.size(), task, "supply", 4)
+	# с нативным ядром обход стороны — десятки микросекунд: потоки не нужны
+	Parallel.run(reps.size(), task, "supply", 1000 if native != null else 4)
 	world.supply_dist.resize(nc)
 	for a in nc:
 		var idx := reps.find(rep[a])
 		world.supply_dist[a] = results[idx] if idx >= 0 else PackedInt32Array()
-	# нагрузка на провинции и итоговое снабжение каждой дивизии
-	var demand := PackedFloat32Array()
-	demand.resize(world.prov_count)
-	for d in world.divisions:
-		if d.alive:
-			demand[d.prov] += 1.5 if d.tpl >= Military.T_MOT else 1.0
-	var caps := world.p_supply_cap
-	var sd: Array = world.supply_dist
-	for d in world.divisions:
-		if not d.alive:
-			continue
-		var dist: PackedInt32Array = sd[d.owner]
-		var h: int = dist[d.prov] if not dist.is_empty() else -1
-		if h < 0:
-			d.supply = 0.0
-			continue
-		var reach := 1.0 if h <= 5 else maxf(0.35, 1.0 - (h - 5) * 0.06)
-		var cap := minf(1.0, caps[d.prov] / maxf(1.0, demand[d.prov]))
-		d.supply = reach * cap
+	# нагрузка на провинции и итоговое снабжение каждой дивизии (ядро по массивам)
+	var side_of := PackedInt32Array()
+	side_of.resize(nc)
+	var flat := PackedInt32Array()
+	for i in reps.size():
+		flat.append_array(results[i])
+	for a in nc:
+		side_of[a] = reps.find(rep[a])
+	world.k_supply(side_of, flat, Military.T_MOT)
+
+
+## Forces.port_blockaded с памятью господства по (страна, зона) на один проход.
+func _blockaded(n: int, p: int, memo: Dictionary) -> bool:
+	if world.fleets.is_empty():
+		return false
+	var any := false
+	for q in world.p_adj[p]:
+		if world.p_land[q] == 0:
+			any = true
+			var key: int = n * world.prov_count + q
+			var sup = memo.get(key)
+			if sup == null:
+				sup = Forces.supremacy(world, n, q)
+				memo[key] = sup
+			if sup >= 0.3:
+				return false
+	return any
 
 
 # --- ИИ: план каждой страны — отдельная задача ------------------------------
 
 func _phase_ai() -> void:
-	# задания: страны ИИ (раз в AI_PERIOD дней) и армии игрока (через день)
-	# все страны ИИ и армии игрока планируются одной пачкой раз в AI_PERIOD дней:
-	# один снимок дивизий на пачку и крупные задачи — ядра загружены лучше
+	# Все страны ИИ и армии игрока планируются одной пачкой раз в AI_PERIOD дней.
+	# Экономика — сразу; военные планы считаются в рабочих потоках по замороженным
+	# таблицам (снимок дивизий + копии массивов мира), пока главный поток ведёт
+	# остальные фазы дня, а приказы применяются в конце дня (_finish_ai).
 	if world.day % AI_PERIOD != 0:
 		return
 	var jobs: Array = []
@@ -317,55 +349,85 @@ func _phase_ai() -> void:
 	jobs.append_array(_group_jobs())
 	if jobs.is_empty():
 		return
-	world.snapshot_divisions()
+	world.k_snapshot()
+	var day := world.day
+	var seed_value := world.seed_value
+	# дивизии по странам — один проход вместо прохода на каждую страну
+	var by_nation: Array = []
+	by_nation.resize(world.nation_count)
+	for n in world.nation_count:
+		by_nation[n] = []   # Array — ссылочный тип: append без копирования
+	var owner := world.d_owner
+	for i in owner.size():
+		by_nation[owner[i]].append(i)
+	for n in world.nation_count:
+		by_nation[n] = PackedInt32Array(by_nation[n])
 	for job in jobs:
+		var rng := Parallel.rng(seed_value, day, job["nation"] if job.has("nation") else 5000 + int(job["group"]))
+		job["rng"] = rng
 		if job.has("group"):
 			var idx := PackedInt32Array()
 			for i in world.divisions.size():
 				if world.divisions[i].group == job["group"]:
 					idx.append(i)
-			job["divs"] = idx
-	var plans: Array = []
-	plans.resize(jobs.size())
-	var day := world.day
-	var seed_value := world.seed_value
-	var task := func(i: int) -> void:
-		var job: Dictionary = jobs[i]
-		if job.has("nation"):
-			var nid: int = job["nation"]
-			plans[i] = AIPlanner.plan(world, nid, Parallel.rng(seed_value, day, nid))
-		else:
-			plans[i] = AIPlanner.plan_military(world, job["owner"], job["divs"], job["opts"],
-				Parallel.rng(seed_value, day, 5000 + int(job["group"])))
-	Parallel.run(jobs.size(), task, "ai", 3)
-
-	var by_id := {}
-	for d in world.divisions:
-		by_id[d.id] = d
-	for i in jobs.size():
-		var plan: Dictionary = plans[i]
-		var job: Dictionary = jobs[i]
-		if job.has("group"):
-			var g: World.ArmyGroup = world.groups[job["group"]]
-			g.front_pairs = plan["fronts"]
+			job["args"] = AIPlanner.military_args(world, job["owner"], idx, job["opts"])
 		else:
 			var nid: int = job["nation"]
 			var nat: World.Nation = world.nations[nid]
-			_ai_train(nat, int(plan["train"]))
-			nat.build_mode = plan["build"]
+			var mine: PackedInt32Array = by_nation[nid]
+			var eco: Dictionary = AIPlanner.plan_economy(world, nid, rng, mine.size())
+			_ai_train(nat, int(eco["train"]))
+			nat.build_mode = eco["build"]
 			if nat.current_research == "":
 				# выбор науки — в главном потоке: константы Tech.LIST общие для всех
 				var av := Tech.available(nat)
 				if not av.is_empty():
-					av.sort_custom(func(a, b): return a["cost"] < b["cost"])
+					av.sort_custom(func(x, y): return x["cost"] < y["cost"])
 					nat.current_research = av[mini(av.size() - 1, (world.day + nid) % 2)]["id"]
-			if plan["war"] >= 0:
-				Diplomacy.declare_war(world, nid, plan["war"])
+			if eco["war"] >= 0:
+				Diplomacy.declare_war(world, nid, eco["war"])
+			job["args"] = AIPlanner.nation_args(world, nid, mine)
+	# глубокая копия: часть записей в массивы мира идёт на месте, без
+	# копирования при записи, — потоки должны читать замороженное состояние
+	var tables := AIPlanner.ai_tables(world).duplicate(true)
+	_ai_jobs = jobs
+	_ai_plans = []
+	_ai_plans.resize(jobs.size())
+	var plans := _ai_plans
+	var task := func(i: int) -> void:
+		var job: Dictionary = jobs[i]
+		plans[i] = AIPlanner.plan_job(tables, job["args"], job["rng"])
+	_ai_gid = Parallel.start(jobs.size(), task, "ai", 3)
+
+
+var _ai_jobs: Array = []
+var _ai_plans: Array = []
+var _ai_gid := -1
+
+
+## Дождаться военных планов ИИ и применить приказы (конец дня).
+func _finish_ai() -> void:
+	if _ai_jobs.is_empty():
+		return
+	Parallel.finish(_ai_gid)
+	_ai_gid = -1
+	var jobs := _ai_jobs
+	_ai_jobs = []
+	var by_id := {}
+	for d in world.divisions:
+		by_id[d.id] = d
+	for i in jobs.size():
+		var plan: Dictionary = _ai_plans[i]
+		var job: Dictionary = jobs[i]
+		if job.has("group"):
+			var g: World.ArmyGroup = world.groups[job["group"]]
+			g.front_pairs = plan["fronts"]
 		for order in plan["orders"]:
 			var d = by_id.get(order[0])
-			if d != null and d.alive:
+			if d != null and d.alive and d.transit_days <= 0:
 				d.path = order[1]
 				d.progress = 0.0
+	_ai_plans = []
 
 
 func _phase_navy() -> void:
@@ -394,6 +456,8 @@ func _phase_navy() -> void:
 
 
 func _ai_train(nat: World.Nation, count: int) -> void:
+	if count <= 0:
+		return
 	var mountainous := false
 	for p in world.prov_count:
 		if world.p_owner[p] == nat.id and world.p_terrain[p] == World.T_MOUNTAIN:
@@ -517,58 +581,43 @@ func order_move(d: World.Division, to: int) -> bool:
 
 # --- Бои и движение ----------------------------------------------------------
 
-## province -> Array[Division] атакующих
+## province -> Array[Division] атакующих. Ядро World.k_march заодно считает
+## шаг движения всех идущих дивизий (список — в _movers).
+var _movers := PackedInt32Array()
+
+
 func _collect_battles() -> Dictionary:
+	var r := world.k_march()
+	var divs := world.divisions
+	for i in r[0]:
+		var d: World.Division = divs[i]
+		d.path = PackedInt32Array()
 	var battles := {}
-	for d in world.divisions:
-		d.in_battle = false
-	for d in world.divisions:
-		if d.path.is_empty() or d.transit_days > 0:
-			continue
-		var t: int = d.path[0]
-		if not world.can_enter(d.owner, t):
-			d.path = PackedInt32Array()
-			d.progress = 0.0
-			continue
-		if world.has_enemies(d.owner, t):
-			if not battles.has(t):
-				battles[t] = []
-			battles[t].append(d)
+	for i in r[1]:
+		var d: World.Division = divs[i]
+		var t := world.d_next[i]
+		if not battles.has(t):
+			battles[t] = []
+		battles[t].append(d)
+	_movers = r[2]
 	return battles
 
 
-func _phase_movement(battles: Dictionary) -> void:
-	var movers: Array = []
-	for d in world.divisions:
-		if d.transit_days <= 0 and not d.path.is_empty() and not world.has_enemies(d.owner, d.path[0]):
-			movers.append(d)
-	if movers.is_empty():
-		return
-	var results: Array = []
-	results.resize(movers.size())
-	var task := func(i: int) -> void:
-		var d: World.Division = movers[i]
-		var t := d.path[0]
-		var speed: float = d.spd * world.p_move_mult[t]
-		var org_factor := 0.5 + 0.5 * clampf(d.org / maxf(1.0, d.max_org), 0.0, 1.0)
-		# без снабжения войска еле ползут
-		results[i] = d.progress + speed * org_factor * (0.5 + 0.5 * d.supply)
-	Parallel.run(movers.size(), task, "move", 96)
-
+func _phase_movement(_battles: Dictionary) -> void:
 	# применение — строго по порядку, чтобы не было гонок за провинцию
-	for i in movers.size():
-		var d: World.Division = movers[i]
-		var t := d.path[0]
-		d.progress = results[i]
-		if d.progress < 1.0:
+	var divs := world.divisions
+	for i in _movers:
+		if world.d_prog[i] < 1.0:
 			continue
+		var d: World.Division = divs[i]
+		var t := d.path[0]
 		if not world.can_enter(d.owner, t) or world.has_enemies(d.owner, t):
 			d.progress = 0.99
 			continue
 		world.prov_divs[d.prov].erase(d)
 		d.prov = t
 		world.prov_divs[t].append(d)
-		d.path.remove_at(0)
+		d.path = d.path.slice(1)
 		d.progress = 0.0
 		if d.landing:
 			d.landing = false
@@ -694,24 +743,31 @@ func _destroy(d: World.Division, why: String) -> void:
 
 
 func _phase_recovery() -> void:
-	for d in world.divisions:
-		if not d.alive or d.transit_days > 0:
-			continue
-		var nat: World.Nation = world.nations[d.owner]
-		if d.supply <= 0.0:
-			# окружение: организация не восстанавливается, части тают
-			d.org = maxf(0.0, d.org - d.max_org * 0.02)
-			d.strength = maxf(0.0, d.strength - 0.6)
-			d.eq = maxf(0.0, d.eq - 0.004)
-			if d.strength <= 5.0:
-				_destroy(d, "погибла в окружении")
-			continue
-		d.entrench = minf(1.0, d.entrench + 0.05) if d.path.is_empty() else 0.0
-		if not d.in_battle:
-			var rate := 0.06 if d.path.is_empty() else 0.03
-			d.org = minf(d.max_org, d.org + d.max_org * rate * (0.3 + 0.7 * d.supply))
-			if world.p_controller[d.prov] == d.owner or world.ally[d.owner * world.nation_count + world.p_controller[d.prov]] == 1:
-				Military.reinforce(nat, d)
+	var nc := world.nation_count
+	var stock := PackedFloat32Array()
+	stock.resize(nc * 7)
+	var manpower := PackedFloat64Array()
+	manpower.resize(nc)
+	var rbonus := PackedFloat64Array()
+	rbonus.resize(nc)
+	for nat in world.nations:
+		var st: PackedFloat32Array = nat.stock
+		for k in 7:
+			stock[nat.id * 7 + k] = st[k]
+		manpower[nat.id] = nat.manpower
+		rbonus[nat.id] = nat.b("reinforce")
+	var r := world.k_recovery(stock, manpower, rbonus)
+	stock = r[0]
+	manpower = r[1]
+	for nat in world.nations:
+		var st := PackedFloat32Array()
+		st.resize(7)
+		for k in 7:
+			st[k] = stock[nat.id * 7 + k]
+		nat.stock = st
+		nat.manpower = manpower[nat.id]
+	for i in r[2]:
+		_destroy(world.divisions[i], "погибла в окружении")
 
 
 # --- Капитуляция -------------------------------------------------------------
@@ -721,13 +777,16 @@ func _check_capitulation() -> void:
 	var held := PackedInt32Array()
 	total.resize(world.nations.size())
 	held.resize(world.nations.size())
+	var owner := world.p_owner
+	var ctrl := world.p_controller
+	var vp := world.p_vp
 	for p in world.prov_count:
-		var o := world.p_owner[p]
-		if o < 0:
+		var o := owner[p]
+		if o < 0 or vp[p] == 0:
 			continue
-		total[o] += world.p_vp[p]
-		if world.p_controller[p] == o:
-			held[o] += world.p_vp[p]
+		total[o] += vp[p]
+		if ctrl[p] == o:
+			held[o] += vp[p]
 	for nat in world.nations:
 		if not nat.alive or nat.at_war.is_empty() or total[nat.id] == 0 or _peace_pending(nat.id):
 			continue

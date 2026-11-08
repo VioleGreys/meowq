@@ -64,4 +64,5 @@ func _run(parallel: bool) -> Array:
 			print("  · ", e)
 		print("Фазы последнего тика (мкс): ", sim.phase_usec)
 	var signature := "живых=%d войн=%d дивизий=%d день=%d хэш=%d" % [alive, wars / 2, world.divisions.size(), world.day, hash(world.p_controller)]
+	world.dispose()
 	return [gen_ms, sim_ms, signature]

@@ -6,6 +6,11 @@
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
+#include <godot_cpp/variant/packed_float64_array.hpp>
+#include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/classes/random_number_generator.hpp>
 
 namespace godot {
 
@@ -32,7 +37,38 @@ public:
 			const PackedByteArray &land, const PackedInt32Array &ctrl, const PackedByteArray &war,
 			int nation_count, int nation, int from, const PackedInt32Array &goals) const;
 
-	String version() const { return "meowq-core 2"; }
+	PackedFloat64Array gather_f64(const PackedFloat64Array &a, const PackedInt32Array &idx) const;
+	PackedInt32Array gather_i32(const PackedInt32Array &a, const PackedInt32Array &idx) const;
+	PackedByteArray gather_u8(const PackedByteArray &a, const PackedInt32Array &idx) const;
+
+	// --- ядра горячих фаз дня (см. World.k_* — тот же алгоритм на GDScript) ---
+	Array recovery(const PackedByteArray &alive, const PackedInt32Array &transit, const PackedFloat64Array &sup,
+			const PackedFloat64Array &org, const PackedFloat64Array &morg, const PackedFloat64Array &str,
+			const PackedFloat64Array &eq, const PackedFloat64Array &ent, const PackedInt32Array &next,
+			const PackedByteArray &battle, const PackedInt32Array &owner, const PackedInt32Array &prov,
+			const PackedInt32Array &tpl, const PackedInt32Array &ctrl, const PackedByteArray &ally, int nc,
+			const PackedFloat32Array &stock, const PackedFloat64Array &manpower, const PackedFloat64Array &rbonus,
+			const PackedFloat64Array &tpl_eq, const PackedFloat64Array &tpl_men) const;
+	PackedFloat64Array supply_apply(const PackedByteArray &alive, const PackedFloat64Array &sup_in, const PackedInt32Array &prov, const PackedInt32Array &tpl,
+			const PackedInt32Array &owner, const PackedInt32Array &side_of, const PackedInt32Array &dist,
+			const PackedFloat32Array &caps, int prov_count, int t_mot) const;
+	Array march(const PackedByteArray &alive, const PackedInt32Array &transit, const PackedInt32Array &next,
+			const PackedInt32Array &owner, const PackedInt32Array &prov, const PackedFloat64Array &prog,
+			const PackedFloat64Array &spd, const PackedFloat64Array &org, const PackedFloat64Array &morg,
+			const PackedFloat64Array &sup, const PackedByteArray &land, const PackedInt32Array &ctrl,
+			const PackedByteArray &war, int nc, const PackedFloat32Array &move_mult) const;
+	Array snapshot(const PackedInt32Array &next, const PackedByteArray &battle, const PackedInt32Array &transit,
+			const PackedInt32Array &resv, const PackedInt32Array &inv, const PackedFloat64Array &str,
+			const PackedFloat64Array &org, const PackedFloat64Array &morg, const PackedFloat64Array &atk,
+			const PackedFloat64Array &eq, const PackedFloat64Array &sup, const PackedInt32Array &prov,
+			int prov_count, int day) const;
+
+	// военный план ИИ (AIPlanner.plan_military), native/src/ai.cpp
+	Dictionary plan_military(const Dictionary &tables, int nid, const PackedInt32Array &divs, int mode, int enemy,
+			int objective, const PackedInt32Array &allowed_list, double ratio, int capital,
+			const PackedInt32Array &nat_enemies, const Ref<RandomNumberGenerator> &rng) const;
+
+	String version() const { return "meowq-core 4"; }
 };
 
 } // namespace godot

@@ -4,27 +4,24 @@ extends RefCounted
 ## plan()/plan_military() только ЧИТАЮТ мир и возвращают приказы — поэтому
 ## планы всех стран ИИ и всех армий игрока считаются параллельно, а
 ## применяются потом в главном потоке.
-## Дивизии читаются из снимка (World.snapshot_divisions: плоские массивы dv_* и
+## Дивизии читаются из снимка (World.k_snapshot: плоские массивы dv_* и
 ## CSR pd_start/pd_list), а не из объектов: так потоки не дерутся за счётчики
 ## ссылок и масштабируются по ядрам. Приказы — [id дивизии, путь].
 
 
-static func plan(world: World, nid: int, rng: RandomNumberGenerator) -> Dictionary:
+## Экономика страны ИИ (главный поток): сколько дивизий заказать, что строить,
+## случайная война (только процедурный мир). Военный план — military_args/plan_job.
+static func plan_economy(world: World, nid: int, rng: RandomNumberGenerator, mine: int) -> Dictionary:
 	var nat: World.Nation = world.nations[nid]
-	var result := {"orders": [], "train": 0, "build": nat.build_mode, "war": -1, "fronts": PackedInt32Array()}
+	var result := {"train": 0, "build": nat.build_mode, "war": -1}
 	if not nat.alive:
 		return result
-	var owner := world.dv_owner
-	var mine := PackedInt32Array()
-	for i in owner.size():
-		if owner[i] == nid:
-			mine.append(i)
 	var at_war := not nat.at_war.is_empty()
 
 	# --- Экономика: сколько дивизий заказать (шаблоны выбираются в главном потоке)
 	var cap := 4.0 + nat.population * 1.3
 	var target_divs := int(minf(6.0 + nat.mil * 2.5 + nat.civ * 0.3, cap) * (1.4 if at_war else 1.0))
-	var pending := mine.size() + nat.training.size()
+	var pending := mine + nat.training.size()
 	while pending < target_divs and result["train"] < 3 and nat.manpower > 10.0 * (result["train"] + 1):
 		result["train"] += 1
 		pending += 1
@@ -48,7 +45,12 @@ static func plan(world: World, nid: int, rng: RandomNumberGenerator) -> Dictiona
 				best_ratio = ratio
 				best = other
 		result["war"] = best
+	return result
 
+
+## Аргументы военного плана всех дивизий страны ИИ (главный поток).
+static func nation_args(world: World, nid: int, mine: PackedInt32Array) -> Array:
+	var nat: World.Nation = world.nations[nid]
 	# осторожность наступления по идеологии: демократии атакуют только с большим перевесом
 	var ratio := 1.3
 	match nat.ideology:
@@ -56,51 +58,79 @@ static func plan(world: World, nid: int, rng: RandomNumberGenerator) -> Dictiona
 			ratio = 2.2
 		"authoritarian":
 			ratio = 1.7
-	var mil := plan_military(world, nid, mine, {"mode": "auto", "ratio": ratio}, rng)
-	result["orders"] = mil["orders"]
-	return result
+	return military_args(world, nid, mine, {"mode": "auto", "ratio": ratio})
+
+
+## Аргументы plan_job из opts (главный поток): всё, что план читает у страны.
+static func military_args(world: World, nid: int, divs: PackedInt32Array, opts: Dictionary) -> Array:
+	var nat: World.Nation = world.nations[nid]
+	var objective: int = opts.get("objective", -1)
+	var allowed: Dictionary = opts.get("fronts", {})
+	return [nid, divs, ["auto", "hold", "attack"].find(opts.get("mode", "auto")), int(opts.get("enemy", -1)), objective,
+		PackedInt32Array(allowed.keys()), float(opts.get("ratio", 1.15 if objective >= 0 else 1.3)), nat.capital,
+		PackedInt32Array(nat.at_war.keys())]
+
+
+## Военный план (для тестов и разовых вызовов): таблицы берутся из мира сейчас.
+static func plan_military(world: World, nid: int, divs: PackedInt32Array, opts: Dictionary, rng: RandomNumberGenerator) -> Dictionary:
+	return plan_job(ai_tables(world), military_args(world, nid, divs, opts), rng)
+
+
+## Военный план по готовым таблицам и аргументам. Читает только их — поэтому
+## может считаться в рабочем потоке, пока главный поток продолжает день.
+static func plan_job(t: Dictionary, args: Array, rng: RandomNumberGenerator) -> Dictionary:
+	var native: Object = Native.core
+	if native != null:
+		# тот же алгоритм в C++ (native/src/ai.cpp)
+		return native.call("plan_military", t, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], rng)
+	return _plan(t, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], rng)
 
 
 ## Военный план для набора дивизий одной страны (индексы в снимке dv_*).
-## opts: mode — "auto" (ИИ: наступать, если идёт война), "hold" (держать фронт),
-##       "attack" (наступать); enemy — номер страны или -1 (все противники);
-##       objective — провинция-цель наступления (-1 — нет);
-##       fronts — Dictionary допустимых провинций фронта (пусто — весь фронт);
-##       ratio — нужный перевес для атаки.
+## mode: 0 — авто (ИИ: наступать, если идёт война), 1 — держать фронт, 2 — наступать;
+## enemy — номер страны или -1 (все противники); objective — провинция-цель
+## наступления (-1 — нет); allowed_list — допустимые провинции фронта (пусто —
+## весь фронт); ratio — нужный перевес для атаки; enemies — с кем страна воюет.
 ## Возвращает {"orders": [[id дивизии, путь]], "fronts": пары (наша, чужая)}.
-static func plan_military(world: World, nid: int, divs: PackedInt32Array, opts: Dictionary, rng: RandomNumberGenerator) -> Dictionary:
+static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int, enemy: int, objective: int,
+		allowed_list: PackedInt32Array, ratio: float, capital: int, enemies: PackedInt32Array,
+		rng: RandomNumberGenerator) -> Dictionary:
 	var result := {"orders": [], "fronts": PackedInt32Array()}
-	var nat: World.Nation = world.nations[nid]
-	var mode: String = opts.get("mode", "auto")
-	var enemy: int = opts.get("enemy", -1)
-	var objective: int = opts.get("objective", -1)
-	var allowed: Dictionary = opts.get("fronts", {})
+	# без литерала-массива: константы скрипта из потоков не читаем
+	var mode := "auto"
+	if mode_i == 1:
+		mode = "hold"
+	elif mode_i == 2:
+		mode = "attack"
+	var allowed := {}
+	for p in allowed_list:
+		allowed[p] = true
 
 	# локальные ссылки на массивы мира — без конкуренции потоков за refcount
-	var ctrl := world.p_controller
-	var land := world.p_land
-	var a_start := world.adj_start
-	var a_list := world.adj_list
-	var war := world.war
-	var ally := world.ally
-	var nc := world.nation_count
-	var def_tab := world.p_def_mult
-	var vp := world.p_vp
-	var coastal := world.p_coastal
-	var owners := world.p_owner
-	var dv_id := world.dv_id
-	var dv_owner := world.dv_owner
-	var dv_prov := world.dv_prov
-	var dv_flags := world.dv_flags
-	var dv_org := world.dv_org
-	var dv_power := world.dv_power
-	var dv_defw := world.dv_defw
-	var pd_start := world.pd_start
-	var pd_list := world.pd_list
-	var capital := nat.capital
+	var ctrl: PackedInt32Array = tb["ctrl"]
+	var land: PackedByteArray = tb["land"]
+	var a_start: PackedInt32Array = tb["adj_start"]
+	var a_list: PackedInt32Array = tb["adj_list"]
+	var war: PackedByteArray = tb["war"]
+	var ally: PackedByteArray = tb["ally"]
+	var nc: int = tb["nc"]
+	var def_tab: PackedFloat32Array = tb["def"]
+	var vp: PackedInt32Array = tb["vp"]
+	var coastal: PackedByteArray = tb["coastal"]
+	var owners: PackedInt32Array = tb["owner"]
+	var dv_id: PackedInt32Array = tb["dv_id"]
+	var dv_owner: PackedInt32Array = tb["dv_owner"]
+	var dv_prov: PackedInt32Array = tb["dv_prov"]
+	var dv_flags: PackedInt32Array = tb["dv_flags"]
+	var dv_org: PackedFloat32Array = tb["dv_org"]
+	var dv_power: PackedFloat32Array = tb["dv_power"]
+	var dv_defw: PackedFloat32Array = tb["dv_defw"]
+	var pd_start: PackedInt32Array = tb["pd_start"]
+	var pd_list: PackedInt32Array = tb["pd_list"]
+	var prov_count := land.size()
 
 	var at_war := false
-	for e in nat.at_war:
+	for e in enemies:
 		if enemy < 0 or e == enemy or (ally.size() > 0 and ally[enemy * nc + e] == 1):
 			at_war = true
 			break
@@ -110,7 +140,7 @@ static func plan_military(world: World, nid: int, divs: PackedInt32Array, opts: 
 	var fronts := {}
 	var targets := {}
 	var fpairs := PackedInt32Array()
-	for p in world.prov_count:
+	for p in prov_count:
 		if ctrl[p] != nid:
 			continue
 		for k in range(a_start[p], a_start[p + 1]):
@@ -159,7 +189,7 @@ static func plan_military(world: World, nid: int, divs: PackedInt32Array, opts: 
 	# в войну столица и крупные порты (узлы снабжения) всегда под охраной
 	if mode == "auto" and at_war and ctrl[capital] == nid:
 		fronts[capital] = true
-		for p in world.prov_count:
+		for p in prov_count:
 			if ctrl[p] == nid and coastal[p] == 1 and vp[p] >= 5 and owners[p] == nid:
 				fronts[p] = true
 
@@ -174,10 +204,8 @@ static func plan_military(world: World, nid: int, divs: PackedInt32Array, opts: 
 
 	# расстояние до цели наступления (по суше, без учёта владельца)
 	var obj_dist := PackedInt32Array()
-	if objective >= 0 and Native.core != null:
-		obj_dist = Native.core.call("land_dist", a_start, a_list, land, objective)
-	elif objective >= 0:
-		obj_dist.resize(world.prov_count)
+	if objective >= 0:
+		obj_dist.resize(prov_count)
 		obj_dist.fill(1 << 20)
 		obj_dist[objective] = 0
 		var queue := PackedInt32Array([objective])
@@ -209,8 +237,8 @@ static func plan_military(world: World, nid: int, divs: PackedInt32Array, opts: 
 			if objective >= 0:
 				score += obj_dist[t] * 25.0
 			target_list.append([score, t, enemy_str * def_mult])
-		target_list.sort_custom(func(a, b): return a[0] < b[0])
-		var ratio: float = opts.get("ratio", 1.15 if objective >= 0 else 1.3)
+		# порядок однозначный (при равенстве — номер провинции): так же сортирует C++
+		target_list.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
 		var left := {}   # сколько наших дивизий останется в провинции
 		for entry in target_list:
 			var t: int = entry[1]
@@ -226,7 +254,7 @@ static func plan_military(world: World, nid: int, divs: PackedInt32Array, opts: 
 			if group.is_empty():
 				continue
 			# сильнейшие первыми; берём ровно столько, сколько нужно (на пустую — одну)
-			group.sort_custom(func(a, b): return dv_power[a] > dv_power[b])
+			group.sort_custom(func(a, b): return dv_power[a] > dv_power[b] or (dv_power[a] == dv_power[b] and a < b))
 			var chosen: Array = []
 			var power := 0.0
 			for i in group:
@@ -281,7 +309,7 @@ static func plan_military(world: World, nid: int, divs: PackedInt32Array, opts: 
 				goal[f] = true
 		if goal.is_empty():
 			continue
-		var path := Pathfinder.nearest_goal(world, nid, pv, goal)
+		var path := _nearest(tb, nid, pv, goal)
 		if path.is_empty():
 			continue
 		var dest := path[path.size() - 1]
@@ -302,3 +330,55 @@ static func _power(world: World, nid: int) -> float:
 			s += st[i]
 	var nat: World.Nation = world.nations[nid]
 	return s + nat.mil * 40.0
+
+
+## Таблицы мира для нативного планировщика (одни на всю пачку заданий ИИ).
+static func ai_tables(world: World) -> Dictionary:
+	return {"ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
+		"war": world.war, "ally": world.ally, "nc": world.nation_count, "def": world.p_def_mult, "vp": world.p_vp,
+		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
+		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
+		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list}
+
+
+## Путь к ближайшей провинции из goal по таблицам (как Pathfinder.nearest_goal).
+static func _nearest(t: Dictionary, nation: int, from: int, goal: Dictionary) -> PackedInt32Array:
+	if goal.has(from):
+		return PackedInt32Array()
+	var land: PackedByteArray = t["land"]
+	var ctrl: PackedInt32Array = t["ctrl"]
+	var war: PackedByteArray = t["war"]
+	var nc: int = t["nc"]
+	var a_start: PackedInt32Array = t["adj_start"]
+	var a_list: PackedInt32Array = t["adj_list"]
+	var parent := PackedInt32Array()
+	parent.resize(land.size())
+	parent.fill(-1)
+	parent[from] = from
+	var queue := PackedInt32Array([from])
+	var head := 0
+	var found := -1
+	while head < queue.size():
+		var p := queue[head]
+		head += 1
+		if goal.has(p):
+			found = p
+			break
+		for k in range(a_start[p], a_start[p + 1]):
+			var q := a_list[k]
+			if parent[q] >= 0 or land[q] == 0:
+				continue
+			var c := ctrl[q]
+			if c != nation and (c < 0 or war[nation * nc + c] == 0):
+				continue
+			parent[q] = p
+			queue.append(q)
+	if found < 0:
+		return PackedInt32Array()
+	var path := PackedInt32Array()
+	var cur := found
+	while cur != from:
+		path.append(cur)
+		cur = parent[cur]
+	path.reverse()
+	return path

@@ -536,6 +536,15 @@ static func ai_fleets(world: World, n: int) -> void:
 static func port_blockaded(world: World, n: int, p: int) -> bool:
 	if world.fleets.is_empty():
 		return false
+	# морская зона без флотов — господство 0.5, блокады нет (быстрая проверка)
+	var zf := world.zone_fleets
+	var land := world.p_land
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	for k in range(a_start[p], a_start[p + 1]):
+		var q := a_list[k]
+		if land[q] == 0 and not zf.has(q):
+			return false
 	var any := false
 	for q in world.p_adj[p]:
 		if world.p_land[q] == 0:
@@ -753,9 +762,17 @@ static func daily_plans(world: World) -> void:
 	if world.invasions.is_empty():
 		return
 	var by_id := {}
-	for d in world.divisions:
-		if d.alive:
-			by_id[d.id] = d
+	var ids := world.d_id
+	var al := world.d_alive
+	for plan in world.invasions:
+		if plan.alive:
+			for id in plan.divs:
+				by_id[id] = null
+	if by_id.is_empty():
+		return
+	for i in ids.size():
+		if al[i] == 1 and by_id.has(ids[i]):
+			by_id[ids[i]] = world.divisions[i]
 	for plan in world.invasions:
 		if not plan.alive:
 			continue
@@ -819,9 +836,12 @@ static func launch_invasion(world: World, divs: Array, target: int) -> int:
 
 ## Дивизии в пути: потери при господстве врага; по прибытии — штурм с моря.
 static func daily_transit(world: World) -> void:
-	for d in world.divisions:
-		if not d.alive or d.transit_days <= 0:
+	var tr := world.d_transit
+	var al := world.d_alive
+	for i in tr.size():
+		if tr[i] <= 0 or al[i] == 0:
 			continue
+		var d: World.Division = world.divisions[i]
 		var zone := -1
 		for q in world.p_adj[d.transit_target]:
 			if world.p_land[q] == 0:
@@ -889,20 +909,27 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 		world.air_sup.resize(world.region_count * nc)
 	world.cas_mult.fill(1.0)
 	world.air_sup.fill(0.5)
-	# пополнение крыльев из резерва, новые крылья ИИ
+	# пополнение крыльев из резерва, новые крылья ИИ (крылья заранее по странам)
+	var by_owner := {}
+	for w in world.wings:
+		if w.alive:
+			if not by_owner.has(w.owner):
+				by_owner[w.owner] = []
+			by_owner[w.owner].append(w)
 	for nat in world.nations:
 		if not nat.alive:
 			continue
+		var own: Array = by_owner.get(nat.id, [])
 		for kind in 2:
 			var eq := Military.EQ_FIG if kind == 0 else Military.EQ_BOMB
-			for w in world.wings:
-				if w.alive and w.owner == nat.id and w.kind == kind and w.planes < WING_MAX and nat.stock[eq] > 0.0:
+			for w in own:
+				if w.kind == kind and w.planes < WING_MAX and nat.stock[eq] > 0.0:
 					var add := minf(WING_MAX - w.planes, nat.stock[eq])
 					w.planes += add
 					nat.stock[eq] -= add
 			var full := true
-			for w in world.wings:
-				if w.alive and w.owner == nat.id and w.kind == kind and w.planes < WING_MAX - 1.0:
+			for w in own:
+				if w.kind == kind and w.planes < WING_MAX - 1.0:
 					full = false
 					break
 			if not nat.is_player and full and nat.stock[eq] >= 100.0:

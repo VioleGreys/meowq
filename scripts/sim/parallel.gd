@@ -25,16 +25,42 @@ static func thread_count() -> int:
 	return maxi(1, OS.get_processor_count())
 
 
+## Фоновая группа задач (start/finish) занимает пул: пока она идёт, обычные
+## run() выполняются в главном потоке — ждать свободных потоков дольше.
+static var _background := 0
+
+
 ## Вызывает body(i) для i в [0, count) на всех ядрах и ждёт завершения.
 static func run(count: int, body: Callable, label: String = "", min_count: int = 2) -> void:
 	if count <= 0:
 		return
-	if not enabled or count < maxi(2, min_count):
+	if not enabled or _background > 0 or count < maxi(2, min_count):
 		for i in count:
 			body.call(i)
 		return
 	var gid := WorkerThreadPool.add_group_task(body, count, -1, true, label)
 	WorkerThreadPool.wait_for_group_task_completion(gid)
+
+
+## Запускает body(i) в фоне на ядрах (кроме одного — оно остаётся главному
+## потоку) и сразу возвращает номер группы; результат ждать через finish().
+## Без потоков (enabled = false) выполняет всё сразу — результат тот же.
+static func start(count: int, body: Callable, label: String = "", min_count: int = 2) -> int:
+	if count <= 0:
+		return -1
+	if not enabled or count < maxi(2, min_count) or thread_count() < 2:
+		for i in count:
+			body.call(i)
+		return -1
+	_background += 1
+	return WorkerThreadPool.add_group_task(body, count, maxi(1, thread_count() - 1), true, label)
+
+
+static func finish(gid: int) -> void:
+	if gid < 0:
+		return
+	WorkerThreadPool.wait_for_group_task_completion(gid)
+	_background -= 1
 
 
 ## Делит [0, count) на крупные куски и вызывает body(start, end) параллельно.

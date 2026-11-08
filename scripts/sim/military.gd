@@ -90,6 +90,12 @@ static func refresh_division(world: World, d: World.Division) -> void:
 
 ## Таблица множителей местности в Packed-массив мира (для параллельных фаз).
 static func build_tables(world: World) -> void:
+	world.tpl_eq = PackedFloat64Array()
+	world.tpl_men = PackedFloat64Array()
+	for t in TEMPLATES.size():
+		world.tpl_men.append(TEMPLATES[t]["men"])
+		for k in EQ_COUNT:
+			world.tpl_eq.append(TEMPLATES[t]["eq"][k])
 	world.tpl_terrain = PackedFloat32Array()
 	for t in TEMPLATES.size():
 		for k in 8:

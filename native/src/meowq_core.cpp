@@ -9,6 +9,14 @@ void MeowqCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("supply_bfs", "adj_start", "adj_list", "land", "ctrl", "ally", "nation_count", "side", "hubs"), &MeowqCore::supply_bfs);
 	ClassDB::bind_method(D_METHOD("land_dist", "adj_start", "adj_list", "land", "from"), &MeowqCore::land_dist);
 	ClassDB::bind_method(D_METHOD("path_bfs", "adj_start", "adj_list", "land", "ctrl", "war", "nation_count", "nation", "from", "goals"), &MeowqCore::path_bfs);
+	ClassDB::bind_method(D_METHOD("gather_f64", "a", "idx"), &MeowqCore::gather_f64);
+	ClassDB::bind_method(D_METHOD("gather_i32", "a", "idx"), &MeowqCore::gather_i32);
+	ClassDB::bind_method(D_METHOD("gather_u8", "a", "idx"), &MeowqCore::gather_u8);
+	ClassDB::bind_method(D_METHOD("recovery", "alive", "transit", "sup", "org", "morg", "str", "eq", "ent", "next", "battle", "owner", "prov", "tpl", "ctrl", "ally", "nc", "stock", "manpower", "rbonus", "tpl_eq", "tpl_men"), &MeowqCore::recovery);
+	ClassDB::bind_method(D_METHOD("supply_apply", "alive", "sup", "prov", "tpl", "owner", "side_of", "dist", "caps", "prov_count", "t_mot"), &MeowqCore::supply_apply);
+	ClassDB::bind_method(D_METHOD("march", "alive", "transit", "next", "owner", "prov", "prog", "spd", "org", "morg", "sup", "land", "ctrl", "war", "nc", "move_mult"), &MeowqCore::march);
+	ClassDB::bind_method(D_METHOD("snapshot", "next", "battle", "transit", "resv", "inv", "str", "org", "morg", "atk", "eq", "sup", "prov", "prov_count", "day"), &MeowqCore::snapshot);
+	ClassDB::bind_method(D_METHOD("plan_military", "tables", "nid", "divs", "mode", "enemy", "objective", "allowed", "ratio", "capital", "enemies", "rng"), &MeowqCore::plan_military);
 	ClassDB::bind_method(D_METHOD("version"), &MeowqCore::version);
 }
 
@@ -118,3 +126,18 @@ PackedInt32Array MeowqCore::path_bfs(const PackedInt32Array &adj_start, const Pa
 	for (int32_t cur = found; cur != from; cur = parent[cur]) w[--len] = cur;
 	return path;
 }
+
+template <typename A>
+static A gather_impl(const A &a, const PackedInt32Array &idx) {
+	A r;
+	r.resize(idx.size());
+	auto *w = r.ptrw();
+	const auto *src = a.ptr();
+	const int32_t *ix = idx.ptr();
+	for (int64_t j = 0; j < idx.size(); j++) w[j] = src[ix[j]];
+	return r;
+}
+
+PackedFloat64Array MeowqCore::gather_f64(const PackedFloat64Array &a, const PackedInt32Array &idx) const { return gather_impl(a, idx); }
+PackedInt32Array MeowqCore::gather_i32(const PackedInt32Array &a, const PackedInt32Array &idx) const { return gather_impl(a, idx); }
+PackedByteArray MeowqCore::gather_u8(const PackedByteArray &a, const PackedInt32Array &idx) const { return gather_impl(a, idx); }

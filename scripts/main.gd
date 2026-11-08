@@ -102,6 +102,8 @@ func _bench_realtime(seconds: float) -> void:
 		frames += 1
 		total += ft
 		worst = maxi(worst, ft)
+		if ft > 30000:
+			print("  долгий кадр %d: %.1f мс (день %d)" % [frames, ft / 1000.0, ticks_done - start_day])
 		if not world.pending_events.is_empty() or not world.pending_peace.is_empty():
 			world_lock()
 			if not world.pending_events.is_empty():
@@ -210,6 +212,8 @@ func new_world(seed_value: int) -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	world_lock()
+	if world != null:
+		world.dispose()
 	world = World.new()
 	var t := Time.get_ticks_msec()
 	if procedural:

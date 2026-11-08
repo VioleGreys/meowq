@@ -42,18 +42,9 @@ func _init() -> void:
 	check(Military.start_training(ger, Military.T_ARM) and ger.training.size() == n_train + 1, "Германия формирует танковую дивизию")
 
 	print("Бой: танки против пехоты на равнине и в горах:")
-	var tank := World.Division.new()
-	tank.owner = GER
-	tank.tpl = Military.T_ARM
-	Military.refresh_division(w, tank)
-	var inf := World.Division.new()
-	inf.owner = POL
-	inf.tpl = Military.T_INF
-	Military.refresh_division(w, inf)
-	var mnt := World.Division.new()
-	mnt.owner = POL
-	mnt.tpl = Military.T_MNT
-	Military.refresh_division(w, mnt)
+	var tank := w.spawn_division(GER, w.nations[GER].capital, Military.T_ARM)
+	var inf := w.spawn_division(POL, w.nations[POL].capital, Military.T_INF)
+	var mnt := w.spawn_division(POL, w.nations[POL].capital, Military.T_MNT)
 	var tmul := w.tpl_terrain
 	var plains: float = Military.side_power([tank], World.T_PLAINS, tmul, false)[0]
 	var mountains: float = Military.side_power([tank], World.T_MOUNTAIN, tmul, false)[0]

@@ -5,6 +5,8 @@
 # Библиотека появляется в bin/, игра подхватывает её через meowq.gdextension.
 env = SConscript("godot-cpp/SConstruct")
 env.Append(CPPPATH=["src/"])
+# одинаковые результаты с GDScript: без слияния умножения и сложения (FMA)
+env.Append(CCFLAGS=["-ffp-contract=off"])
 sources = Glob("src/*.cpp")
 lib = "bin/libmeowq{}{}".format(env["suffix"], env["SHLIBSUFFIX"])
 Default(env.SharedLibrary(lib, source=sources))
