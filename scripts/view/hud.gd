@@ -13,7 +13,7 @@ var nation_label: Label
 var date_label: Label
 var res_label: Label
 var speed_buttons: Array = []
-var side: VBoxContainer
+var side: Control
 var info_panel: PanelContainer
 var info_label: Label
 var info_actions: HBoxContainer
@@ -87,6 +87,7 @@ func _ready() -> void:
 	toast_label.position = Vector2(-300, -190)
 	toast_label.size = Vector2(600, 40)
 	toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	toast_label.add_theme_color_override("font_color", UiStyle.CREAM)
 	toast_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	toast_label.add_theme_constant_override("outline_size", 6)
 	toast_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -116,70 +117,137 @@ func _button(text: String, cb: Callable, min_size := Vector2(0, 56)) -> Button:
 # --- Построение --------------------------------------------------------------
 
 func _build_top_bar() -> void:
+	# кожаная полоса со строчкой; флаг, ресурсы и дата — на бумажных ленточках,
+	# скорость — картонные бирки (выбранная обведена красным)
 	top_bar = PanelContainer.new()
 	top_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	top_bar.offset_left = 8
-	top_bar.offset_right = -8
-	top_bar.offset_top = 6
+	var lea := StyleBoxTexture.new()
+	lea.texture = UiStyle.ui_tex("leather.jpg")
+	lea.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+	lea.axis_stretch_vertical = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+	lea.set_content_margin_all(8)
+	lea.content_margin_left = 12
+	lea.content_margin_right = 12
+	top_bar.add_theme_stylebox_override("panel", lea)
 	root.add_child(top_bar)
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 12)
 	top_bar.add_child(h)
+	var flag_tag := PanelContainer.new()
+	flag_tag.add_theme_stylebox_override("panel", UiStyle.sbox("strip.png", 8, 5))
 	swatch = Flag.make({}, Vector2(48, 32))
-	h.add_child(swatch)
+	flag_tag.add_child(swatch)
+	h.add_child(flag_tag)
 	nation_label = Label.new()
-	UiStyle.title(nation_label, 24)
+	UiStyle.title(nation_label, 28)
+	nation_label.add_theme_color_override("font_color", UiStyle.CREAM)
+	nation_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.6))
 	h.add_child(nation_label)
+	var res_strip := PanelContainer.new()
+	res_strip.add_theme_stylebox_override("panel", UiStyle.sbox("strip.png", 8, 6))
+	res_strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	res_strip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	res_label = Label.new()
-	res_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	res_label.clip_text = true
 	res_label.add_theme_font_size_override("font_size", 16)
-	h.add_child(res_label)
+	res_strip.add_child(res_label)
+	h.add_child(res_strip)
+	var date_strip := PanelContainer.new()
+	date_strip.add_theme_stylebox_override("panel", UiStyle.sbox("strip.png", 8, 6))
+	date_strip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	date_label = Label.new()
-	date_label.custom_minimum_size = Vector2(190, 0)
-	date_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	h.add_child(date_label)
+	date_label.custom_minimum_size = Vector2(210, 0)
+	date_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	date_label.add_theme_font_override("font", UiStyle.mono_bold())
+	date_strip.add_child(date_label)
+	h.add_child(date_strip)
+	var tag := UiStyle.sbox("tag.png", 10, 4)
+	var tag_on := UiStyle.sbox("tag_on.png", 10, 4)
 	var labels := ["II", "1", "2", "3", "4", "5"]
 	for i in labels.size():
-		var b := _button(labels[i], func(): game.set_speed(i); refresh_top(), Vector2(48, 48))
+		var b := _button(labels[i], func(): game.set_speed(i); refresh_top(), Vector2(50, 48))
 		b.toggle_mode = true
+		for st in ["normal", "hover", "disabled"]:
+			b.add_theme_stylebox_override(st, tag)
+		b.add_theme_stylebox_override("pressed", tag_on)
+		b.add_theme_stylebox_override("hover_pressed", tag_on)
+		b.add_theme_font_override("font", UiStyle.title_font(600))
+		b.add_theme_font_size_override("font_size", 24)
+		b.add_theme_color_override("font_pressed_color", UiStyle.INK)
+		b.add_theme_color_override("font_hover_pressed_color", UiStyle.INK)
 		speed_buttons.append(b)
 		h.add_child(b)
 
 
+# Стопка папок слева: корешки под наклоном выглядывают из-за края экрана
+# (картинки — assets/ui/spine_*.png, tools/build_ui.py). Наведение — папка чуть
+# выезжает, открытая — выдвинута сильнее.
+const SPINE_SIZE := Vector2(330, 59)    # 470×84 в масштабе ~0.7
+const SPINE_SHOW := 200.0               # видимая часть корешка
+var spines: Array = []                  # [TextureButton, id]
+var _side_active := ""
+
+
 func _build_side() -> void:
-	side = VBoxContainer.new()
-	side.set_anchors_preset(Control.PRESET_CENTER_LEFT)
-	side.position = Vector2(10, -272)
-	side.add_theme_constant_override("separation", 4)
+	side = Control.new()
+	side.set_anchors_preset(Control.PRESET_LEFT_WIDE)
+	side.offset_top = 80
+	side.custom_minimum_size = Vector2(SPINE_SHOW + 60, 0)
+	side.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(side)
-	var bs := Vector2(176, 52)
 	var items := [
-		["Фокусы", "focus", func():
+		["focus", func():
 			close_popup()
 			focus_view.open(game, game.world, game.player())],
-		["Армия", "army", func(): open_tab("army")],
-		["Флот и авиация", "fleet", func(): open_tab("navy")],
-		["Производство", "factory", func(): open_tab("production")],
-		["Наука", "research", func(): open_tab("research")],
-		["Стройка", "civ", func(): open_tab("build")],
-		["Дипломатия", "diplomacy", func(): open_tab("diplomacy")],
-		["Все войска", "inf", func(): game.select_all()],
-		["Режим карты", "map", _cycle_map_mode],
-		["Настройки", "settings", func(): open_tab("settings")],
+		["army", func(): open_tab("army")],
+		["navy", func(): open_tab("navy")],
+		["production", func(): open_tab("production")],
+		["research", func(): open_tab("research")],
+		["build", func(): open_tab("build")],
+		["diplomacy", func(): open_tab("diplomacy")],
+		["all", func(): game.select_all()],
+		["mapmode", _cycle_map_mode],
+		["settings", func(): open_tab("settings")],
 	]
-	for it in items:
-		var b := _button(it[0], it[2], bs)
-		b.icon = UiStyle.icon(it[1], 40)
-		b.expand_icon = false
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		side.add_child(b)
+	for i in items.size():
+		var id: String = items[i][0]
+		var cb: Callable = items[i][1]
+		var tb := TextureButton.new()
+		tb.texture_normal = UiStyle.ui_tex("spine_%s.png" % id)
+		tb.ignore_texture_size = true
+		tb.stretch_mode = TextureButton.STRETCH_SCALE
+		tb.size = SPINE_SIZE
+		tb.pivot_offset = Vector2(SPINE_SIZE.x, SPINE_SIZE.y * 0.5)
+		tb.rotation_degrees = -4.0 + float((i % 3) - 1) * 1.2
+		tb.set_meta("base_rot", tb.rotation_degrees)
+		tb.set_meta("base_x", -SPINE_SIZE.x + SPINE_SHOW + float(i % 2) * 6.0)
+		tb.position = Vector2(tb.get_meta("base_x"), i * (SPINE_SIZE.y + 4.0))
+		tb.pressed.connect(func(): cb.call(), CONNECT_DEFERRED)
+		tb.mouse_entered.connect(func(): _spine_slide(tb, id, 16.0))
+		tb.mouse_exited.connect(func(): _spine_slide(tb, id, 0.0))
+		side.add_child(tb)
+		spines.append([tb, id])
+
+
+## Папка выезжает/возвращается (плавно, с замедлением).
+func _spine_slide(tb: TextureButton, id: String, extra: float) -> void:
+	var out := 34.0 if id == _side_active else extra
+	var tw := tb.create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(tb, "position:x", float(tb.get_meta("base_x")) + out, 0.18)
+	tw.parallel().tween_property(tb, "rotation_degrees", -1.0 if out > 20.0 else float(tb.get_meta("base_rot")), 0.18)
+
+
+func _set_side_active(id: String) -> void:
+	_side_active = id
+	for sp in spines:
+		_spine_slide(sp[0], sp[1], 0.0)
 
 
 func _build_info() -> void:
 	info_panel = PanelContainer.new()
+	info_panel.add_theme_stylebox_override("panel", UiStyle.sbox("index_card.png", 30, 20))
 	info_panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	info_panel.offset_left = 180
+	info_panel.offset_left = 230
 	info_panel.offset_right = -180
 	info_panel.offset_bottom = -8
 	info_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -196,23 +264,69 @@ func _build_info() -> void:
 	info_panel.hide()
 
 
+# Окно — раскрытая папка-«дело»: левая створка (наклейка дела, фото) и правая
+# с листом, на котором содержимое. События — лист на планшете под зажимом.
+var popup_board: NinePatchRect
+var popup_sheet: TextureRect
+var popup_sheet_box: MarginContainer
+var popup_content: MarginContainer
+var popup_clip: NinePatchRect
+var popup_cover: TextureRect
+var cover_title: Label
+var cover_sub: Label
+var cover_photo: TextureRect
+var cover_stamp: TextureRect
+
+const TAB_NAMES := {"army": "Армия", "navy": "Флот и авиация", "production": "Производство",
+	"research": "Наука", "build": "Стройка", "diplomacy": "Дипломатия", "settings": "Настройки",
+	"nations": "Выбор страны", "nation": "Досье страны", "peace": "Мирный договор"}
+const TAB_NUM := {"army": 2, "navy": 3, "production": 4, "research": 5, "build": 6, "diplomacy": 7,
+	"nation": 7, "settings": 10, "nations": 1, "peace": 7}
+
+
+func _nine(tex: String, m: int) -> NinePatchRect:
+	var n := NinePatchRect.new()
+	n.texture = UiStyle.ui_tex(tex)
+	n.patch_margin_left = m
+	n.patch_margin_right = m
+	n.patch_margin_top = m
+	n.patch_margin_bottom = m
+	n.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return n
+
+
 func _build_popup() -> void:
 	popup = PanelContainer.new()
-	popup.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-	popup.offset_left = -470
-	popup.offset_right = -8
-	popup.offset_top = 70
-	popup.offset_bottom = -8
+	popup.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	root.add_child(popup)
+	popup_board = _nine("dossier_right.png", 40)
+	popup.add_child(popup_board)
+	popup_sheet_box = MarginContainer.new()
+	popup_sheet_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	popup.add_child(popup_sheet_box)
+	popup_sheet = TextureRect.new()
+	popup_sheet.texture = UiStyle.ui_tex("sheet.png")
+	popup_sheet.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	popup_sheet.stretch_mode = TextureRect.STRETCH_SCALE
+	popup_sheet.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	popup_sheet_box.add_child(popup_sheet)
+	popup_content = MarginContainer.new()
+	popup.add_child(popup_content)
 	var v := VBoxContainer.new()
-	popup.add_child(v)
+	popup_content.add_child(v)
 	var head := HBoxContainer.new()
 	v.add_child(head)
 	popup_title = Label.new()
 	popup_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	UiStyle.title(popup_title, 26)
+	popup_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	UiStyle.title(popup_title, 30)
+	popup_title.add_theme_color_override("font_color", UiStyle.INK)
 	head.add_child(popup_title)
-	head.add_child(_button("✕", close_popup, Vector2(56, 52)))
+	head.add_child(_button("✕", close_popup, Vector2(52, 48)))
+	var rule := ColorRect.new()
+	rule.color = Color(UiStyle.INK_SOFT, 0.6)
+	rule.custom_minimum_size = Vector2(0, 2)
+	v.add_child(rule)
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -221,7 +335,147 @@ func _build_popup() -> void:
 	popup_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	popup_body.add_theme_constant_override("separation", 8)
 	scroll.add_child(popup_body)
+	popup_clip = _nine("clipboard_clip.png", 1)
+	popup.add_child(popup_clip)
+	# левая створка — отдельно, слева от окна
+	popup_cover = TextureRect.new()
+	popup_cover.texture = UiStyle.ui_tex("dossier_left.png")
+	popup_cover.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	popup_cover.stretch_mode = TextureRect.STRETCH_SCALE
+	root.add_child(popup_cover)
+	var cm := MarginContainer.new()
+	cm.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for side_name in ["left", "right", "top", "bottom"]:
+		cm.add_theme_constant_override("margin_" + side_name, 30)
+	popup_cover.add_child(cm)
+	var cv := VBoxContainer.new()
+	cv.add_theme_constant_override("separation", 16)
+	cm.add_child(cv)
+	var lab := PanelContainer.new()
+	lab.add_theme_stylebox_override("panel", UiStyle.sbox("dossier_label.png", 20, 16))
+	lab.rotation_degrees = 1.2
+	cv.add_child(lab)
+	var lv := VBoxContainer.new()
+	lab.add_child(lv)
+	var org := _label("НАРОДНЫЙ КОМИССАРИАТ · АРХИВ", 12, UiStyle.INK_SOFT, true)
+	lv.add_child(org)
+	cover_title = _label("ДЕЛО № 07", 34, UiStyle.INK, true)
+	cover_title.add_theme_font_override("font", UiStyle.title_font(600))
+	lv.add_child(cover_title)
+	cover_sub = _label("", 16, UiStyle.INK, true)
+	lv.add_child(cover_sub)
+	lv.add_child(_label("Хранить вечно", 14, UiStyle.RED_INK, true))
+	cover_photo = TextureRect.new()
+	cover_photo.custom_minimum_size = Vector2(180, 240)
+	cover_photo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	cover_photo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	cover_photo.rotation_degrees = -3.0
+	cover_photo.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	cv.add_child(cover_photo)
+	cover_stamp = TextureRect.new()
+	cover_stamp.texture = UiStyle.ui_tex("stamp_top_secret.png")
+	cover_stamp.custom_minimum_size = Vector2(220, 70)
+	cover_stamp.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	cover_stamp.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	cover_stamp.rotation_degrees = -7.0
+	cover_stamp.size_flags_vertical = Control.SIZE_SHRINK_END
+	cover_stamp.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	cv.add_child(spacer)
+	cv.add_child(cover_stamp)
+	_layout_popup(false)
 	popup.hide()
+	popup_cover.hide()
+
+
+## Раскладка окна: папка-«дело» справа (створка слева от неё) или планшет по
+## центру (события).
+func _layout_popup(clipboard: bool) -> void:
+	var view := root.get_viewport_rect().size if root.is_inside_tree() else Vector2(1280, 720)
+	if clipboard:
+		popup.set_anchors_preset(Control.PRESET_CENTER_TOP)
+		popup.anchor_bottom = 1.0
+		var h := view.y - 84.0
+		var w := minf(h * 665.0 / 980.0 * 1.05, view.x - 40.0)
+		popup.offset_left = -w * 0.5
+		popup.offset_right = w * 0.5
+		popup.offset_top = 76
+		popup.offset_bottom = -6
+		popup_board.texture = UiStyle.ui_tex("clipboard.png")
+		_set_margins(popup_sheet_box, 34, 34, int(h * 0.12), 26)
+		_set_margins(popup_content, 60, 60, int(h * 0.12) + 46, 46)
+		popup_sheet.texture = UiStyle.ui_tex("sheet_crumpled.png")
+		popup_sheet.rotation_degrees = -1.0
+		popup_clip.texture = UiStyle.ui_tex("clipboard_clip.png")
+		popup_clip.show()
+		popup_cover.hide()
+	else:
+		popup.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+		var w := clampf(view.x * 0.33, 420.0, 520.0)
+		popup.offset_left = -w - 10.0
+		popup.offset_right = -10
+		popup.offset_top = 80
+		popup.offset_bottom = -8
+		popup_board.texture = UiStyle.ui_tex("dossier_right.png")
+		_set_margins(popup_sheet_box, 20, 26, 18, 18)
+		_set_margins(popup_content, 46, 46, 34, 34)
+		popup_sheet.texture = UiStyle.ui_tex("sheet.png")
+		popup_sheet.rotation_degrees = -0.7
+		popup_clip.hide()
+		popup_cover.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+		var cw := clampf(view.x * 0.22, 260.0, 360.0)
+		popup_cover.offset_right = popup.offset_left + 6.0
+		popup_cover.offset_left = popup_cover.offset_right - cw
+		popup_cover.offset_top = 80
+		popup_cover.offset_bottom = -8
+	popup_sheet.pivot_offset = popup_sheet.size * 0.5
+
+
+func _set_margins(m: MarginContainer, l: int, r: int, t: int, b: int) -> void:
+	m.add_theme_constant_override("margin_left", l)
+	m.add_theme_constant_override("margin_right", r)
+	m.add_theme_constant_override("margin_top", t)
+	m.add_theme_constant_override("margin_bottom", b)
+
+
+## Створка дела: номер, раздел, фото лидера (своей страны или страны из досье).
+func _fill_cover() -> void:
+	var w: World = game.world
+	var num: int = TAB_NUM.get(popup_tab, 0)
+	cover_title.text = "ДЕЛО № %02d" % num
+	var sub: String = TAB_NAMES.get(popup_tab, "")
+	var nid: int = game.player() if w != null else -1
+	if popup_tab == "nation" and _card_nation >= 0:
+		nid = _card_nation
+	if w != null and nid >= 0 and nid < w.nations.size():
+		var n: World.Nation = w.nations[nid]
+		sub = "%s · %s" % [sub, n.name]
+		var pt := UiStyle.portrait(n.tag)
+		cover_photo.texture = pt if pt != null else UiStyle.ui_tex("nophoto.png")
+		cover_stamp.texture = UiStyle.ui_tex("stamp_threat.png") if popup_tab == "nation" and \
+			w.nations[game.player()].at_war.has(nid) else UiStyle.ui_tex("stamp_top_secret.png")
+	cover_sub.text = sub
+
+
+## Анимация открытия: створка раскрывается от сгиба, лист проявляется; планшет
+## событий въезжает снизу.
+func _animate_open(clipboard: bool) -> void:
+	await get_tree().process_frame
+	popup_sheet.pivot_offset = popup_sheet.size * 0.5
+	var tw := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	if clipboard:
+		var y := popup.position.y
+		popup.position.y = y + 120.0
+		popup.modulate.a = 0.0
+		tw.tween_property(popup, "position:y", y, 0.32)
+		tw.parallel().tween_property(popup, "modulate:a", 1.0, 0.2)
+	else:
+		popup.modulate.a = 0.0
+		popup_cover.pivot_offset = Vector2(popup_cover.size.x, popup_cover.size.y * 0.5)
+		popup_cover.scale = Vector2(0.05, 1.0)
+		tw.tween_property(popup, "modulate:a", 1.0, 0.18)
+		tw.parallel().tween_property(popup_cover, "scale:x", 1.0, 0.32)
 
 
 func _build_log() -> void:
@@ -264,12 +518,14 @@ func _clear(c: Node) -> void:
 		ch.queue_free()
 
 
-func _label(text: String, size := 20, color := Color(0.93, 0.9, 0.82)) -> Label:
+## Подпись. Окна — бумага, поэтому светлые цвета прежней тёмной темы
+## переводятся в чернила (UiStyle.ink); raw — как есть (подписи поверх карты).
+func _label(text: String, size := 20, color := Color(0.93, 0.9, 0.82), raw := false) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	l.add_theme_font_size_override("font_size", size)
-	l.add_theme_color_override("font_color", color)
+	l.add_theme_color_override("font_color", color if raw else UiStyle.ink(color))
 	return l
 
 
@@ -449,7 +705,7 @@ func on_tick() -> void:
 	var w: World = game.world
 	while not w.events.is_empty():
 		var e: String = w.events.pop_front()
-		var l := _label(e, 16)
+		var l := _label(e, 16, UiStyle.CREAM, true)
 		l.add_theme_color_override("font_outline_color", Color.BLACK)
 		l.add_theme_constant_override("outline_size", 5)
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -619,11 +875,19 @@ func _update_selection_text() -> void:
 # --- Всплывающие окна --------------------------------------------------------
 
 func open_tab(tab: String) -> void:
+	var was_open := popup.visible
+	var same_mode := was_open and ((popup_tab == "event") == (tab == "event"))
 	popup_tab = tab
-	# события — на «бумаге», остальные окна — в общей тёмной теме
-	popup.theme = UiStyle.paper_theme() if tab == "event" else null
+	var clipboard := tab == "event"
+	_layout_popup(clipboard)
 	_rebuild_popup()
 	popup.show()
+	if not clipboard:
+		_fill_cover()
+		popup_cover.show()
+	_set_side_active(tab)
+	if not same_mode:
+		_animate_open(clipboard)
 	log_box.hide()
 	if tab == "nations":
 		overlay.hide()
@@ -632,6 +896,8 @@ func open_tab(tab: String) -> void:
 func close_popup() -> bool:
 	if popup.visible:
 		popup.hide()
+		popup_cover.hide()
+		_set_side_active("")
 		log_box.show()
 		if game.state == "select":
 			overlay.show()
@@ -648,6 +914,8 @@ func _cycle_map_mode() -> void:
 func _rebuild_popup() -> void:
 	_clear(popup_body)
 	_dynamic.clear()
+	if popup_tab != "event" and popup_cover != null and game != null and game.world != null:
+		_fill_cover()
 	var w: World = game.world
 	if popup_tab == "nations":
 		_build_nation_list(w)

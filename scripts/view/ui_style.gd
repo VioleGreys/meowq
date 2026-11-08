@@ -7,6 +7,8 @@ extends RefCounted
 const BRASS := Color(0.74, 0.61, 0.36)
 const BRASS_DIM := Color(0.50, 0.42, 0.27)
 const INK := Color(0.16, 0.13, 0.10)
+const INK_SOFT := Color(0.32, 0.26, 0.19)
+const RED_INK := Color(0.60, 0.13, 0.10)
 const CREAM := Color(0.94, 0.90, 0.80)
 const PAPER := Color(0.89, 0.84, 0.72)
 
@@ -60,62 +62,102 @@ static func _box(bg: Color, border: Color, width: int = 2, radius: int = 3, marg
 
 
 static func make_theme() -> Theme:
+	# «Досье и архив»: кнопки — бумажные карточки, окна — листы в папках,
+	# текст — машинопись (IBM Plex Mono) тёмными чернилами (assets/ui, tools/build_ui.py)
 	var t := Theme.new()
-	t.default_font = text_font()
-	t.default_font_size = 20
-	var panel := _box(Color(0.095, 0.10, 0.085, 0.94), BRASS_DIM, 2, 10, 10)
-	panel.shadow_color = Color(0, 0, 0, 0.45)
-	panel.shadow_size = 6
-	t.set_stylebox("panel", "PanelContainer", panel)
-	t.set_stylebox("panel", "Panel", panel)
-	var btn := _box(Color(0.19, 0.19, 0.15), BRASS_DIM, 2, 8, 8)
-	btn.border_width_bottom = 3
-	var hover := _box(Color(0.27, 0.26, 0.20), BRASS, 2, 8, 8)
-	hover.border_width_bottom = 3
-	var pressed := _box(Color(0.60, 0.48, 0.25), BRASS, 2, 8, 8)
-	var disabled := _box(Color(0.14, 0.14, 0.13), Color(0.30, 0.29, 0.26), 2, 8, 8)
-	t.set_stylebox("normal", "Button", btn)
-	t.set_stylebox("hover", "Button", hover)
-	t.set_stylebox("pressed", "Button", pressed)
-	t.set_stylebox("hover_pressed", "Button", pressed)
-	t.set_stylebox("disabled", "Button", disabled)
-	t.set_stylebox("focus", "Button", StyleBoxEmpty.new())
-	t.set_font("font", "Button", title_font(500, 1))
-	t.set_color("font_color", "Button", CREAM)
-	t.set_color("font_hover_color", "Button", Color(1, 0.96, 0.86))
-	t.set_color("font_pressed_color", "Button", INK)
-	t.set_color("font_disabled_color", "Button", Color(0.48, 0.47, 0.44))
-	t.set_color("icon_normal_color", "Button", BRASS)
-	t.set_color("icon_hover_color", "Button", Color(1, 0.86, 0.55))
-	t.set_color("icon_pressed_color", "Button", INK)
+	t.default_font = mono_font()
+	t.default_font_size = 19
+	var sheet := sbox("sheet.png", 46, 26)
+	t.set_stylebox("panel", "PanelContainer", sheet)
+	t.set_stylebox("panel", "Panel", sheet)
+	var card := sbox("card.png", 8, 10)
+	card.content_margin_left = 16
+	card.content_margin_right = 16
+	var hover := card.duplicate()
+	hover.modulate_color = Color(1.05, 1.03, 0.97)
+	var pressed := sbox("card_pressed.png", 8, 10)
+	pressed.content_margin_left = 16
+	pressed.content_margin_right = 16
+	var disabled := card.duplicate()
+	disabled.modulate_color = Color(0.85, 0.82, 0.76, 0.65)
+	for cls in ["Button", "CheckButton", "OptionButton"]:
+		t.set_stylebox("normal", cls, card)
+		t.set_stylebox("hover", cls, hover)
+		t.set_stylebox("pressed", cls, pressed)
+		t.set_stylebox("hover_pressed", cls, pressed)
+		t.set_stylebox("disabled", cls, disabled)
+		t.set_stylebox("focus", cls, StyleBoxEmpty.new())
+		t.set_font("font", cls, mono_bold())
+		t.set_color("font_color", cls, INK)
+		t.set_color("font_hover_color", cls, Color(0.05, 0.04, 0.03))
+		t.set_color("font_pressed_color", cls, RED_INK)
+		t.set_color("font_hover_pressed_color", cls, RED_INK)
+		t.set_color("font_disabled_color", cls, Color(0.35, 0.30, 0.24, 0.7))
+		t.set_color("icon_normal_color", cls, INK)
+		t.set_color("icon_hover_color", cls, Color(0.05, 0.04, 0.03))
+		t.set_color("icon_pressed_color", cls, RED_INK)
 	t.set_constant("icon_max_width", "Button", 26)
 	t.set_constant("h_separation", "Button", 8)
-	t.set_color("font_color", "Label", CREAM)
-	var bar_bg := _box(Color(0.04, 0.04, 0.035), Color(0.3, 0.26, 0.18), 1, 5, 0)
-	var bar_fill := _box(BRASS, BRASS, 0, 5, 0)
+	t.set_color("font_color", "Label", INK)
+	t.set_font("font", "Label", mono_font())
+	var bar_bg := _box(Color(0.30, 0.24, 0.17, 0.35), Color(0.25, 0.19, 0.12, 0.8), 1, 2, 0)
+	var bar_fill := _box(Color(0.52, 0.16, 0.12), Color(0.52, 0.16, 0.12), 0, 2, 0)
 	t.set_stylebox("background", "ProgressBar", bar_bg)
 	t.set_stylebox("fill", "ProgressBar", bar_fill)
-	# прокрутка — тонкая латунная
-	var grab := _box(BRASS_DIM, BRASS_DIM, 0, 3, 0)
-	var scroll := _box(Color(0, 0, 0, 0.25), Color(0, 0, 0, 0), 0, 3, 0)
+	t.set_color("font_color", "ProgressBar", INK)
+	var grab := _box(Color(0.42, 0.32, 0.22, 0.7), Color(0, 0, 0, 0), 0, 3, 0)
+	var scroll := _box(Color(0, 0, 0, 0.08), Color(0, 0, 0, 0), 0, 3, 0)
 	for sb in ["VScrollBar", "HScrollBar"]:
 		t.set_stylebox("scroll", sb, scroll)
 		t.set_stylebox("grabber", sb, grab)
-		t.set_stylebox("grabber_highlight", sb, _box(BRASS, BRASS, 0, 3, 0))
-		t.set_stylebox("grabber_pressed", sb, _box(BRASS, BRASS, 0, 3, 0))
+		t.set_stylebox("grabber_highlight", sb, _box(Color(0.42, 0.32, 0.22), Color(0, 0, 0, 0), 0, 3, 0))
+		t.set_stylebox("grabber_pressed", sb, _box(Color(0.30, 0.22, 0.14), Color(0, 0, 0, 0), 0, 3, 0))
 	return t
 
 
-## «Бумажная» панель для окон событий: светлая, текст тёмный, шрифт с засечками.
+## Тема окон событий — та же бумага (раньше была отдельной).
 static func paper_theme() -> Theme:
-	var t := make_theme()
-	var paper := _box(PAPER, Color(0.42, 0.33, 0.20), 3, 10, 14)
-	paper.shadow_color = Color(0, 0, 0, 0.55)
-	paper.shadow_size = 10
-	t.set_stylebox("panel", "PanelContainer", paper)
-	t.set_color("font_color", "Label", INK)
-	t.set_font("font", "Label", serif_font())
-	return t
+	return make_theme()
+
+
+# --- текстуры интерфейса (assets/ui) -------------------------------------------
+
+static var _ui := {}
+
+
+static func ui_tex(name: String) -> Texture2D:
+	if not _ui.has(name):
+		var p := "res://assets/ui/" + name
+		_ui[name] = load(p) if ResourceLoader.exists(p) else null
+	return _ui[name]
+
+
+## Растягиваемая по 9 частям текстура: margin — неизменные края, pad — отступ
+## содержимого.
+static func sbox(name: String, margin: int, pad: int) -> StyleBoxTexture:
+	var b := StyleBoxTexture.new()
+	b.texture = ui_tex(name)
+	b.set_texture_margin_all(margin)
+	b.set_content_margin_all(pad)
+	return b
+
+
+## Машинопись: IBM Plex Mono (OFL).
+static func mono_font() -> Font:
+	return _font("res://assets/fonts/IBMPlexMono-Regular.ttf")
+
+
+static func mono_bold() -> Font:
+	return _font("res://assets/fonts/IBMPlexMono-SemiBold.ttf")
+
+
+## Цвет текста для бумаги: светлые цвета прежней тёмной темы → чернила.
+static func ink(c: Color) -> Color:
+	if c.get_luminance() < 0.5:
+		return c
+	if c.s < 0.25:
+		return INK if c.v > 0.85 else INK_SOFT
+	return Color.from_hsv(c.h, minf(1.0, c.s + 0.25), 0.42)
 
 
 ## Заголовок: Oswald, крупно, с разрядкой.

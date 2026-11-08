@@ -1,0 +1,6 @@
+config_version=5
+[application]
+run/main_scene="res://r.tscn"
+[rendering]
+renderer/rendering_method="gl_compatibility"
+viewport/transparent_background=true
