@@ -3,7 +3,9 @@ extends Node
 
 # Скорости как в стратегиях жанра: 1 — неспешно, 5 — «сколько потянет
 # процессор». Игровых дней в секунду; INF — максимум.
-const SPEEDS := [0.0, 0.5, 1.0, 2.0, 4.0, INF]
+# Скорость 5 — фиксированные 8 дней/с: плавность важнее предельной скорости
+# (неограниченный режим — только для замеров: -- --speed=6).
+const SPEEDS := [0.0, 0.5, 1.0, 2.0, 4.0, 8.0, INF]
 # Симуляция идёт в фоновом потоке; очередь не больше MAX_PENDING дней: если
 # телефон не успевает, игра идёт медленнее, а картинка остаётся плавной.
 const MAX_PENDING := 3
@@ -61,6 +63,8 @@ func _ready() -> void:
 	procedural = "--procedural" in OS.get_cmdline_user_args()
 	# -- --single: всё в одном потоке (для сравнения с многоядерным режимом)
 	single_thread = "--single" in OS.get_cmdline_user_args()
+	if _arg("slow_tick") != "":
+		_slow_tick_usec = int(float(_arg("slow_tick")) * 1000.0)
 	if single_thread or "--no-parallel" in OS.get_cmdline_user_args():
 		Parallel.enabled = false   # --no-parallel: фоновый поток есть, задачи внутри дня — нет
 	if not single_thread:
@@ -95,7 +99,11 @@ func _bench_realtime(seconds: float) -> void:
 			sim.tick()
 		world.events.clear()
 	world_unlock()
-	speed = SPEEDS.size() - 1
+	speed = SPEEDS.size() - 1 if _arg("speed") == "" else int(_arg("speed"))
+	var bench_speed := speed
+	_ui_last = 0
+	_ui_gap_max = 0
+	_ui_count = 0
 	var start_day := ticks_done
 	var t0 := Time.get_ticks_msec()
 	var frames := 0
@@ -117,10 +125,11 @@ func _bench_realtime(seconds: float) -> void:
 			if not world.pending_peace.is_empty():
 				sim.resolve_peace("annex")
 			world_unlock()
-			speed = SPEEDS.size() - 1
+			speed = bench_speed
 	var days := ticks_done - start_day
 	print("BENCH_RT: %.1f с, дней %d (%.1f дн/с), кадров %d, средний кадр %.2f мс, худший %.2f мс, ядер %d" % [
 		seconds, days, days / seconds, frames, total / 1000.0 / maxi(1, frames), worst / 1000.0, Parallel.thread_count()])
+	print("  интерфейс: обновлений %d (%.1f в с), самая долгая пауза %.0f мс" % [_ui_count, _ui_count / seconds, _ui_gap_max / 1000.0])
 	speed = 0
 	_shutdown()
 	get_tree().quit()
@@ -296,14 +305,30 @@ func _sim_loop() -> void:
 		# на паузе заказанные дни сбрасываются — остановка сразу
 		if state == "play" and sim != null and speed > 0:
 			sim.tick()
+			if _slow_tick_usec > 0:   # отладка: имитация медленного телефона
+				var t0 := Time.get_ticks_usec()
+				while Time.get_ticks_usec() - t0 < _slow_tick_usec:
+					pass
 			ticks_done += 1
 		sim_mutex.unlock()
 		_pending_mutex.lock()
 		_pending = maxi(0, _pending - 1)
 		_pending_mutex.unlock()
+		# интерфейс ждёт мир — уступаем ему окно, иначе на максимальной
+		# скорости поток сразу берёт замок снова и экран не обновляется
+		var waited := 0
+		while _ui_waiting and not _quitting and waited < 100:
+			OS.delay_usec(250)
+			waited += 1
 
 
 var single_thread := false
+var _slow_tick_usec := 0      # -- --slow_tick=20: +20 мс к каждому дню (как на слабом телефоне)
+const UI_MAX_GAP_USEC := 40000  # экран обновляется не реже ~25 раз в секунду
+var _ui_waiting := false      # главный поток ждёт мир: фоновый уступает после дня
+var _ui_last := 0             # замер: время последнего обновления интерфейса
+var _ui_gap_max := 0
+var _ui_count := 0
 const SINGLE_BUDGET_USEC := 8000   # однопоточный режим: время симуляции на кадр
 
 
@@ -363,8 +388,16 @@ func _process(dt: float) -> void:
 		_rate_time = 0.0
 	# интерфейс и список отрисовки — только когда мир не занят симуляцией
 	if sim_mutex.try_lock():
+		_ui_waiting = false
 		_ui_update()
 		sim_mutex.unlock()
+		var now := Time.get_ticks_usec()
+		if _ui_last > 0:
+			_ui_gap_max = maxi(_ui_gap_max, now - _ui_last)
+		_ui_last = now
+		_ui_count += 1
+	elif Time.get_ticks_usec() - _ui_last > UI_MAX_GAP_USEC:
+		_ui_waiting = true   # давно не обновлялись — попросить окно у симуляции
 
 
 func _ui_update() -> void:
@@ -604,7 +637,7 @@ func stop_selected() -> void:
 # --- Действия игрока ---------------------------------------------------------
 
 func set_speed(s: int) -> void:
-	speed = clampi(s, 0, SPEEDS.size() - 1)
+	speed = clampi(s, 0, 5)   # 6 (без ограничения) — только для замеров
 
 
 func train(count: int, tpl: int = Military.T_INF) -> int:
