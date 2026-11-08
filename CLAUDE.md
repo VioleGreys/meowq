@@ -197,8 +197,8 @@
   обязаны совпадать.
 - APK (release, arm64, Android 7+): `GODOT=<путь к godot> sh tools/build_apk.sh` →
   `export/meowq.apk` (`MODE=debug` — отладочный). На телефоне (метка `.mobile` в
-  project.godot): рендерер Compatibility (GLES3) и отрисовка в отдельном потоке
-  (`thread_model.mobile=2`). Release-движок: тик без C++ −29%, с C++ −13% (ПК). Нужны шаблоны экспорта 4.3 (с GitHub-релиза Godot, в
+  project.godot): рендерер Compatibility (GLES3). Отдельный поток отрисовки
+  (`thread_model=2`) на телефоне не запускался — не включать. Release-движок: тик без C++ −29%, с C++ −13% (ПК). Нужны шаблоны экспорта 4.3 (с GitHub-релиза Godot, в
   `~/.local/share/godot/export_templates/4.3.stable`). Android SDK не нужен:
   скрипт делает минимальный «SDK» с обёрткой apksigner на Google apksig 2.3.0
   (Maven Central, подпись v2). C++ под Android: NDK r23c (23.2.8568313, dl.google.com
