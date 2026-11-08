@@ -33,9 +33,17 @@ CFG="$HOME/.config/godot/editor_settings-4.3.tres"
 if [ -f "$CFG" ]; then
 	sed -i "s#^export/android/android_sdk_path = .*#export/android/android_sdk_path = \"$SDK\"#" "$CFG"
 fi
-# манифест нативной библиотеки для ПК в APK не берём (нет сборки под Android)
+# C++-ядро (native/bin/libmeowq.android.*.arm64.so) попадает в APK, если собрано
+# (scons platform=android arch=arm64, нужен NDK 23.2); иначе манифест убираем —
+# без библиотеки Godot выдал бы ошибку загрузки, игра идёт на GDScript
 MANIFEST_MOVED=0
-if [ -f meowq.gdextension ]; then mv meowq.gdextension "$WORK/meowq.gdextension"; MANIFEST_MOVED=1; fi
+if [ -f native/bin/libmeowq.android.template_debug.arm64.so ]; then
+	cp native/meowq.gdextension.in meowq.gdextension
+	echo "C++-ядро: включено"
+elif [ -f meowq.gdextension ]; then
+	mv meowq.gdextension "$WORK/meowq.gdextension"; MANIFEST_MOVED=1
+	echo "C++-ядро: нет сборки под Android, APK на GDScript"
+fi
 "$GODOT" --headless --editor --quit --path . >/dev/null 2>&1 || true
 "$GODOT" --headless --path . --export-debug "Android" export/meowq.apk 2>&1 | grep -E "Signed|ERROR|export: end" || true
 if [ "$MANIFEST_MOVED" = 1 ]; then mv "$WORK/meowq.gdextension" meowq.gdextension; fi

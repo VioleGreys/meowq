@@ -185,8 +185,10 @@
   `export/meowq.apk`. Нужны шаблоны экспорта 4.3 (с GitHub-релиза Godot, в
   `~/.local/share/godot/export_templates/4.3.stable`). Android SDK не нужен:
   скрипт делает минимальный «SDK» с обёрткой apksigner на Google apksig 2.3.0
-  (Maven Central, подпись v2). dl.google.com в облачной среде закрыт (SDK/NDK
-  оттуда), поэтому C++-библиотеки под Android пока нет — в APK игра на GDScript.
+  (Maven Central, подпись v2). C++ под Android: NDK r23c (23.2.8568313, dl.google.com
+  открыт) в `/opt/ndk/ndk/23.2.8568313`, `ANDROID_HOME=/opt/ndk scons platform=android
+  arch=arm64 target=template_debug`; `build_apk.sh` кладёт ядро в APK, если библиотека
+  собрана (иначе APK на GDScript). В нижней строке игры — «C++» или «GDScript».
 - Скриншот без человека: `godot --path . -- --screenshot=out.png --nation=GER --days=120`
   (доп. флаги: `--zoom=1.6 --select --tab=army --pick=1 --mapmode=4 --card=AUS --peace=AUS`;
   армия и война: `--group --war=POL --warday=30`; фокусы и события: `--focus`, `--event=munich`; флот: `--tab=navy --sel=fleet|wing --center=NOR`).

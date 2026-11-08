@@ -370,7 +370,7 @@ func refresh_top() -> void:
 	var phases := ""
 	for k in game.sim.phase_usec:
 		phases += " %s %.1f" % [k, game.sim.phase_usec[k] / 1000.0]
-	perf_label.text = "%d FPS · ядер %d · %.1f дн/с · тик %.2f мс ·%s" % [Engine.get_frames_per_second(), Parallel.thread_count(), game.days_per_sec, game.sim.last_tick_usec / 1000.0, phases]
+	perf_label.text = "%d FPS · %s · ядер %d · %.1f дн/с · тик %.2f мс ·%s" % [Engine.get_frames_per_second(), "C++" if Native.available() else "GDScript", Parallel.thread_count(), game.days_per_sec, game.sim.last_tick_usec / 1000.0, phases]
 	if _toast_t > 0.0:
 		_toast_t -= get_process_delta_time()
 		toast_label.modulate.a = clampf(_toast_t, 0.0, 1.0)
