@@ -132,6 +132,12 @@
 - Тест детерминизма и скорости: `godot --headless --path . --script res://tests/sim_bench.gd`
   (`-- --large` — большая карта). Однопоточный и многопоточный результаты
   обязаны совпадать.
+- APK (отладочный, arm64, Android 7+): `GODOT=<путь к godot> sh tools/build_apk.sh` →
+  `export/meowq.apk`. Нужны шаблоны экспорта 4.3 (с GitHub-релиза Godot, в
+  `~/.local/share/godot/export_templates/4.3.stable`). Android SDK не нужен:
+  скрипт делает минимальный «SDK» с обёрткой apksigner на Google apksig 2.3.0
+  (Maven Central, подпись v2). dl.google.com в облачной среде закрыт (SDK/NDK
+  оттуда), поэтому C++-библиотеки под Android пока нет — в APK игра на GDScript.
 - Скриншот без человека: `godot --path . -- --screenshot=out.png --nation=GER --days=120`
   (доп. флаги: `--zoom=1.6 --select --tab=army --pick=1 --mapmode=4 --card=AUS --peace=AUS`;
   армия и война: `--group --war=POL --warday=30`; фокусы и события: `--focus`, `--event=munich`; флот: `--tab=navy --sel=fleet|wing --center=NOR`).
