@@ -3,7 +3,7 @@
 export/
 *.apk
 *.aab
-native/godot-cpp/
+native/godot-cpp
 native/bin/
 meowq.gdextension
 native/.sconsign.dblite

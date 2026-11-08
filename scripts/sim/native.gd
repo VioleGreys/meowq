@@ -13,7 +13,7 @@ static func init() -> void:
 	if _checked:
 		return
 	_checked = true
-	if ClassDB.class_exists("MeowqCore") and not OS.has_feature("no_native"):
+	if ClassDB.class_exists("MeowqCore") and not OS.get_cmdline_user_args().has("--no-native"):
 		core = ClassDB.instantiate("MeowqCore")
 		print("Нативное ядро: ", core.call("version"))
 

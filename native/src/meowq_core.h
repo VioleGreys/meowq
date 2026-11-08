@@ -26,7 +26,13 @@ public:
 	PackedInt32Array land_dist(const PackedInt32Array &adj_start, const PackedInt32Array &adj_list,
 			const PackedByteArray &land, int from) const;
 
-	String version() const { return "meowq-core 1"; }
+	// Путь в ширину для дивизии страны nation: по своим провинциям и провинциям
+	// противника (war[nation*nc+c]==1) до ближайшей из goals. Путь без from.
+	PackedInt32Array path_bfs(const PackedInt32Array &adj_start, const PackedInt32Array &adj_list,
+			const PackedByteArray &land, const PackedInt32Array &ctrl, const PackedByteArray &war,
+			int nation_count, int nation, int from, const PackedInt32Array &goals) const;
+
+	String version() const { return "meowq-core 2"; }
 };
 
 } // namespace godot

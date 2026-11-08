@@ -20,6 +20,10 @@ static func nearest_goal(world: World, nation: int, from: int, goal: Dictionary)
 
 
 static func _bfs(world: World, nation: int, from: int, goal: Dictionary) -> PackedInt32Array:
+	var native: Object = Native.core
+	if native != null:
+		return native.call("path_bfs", world.adj_start, world.adj_list, world.p_land, world.p_controller,
+				world.war, world.nation_count, nation, from, PackedInt32Array(goal.keys()))
 	var land := world.p_land
 	var ctrl := world.p_controller
 	var war := world.war

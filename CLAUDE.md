@@ -72,11 +72,16 @@
   список отрисовки под замком, `_draw` читает только его. ИИ — раз в
   `AI_PERIOD`=3 дня по снимку дивизий (`World.snapshot_divisions`: `dv_*`,
   CSR `pd_start/pd_list`). Тик ~19 мс к 1940 г. (~1000 дивизий) на ПК.
-- C++: `native/` — GDExtension `MeowqCore` (supply_bfs, land_dist), сборка
+- C++: `native/` — GDExtension `MeowqCore` (supply_bfs, land_dist, path_bfs; собирается и
+  работает, в облаке собрано за ~4 мин, `pip install scons`), сборка
   `cd native && scons platform=linux|android ...` (нужен godot-cpp 4.3 в
   `native/godot-cpp`); после сборки манифест `meowq.gdextension` копируется
   в корень. Обёртка `scripts/sim/native.gd`: без библиотеки тот же алгоритм на
-  GDScript, результаты обязаны совпадать (sim_bench).
+  GDScript, результаты обязаны совпадать (sim_bench). `-- --no-native` —
+  принудительно без библиотеки (сравнение в perf_bench). Вывод замеров: поиск
+  в ширину — не узкое место (выигрыш ~0,3 мс); время съедает GDScript-обход
+  объектов `Division`/`Fleet` по многим фазам — для C++ нужны данные дивизий в
+  плоских массивах (SoA).
 
 ## Карта
 - Собирается на ПК: `python3 tools/build_map.py --ne <папка с GeoJSON Natural Earth> [--preview out.png]`
