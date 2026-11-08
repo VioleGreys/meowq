@@ -170,6 +170,8 @@ func _auto_screenshot(path: String) -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	get_viewport().get_texture().get_image().save_png(path)
+	if "--report" in OS.get_cmdline_user_args():
+		print(Report.build(self))
 	_shutdown()
 	get_tree().quit()
 

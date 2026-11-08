@@ -377,6 +377,9 @@ func refresh_top() -> void:
 	if OS.has_feature("mobile"):
 		phases = ""   # на телефоне без фаз — они закрывали бы карту
 	var gpu: Vector2 = game.map_view.gpu_ms()
+	Report.sample(Engine.get_frames_per_second(), game.sim.last_tick_usec / 1000.0,
+		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, game.unit_layer.draw_usec / 1000.0,
+		gpu.x, game.days_per_sec)
 	phases += "\nкадр: логика %.1f · фишки %.1f · ГП карта %.1f (%d%%) · ГП экран %.1f мс · карта %d раз/с\nдень (макс. за с): панели %.1f · палитра %.1f · список %.1f · строка %.1f мс" % [
 		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, game.unit_layer.draw_usec / 1000.0,
 		gpu.x, int(game.map_view.res_scale * 100), gpu.y, _redraw_rate(), game.ui_prof[0] / 1000.0, game.ui_prof[1] / 1000.0,
@@ -1096,6 +1099,11 @@ func _build_navy(w: World, me: int) -> void:
 		game.map_view.motion_lite = v)
 	popup_body.add_child(lite)
 	popup_body.add_child(_label("Пока карту двигают, она рисуется в низком качестве, после остановки — в выбранном.", 15, Color(0.75, 0.75, 0.7)))
+	popup_body.add_child(_label("Отчёт для разработки", 20))
+	popup_body.add_child(_label("Телефон, видеокарта, настройки, замеры за последние 30 секунд и ошибки из журнала (после вылета — и причина). Вставьте его в чат одним сообщением.", 15, Color(0.75, 0.75, 0.7)))
+	popup_body.add_child(_button("Скопировать отчёт", func():
+		DisplayServer.clipboard_set(Report.build(game))
+		toast("Отчёт скопирован в буфер обмена"), Vector2(0, 52)))
 	popup_body.add_child(_section("Морские высадки"))
 	var plans := 0
 	for plan in w.invasions:
@@ -1292,3 +1300,8 @@ func _build_settings() -> void:
 		game.map_view.motion_lite = v)
 	popup_body.add_child(lite)
 	popup_body.add_child(_label("Пока карту двигают, она рисуется в низком качестве, после остановки — в выбранном.", 15, Color(0.75, 0.75, 0.7)))
+	popup_body.add_child(_label("Отчёт для разработки", 20))
+	popup_body.add_child(_label("Телефон, видеокарта, настройки, замеры за последние 30 секунд и ошибки из журнала (после вылета — и причина). Вставьте его в чат одним сообщением.", 15, Color(0.75, 0.75, 0.7)))
+	popup_body.add_child(_button("Скопировать отчёт", func():
+		DisplayServer.clipboard_set(Report.build(game))
+		toast("Отчёт скопирован в буфер обмена"), Vector2(0, 52)))

@@ -171,6 +171,13 @@
   «кадр: логика · фишки · ГП карта · ГП экран · карта N раз/с»; панели и
   кнопки — скругление 8–10 пикс.
 
+## Отчёт с телефона
+- Журнал Godot пишется в файл и на телефоне (`debug/file_logging`, 5 файлов в
+  user://logs). «Настройки» → «Скопировать отчёт» (`scripts/view/report.gd`):
+  устройство, видеокарта, рендерер, настройки, замеры за 30 с (мин/сред/макс),
+  ошибки текущего журнала и хвост прошлого (причина вылета). Проверка на ПК:
+  `--screenshot=... --report` печатает отчёт.
+
 ## Карта
 - Собирается на ПК: `python3 tools/build_map.py --ne <папка с GeoJSON Natural Earth> [--preview out.png]`
   (нужны numpy, scipy, pillow; GeoJSON — из github.com/nvkelso/natural-earth-vector/geojson).

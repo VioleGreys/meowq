@@ -12,6 +12,11 @@ config/features=PackedStringArray("4.3", "Mobile")
 config/icon="res://icon.svg"
 config/quit_on_go_back=false
 
+[debug]
+
+file_logging/enable_file_logging=true
+file_logging/max_log_files=5
+
 [display]
 
 window/size/viewport_width=1280
