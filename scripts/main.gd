@@ -433,6 +433,10 @@ func _process(dt: float) -> void:
 		_ui_waiting = true   # давно не обновлялись — попросить окно у симуляции
 
 
+const PALETTE_MIN_MSEC := 500
+var _palette_msec := 0
+
+
 func _ui_update() -> void:
 	if world.game_over != "":
 		state = "over"
@@ -455,7 +459,10 @@ func _ui_update() -> void:
 		_prune_selection()
 		hud.on_tick()
 	var t1 := Time.get_ticks_usec()
-	if world.palette_dirty:
+	# захваты перекрашивают карту не чаще двух раз в секунду: на высоком качестве
+	# полная перерисовка дорогая, а в войну владельцы меняются почти каждый день
+	if world.palette_dirty and (speed == 0 or Time.get_ticks_msec() - _palette_msec >= PALETTE_MIN_MSEC):
+		_palette_msec = Time.get_ticks_msec()
 		map_view.update_palette()
 	var t2 := Time.get_ticks_usec()
 	if new_day or _layer_dirty:
