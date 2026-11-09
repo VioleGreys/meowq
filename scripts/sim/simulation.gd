@@ -147,7 +147,7 @@ func _phase_economy() -> void:
 				if spawn >= 0:
 					world.spawn_division(i, spawn, int(entry[1]))
 					if nat.is_player:
-						world.log_event("Готова дивизия (%s): %s" % [Military.tpl(int(entry[1]))["name"].to_lower(), world.p_name[spawn]])
+						world.log_event("Готова дивизия (%s): %s" % [Military.tpl(world, int(entry[1]))["name"].to_lower(), world.p_name[spawn]])
 			else:
 				still.append([int(entry[0]) - 1, int(entry[1])])
 		nat.training = still
@@ -204,7 +204,7 @@ func _any_province(nid: int) -> int:
 
 
 func train_division(nid: int, tpl: int = Military.T_INF) -> bool:
-	return Military.start_training(world.nations[nid], tpl)
+	return Military.start_training(world, world.nations[nid], tpl)
 
 
 ## Матрица «одна сторона» для параллельных фаз (фракции и сюзерены меняются редко,
@@ -351,7 +351,7 @@ func _phase_supply() -> void:
 		flat.append_array(results[i])
 	for a in nc:
 		side_of[a] = reps.find(rep[a])
-	world.k_supply(side_of, flat, Military.T_MOT)
+	world.k_supply(side_of, flat)
 
 
 ## Forces.port_blockaded с памятью господства по (страна, зона) на один проход.
@@ -575,8 +575,8 @@ func _ai_train(nat: World.Nation, count: int) -> void:
 			mountainous = true
 			break
 	for k in count:
-		var t := Military.ai_template(nat, nat.trained_count, mountainous)
-		if Military.start_training(nat, t) or (t != Military.T_INF and Military.start_training(nat, Military.T_INF)):
+		var t := Military.ai_template(world, nat, nat.trained_count, mountainous)
+		if Military.start_training(world, nat, t) or (t != Military.T_INF and Military.start_training(world, nat, Military.T_INF)):
 			nat.trained_count += 1
 		else:
 			break

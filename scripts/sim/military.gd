@@ -20,57 +20,157 @@ const EQ_SHORT := ["Винт.", "Ору.", "Танки", "Груз.", "Суда"
 # цена единицы в «очках производства»; один военный завод даёт 1 очко в день
 const EQ_COST := [1.0, 3.5, 12.0, 2.5, 1.0, 6.0, 12.0]
 
-# --- Шаблоны дивизий -------------------------------------------------------------
+# --- Батальоны и шаблоны дивизий ------------------------------------------------
+# Шаблон — состав из батальонов (как в жанре): характеристики дивизии — сумма
+# (люди, снаряжение, атака, оборона) или среднее по людям (организация,
+# бронированность, местность), скорость — по самому медленному батальону.
+# Составы по умолчанию дают ровно прежние 6 шаблонов. Шаблоны лежат в мире
+# (World.templates): 0–5 — общие, дальше — проекты стран (поле owner).
+const B_INF := 0
+const B_MNT := 1
+const B_CAV := 2
+const B_ART := 3
+const B_MOT := 4
+const B_TANK := 5
+const BAT_COUNT := 6
+# men — тыс. человек; eq — [винт., ору., танки, груз.]; terr — множитель на
+# местности (равнины, лес, холмы, горы, город, море, пустыня, болота);
+# motor — моторизован (скорость от бонуса «speed» полностью, снабжение ×1,5)
+const BATTALIONS := [
+	{"name": "Пехотный", "short": "пех.", "icon": "pistol-gun", "men": 1.0, "eq": [10.0, 1.2, 0.0, 0.0], "atk": 1.0, "def": 1.2, "org": 40.0, "spd": 1.0, "hard": 0.0, "days": 14, "req": "", "motor": false,
+		"terr": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]},
+	{"name": "Горнострелковый", "short": "горн.", "icon": "mountain-climbing", "men": 1.0, "eq": [11.0, 0.6, 0.0, 0.0], "atk": 0.9, "def": 1.2, "org": 45.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "mnt1", "motor": false,
+		"terr": [1.0, 1.1, 1.35, 1.5, 1.0, 1.0, 0.9, 1.0]},
+	{"name": "Кавалерийский", "short": "кав.", "icon": "horse-head", "men": 1.0, "eq": [10.0, 0.0, 0.0, 0.0], "atk": 1.0, "def": 1.0, "org": 50.0, "spd": 1.5, "hard": 0.0, "days": 14, "req": "", "motor": false,
+		"terr": [1.1, 0.8, 0.9, 0.7, 0.8, 1.0, 1.1, 0.7]},
+	# артиллерия: 2 батальона к 10 пехотным дают прежнюю «пехоту с артиллерией»;
+	# на трудной местности она обуза (значения ниже 1 тянут среднее вниз)
+	{"name": "Артиллерийский", "short": "арт.", "icon": "cannon", "men": 0.5, "eq": [0.0, 12.0, 0.0, 0.0], "atk": 3.0, "def": 1.0, "org": 18.0, "spd": 0.9, "hard": 0.0, "days": 18, "req": "", "motor": false,
+		"terr": [1.55, 0.45, 0.45, -0.65, 1.0, 1.0, 1.55, -0.1]},
+	{"name": "Моторизованный", "short": "мот.", "icon": "jeep", "men": 1.0, "eq": [10.0, 1.2, 0.0, 6.0], "atk": 1.1, "def": 1.2, "org": 40.0, "spd": 2.0, "hard": 0.1, "days": 20, "req": "mot1", "motor": true,
+		"terr": [1.1, 0.85, 0.9, 0.75, 0.9, 1.0, 1.1, 0.7]},
+	{"name": "Танковый", "short": "танк.", "icon": "tank", "men": 1.0, "eq": [5.0, 0.0, 7.5, 5.0], "atk": 3.75, "def": 1.5, "org": 35.0, "spd": 1.8, "hard": 0.7, "days": 30, "req": "armor1", "motor": true,
+		"terr": [1.15, 0.75, 0.75, 0.55, 0.75, 1.0, 1.15, 0.55]},
+]
+const MAX_BATTALIONS := 15
+
 const T_INF := 0
 const T_MNT := 1
 const T_CAV := 2
 const T_ART := 3
 const T_MOT := 4
 const T_ARM := 5
-# men — тыс. человек; eq — [винт., ору., танки, груз.]; spd — множитель скорости;
-# hard — бронированность (снижает урон от атакующих без танков)
-const TEMPLATES := [
-	{"name": "Пехотная", "short": "пех.", "men": 10.0, "eq": [100, 12, 0, 0, 0, 0, 0], "atk": 10.0, "def": 12.0, "org": 40.0, "spd": 1.0, "hard": 0.0, "days": 14, "req": ""},
-	{"name": "Горнострелковая", "short": "горн.", "men": 10.0, "eq": [110, 6, 0, 0, 0, 0, 0], "atk": 9.0, "def": 12.0, "org": 45.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "mnt1"},
-	{"name": "Кавалерийская", "short": "кав.", "men": 8.0, "eq": [80, 0, 0, 0, 0, 0, 0], "atk": 8.0, "def": 8.0, "org": 50.0, "spd": 1.5, "hard": 0.0, "days": 14, "req": ""},
-	{"name": "Пехотная с артиллерией", "short": "п+арт", "men": 11.0, "eq": [100, 36, 0, 0, 0, 0, 0], "atk": 16.0, "def": 14.0, "org": 38.0, "spd": 0.9, "hard": 0.0, "days": 18, "req": ""},
-	{"name": "Моторизованная", "short": "мот.", "men": 10.0, "eq": [100, 12, 0, 60, 0, 0, 0], "atk": 11.0, "def": 12.0, "org": 40.0, "spd": 2.0, "hard": 0.1, "days": 20, "req": "mot1"},
-	{"name": "Танковая", "short": "танк.", "men": 8.0, "eq": [40, 0, 60, 40, 0, 0, 0], "atk": 30.0, "def": 12.0, "org": 35.0, "spd": 1.8, "hard": 0.7, "days": 30, "req": "armor1"},
+# классы для значков и ролей ИИ — совпадают с номерами общих шаблонов
+const DEFAULT_TEMPLATES := [
+	["Пехотная", "пех.", [10, 0, 0, 0, 0, 0]],
+	["Горнострелковая", "горн.", [0, 10, 0, 0, 0, 0]],
+	["Кавалерийская", "кав.", [0, 0, 8, 0, 0, 0]],
+	["Пехотная с артиллерией", "п+арт", [10, 0, 0, 2, 0, 0]],
+	["Моторизованная", "мот.", [0, 0, 0, 0, 10, 0]],
+	["Танковая", "танк.", [0, 0, 0, 0, 0, 8]],
 ]
 const BASE_SPEED := 0.28   # доля провинции в день для скорости 1.0 на равнине
 
-# Множитель атаки/обороны шаблона на местности (индексы World.T_*):
-# равнины, лес, холмы, горы, город, море, пустыня, болота
-const TERRAIN_MULT := [
-	[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],      # пехота
-	[1.0, 1.1, 1.35, 1.5, 1.0, 1.0, 0.9, 1.0],     # горные
-	[1.1, 0.8, 0.9, 0.7, 0.8, 1.0, 1.1, 0.7],      # кавалерия
-	[1.05, 0.95, 0.95, 0.85, 1.0, 1.0, 1.05, 0.9], # пехота с артиллерией
-	[1.1, 0.85, 0.9, 0.75, 0.9, 1.0, 1.1, 0.7],    # моторизованная
-	[1.15, 0.75, 0.75, 0.55, 0.75, 1.0, 1.15, 0.55], # танковая
-]
+
+## Собрать шаблон из состава bat (число батальонов каждого типа).
+static func make_template(name: String, short: String, bat: Array, owner: int = -1) -> Dictionary:
+	var men := 0.0
+	var eq := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	var atk := 0.0
+	var def := 0.0
+	var org := 0.0
+	var hard := 0.0
+	var spd := 99.0
+	var days := 0
+	var terr := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	var req: Array = []
+	var motor := true
+	var total := 0
+	for b in BAT_COUNT:
+		var c: int = int(bat[b])
+		if c <= 0:
+			continue
+		total += c
+		var bt: Dictionary = BATTALIONS[b]
+		var m: float = c * float(bt["men"])
+		men += m
+		for k in 4:
+			eq[k] += c * float(bt["eq"][k])
+		atk += c * float(bt["atk"])
+		def += c * float(bt["def"])
+		org += m * float(bt["org"])
+		hard += m * float(bt["hard"])
+		for k in 8:
+			terr[k] += m * float(bt["terr"][k])
+		spd = minf(spd, float(bt["spd"]))
+		days = maxi(days, int(bt["days"]))
+		if bt["req"] != "" and not req.has(bt["req"]):
+			req.append(bt["req"])
+		motor = motor and bool(bt["motor"])
+	men = maxf(men, 0.01)
+	for k in 8:
+		terr[k] = clampf(terr[k] / men, 0.3, 2.0)
+	return {"name": name, "short": short, "owner": owner, "bat": bat.duplicate(), "men": men, "eq": eq,
+		"atk": atk, "def": def, "org": org / men, "hard": hard / men, "spd": spd if total > 0 else 1.0,
+		"days": days, "req": req, "motor": motor and total > 0, "terr": terr, "cls": _template_class(bat),
+		"hidden": false}
 
 
-static func tpl_count() -> int:
-	return TEMPLATES.size()
+## Класс шаблона для значка и роли ИИ (номера общих шаблонов T_*).
+static func _template_class(bat: Array) -> int:
+	var total := 0
+	for b in BAT_COUNT:
+		total += int(bat[b])
+	if int(bat[B_TANK]) > 0:
+		return T_ARM
+	if int(bat[B_MOT]) * 2 > total:
+		return T_MOT
+	if int(bat[B_MNT]) * 2 > total:
+		return T_MNT
+	if int(bat[B_CAV]) * 2 > total:
+		return T_CAV
+	if int(bat[B_ART]) > 0:
+		return T_ART
+	return T_INF
 
 
-static func tpl(t: int) -> Dictionary:
-	return TEMPLATES[t]
-
-
-static func available_templates(nat: World.Nation) -> Array:
+static func default_templates() -> Array:
 	var res: Array = []
-	for i in TEMPLATES.size():
-		var req: String = TEMPLATES[i]["req"]
-		if req == "" or nat.techs.has(req):
+	for d in DEFAULT_TEMPLATES:
+		res.append(make_template(d[0], d[1], d[2]))
+	return res
+
+
+static func tpl_count(world: World) -> int:
+	return world.templates.size()
+
+
+static func tpl(world: World, t: int) -> Dictionary:
+	return world.templates[t]
+
+
+## Шаблоны, которые страна может готовить: общие и свои, не скрытые, с технологиями.
+static func available_templates(world: World, nat: World.Nation, with_locked := false) -> Array:
+	var res: Array = []
+	for i in world.templates.size():
+		var t: Dictionary = world.templates[i]
+		if t["hidden"] or (int(t["owner"]) >= 0 and int(t["owner"]) != nat.id):
+			continue
+		if with_locked or tech_missing(t, nat) == "":
 			res.append(i)
 	return res
 
 
-static func eq_points(t: int) -> float:
+static func tech_missing(t: Dictionary, nat: World.Nation) -> String:
+	for r in t["req"]:
+		if not nat.techs.has(r):
+			return r
+	return ""
+
+
+static func eq_points(world: World, t: int) -> float:
 	var s := 0.0
-	var eq: Array = TEMPLATES[t]["eq"]
+	var eq: Array = world.templates[t]["eq"]
 	for k in EQ_COUNT:
 		s += eq[k] * EQ_COST[k]
 	return s
@@ -78,28 +178,84 @@ static func eq_points(t: int) -> float:
 
 ## Пересчитать кэш характеристик дивизии (главный поток).
 static func refresh_division(world: World, d: World.Division) -> void:
+	if world.templates.is_empty():
+		build_tables(world)
 	var nat: World.Nation = world.nations[d.owner]
-	var t: Dictionary = TEMPLATES[d.tpl]
+	var t: Dictionary = world.templates[d.tpl]
 	d.atk = t["atk"] * (1.0 + nat.b("attack"))
 	d.def = t["def"] * (1.0 + nat.b("defense"))
 	d.max_org = t["org"] * (1.0 + nat.b("org"))
-	var spd_bonus := nat.b("speed") if d.tpl >= T_MOT else nat.b("speed") * 0.3
+	var spd_bonus := nat.b("speed") if t["motor"] else nat.b("speed") * 0.3
 	d.spd = BASE_SPEED * t["spd"] * (1.0 + spd_bonus)
 	d.hard = t["hard"]
 
 
-## Таблица множителей местности в Packed-массив мира (для параллельных фаз).
+## Таблицы шаблонов в Packed-массивы мира (для параллельных фаз и C++).
+## Вызывать после каждого изменения world.templates.
 static func build_tables(world: World) -> void:
+	if world.templates.is_empty():
+		world.templates = default_templates()
 	world.tpl_eq = PackedFloat64Array()
 	world.tpl_men = PackedFloat64Array()
-	for t in TEMPLATES.size():
-		world.tpl_men.append(TEMPLATES[t]["men"])
-		for k in EQ_COUNT:
-			world.tpl_eq.append(TEMPLATES[t]["eq"][k])
 	world.tpl_terrain = PackedFloat32Array()
-	for t in TEMPLATES.size():
+	world.tpl_cls = PackedInt32Array()
+	world.tpl_motor = PackedInt32Array()
+	for t in world.templates:
+		world.tpl_men.append(t["men"])
+		for k in EQ_COUNT:
+			world.tpl_eq.append(t["eq"][k])
 		for k in 8:
-			world.tpl_terrain.append(TERRAIN_MULT[t][k])
+			world.tpl_terrain.append(t["terr"][k])
+		world.tpl_cls.append(t["cls"])
+		world.tpl_motor.append(1 if t["motor"] else 0)
+
+
+## Новый шаблон страны (или правка своего). Правка меняет дивизии на ходу:
+## снаряжение и люди пересчитываются в доли нового состава, излишек — на склад.
+## Возвращает номер шаблона или -1. Только между world_lock/unlock.
+static func save_template(world: World, nid: int, name: String, bat: Array, edit: int = -1) -> int:
+	var total := 0
+	for b in BAT_COUNT:
+		total += int(bat[b])
+	if total <= 0 or total > MAX_BATTALIONS:
+		return -1
+	var short := name.substr(0, 6).to_lower() + "."
+	var nt := make_template(name, short, bat, nid)
+	if edit >= 0:
+		var old: Dictionary = world.templates[edit]
+		if int(old["owner"]) != nid:
+			return -1
+		var nat: World.Nation = world.nations[nid]
+		for d in world.divisions:
+			if d.alive and d.tpl == edit:
+				var frac := 1.0
+				for k in EQ_LAND:
+					var have: float = d.eq * float(old["eq"][k])
+					if float(nt["eq"][k]) > 0.0:
+						frac = minf(frac, have / float(nt["eq"][k]))
+				for k in EQ_LAND:
+					nat.stock[k] += maxf(0.0, d.eq * float(old["eq"][k]) - frac * float(nt["eq"][k]))
+				var men_have: float = d.strength / 100.0 * float(old["men"])
+				var s := minf(100.0, 100.0 * men_have / float(nt["men"]))
+				nat.manpower += maxf(0.0, men_have - s / 100.0 * float(nt["men"]))
+				d.eq = frac
+				d.strength = maxf(1.0, s)
+		world.templates[edit] = nt
+	else:
+		world.templates.append(nt)
+		edit = world.templates.size() - 1
+	build_tables(world)
+	for d in world.divisions:
+		if d.alive and d.tpl == edit:
+			refresh_division(world, d)
+			d.org = minf(d.org, d.max_org)
+	return edit
+
+
+## Скрыть свой шаблон из списка (дивизии на нём остаются).
+static func hide_template(world: World, nid: int, t: int) -> void:
+	if t >= 0 and t < world.templates.size() and int(world.templates[t]["owner"]) == nid:
+		world.templates[t]["hidden"] = true
 
 
 # --- Производство ----------------------------------------------------------------
@@ -207,10 +363,11 @@ static func produce(nat: World.Nation) -> void:
 
 # --- Подготовка и пополнение -------------------------------------------------
 
-static func can_train(nat: World.Nation, t: int) -> String:
-	var tp: Dictionary = TEMPLATES[t]
-	if tp["req"] != "" and not nat.techs.has(tp["req"]):
-		return "нужна технология «%s»" % Tech.get_tech(tp["req"]).get("name", tp["req"])
+static func can_train(world: World, nat: World.Nation, t: int) -> String:
+	var tp: Dictionary = world.templates[t]
+	var miss := tech_missing(tp, nat)
+	if miss != "":
+		return "нужна технология «%s»" % Tech.get_tech(miss).get("name", miss)
 	if nat.manpower < tp["men"]:
 		return "не хватает людей"
 	var eq: Array = tp["eq"]
@@ -220,10 +377,10 @@ static func can_train(nat: World.Nation, t: int) -> String:
 	return ""
 
 
-static func start_training(nat: World.Nation, t: int) -> bool:
-	if can_train(nat, t) != "":
+static func start_training(world: World, nat: World.Nation, t: int) -> bool:
+	if can_train(world, nat, t) != "":
 		return false
-	var tp: Dictionary = TEMPLATES[t]
+	var tp: Dictionary = world.templates[t]
 	var eq: Array = tp["eq"]
 	nat.manpower -= tp["men"]
 	for k in EQ_COUNT:
@@ -234,10 +391,10 @@ static func start_training(nat: World.Nation, t: int) -> bool:
 
 ## Пополнение дивизии за день: люди и снаряжение со склада; нужна связь
 ## со снабжением.
-static func reinforce(nat: World.Nation, d: World.Division) -> void:
+static func reinforce(world: World, nat: World.Nation, d: World.Division) -> void:
 	if d.supply < 0.3 or (d.eq >= 1.0 and d.strength >= 100.0):
 		return   # полностью укомплектована — быстрый выход
-	var tp: Dictionary = TEMPLATES[d.tpl]
+	var tp: Dictionary = world.templates[d.tpl]
 	var eq: Array = tp["eq"]
 	var rate := 0.04 * (1.0 + nat.b("reinforce")) * d.supply
 	# снаряжение
@@ -264,15 +421,15 @@ static func shortage(world: World, n: int) -> Array:
 	var need := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 	for d in world.divisions:
 		if d.alive and d.owner == n and d.eq < 1.0:
-			var eq: Array = TEMPLATES[d.tpl]["eq"]
+			var eq: Array = world.templates[d.tpl]["eq"]
 			for k in EQ_COUNT:
 				need[k] += eq[k] * (1.0 - d.eq)
 	return need
 
 
 ## Какой шаблон ИИ готовит следующим (детерминированно по номеру).
-static func ai_template(nat: World.Nation, k: int, mountainous: bool) -> int:
-	var avail := available_templates(nat)
+static func ai_template(world: World, nat: World.Nation, k: int, mountainous: bool) -> int:
+	var avail := available_templates(world, nat)
 	var cycle: Array = [T_INF, T_INF, T_ART, T_INF]
 	if avail.has(T_MOT):
 		cycle.append(T_MOT)

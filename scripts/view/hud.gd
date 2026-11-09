@@ -1761,7 +1761,7 @@ func _build_nation_list(w: World) -> void:
 
 func _train(count: int, tpl: int) -> void:
 	var made: int = game.train(count, tpl)
-	toast("В подготовке: +%d" % made if made > 0 else Military.can_train(game.world.nations[game.player()], tpl))
+	toast("В подготовке: +%d" % made if made > 0 else Military.can_train(game.world, game.world.nations[game.player()], tpl))
 	_rebuild_popup()
 
 
@@ -1793,9 +1793,9 @@ func _build_army(w: World, me: int) -> void:
 	if not any:
 		popup_body.add_child(_small("Выделите дивизии на карте (или «Все войска») и нажмите «Создать армию». Армия сама держит фронт против выбранной страны или наступает к цели."))
 	popup_body.add_child(_section("Формирование дивизий"))
-	for t in Military.tpl_count():
-		var tp: Dictionary = Military.tpl(t)
-		var why := Military.can_train(n, t)
+	for t in Military.available_templates(w, n, true):
+		var tp: Dictionary = Military.tpl(w, t)
+		var why := Military.can_train(w, n, t)
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
 		var b1 := _button("%s" % tp["name"], func(): _train(1, t), Vector2(0, 48))

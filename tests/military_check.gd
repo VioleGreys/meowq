@@ -34,12 +34,12 @@ func _init() -> void:
 	for i in 30:
 		sim.tick()
 	check(ger.stock[0] > before[0] and ger.stock[2] > before[2], "за 30 дней выросли запасы винтовок (%d→%d) и танков (%d→%d)" % [before[0], ger.stock[0], before[2], ger.stock[2]])
-	check(Military.can_train(w.nations[POL], Military.T_ARM).contains("технолог"), "Польше без технологии танковые дивизии недоступны")
+	check(Military.can_train(w, w.nations[POL], Military.T_ARM).contains("технолог"), "Польше без технологии танковые дивизии недоступны")
 	ger.stock[Military.EQ_TANK] = 500.0
 	ger.stock[Military.EQ_TRUCK] = 500.0
 	ger.manpower = 500.0
 	var n_train := ger.training.size()
-	check(Military.start_training(ger, Military.T_ARM) and ger.training.size() == n_train + 1, "Германия формирует танковую дивизию")
+	check(Military.start_training(w, ger, Military.T_ARM) and ger.training.size() == n_train + 1, "Германия формирует танковую дивизию")
 
 	print("Бой: танки против пехоты на равнине и в горах:")
 	var tank := w.spawn_division(GER, w.nations[GER].capital, Military.T_ARM)

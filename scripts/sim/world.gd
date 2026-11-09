@@ -345,7 +345,10 @@ var n_attack := PackedFloat32Array()
 var n_defense := PackedFloat32Array()
 var n_org := PackedFloat32Array()
 var n_speed := PackedFloat32Array()
-var tpl_eq := PackedFloat64Array()       # Military.TEMPLATES[t]["eq"][k] — шаблон*7 + k
+var templates: Array = []               # шаблоны дивизий (Military.make_template): 0–5 общие, дальше — проекты стран
+var tpl_eq := PackedFloat64Array()       # templates[t]["eq"][k] — шаблон*7 + k
+var tpl_cls := PackedInt32Array()        # класс шаблона (Military.T_*) — значок и роль
+var tpl_motor := PackedInt32Array()      # 1 — моторизован (снабжение ×1,5)
 var tpl_men := PackedFloat64Array()
 var tpl_terrain := PackedFloat32Array()   # Military.TERRAIN_MULT построчно (шаблон*8 + местность)
 var p_coastal := PackedByteArray()
@@ -837,7 +840,8 @@ func rebuild_prov_divs() -> void:
 ## (org — сумма org/max_org). C++ — MeowqCore.counters, результаты совпадают.
 func k_counters() -> Array:
 	if Native.core != null:
-		return Native.core.call("counters", pl_head, d_nx, d_alive, d_owner, d_str, d_org, d_morg, d_sup, d_tpl)
+		return Native.core.call("counters", pl_head, d_nx, d_alive, d_owner, d_str, d_org, d_morg, d_sup, Native.gather_i32(tpl_cls, d_tpl))
+	var d_cls := Native.gather_i32(tpl_cls, d_tpl)
 	var o_prov := PackedInt32Array()
 	var o_owner := PackedInt32Array()
 	var o_n := PackedInt32Array()
@@ -877,7 +881,7 @@ func k_counters() -> Array:
 				g_str[k] += d_str[h]
 				g_org[k] += d_org[h] / maxf(1.0, d_morg[h])
 				g_sup[k] = minf(g_sup[k], d_sup[h])
-				g_tc[k * 8 + clampi(d_tpl[h], 0, 7)] += 1
+				g_tc[k * 8 + clampi(d_cls[h], 0, 7)] += 1
 			h = d_nx[h]
 		for k in g_owner.size():
 			var main_t := 0
@@ -1285,16 +1289,18 @@ func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus:
 
 ## Снабжение дивизий: side_of — номер стороны страны (-1 — нет сети),
 ## dist — расстояния до узлов по сторонам подряд (сторона*prov_count + p).
-func k_supply(side_of: PackedInt32Array, dist: PackedInt32Array, t_mot: int) -> void:
+func k_supply(side_of: PackedInt32Array, dist: PackedInt32Array) -> void:
+	# моторизованность по шаблону: 1 — да (порог t_mot = 1 в ядре)
+	var mot := Native.gather_i32(tpl_motor, d_tpl)
 	if Native.core != null:
-		d_sup = Native.core.call("supply_apply", d_alive, d_sup, d_prov, d_tpl, d_owner, side_of, dist, p_supply_cap, prov_count, t_mot)
+		d_sup = Native.core.call("supply_apply", d_alive, d_sup, d_prov, mot, d_owner, side_of, dist, p_supply_cap, prov_count, 1)
 		return
 	var demand := PackedFloat32Array()
 	demand.resize(prov_count)
 	var n := d_id.size()
 	for i in n:
 		if d_alive[i] == 1:
-			demand[d_prov[i]] += 1.5 if d_tpl[i] >= t_mot else 1.0
+			demand[d_prov[i]] += 1.5 if mot[i] >= 1 else 1.0
 	for i in n:
 		if d_alive[i] == 0:
 			continue

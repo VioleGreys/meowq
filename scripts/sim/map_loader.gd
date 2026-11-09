@@ -326,7 +326,7 @@ static func _spawn_armies(world: World, rng: RandomNumberGenerator, data: Dictio
 		var need := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 		for dv in world.divisions:
 			if dv.owner == nat.id:
-				var eq: Array = Military.tpl(dv.tpl)["eq"]
+				var eq: Array = Military.tpl(world, dv.tpl)["eq"]
 				for k in Military.EQ_COUNT:
 					need[k] += eq[k]
 		for k in Military.EQ_COUNT:
