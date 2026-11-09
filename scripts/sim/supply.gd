@@ -99,7 +99,7 @@ static func regions(world: World, side_of: PackedInt32Array, sources: Array, cap
 	else:
 		f = field(field_snapshot(world, side_of, sources, capitals))
 	world.sup_job = {}
-	var t := {"ps": f[0], "got": f[1], "side_of": side_of, "ctrl": world.p_controller, "pcap": world.p_supply_cap,
+	var t := {"ps": f[0], "got": f[1], "gsrc": f[2], "side_of": side_of, "ctrl": world.p_controller, "pcap": world.p_supply_cap,
 		"d_alive": world.d_alive, "d_prov": world.d_prov, "d_owner": world.d_owner,
 		"mot": Native.gather_i32(world.tpl_motor, world.d_tpl), "local": LOCAL}
 	if Native.core != null:
@@ -229,16 +229,20 @@ static func field_gd(t: Dictionary) -> Array:
 	Parallel.run(nr, _flood_region.bind(args), "снабжение:районы", 8)
 	var got := PackedFloat64Array()
 	got.resize(pc)
+	var gsrc := PackedInt32Array()   # источник лучшей подачи провинции
+	gsrc.resize(pc)
+	gsrc.fill(-1)
 	for r in nr:
 		var out: PackedFloat64Array = parts[r]
-		for j in range(0, out.size(), 2):
+		for j in range(0, out.size(), 3):
 			var p := int(out[j])
 			if out[j + 1] > got[p]:
 				got[p] = out[j + 1]
-	return [ps, got]
+				gsrc[p] = int(out[j + 2])
+	return [ps, got, gsrc]
 
 
-## Волна подачи от источников района r (пары: провинция, подача) → parts[r].
+## Волна подачи от источников района r (тройки: провинция, подача, источник) → parts[r].
 static func _flood_region(r: int, args: Array) -> void:
 	var adj_start: PackedInt32Array = args[0]
 	var adj_list: PackedInt32Array = args[1]
@@ -271,6 +275,7 @@ static func _flood_region(r: int, args: Array) -> void:
 			head += 1
 			out.append(float(p))
 			out.append(f0 * fall[h])
+			out.append(float(start))
 			if h >= hub_range:
 				continue
 			for e in range(adj_start[p], adj_start[p + 1]):
@@ -289,6 +294,7 @@ static func _flood_region(r: int, args: Array) -> void:
 static func divisions_gd(t: Dictionary) -> PackedFloat64Array:
 	var ps: PackedInt32Array = t["ps"]
 	var got: PackedFloat64Array = t["got"]
+	var gsrc: PackedInt32Array = t["gsrc"]
 	var side_of: PackedInt32Array = t["side_of"]
 	var ctrl: PackedInt32Array = t["ctrl"]
 	var pcap: PackedFloat32Array = t["pcap"]
@@ -314,7 +320,10 @@ static func divisions_gd(t: Dictionary) -> PackedFloat64Array:
 		if s < 0 or c < 0 or side_of[c] != s:
 			continue   # не своя сторона — снабжения нет
 		var have := k_local * float(pcap[p])
-		if ps[p] == s:
+		# подача вчерашнего поля — если провинция и её источник (узел, порт,
+		# столица) и сегодня за этой стороной: захваченный за сутки узел не кормит
+		var g := gsrc[p]
+		if ps[p] == s and g >= 0 and ctrl[g] >= 0 and side_of[ctrl[g]] == s:
 			have += got[p]
 		var d := dem[p]
 		sup[i] = 1.0 if have >= d else have / maxf(1.0, d)

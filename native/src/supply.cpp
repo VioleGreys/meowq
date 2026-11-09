@@ -112,6 +112,10 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	got_a.resize(pc);
 	double *got = got_a.ptrw();
 	std::fill(got, got + pc, 0.0);
+	PackedInt32Array gsrc_a;
+	gsrc_a.resize(pc);
+	int32_t *gsrc = gsrc_a.ptrw();
+	std::fill(gsrc, gsrc + pc, -1);
 	std::vector<int32_t> mark(pc, 0), queue, hops;
 	int stamp = 0;
 	for (int r = 0; r < nr; r++) {
@@ -130,8 +134,10 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 				const int h = hops[head];
 				head++;
 				const double v = f0 * fall[h];
-				if (v > got[p])
+				if (v > got[p]) {
 					got[p] = v;
+					gsrc[p] = start;
+				}
 				if (h >= hub_range)
 					continue;
 				for (int e = adj_start[p]; e < adj_start[p + 1]; e++) {
@@ -148,12 +154,15 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	Array res;
 	res.push_back(ps_a);
 	res.push_back(got_a);
+	res.push_back(gsrc_a);
 	return res;
 }
 
 PackedFloat64Array MeowqCore::supply_divs(const Dictionary &t) const {
 	const PackedInt32Array ps_a = t["ps"], side_a = t["side_of"], ctrl_a = t["ctrl"];
 	const PackedFloat64Array got_a = t["got"];
+	const PackedInt32Array gsrc_a = t["gsrc"];
+	const int32_t *gsrc = gsrc_a.ptr();
 	const PackedFloat32Array pcap_a = t["pcap"];
 	const PackedByteArray alive_a = t["d_alive"];
 	const PackedInt32Array prov_a = t["d_prov"], owner_a = t["d_owner"], mot_a = t["mot"];
@@ -181,7 +190,8 @@ PackedFloat64Array MeowqCore::supply_divs(const Dictionary &t) const {
 		if (s < 0 || c < 0 || side_of[c] != s)
 			continue;
 		double have = k_local * double(pcap[p]);
-		if (ps[p] == s)
+		const int g = gsrc[p];
+		if (ps[p] == s && g >= 0 && ctrl[g] >= 0 && side_of[ctrl[g]] == s)
 			have += got[p];
 		const double d = dem[p];
 		sup[i] = have >= d ? 1.0 : have / std::max(1.0, d);
