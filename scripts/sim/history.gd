@@ -1271,7 +1271,7 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sуступка (влияние −%d)" % [who, int(e.get("v", 10))])
 			"supply":
 				var rn2 := {"oil": "нефть", "steel": "сталь", "aluminium": "алюминий", "rubber": "каучук", "tungsten": "вольфрам", "chromium": "хром"}
-				parts.append("%sпоставки по договору: %s %d в день → %s" % [who, rn2.get(String(e.get("res", "oil")), ""), int(e.get("v", 1)), tname])
+				parts.append("%sпоставки по договору: %s %s в день → %s" % [who, rn2.get(String(e.get("res", "oil")), ""), str(snappedf(float(e.get("v", 1)), 0.1)).trim_suffix(".0"), tname])
 			"closed_trade":
 				parts.append("%s%s" % [who, "торговля только с сюзереном" if bool(e.get("v", true)) else "свободная торговля марионетки"])
 			"embargo":

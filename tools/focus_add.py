@@ -18,6 +18,7 @@ m — армия, флот, авиация (6–8). Фокус встаёт по
   inf2 arm1 mnt1 cav1 mot1 art1   дивизии          bb1 cr1 dd2 ss2   корабли
   rep:КТО:О_КОМ:±N   trade:КТО:ГДЕ:N   lead:Имя_Фамилия   war:T  lwar:T (ограниченная)
   join:T  pact:T  guar:T  aid:T  peace:T  conc:N  flag:id  tens:N  ev:id
+  sup:КОМУ:ресурс:ед.:дней   поставка по договору (oil, aluminium, rubber, tungsten, chromium)
 Условия: date:1938-03-12 alive:T dead:T atwar pair:A:B flag:id
 """
 import os
@@ -74,6 +75,9 @@ def effects(s):
                 out.append({"t": "flag", "id": p[1]})
             elif k == "ev":
                 out.append({"t": "event", "id": p[1]})
+            elif k == "sup":
+                # sup:КОМУ:ресурс:ед.:дней — поставка по договору
+                out.append({"t": "supply", "target": p[1], "res": p[2], "v": float(p[3]), "days": int(p[4])})
             else:
                 raise ValueError("эффект? " + tok)
     return out

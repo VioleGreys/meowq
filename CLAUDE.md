@@ -173,7 +173,12 @@
   res_val`; у страны `res_prod/need/in/out/fill/synth`. Расход линии — по
   снаряжению (`Economy.RES_NEED`), выпуск ×`line_mult` (не ниже `SHORT_FLOOR`).
   Курс (`LAWS`, `trade_law`, бонусы — в `recalc_spirits`): доля экспорта, но
-  продаётся только излишек (`export_cap`). Поставки `world.contracts`:
+  продаётся только излишек (`export_cap`). Союзнику по фракции и сюзерену ИИ-продавец
+  отдаёт весь излишек сверх курса (`Economy.is_ally`, `exportable(..., buyer)`,
+  в `plan_sales` — две доли: по курсу и союзная); игрок-продавец — только по курсу.
+  Договоры Германии: нефть Румынии, нефть и хром СССР, хром Турции (`tur_x10`,
+  1941), вольфрам Португалии (`por_x14`, 1942); эффект `sup:` в focus_add.
+  Диагностика закупок: `tests/trade_diag.gd [-- --nation=GER]`. Поставки `world.contracts`:
   [покупатель, продавец, ресурс, ед., оплачено до, договор до, со след.
   месяца]; оплата — гражданскими заводами (`UNITS_PER_CIV`, продавцу половина).
   Раз в `SWEEP_DAYS`=14 — пакетом: добыча/нужда, обход поставок, рейтинг
@@ -409,6 +414,7 @@
 - Военная система: `godot --headless --path . --script res://tests/military_check.gd`
 - Дипломатия (правила + прогон лет): `godot --headless --path . --script res://tests/diplomacy_check.gd -- --years=3`
 - Проверка стартовых данных: `godot --headless --path . --script res://tests/data_check.gd`
+- Закупки ресурсов страны: `godot --headless --path . --script res://tests/trade_diag.gd [-- --nation=GER]`
 - Профиль участков кода: `godot --headless --path . --script res://tests/prof_check.gd`
 - Производительность: `godot --headless --path . --script res://tests/perf_bench.gd`
   (разгон до 1940 г., тик по фазам, один поток против многих); в реальном

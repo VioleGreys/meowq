@@ -127,15 +127,29 @@ static func available(nat: World.Nation, r: int) -> float:
 ## Сколько ресурса r страна ещё может продать (её курс минус уже проданное).
 ## Продают только излишек сверх своей нужды (как было в войну: стратегическое
 ## сырьё, нужное самим, не вывозили — кроме договоров, см. oblige).
-static func exportable(world: World, seller: World.Nation, r: int) -> float:
-	return maxf(0.0, export_cap(seller, r) - seller.res_out[r])
+## Союзнику по фракции и сюзерену ИИ-продавец отдаёт весь излишек, без
+## ограничения курса (как ресурсы шли внутри Оси и союзников в войну);
+## buyer = −1 — по курсу.
+static func exportable(world: World, seller: World.Nation, r: int, buyer := -1) -> float:
+	var ally := buyer >= 0 and is_ally(world, seller.id, buyer)
+	return maxf(0.0, export_cap(seller, r, ally) - seller.res_out[r])
+
+
+## Продаёт ли ИИ-страна s покупателю b излишек сверх курса: одна фракция или
+## b — её сюзерен. Игрок-продавец всегда торгует по своему курсу.
+static func is_ally(world: World, s: int, b: int) -> bool:
+	var sn: World.Nation = world.nations[s]
+	if sn.is_player or b < 0 or b == s:
+		return false
+	return sn.overlord == b or (sn.faction >= 0 and sn.faction == world.nations[b].faction)
 
 
 ## Сколько всего ресурса r страна готова продавать в день: доля курса, но не
 ## больше излишка.
-static func export_cap(seller: World.Nation, r: int) -> float:
-	# закрытая марионетка отдаёт сюзерену весь излишек, независимо от курса
-	var share: float = 1.0 if (seller.trade_closed and seller.overlord >= 0) else float(LAWS[seller.trade_law]["export"])
+static func export_cap(seller: World.Nation, r: int, ally := false) -> float:
+	# закрытая марионетка отдаёт сюзерену весь излишек, независимо от курса;
+	# союзнику ИИ отдаёт весь излишек (ally)
+	var share: float = 1.0 if (ally or (seller.trade_closed and seller.overlord >= 0)) else float(LAWS[seller.trade_law]["export"])
 	var cap: float = seller.res_prod[r] * share
 	return minf(cap, maxf(0.0, seller.res_prod[r] - seller.res_need[r] * 1.1))
 
@@ -166,7 +180,7 @@ static func buy(world: World, buyer: int, seller: int, r: int, units: float, log
 	if units < 0.1 or can_trade(world, buyer, seller) != "":
 		return false
 	var sn: World.Nation = world.nations[seller]
-	if exportable(world, sn, r) + 0.001 < units:
+	if exportable(world, sn, r, buyer) + 0.001 < units:
 		return false
 	var bn: World.Nation = world.nations[buyer]
 	var c := _find(world, buyer, seller, r)
@@ -391,18 +405,24 @@ static func plan_sales(t: Dictionary, i: int, s: int, row: PackedFloat32Array) -
 	var share: PackedFloat32Array = t["share"]
 	var auto: PackedByteArray = t["auto"]
 	var oblig: PackedFloat32Array = t["oblig"]
+	var fac: PackedInt32Array = t["fac"]
+	var over: PackedInt32Array = t["over"]
+	var player: PackedByteArray = t["player"]
 	var cur_all: Array = t["cur"]
 	var c3_all: Array = t["c3"]
 	var cur: PackedFloat32Array = cur_all[i]
 	var c3: PackedFloat32Array = c3_all[i]
 	var plan: Array = []
-	if share[s] <= 0.0:
+	# союзникам (фракция, сюзерен) ИИ-продавец отдаёт весь излишек сверх курса
+	var allies := player[s] == 0 and (fac[s] >= 0 or over[s] >= 0)
+	if share[s] <= 0.0 and not allies:
 		return plan
 	for r in RES_COUNT:
-		var cap: float = prod[s * RES_COUNT + r] * share[s]
-		cap = minf(cap, maxf(0.0, prod[s * RES_COUNT + r] - need[s * RES_COUNT + r] * 1.1))
+		var surplus: float = maxf(0.0, prod[s * RES_COUNT + r] - need[s * RES_COUNT + r] * 1.1)
+		var cap: float = minf(prod[s * RES_COUNT + r] * share[s], surplus)
 		cap = maxf(0.0, cap - oblig[s * RES_COUNT + r])   # договорные поставки — вне доли
-		if cap < 0.1 and out[s * RES_COUNT + r] <= 0.0:
+		var cap_ally: float = maxf(0.0, surplus - oblig[s * RES_COUNT + r]) if allies else cap
+		if cap_ally < 0.1 and out[s * RES_COUNT + r] <= 0.0:
 			continue
 		var order: Array = []
 		for b in nc:
@@ -418,9 +438,12 @@ static func plan_sales(t: Dictionary, i: int, s: int, row: PackedFloat32Array) -
 		order.sort_custom(func(x, y): return x[0] > y[0] or (x[0] == y[0] and x[1] < y[1]))
 		for o in order:
 			var b: int = o[1]
-			var give := snappedf(minf(float(o[2]), cap), 0.1)
+			var ally := allies and (over[s] == b or (fac[s] >= 0 and fac[s] == fac[b]))
+			var give := snappedf(minf(float(o[2]), cap_ally if ally else cap), 0.1)
 			# урезанная поставка дослуживает месяц и занимает свою часть доли
-			cap = maxf(0.0, cap - maxf(give, c3[b * RES_COUNT + r]))
+			var used := maxf(give, c3[b * RES_COUNT + r])
+			cap = maxf(0.0, cap - used)
+			cap_ally = maxf(0.0, cap_ally - used)
 			plan.append([b, r, give])
 	return plan
 
@@ -726,7 +749,8 @@ static func _ai_buy(world: World, nat: World.Nation, free: Array) -> void:
 			var lst := PackedInt32Array()
 			for x in nc:
 				var xn: World.Nation = world.nations[x]
-				if xn.alive and exportable(world, xn, r) >= 0.3:
+				# с запасом: союзникам продают и сверх курса (проверка ниже)
+				if xn.alive and maxf(0.0, export_cap(xn, r, not xn.is_player) - xn.res_out[r]) >= 0.3:
 					lst.append(x)
 			free.append(lst)
 	var budget := _budget(world, nat.id)
@@ -744,13 +768,13 @@ static func _ai_buy(world: World, nat: World.Nation, free: Array) -> void:
 				var sc: float = world.trade_score[s * nc + nat.id]
 				if sc <= best_score:
 					continue
-				if exportable(world, world.nations[s], r) < 0.3:
+				if exportable(world, world.nations[s], r, nat.id) < 0.3:
 					continue
 				best_score = sc
 				best = s
 			if best < 0:
 				break
-			var take := minf(lack, exportable(world, world.nations[best], r))
+			var take := minf(lack, exportable(world, world.nations[best], r, nat.id))
 			if not buy(world, nat.id, best, r, take):
 				break
 			lack -= take

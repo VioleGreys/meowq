@@ -833,7 +833,9 @@
       {"id": "tur_x08", "name": "Мобилизация 1941 года", "desc": "Армия на границах.", "days": 35, "x": 7, "y": 0, "available": {"date": "1941-01-01"},
        "effects": [{"t": "manpower", "v": 50}, {"t": "divisions", "tpl": "inf", "n": 1}]},
       {"id": "tur_x09", "name": "Британские самолёты", "desc": "Ленд-лиз для Турции.", "days": 35, "x": 7, "y": 1, "requires": ["tur_x08"], "available": {"date": "1942-01-01"},
-       "effects": [{"t": "bonus", "key": "attack", "v": 0.04}]}
+       "effects": [{"t": "bonus", "key": "attack", "v": 0.04}]},
+      {"id": "tur_x10", "name": "Соглашение Клодиуса", "desc": "Октябрь 1941 г.: Турция обязуется продавать Германии хром в обмен на оружие и машины.", "days": 35, "x": 1, "y": 2, "requires": ["tur_x06"], "available": {"date": "1941-10-09"},
+       "effects": [{"t": "supply", "target": "GER", "res": "chromium", "v": 3.0, "days": 900}, {"t": "rep", "by": "ENG", "of": "TUR", "v": -5}]}
     ],
     "FIN": [
       {"id": "fin_forest", "name": "Лес и бумага", "desc": "Экспорт древесины — главный источник валюты.", "days": 35, "x": 1, "y": 0,
@@ -1169,7 +1171,9 @@
       {"id": "por_x12", "name": "Охрана Тимора", "desc": "Колония под угрозой Японии.", "days": 35, "x": 6, "y": 1, "requires": ["por_legion"], "available": {"date": "1941-12-17"},
        "effects": [{"t": "bonus", "key": "defense", "v": 0.04}]},
       {"id": "por_x13", "name": "Флот колоний", "desc": "Шлюпы для Анголы и Мозамбика.", "days": 35, "x": 7, "y": 1, "requires": ["por_x11"],
-       "effects": [{"t": "ships", "kind": "dd", "n": 1}, {"t": "divisions", "tpl": "inf", "n": 1}]}
+       "effects": [{"t": "ships", "kind": "dd", "n": 1}, {"t": "divisions", "tpl": "inf", "n": 1}]},
+      {"id": "por_x14", "name": "Вольфрамовое соглашение", "desc": "Договор января 1942 г.: часть добычи вольфрама — Германии в обмен на уголь, сталь и золото.", "days": 35, "x": 2, "y": 1, "requires": ["por_x09"], "available": {"date": "1942-01-24"},
+       "effects": [{"t": "supply", "target": "GER", "res": "tungsten", "v": 1.5, "days": 900}, {"t": "rep", "by": "ENG", "of": "POR", "v": -5}]}
     ],
     "LUX": [
       {"id": "lux_arbed", "name": "АРБЕД", "desc": "Сталь великого герцогства.", "days": 70, "x": 1, "y": 0,

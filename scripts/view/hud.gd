@@ -2247,7 +2247,7 @@ func _build_sellers(w: World, me: int, r: int) -> void:
 	for s in nc:
 		if s == me or not w.nations[s].alive:
 			continue
-		var free := Economy.exportable(w, w.nations[s], r)
+		var free := Economy.exportable(w, w.nations[s], r, me)
 		if free < 0.1:
 			continue
 		var sc: float = w.trade_score[s * nc + me] if w.trade_score.size() == nc * nc else 0.0
