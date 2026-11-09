@@ -793,13 +793,14 @@ func _check_capitulation() -> void:
 		if o < 0 or vp[p] == 0:
 			continue
 		total[o] += vp[p]
-		if ctrl[p] == o:
+		# провинции у союзника по стороне (сюзерен, фракция) — не потеряны
+		if ctrl[p] == o or (ctrl[p] >= 0 and Diplomacy.same_side(world, ctrl[p], o)):
 			held[o] += vp[p]
 	for nat in world.nations:
 		if not nat.alive or nat.at_war.is_empty() or total[nat.id] == 0 or _peace_pending(nat.id):
 			continue
 		var ratio := float(held[nat.id]) / float(total[nat.id])
-		if ratio < 0.3:
+		if ratio < nat.capitulate_at:
 			_capitulate(nat.id)
 		elif world.p_controller[nat.capital] != nat.id:
 			_move_capital(nat)
@@ -825,7 +826,8 @@ func _capitulate(nid: int) -> void:
 	# главный победитель — тот, кто держит больше всего наших провинций
 	var occ := {}
 	for p in world.prov_count:
-		if world.p_owner[p] == nid and world.p_controller[p] != nid:
+		if world.p_owner[p] == nid and world.p_controller[p] != nid and world.p_controller[p] >= 0 \
+				and not Diplomacy.same_side(world, world.p_controller[p], nid):
 			occ[world.p_controller[p]] = int(occ.get(world.p_controller[p], 0)) + world.p_vp[p] + 1
 	var winner := -1
 	var best := -1

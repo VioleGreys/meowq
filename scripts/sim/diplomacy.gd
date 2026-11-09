@@ -442,8 +442,8 @@ static func ai_turn(world: World, n: int, rng: RandomNumberGenerator) -> void:
 	if not nat.alive or nat.is_player or nat.overlord >= 0:
 		return
 
-	# 1. Фракции
-	if nat.faction < 0 and not nat.neutral:
+	# 1. Фракции (в исторической игре союзы складываются только фокусами и событиями)
+	if nat.faction < 0 and not nat.neutral and not world.historical:
 		var threatened := _threatened(world, n)
 		var best := -1
 		for f in world.factions:

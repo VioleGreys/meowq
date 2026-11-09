@@ -51,6 +51,7 @@
    ]
   },
   "SOV": {
+   "capitulate_at": 0.15,
    "major": true,
    "full_name": "Союз Советских Социалистических Республик",
    "ideology": "communism",
@@ -1614,6 +1615,7 @@
    "techs": []
   },
   "CHI": {
+   "capitulate_at": 0.1,
    "full_name": "Китайская Республика",
    "ideology": "authoritarian",
    "leader": "Чан Кайши",

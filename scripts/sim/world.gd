@@ -41,6 +41,7 @@ class Nation:
 	var manpower_rate := 0.015
 	var major := false
 	var neutral := false
+	var capitulate_at := 0.3    # капитуляция, когда своих очков победы меньше этой доли
 	var color := Color.WHITE
 	var capital := -1
 	var alive := true

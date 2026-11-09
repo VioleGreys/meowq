@@ -117,6 +117,7 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		nat.population = float(d.get("population", 1.0))
 		nat.major = bool(d.get("major", false))
 		nat.neutral = bool(d.get("neutral", false))
+		nat.capitulate_at = float(d.get("capitulate_at", 0.3))
 		nat.manpower_rate = float(ideologies.get(nat.ideology, {}).get("manpower_rate", 0.015))
 		for tech_id in d.get("techs", []):
 			Tech.complete(nat, tech_id)
