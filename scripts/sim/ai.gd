@@ -240,6 +240,13 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			var score: float = enemy_str * def_mult - vp[t] * 6.0 + rng.randf() * 20.0
 			if objective >= 0:
 				score += obj_dist[t] * 25.0
+			# охват: цель, которую можно атаковать с нескольких наших участков, важнее
+			var dirs := 0
+			for k in range(a_start[t], a_start[t + 1]):
+				if fronts.has(a_list[k]):
+					dirs += 1
+			if dirs > 1:
+				score -= float(dirs - 1) * 15.0
 			target_list.append([score, t, enemy_str * def_mult])
 		# порядок однозначный (при равенстве — номер провинции): так же сортирует C++
 		target_list.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
@@ -280,12 +287,46 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				for i in chosen:
 					left[dv_prov[i]] = int(left[dv_prov[i]]) + 1
 
+	# Ротация: измотанные дивизии (организация < 30 %) на передовой отходят на
+	# соседнюю тыловую провинцию, если на участке остаётся кто-то из наших.
+	var rotated: Array = []
+	var ours_left := {}
+	if at_war:
+		for i in idle:
+			if used.has(i) or dv_org[i] >= 0.3:
+				continue
+			var pv := dv_prov[i]
+			if not fronts.has(pv):
+				continue
+			if not ours_left.has(pv):
+				var cnt := 0
+				for m in range(pd_start[pv], pd_start[pv + 1]):
+					if dv_owner[pd_list[m]] == nid:
+						cnt += 1
+				ours_left[pv] = cnt
+			if int(ours_left[pv]) <= 1:
+				continue
+			var rear := -1
+			for k in range(a_start[pv], a_start[pv + 1]):
+				var q := a_list[k]
+				if land[q] == 1 and ctrl[q] == nid and not fronts.has(q):
+					rear = q
+					break
+			if rear < 0:
+				continue
+			used[i] = true
+			ours_left[pv] = int(ours_left[pv]) - 1
+			rotated.append(i)
+			orders.append([i, PackedInt32Array([rear])])
+
 	# Остальных распределяем по фронту: больше — туда, где больше противника.
 	var per_front := {}
 	for i in divs:
 		var pv := dv_prov[i]
 		if dv_flags[i] & 4 == 0 and fronts.has(pv):
 			per_front[pv] = int(per_front.get(pv, 0)) + 1
+	for i in rotated:
+		per_front[dv_prov[i]] = int(per_front.get(dv_prov[i], 0)) - 1
 	var weight := {}
 	var wsum := 0.0
 	for f in fronts:

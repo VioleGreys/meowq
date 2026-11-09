@@ -1,3 +1,4 @@
+// Версия ядра в meowq_core.cpp повышается при каждом изменении алгоритма.
 // Военный план ИИ — перенос AIPlanner.plan_military (scripts/sim/ai.gd) один
 // в один: тот же порядок обхода (словари GDScript хранят порядок вставки —
 // здесь это вектор + флаги), те же формулы в double, те же вызовы ГСЧ.
@@ -181,6 +182,11 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			const double def_mult = 1.0 + double(def_tab[t]);
 			double score = enemy_str * def_mult - vp[t] * 6.0 + double(rng->randf()) * 20.0;
 			if (objective >= 0) score += obj_dist[t] * 25.0;
+			// охват: цель, которую можно атаковать с нескольких наших участков, важнее
+			int dirs = 0;
+			for (int32_t k = a_start[t]; k < a_start[t + 1]; k++)
+				if (fronts.has[a_list[k]]) dirs++;
+			if (dirs > 1) score -= double(dirs - 1) * 15.0;
 			target_list.push_back({ score, t, enemy_str * def_mult });
 		}
 		std::sort(target_list.begin(), target_list.end(), [](const Entry &a, const Entry &b) {
@@ -231,6 +237,43 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		}
 	}
 
+	// ротация: измотанные дивизии (организация < 30 %) на передовой отходят на
+	// соседнюю тыловую провинцию, если на участке остаётся кто-то из наших
+	std::vector<int32_t> rotated;
+	if (at_war) {
+		std::vector<int32_t> ours_left(pc, INT_MIN);
+		for (int32_t i : idle) {
+			if (used[i] || double(dv_org[i]) >= 0.3) continue;
+			const int32_t pv = dv_prov[i];
+			if (!fronts.has[pv]) continue;
+			if (ours_left[pv] == INT_MIN) {
+				int cnt = 0;
+				for (int32_t m = pd_start[pv]; m < pd_start[pv + 1]; m++)
+					if (dv_owner[pd_list[m]] == nid) cnt++;
+				ours_left[pv] = cnt;
+			}
+			if (ours_left[pv] <= 1) continue;
+			int32_t rear = -1;
+			for (int32_t k = a_start[pv]; k < a_start[pv + 1]; k++) {
+				const int32_t q = a_list[k];
+				if (land[q] == 1 && ctrl[q] == nid && !fronts.has[q]) {
+					rear = q;
+					break;
+				}
+			}
+			if (rear < 0) continue;
+			used[i] = 1;
+			ours_left[pv] -= 1;
+			rotated.push_back(i);
+			Array o;
+			o.push_back(i);
+			PackedInt32Array path;
+			path.push_back(rear);
+			o.push_back(path);
+			orders.push_back(o);
+		}
+	}
+
 	// остальные — по фронту, больше туда, где больше противника
 	std::vector<int32_t> per_front(pc, 0);
 	for (int64_t k = 0; k < divs.size(); k++) {
@@ -238,6 +281,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		const int32_t pv = dv_prov[i];
 		if ((dv_flags[i] & 4) == 0 && fronts.has[pv]) per_front[pv] += 1;
 	}
+	for (int32_t i : rotated) per_front[dv_prov[i]] -= 1;
 	std::vector<double> weight(pc, 0.0);
 	double wsum = 0.0;
 	for (int32_t f : fronts.order) {
