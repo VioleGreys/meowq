@@ -215,10 +215,9 @@ static func _ai_pick_focus(world: World, n: int, rng: RandomNumberGenerator) -> 
 			avail.append(fd["id"])
 	if avail.is_empty():
 		return
-	if world.historical:
-		_ai_pick_historical(world, n, avail)
-		return
-	start_focus(world, n, avail[rng.randi() % avail.size()])
+	# ИИ идёт строго по исторической ветке в любом режиме: развилки — первый путь
+	# в списке, сроки — исторические. Варианты для ИИ добавим позже.
+	_ai_pick_historical(world, n, avail)
 
 
 ## Исторический ИИ: фокусы по сроку. Для каждого датированного фокуса считается
@@ -351,21 +350,13 @@ static func _ai_option(world: World, ev: Dictionary, rng: RandomNumberGenerator)
 	var opts: Array = ev.get("options", [])
 	if opts.is_empty():
 		return -1
-	if world.historical:
-		var best := 0
-		for i in opts.size():
-			if float(opts[i].get("ai", 0)) > float(opts[best].get("ai", 0)):
-				best = i
-		return best
-	var total := 0.0
-	for o in opts:
-		total += maxf(1.0, float(o.get("ai", 0)))
-	var r := rng.randf() * total
+	# ИИ всегда выбирает исторический вариант (наибольший вес «ai»);
+	# варианты с весами для ИИ вернём, когда появятся альтернативные ветки
+	var best := 0
 	for i in opts.size():
-		r -= maxf(1.0, float(opts[i].get("ai", 0)))
-		if r <= 0.0:
-			return i
-	return 0
+		if float(opts[i].get("ai", 0)) > float(opts[best].get("ai", 0)):
+			best = i
+	return best
 
 
 ## Выбор варианта события (ИИ или игрок).
