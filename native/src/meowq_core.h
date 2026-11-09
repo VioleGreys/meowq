@@ -127,7 +127,7 @@ public:
 			const PackedInt32Array &owner, const PackedInt32Array &ctrl, const PackedInt32Array &adj_start,
 			const PackedInt32Array &adj_list, const PackedByteArray &land, const PackedByteArray &hostile, int nc,
 			const PackedFloat64Array &plan_in, double gain, double active, double rear) const;
-	String version() const { return "meowq-core 21"; }
+	String version() const { return "meowq-core 22"; }
 };
 
 } // namespace godot

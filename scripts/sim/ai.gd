@@ -257,7 +257,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 					dirs += 1
 			if dirs > 1:
 				score -= float(dirs - 1) * 15.0
-			target_list.append([score, t, enemy_str * def_mult])
+			target_list.append([score, t, enemy_str * def_mult, dirs])
 		# порядок однозначный (при равенстве — номер провинции): так же сортирует C++
 		target_list.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
 		for j in mini(3, target_list.size()):
@@ -266,6 +266,9 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		for entry in target_list:
 			var t: int = entry[1]
 			var need: float = entry[2] * ratio
+			# осторожная страна не лезет в пустую провинцию-выступ (котёл)
+			if float(entry[2]) <= 0.0 and ratio >= 4.0 and int(entry[3]) < 2:
+				continue
 			var group: Array = []
 			for k in range(a_start[t], a_start[t + 1]):
 				var q := a_list[k]

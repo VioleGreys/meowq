@@ -178,6 +178,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			double score;
 			int32_t t;
 			double es;
+			int dirs;
 		};
 		std::vector<Entry> target_list;
 		for (int32_t t : targets.order) {
@@ -195,7 +196,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			for (int32_t k = a_start[t]; k < a_start[t + 1]; k++)
 				if (fronts.has[a_list[k]]) dirs++;
 			if (dirs > 1) score -= double(dirs - 1) * 15.0;
-			target_list.push_back({ score, t, enemy_str * def_mult });
+			target_list.push_back({ score, t, enemy_str * def_mult, dirs });
 		}
 		std::sort(target_list.begin(), target_list.end(), [](const Entry &a, const Entry &b) {
 			return a.score < b.score || (a.score == b.score && a.t < b.t);
@@ -209,6 +210,8 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		for (const Entry &entry : target_list) {
 			const int32_t t = entry.t;
 			const double need = entry.es * ratio;
+			// осторожная страна не лезет в пустую провинцию-выступ (котёл)
+			if (entry.es <= 0.0 && ratio >= 4.0 && entry.dirs < 2) continue;
 			group.clear();
 			for (int32_t k = a_start[t]; k < a_start[t + 1]; k++) {
 				const int32_t q = a_list[k];
