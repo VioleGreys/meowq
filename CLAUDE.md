@@ -207,6 +207,16 @@
   интерфейса — только между `game.world_lock()` / `game.world_unlock()`;
   интерфейс обновляется через `try_lock`, `UnitLayer.rebuild()` собирает список
   отрисовки под замком, `_draw` читает только его.
+  Конвейер ввода игрока: действия из интерфейса — через `game.act(cb)`, не
+  `world_lock`: если мир свободен — сразу, иначе в очередь (`_cmds`), которую
+  главный поток выполняет на границе дня (`_run_cmds` в `_process`, при
+  `try_lock`); симуляция уступает окно (`_ui_waiting`). Порядок действий
+  сохраняется, главный поток не ждёт дня (было до 120 мс на нажатие;
+  `--bench_rt` печатает «действия игрока»). Кнопки `Hud._button`, касания
+  карты, фокусы, ответы на события — через `act`. Приказ выделенным войскам —
+  `Simulation.order_move_many`: пути одним обратным поиском от цели
+  (`Pathfinder.paths_to`, проверка `tests/paths_check.gd`; без C++ — 1 мс вместо
+  22 на 1200 путей).
 - Дивизии (7б): числовое состояние — плоские массивы мира `World.d_*` (индекс —
   `Division.slot`, порядок = `world.divisions`), свойства `Division` — обёртки
   над ними. Путь менять только присваиванием (`d.path = ...`, зеркалится в
@@ -351,6 +361,7 @@
 - Перепарсить скрипты / обновить кэш классов: `godot --headless --editor --quit --path .`
 - История (вехи 1936–41): `godot --headless --path . --script res://tests/history_check.gd [-- --until=1941-07-01 --quiet]`
 - Флот и авиация: `godot --headless --path . --script res://tests/forces_check.gd`
+- Пути многим дивизиям сразу: `godot --headless --path . --script res://tests/paths_check.gd`
 - Военная система: `godot --headless --path . --script res://tests/military_check.gd`
 - Дипломатия (правила + прогон лет): `godot --headless --path . --script res://tests/diplomacy_check.gd -- --years=3`
 - Проверка стартовых данных: `godot --headless --path . --script res://tests/data_check.gd`

@@ -715,6 +715,38 @@ func order_move(d: World.Division, to: int) -> bool:
 	return true
 
 
+## Приказ многим дивизиям сразу: пути — одним обратным поиском от цели
+## (Pathfinder.paths_to). Возвращает, скольким дивизиям приказ отдан.
+func order_move_many(divs: Array, to: int) -> int:
+	if divs.size() < 3:
+		var n := 0
+		for d in divs:
+			if order_move(d, to):
+				n += 1
+				d.group = -1
+		return n
+	var srcs := PackedInt32Array()
+	var owner := -1
+	for d in divs:
+		srcs.append(d.prov)
+		owner = d.owner
+	var paths := Pathfinder.paths_to(world, owner, to, srcs)
+	var ok := 0
+	for d in divs:
+		if d.prov == to:
+			d.path = PackedInt32Array()
+		elif paths.has(d.prov):
+			var path: PackedInt32Array = paths[d.prov]
+			if d.path.is_empty() or d.path[0] != path[0]:
+				d.progress = 0.0
+			d.path = path
+		else:
+			continue
+		d.group = -1   # ручной приказ выводит дивизию из армии
+		ok += 1
+	return ok
+
+
 # --- Бои и движение ----------------------------------------------------------
 
 ## province -> Array[Division] атакующих. Ядро World.k_march заодно считает

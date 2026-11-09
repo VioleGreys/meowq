@@ -43,6 +43,8 @@ var _ticks_seen := 0
 var _rate_time := 0.0
 var _rate_ticks := 0
 var _layer_dirty := true
+var _cmds: Array = []             # действия игрока, ждущие границы дня (act)
+var _cmd_mutex := Mutex.new()
 var large_map := false
 var procedural := false          # старая процедурная карта (для тестов): -- --procedural
 
@@ -125,6 +127,20 @@ func _bench_realtime(seconds: float) -> void:
 			map_view.camera.position += Vector2(cos(tt), sin(tt)) * 6.0 / map_view.camera.zoom.x
 			map_view.camera.zoom = Vector2.ONE * clampf(map_view.camera.zoom.x * (1.0 + 0.01 * sin(tt * 0.7)), 0.3, 4.0)
 			map_view._on_view_changed()
+		# действие игрока каждые 10 кадров: по очереди — прежним способом
+		# (ждать мир под замком) и через очередь act; копим, сколько стоял
+		# главный поток и через сколько действие выполнилось
+		if frames % 10 == 0:
+			var ta := Time.get_ticks_usec()
+			if (frames / 10) % 2 == 0:
+				world_lock()
+				world_unlock()
+				var b := Time.get_ticks_usec() - ta
+				_act_old.append(b)
+			else:
+				var rec := _act_new
+				act(func(): rec.append(Time.get_ticks_usec() - ta))
+				_act_block.append(Time.get_ticks_usec() - ta)
 		await get_tree().process_frame
 		var ft := Time.get_ticks_usec() - f0
 		var vrid := get_viewport().get_viewport_rid()
@@ -153,12 +169,30 @@ func _bench_realtime(seconds: float) -> void:
 	print("  карта: разрешение %d%%, цена полной перерисовки %.1f мс" % [int(map_view.res_scale * 100), map_view.last_cost_ms])
 	print("  палитра обновлялась %d раз; слой фишек рисовался %d раз, в среднем %.2f мс" % [map_view.palette_version,
 		unit_layer.draw_count, unit_layer.draw_total_usec / 1000.0 / maxi(1, unit_layer.draw_count)])
+	print("  действия игрока: ждать мир — главный поток стоит %s; очередь — стоит %s, выполнено через %s" % [
+		_stat(_act_old), _stat(_act_block), _stat(_act_new)])
 	var names := ["панели дня", "палитра", "список фишек", "верхняя строка"]
 	for i in 4:
 		print("  %s: всего %.0f мс за прогон, худшее %.1f мс" % [names[i], ui_prof_sum[i] / 1000.0, ui_prof_max[i] / 1000.0])
 	speed = 0
 	_shutdown()
 	get_tree().quit()
+
+
+var _act_old: Array = []
+var _act_new: Array = []
+var _act_block: Array = []
+
+
+func _stat(a: Array) -> String:
+	if a.is_empty():
+		return "—"
+	var s := 0
+	var m := 0
+	for v in a:
+		s += int(v)
+		m = maxi(m, int(v))
+	return "сред %.1f / макс %.1f мс" % [s / 1000.0 / a.size(), m / 1000.0]
 
 
 func _auto_screenshot(path: String) -> void:
@@ -338,6 +372,46 @@ func player() -> int:
 	return unit_layer.player
 
 
+## Действие игрока без ожидания (конвейер ввода): если мир свободен — сразу,
+## иначе в очередь; очередь выполняется в главном потоке на границе дней
+## (_process, когда мьютекс свободен), поток симуляции уступает окно после
+## своего дня. Порядок действий сохраняется. Интерфейс не замирает на время
+## дня (на телефоне — до 100 мс на нажатие).
+func act(cb: Callable) -> void:
+	_cmd_mutex.lock()
+	var queued := not _cmds.is_empty()
+	if queued or single_thread or not sim_mutex.try_lock():
+		_cmds.append(cb)
+		_cmd_mutex.unlock()
+		_ui_waiting = true
+		if single_thread:
+			_run_cmds()
+		return
+	_cmd_mutex.unlock()
+	cb.call()
+	_layer_dirty = true
+	sim_mutex.unlock()
+
+
+## Выполнить накопленные действия (мьютекс мира уже взят или поток один).
+func _run_cmds() -> void:
+	_cmd_mutex.lock()
+	var list := _cmds
+	_cmds = []
+	_cmd_mutex.unlock()
+	for cb in list:
+		(cb as Callable).call()
+	if not list.is_empty():
+		_layer_dirty = true
+
+
+func pending_actions() -> int:
+	_cmd_mutex.lock()
+	var n := _cmds.size()
+	_cmd_mutex.unlock()
+	return n
+
+
 func world_lock() -> void:
 	sim_mutex.lock()
 
@@ -441,6 +515,7 @@ func _process(dt: float) -> void:
 	# интерфейс и список отрисовки — только когда мир не занят симуляцией
 	if sim_mutex.try_lock():
 		_ui_waiting = false
+		_run_cmds()
 		_ui_update()
 		sim_mutex.unlock()
 		var now := Time.get_ticks_usec()
@@ -448,8 +523,8 @@ func _process(dt: float) -> void:
 			_ui_gap_max = maxi(_ui_gap_max, now - _ui_last)
 		_ui_last = now
 		_ui_count += 1
-	elif Time.get_ticks_usec() - _ui_last > UI_MAX_GAP_USEC:
-		_ui_waiting = true   # давно не обновлялись — попросить окно у симуляции
+	elif Time.get_ticks_usec() - _ui_last > UI_MAX_GAP_USEC or pending_actions() > 0:
+		_ui_waiting = true   # давно не обновлялись или ждут действия — попросить окно у симуляции
 
 
 const PALETTE_MIN_MSEC := 500
@@ -548,9 +623,7 @@ func _prune_selection() -> void:
 # --- Ввод с карты ------------------------------------------------------------
 
 func _on_province_tapped(p: int) -> void:
-	world_lock()
-	_on_province_tapped_locked(p)
-	world_unlock()
+	act(func(): _on_province_tapped_locked(p))
 
 
 func _on_province_tapped_locked(p: int) -> void:
@@ -608,11 +681,8 @@ func _on_province_tapped_locked(p: int) -> void:
 		return
 	# есть выделенные войска -> приказ на движение
 	if not selected_divs.is_empty() and p != selected_prov:
-		var ok := 0
-		for d in selected_divs:
-			if sim.order_move(d, p):
-				ok += 1
-				d.group = -1   # ручной приказ выводит дивизию из армии
+		# пути всем выделенным — одним поиском от цели (Simulation.order_move_many)
+		var ok := sim.order_move_many(selected_divs, p)
 		if ok > 0:
 			hud.toast("Приказ отдан: %d дивизий → %s" % [ok, world.p_name[p]])
 			selected_prov = p

@@ -256,12 +256,11 @@ func _choose(k: int) -> void:
 		return
 	for b in _buttons:
 		b.disabled = true
-	game.world_lock()
-	if _info:
-		game.dismiss_info_event()
-	else:
-		game.resolve_event(k)
-	game.world_unlock()
+	game.act(func():
+		if _info:
+			game.dismiss_info_event()
+		else:
+			game.resolve_event(k))
 
 
 ## Появление: планшет въезжает снизу.

@@ -106,15 +106,14 @@ func _button(text: String, cb: Callable, min_size := Vector2(0, 56)) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.custom_minimum_size = min_size
-	# действия игрока меняют мир — выполняем под блокировкой (ждём конца дня)
+	# действия игрока меняют мир — через очередь game.act (на границе дня)
 	# отложенно (в конце кадра): действие часто пересобирает окно и удаляет саму
 	# кнопку — посреди обработки нажатия это давало ошибки «!is_inside_tree()»
 	b.pressed.connect(func():
 		if game != null:
-			game.world_lock()
-		cb.call()
-		if game != null:
-			game.world_unlock(), CONNECT_DEFERRED)
+			game.act(cb)   # конвейер ввода: не ждём конца игрового дня
+		else:
+			cb.call(), CONNECT_DEFERRED)
 	return b
 
 
