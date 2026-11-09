@@ -144,7 +144,7 @@ static func daily(world: World) -> void:
 		return
 	for nat in world.nations:
 		nat.aggression *= 0.95
-		nat.diplo *= 0.95
+		nat.diplo *= 0.95 if nat.diplo > 0.0 else 0.98   # уступки помнятся дольше
 	var n := world.rep_n
 	for a in n:
 		if not world.nations[a].alive:
@@ -173,7 +173,8 @@ const POTENTIAL_MAX := 30.0   # потенциал (армия, экономик
 const POTENTIAL_FULL := 0.30  # доля мира, при которой составляющая потенциала полная
 const NEUTRAL_POTENTIAL := 0.3  # нейтралитет на мир почти не влияет — потенциал ×0,3
 const ACTION_MAX := 70.0      # действия — до 70 очков
-const ACTION_FULL := 80.0     # очков действий (агрессия + дипломатия) для полных 80
+const ACTION_FULL := 80.0     # очков действий (агрессия + дипломатия) для полных 70
+const DISCREDIT_MAX := 12.0   # уступки снимают с силы не больше 12 очков (дискредитация)
 
 
 ## Сила страны для шкалы: армия (дивизии, флот, авиация).
@@ -229,18 +230,22 @@ static func update_threat(world: World) -> void:
 				dp += nat.diplo
 		var k := NEUTRAL_POTENTIAL if ideo == "authoritarian" else 1.0
 		var third := POTENTIAL_MAX / 3.0 * k
-		# уступки (отрицательная дипломатия) уменьшают действия силы
-		var act := ACTION_MAX * clampf((ag + dp) / ACTION_FULL, 0.0, 1.0)
+		# действия: агрессия и дипломатия; уступки (отрицательная дипломатия)
+		# уходят в минус и снимают очки и с потенциала (дискредитация)
+		var act := maxf(ACTION_MAX * clampf((ag + dp) / ACTION_FULL, -1.0, 1.0), -DISCREDIT_MAX)
+		var pos := ag + maxf(dp, 0.0)
 		var parts := {
 			"армия": third * minf(1.0, (m / maxf(tot_m, 1.0)) / POTENTIAL_FULL),
 			"экономика": third * minf(1.0, (e / maxf(tot_e, 1.0)) / POTENTIAL_FULL),
 			"наука": third * minf(1.0, (s / maxf(tot_s, 1.0)) / POTENTIAL_FULL),
-			"агрессия": act * (ag / maxf(ag + maxf(dp, 0.0), 0.001)),
-			"дипломатия": act * (maxf(dp, 0.0) / maxf(ag + maxf(dp, 0.0), 0.001)),
+			"агрессия": maxf(act, 0.0) * (ag / maxf(pos, 0.001)),
+			"дипломатия": maxf(act, 0.0) * (maxf(dp, 0.0) / maxf(pos, 0.001)),
+			"уступки": minf(act, 0.0),
 		}
 		var raw := 0.0
 		for key in parts:
 			raw += parts[key]
+		raw = maxf(raw, 0.0)
 		world.threat[ideo] = {"pct": 0.0, "raw": raw, "parts": parts}
 		total += raw
 	for ideo in THREATS:
