@@ -37,7 +37,7 @@ F_OSW = os.path.join(ROOT, "assets/fonts/Oswald.ttf")
 F_MONO = os.path.join(ROOT, "assets/fonts/IBMPlexMono-Regular.ttf")
 F_MONO_B = os.path.join(ROOT, "assets/fonts/IBMPlexMono-SemiBold.ttf")
 
-AMBIENT = ["Cardboard002", "Leather026", "SurfaceImperfections001", "SurfaceImperfections013", "Scratches003",
+AMBIENT = ["Paper003", "Cardboard002", "Leather026", "SurfaceImperfections001", "SurfaceImperfections013", "Scratches003",
            "Scratches005", "Rust009"]
 OGA = {
     "oldpage.png": "https://opengameart.org/sites/default/files/oldpage.png",
@@ -78,6 +78,7 @@ def download(godot):
     for name, url in OGA.items():
         fetch(url, os.path.join(SRC, name))
     fetch(CLIP_URL, os.path.join(SRC, "paperclip.png"))
+    fetch(CLIP_URL, os.path.join(SRC, "paperclip_full.png"))
     render = os.path.join(SRC, "clipboard_render.png")
     if not os.path.exists(render):
         api = json.loads(urllib.request.urlopen(urllib.request.Request(
@@ -309,6 +310,14 @@ def build_spines():
         save(f, f"spine_{mid}.png")
 
 
+def build_spine_shadow():
+    """тень корешка (как в макете: 50% альфы, размытие 6), поля 24"""
+    w, h, p = 470, 84, 24
+    sh = Image.new("RGBA", (w + 2 * p, h + 2 * p), (0, 0, 0, 0))
+    ImageDraw.Draw(sh).rounded_rectangle((p, p, p + w - 1, p + h - 1), 5, fill=(0, 0, 0, 128))
+    save(sh.filter(ImageFilter.GaussianBlur(6)), "spine_shadow.png")
+
+
 def build_dossier():
     """створки картонной папки-дела: левая (обложка изнутри, завязки) и правая"""
     W, H = 760, 980
@@ -388,6 +397,228 @@ def build_misc():
         save(stamp(text, 300, 96, col, seed), f"stamp_{name}.png")
 
 
+# --- окно события и верхняя полоса «один в один» с макетом ---------------------
+# Функции ниже повторяют код, которым рисовался утверждённый макет (размеры в
+# пикселях экрана 1920×1080; в игре всё масштабируется 720/1080).
+
+RED_M = (168, 32, 28)
+DEJAVU = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
+
+def m_tex(name, size, tint=None, amount=0.0, bright=1.0):
+    im = amb(name)
+    w, h = size
+    out = Image.new("RGB", (w, h))
+    for y in range(0, h, im.height):
+        for x in range(0, w, im.width):
+            out.paste(im, (x, y))
+    if tint:
+        out = Image.blend(out, Image.new("RGB", size, tint), amount)
+    if bright != 1.0:
+        out = ImageEnhance.Brightness(out).enhance(bright)
+    return out
+
+
+def m_paper(size):
+    g = ImageOps.grayscale(m_tex("Paper003", size))
+    return ImageOps.colorize(g, black=(150, 130, 100), white=(244, 234, 210))
+
+
+def m_manila(size):
+    return m_tex("Cardboard002", size, (214, 178, 110), 0.25, 1.02)
+
+
+def m_leather(size):
+    return m_tex("Leather026", size, (60, 40, 25), 0.35, 1.25)
+
+
+def m_rounded(size, r, corners=(1, 1, 1, 1)):
+    m = Image.new("L", size, 0)
+    ImageDraw.Draw(m).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), r, fill=255,
+                                        corners=tuple(bool(c) for c in corners))
+    return m
+
+
+def m_shadow_img(size, box, r, off, blur, alpha):
+    """тень как в макете: скруглённый прямоугольник со сдвигом, размытый"""
+    sh = Image.new("RGBA", size, (0, 0, 0, 0))
+    x0, y0, x1, y1 = box
+    ImageDraw.Draw(sh).rounded_rectangle((x0 + off[0], y0 + off[1], x1 + off[0], y1 + off[1]), r,
+                                         fill=(0, 0, 0, alpha))
+    return sh.filter(ImageFilter.GaussianBlur(blur))
+
+
+def m_grunge(size, seed=1, keep=0.82):
+    g = ImageOps.grayscale(m_tex("Paper003", (max(size[0], 64) * 2, max(size[1], 64) * 2))).resize(size)
+    g = ImageOps.autocontrast(g)
+    random.seed(seed)
+    noise = Image.effect_noise(size, 60).filter(ImageFilter.GaussianBlur(0.6))
+    m = ImageChops.add(g, noise, scale=2.0)
+    return m.point(lambda v: 255 if v > (1 - keep) * 255 else int(v * 2))
+
+
+def m_stamp(text, w, h, color, seed):
+    """штамп макета без поворота (поворачивает игра)"""
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle((3, 3, w - 4, h - 4), 8, outline=color + (255,), width=5)
+    d.rounded_rectangle((11, 11, w - 12, h - 12), 5, outline=color + (255,), width=2)
+    f = font(F_OSW, int(h * 0.48))
+    tw = d.textlength(text, font=f)
+    d.text(((w - tw) / 2, h * 0.17), text, font=f, fill=color + (255,))
+    a = ImageChops.multiply(im.getchannel("A"), m_grunge((w, h), seed))
+    im.putalpha(a.point(lambda v: int(v * 0.85)))
+    return im
+
+
+def m_sheet(w, h, crumpled):
+    """лист макета: «old page», помятый — с наложенной мятой бумагой"""
+    base = Image.open(os.path.join(SRC, "oldpage.png")).convert("RGBA").resize((w, h), Image.LANCZOS)
+    if not crumpled:
+        return base
+    wr = Image.open(os.path.join(SRC, "wrinkled.png")).convert("L").resize((w, h), Image.LANCZOS)
+    wr = ImageOps.autocontrast(wr, cutoff=2).point(lambda v: int(150 + v * 0.42))
+    rgb = ImageChops.multiply(base.convert("RGB"), Image.merge("RGB", (wr, wr, wr)))
+    rgb = ImageEnhance.Brightness(rgb).enhance(1.12)
+    out = rgb.convert("RGBA")
+    out.putalpha(base.getchannel("A"))
+    return out
+
+
+def m_text_img(text, fpath, size, color):
+    """надпись (знак) так, как её рисует PIL в точке (0, 0)"""
+    f = font(fpath, size)
+    asc, desc = f.getmetrics()
+    w = int(f.getlength(text)) + 2
+    im = Image.new("RGBA", (w, asc + desc), (0, 0, 0, 0))
+    ImageDraw.Draw(im).text((0, 0), text, font=f, fill=color + (255,))
+    return im
+
+
+PAD = 48   # поля под тень у планшета
+
+
+def build_event():
+    # планшет 990 пикс. высотой, тень как в макете
+    im = Image.open(os.path.join(SRC, "clipboard_render.png")).convert("RGBA")
+    im = im.crop(im.getbbox())
+    h = 990
+    w = int(im.width * h / im.height)
+    im = im.resize((w, h), Image.LANCZOS)
+    g = ImageOps.grayscale(im)
+    top = Image.new("L", im.size, 0)
+    ImageDraw.Draw(top).rectangle((0, 0, w, int(h * 0.17)), fill=255)
+    clip_a = ImageChops.multiply(g.point(lambda v: 255 if v < 95 else 0), top)
+    clip_a = ImageChops.multiply(clip_a.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.GaussianBlur(1)),
+                                 im.getchannel("A"))
+    a = im.getchannel("A")
+    gg = ImageOps.autocontrast(ImageOps.grayscale(im.convert("RGB")), cutoff=1)
+    wood = ImageOps.colorize(gg, black=(34, 22, 12), mid=(92, 62, 36), white=(150, 112, 70))
+    board = Image.composite(im.convert("RGB"), wood, clip_a).convert("RGBA")
+    board.putalpha(a)
+    board = age(board, 5, stains=0.55, scratches=0.55, edge=16, edge_col=(176, 140, 96), dirt_col=(25, 15, 8))
+    rust = tiled(amb("Rust009"), board.size, 12)
+    rm = ImageChops.multiply(clip_a, tiled(amb("SurfaceImperfections001", "Opacity"), board.size, 13)
+                             .point(lambda v: 255 if v > 110 else int(v * 1.2)))
+    board = Image.composite(rust.convert("RGBA"), board, rm.point(lambda v: int(v * 0.75)))
+    board.putalpha(a)
+    clip = board.copy()
+    clip.putalpha(clip_a)
+    cw, ch = w + 2 * PAD, h + 2 * PAD
+    canvas = m_shadow_img((cw, ch), (PAD + 10, PAD + 10, PAD + w - 10, PAD + h - 6), 14, (10, 14), 16, 170)
+    canvas.alpha_composite(board, (PAD, PAD))
+    save(canvas, "ev_board.png")
+    cl = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    cl.alpha_composite(clip, (PAD, PAD))
+    save(cl, "ev_clip.png")
+    print("   планшет", w, "x", h)
+    # лист 602×840 и его тень (55% альфы, размытие 6)
+    sw, sh = w - 70, h - 150
+    pg = m_sheet(sw, sh, True)
+    save(pg, "ev_sheet.png")
+    sp = 24
+    blk = Image.new("RGBA", (sw + 2 * sp, sh + 2 * sp), (0, 0, 0, 0))
+    a2 = pg.getchannel("A").point(lambda v: int(v * 0.55))
+    one = Image.new("RGBA", (sw, sh), (0, 0, 0, 255))
+    one.putalpha(a2)
+    blk.alpha_composite(one, (sp, sp))
+    save(blk.filter(ImageFilter.GaussianBlur(6)), "ev_sheet_shadow.png")
+    # карточка варианта 506×50: тень (2,3) размытие 2, рамка, квадратик
+    bw, bh = sw - 96, 50
+    for name, bright, tick in (("ev_card", 1.0, False), ("ev_card_hover", 1.05, False),
+                               ("ev_card_pressed", 0.9, True)):
+        c = Image.new("RGBA", (bw + 8, bh + 8), (0, 0, 0, 0))
+        lay = Image.new("RGBA", c.size, (0, 0, 0, 0))
+        ImageDraw.Draw(lay).rounded_rectangle((2, 3, bw + 2, bh + 3), 3, fill=(0, 0, 0, 80))
+        c.alpha_composite(lay.filter(ImageFilter.GaussianBlur(2)))
+        card = m_sheet(bw, bh, False)
+        if bright != 1.0:
+            card = ImageEnhance.Brightness(card.convert("RGB")).enhance(bright).convert("RGBA")
+            card.putalpha(m_sheet(bw, bh, False).getchannel("A"))
+        c.alpha_composite(card, (0, 0))
+        d = ImageDraw.Draw(c)
+        d.rectangle((0, 0, bw - 1, bh - 1), outline=(78, 64, 48, 190), width=1)
+        d.rectangle((14, bh / 2 - 9, 32, bh / 2 + 9), outline=(38, 30, 22, 255), width=2)
+        if tick:
+            d.line((17, bh / 2, 22, bh / 2 + 6, 31, bh / 2 - 9), fill=RED_M + (255,), width=3)
+        save(c, name + ".png")
+    save(m_stamp("СЕКРЕТНО", 220, 74, RED_M, 3), "ev_stamp_secret.png")
+    for name, text, col, seed in (("ev_stamp_accepted", "ПРИНЯТО", (40, 60, 140), 5),
+                                  ("ev_stamp_rejected", "ОТКЛОНЕНО", RED_M, 7)):
+        save(m_stamp(text, 220, 74, col, seed), name + ".png")
+    cl = Image.open(os.path.join(SRC, "paperclip_full.png")).convert("RGBA")
+    cl = cl.resize((int(cl.width * 96 / cl.height), 96), Image.LANCZOS)
+    save(cl, "ev_paperclip.png")
+    save(m_text_img("★", DEJAVU, 18, RED_M), "ev_star18.png")
+    save(m_text_img("★", DEJAVU, 26, RED_M), "ev_star26.png")
+
+
+def build_topbar():
+    """верхняя полоса макета: кожа со строчкой, бумажные ленты, бирки"""
+    W, H = 2560, 78
+    bar = m_leather((W, H)).convert("RGBA")
+    d = ImageDraw.Draw(bar)
+    for x in range(10, W - 10, 18):
+        d.line((x, H - 9, x + 9, H - 9), fill=(150, 120, 80, 200), width=2)
+    d.line((0, H - 1, W, H - 1), fill=(20, 12, 6, 255), width=2)
+    save(bar.convert("RGB"), "tb_leather.jpg")
+    save(m_paper((1600, 54)), "tb_paper.jpg")
+    for name, ring in (("tb_tag", False), ("tb_tag_on", True)):
+        t = Image.new("RGBA", (52 + 8, 48 + 8), (0, 0, 0, 0))
+        t.alpha_composite(m_shadow_img(t.size, (0, 0, 52, 48), 3, (2, 3), 3, 110))
+        tag = m_manila((52, 48)).convert("RGBA")
+        tag.putalpha(m_rounded((52, 48), 5))
+        t.alpha_composite(tag, (0, 0))
+        if ring:
+            ImageDraw.Draw(t).ellipse((6, 4, 46, 44), outline=RED_M + (230,), width=3)
+        save(t, name + ".png")
+
+
+def build_index_card():
+    """учётная карточка макета 540×230: бумага, красная черта, синяя линовка"""
+    W, H = 540, 230
+    c = m_paper((W, H)).convert("RGBA")
+    c.putalpha(m_rounded((W, H), 4))
+    d = ImageDraw.Draw(c)
+    d.line((0, 50, W, 50), fill=(190, 70, 60, 200), width=2)
+    for yy in range(82, H - 10, 30):
+        d.line((10, yy, W - 10, yy), fill=(120, 140, 170, 90), width=1)
+    save(c, "ic_card.png")
+    # кнопка карточки: бумага ярче, скругление 4, рамка, квадратик (растягивается)
+    bw, bh = 220, 48
+    b = m_paper((bw, bh))
+    b = ImageEnhance.Brightness(b).enhance(1.04).convert("RGBA")
+    b.putalpha(m_rounded((bw, bh), 4))
+    d = ImageDraw.Draw(b)
+    d.rounded_rectangle((0, 0, bw - 1, bh - 1), 4, outline=(78, 64, 48, 200), width=1)
+    d.rectangle((14, bh / 2 - 9, 32, bh / 2 + 9), outline=(38, 30, 22, 255), width=2)
+    save(b, "ic_button.png")
+    bp = ImageEnhance.Brightness(b.convert("RGB")).enhance(0.9).convert("RGBA")
+    bp.putalpha(b.getchannel("A"))
+    ImageDraw.Draw(bp).line((17, bh / 2, 22, bh / 2 + 6, 31, bh / 2 - 9), fill=RED_M + (255,), width=3)
+    save(bp, "ic_button_pressed.png")
+
+
 def main():
     global SRC
     ap = argparse.ArgumentParser()
@@ -402,6 +633,10 @@ def main():
     build_spines()
     build_dossier()
     build_misc()
+    build_spine_shadow()
+    build_event()
+    build_topbar()
+    build_index_card()
     print("готово:", OUT)
 
 

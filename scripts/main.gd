@@ -445,7 +445,7 @@ func _ui_update() -> void:
 		hud.show_game_over(world.game_over)
 		return
 	if not world.pending_events.is_empty():
-		if hud.popup_tab != "event" or not hud.popup.visible:
+		if not hud.event_open():
 			speed = 0
 			_accum = 0.0
 			hud.open_tab("event")

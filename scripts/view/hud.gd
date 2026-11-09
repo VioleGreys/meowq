@@ -7,16 +7,15 @@ var game  # main.gd
 var gen_info := ""
 
 var root: Control
-var top_bar: PanelContainer
+var top_bar: Control
 var swatch: Flag
 var nation_label: Label
 var date_label: Label
 var res_label: Label
 var speed_buttons: Array = []
 var side: Control
-var info_panel: PanelContainer
-var info_label: Label
-var info_actions: HBoxContainer
+var info_panel: Control
+var info_actions: HFlowContainer
 var popup: PanelContainer
 var popup_title: Label
 var popup_body: VBoxContainer
@@ -31,6 +30,7 @@ var _dynamic: Dictionary = {}   # ссылки на элементы окна, �
 var _info_prov := -1
 var _card_nation := -1
 var focus_view: FocusView
+var event_sheet: EventSheet
 
 
 # Звук нажатия: все кнопки интерфейса (и созданные позже) щёлкают сами —
@@ -79,14 +79,18 @@ func _ready() -> void:
 	_build_popup()
 	_build_log()
 	_build_overlay()
+	event_sheet = EventSheet.new()
+	root.add_child(event_sheet)
+	event_sheet.hide()
 	focus_view = FocusView.new()
 	root.add_child(focus_view)
 	focus_view.hide()
 	toast_label = Label.new()
-	toast_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	toast_label.position = Vector2(-300, -190)
+	# уведомления — справа под верхней полосой, не поверх окон и планшета
+	toast_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	toast_label.position = Vector2(-620, 60)
 	toast_label.size = Vector2(600, 40)
-	toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	toast_label.add_theme_color_override("font_color", UiStyle.CREAM)
 	toast_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	toast_label.add_theme_constant_override("outline_size", 6)
@@ -116,83 +120,161 @@ func _button(text: String, cb: Callable, min_size := Vector2(0, 56)) -> Button:
 
 # --- Построение --------------------------------------------------------------
 
+## Верхняя полоса «один в один» с макетом: координаты — в пикселях экрана
+## 1920×1080, узел масштабируется 720/1080 (UI_K). Кожа со строчкой, флаг на
+## бумажной бирке, ресурсы на бумажной ленте, дата на карточке, бирки скорости.
+const UI_K := 720.0 / 1080.0
+const TB_H := 78.0
+const CREAM_M := Color8(238, 228, 205)
+const INK_M := Color8(38, 30, 22)
+var _tb_bg: TextureRect
+var _tb_res: Control
+var _tb_date: Control
+var _tb_tags: Array = []
+var _tb_key := ""
+
+
 func _build_top_bar() -> void:
-	# кожаная полоса со строчкой; флаг, ресурсы и дата — на бумажных ленточках,
-	# скорость — картонные бирки (выбранная обведена красным)
-	top_bar = PanelContainer.new()
-	top_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	var lea := StyleBoxTexture.new()
-	lea.texture = UiStyle.ui_tex("leather.jpg")
-	lea.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
-	lea.axis_stretch_vertical = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
-	lea.set_content_margin_all(8)
-	lea.content_margin_left = 12
-	lea.content_margin_right = 12
-	top_bar.add_theme_stylebox_override("panel", lea)
+	top_bar = Control.new()
+	top_bar.scale = Vector2(UI_K, UI_K)
+	top_bar.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	top_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(top_bar)
-	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 12)
-	top_bar.add_child(h)
-	var flag_tag := PanelContainer.new()
-	flag_tag.add_theme_stylebox_override("panel", UiStyle.sbox("strip.png", 8, 5))
-	swatch = Flag.make({}, Vector2(48, 32))
+	_tb_bg = TextureRect.new()
+	_tb_bg.texture = UiStyle.ui_tex("tb_leather.jpg")
+	_tb_bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_tb_bg.stretch_mode = TextureRect.STRETCH_TILE
+	_tb_bg.mouse_filter = Control.MOUSE_FILTER_STOP   # клики по полосе не уходят на карту
+	top_bar.add_child(_tb_bg)
+	var flag_tag := _tb_paper(Vector2(14, 12), Vector2(102, 54), 4, Vector2(3, 4), 4.0, 120)
+	swatch = Flag.make({}, Vector2(87, 39))
+	swatch.position = Vector2(8, 8)
+	swatch.size = Vector2(87, 39)
 	flag_tag.add_child(swatch)
-	h.add_child(flag_tag)
-	nation_label = Label.new()
-	UiStyle.title(nation_label, 28)
-	nation_label.add_theme_color_override("font_color", UiStyle.CREAM)
-	nation_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.6))
-	h.add_child(nation_label)
-	var res_strip := PanelContainer.new()
-	res_strip.add_theme_stylebox_override("panel", UiStyle.sbox("strip.png", 8, 6))
-	res_strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	res_strip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	res_label = Label.new()
+	nation_label = _tb_label(UiStyle._font("res://assets/fonts/Oswald.ttf"), 44, CREAM_M)
+	nation_label.position = Vector2(132, 4)
+	top_bar.add_child(nation_label)
+	_tb_res = _tb_paper(Vector2.ZERO, Vector2(100, 36), 2, Vector2(2, 3), 3.0, 110)
+	res_label = _tb_label(UiStyle.mono_font(), 19, INK_M)
+	res_label.position = Vector2(17, 6)
 	res_label.clip_text = true
-	res_label.add_theme_font_size_override("font_size", 16)
-	res_strip.add_child(res_label)
-	h.add_child(res_strip)
-	var date_strip := PanelContainer.new()
-	date_strip.add_theme_stylebox_override("panel", UiStyle.sbox("strip.png", 8, 6))
-	date_strip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	date_label = Label.new()
-	date_label.custom_minimum_size = Vector2(210, 0)
-	date_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	date_label.add_theme_font_override("font", UiStyle.mono_bold())
-	date_strip.add_child(date_label)
-	h.add_child(date_strip)
-	var tag := UiStyle.sbox("tag.png", 10, 4)
-	var tag_on := UiStyle.sbox("tag_on.png", 10, 4)
+	_tb_res.add_child(res_label)
+	_tb_date = _tb_paper(Vector2.ZERO, Vector2(100, 48), 3, Vector2(3, 4), 4.0, 120)
+	date_label = _tb_label(UiStyle.mono_bold(), 22, INK_M)
+	date_label.position = Vector2(20, 10)
+	_tb_date.add_child(date_label)
 	var labels := ["II", "1", "2", "3", "4", "5"]
 	for i in labels.size():
-		var b := _button(labels[i], func(): game.set_speed(i); refresh_top(), Vector2(50, 48))
+		var b := TextureButton.new()
+		b.texture_normal = UiStyle.ui_tex("tb_tag.png")
+		b.texture_pressed = UiStyle.ui_tex("tb_tag_on.png")
+		b.texture_hover = UiStyle.ui_tex("tb_tag.png")
 		b.toggle_mode = true
-		for st in ["normal", "hover", "disabled"]:
-			b.add_theme_stylebox_override(st, tag)
-		b.add_theme_stylebox_override("pressed", tag_on)
-		b.add_theme_stylebox_override("hover_pressed", tag_on)
-		b.add_theme_font_override("font", UiStyle.title_font(600))
-		b.add_theme_font_size_override("font_size", 24)
-		b.add_theme_color_override("font_pressed_color", UiStyle.INK)
-		b.add_theme_color_override("font_hover_pressed_color", UiStyle.INK)
+		b.size = Vector2(60, 56)
+		var sp := i
+		b.pressed.connect(func():
+			game.set_speed(sp)
+			refresh_top(), CONNECT_DEFERRED)
+		var l := _tb_label(UiStyle._font("res://assets/fonts/Oswald.ttf"), 28, INK_M)
+		l.text = labels[i]
+		var tw: float = l.get_theme_font("font").get_string_size(labels[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x
+		l.position = Vector2(26 - tw * 0.5, 4)
+		b.add_child(l)
+		top_bar.add_child(b)
 		speed_buttons.append(b)
-		h.add_child(b)
+		_tb_tags.append(b)
+	get_viewport().size_changed.connect(_layout_top)
+	_layout_top()
 
 
-# Стопка папок слева: корешки под наклоном выглядывают из-за края экрана
-# (картинки — assets/ui/spine_*.png, tools/build_ui.py). Наведение — папка чуть
-# выезжает, открытая — выдвинута сильнее.
-const SPINE_SIZE := Vector2(330, 59)    # 470×84 в масштабе ~0.7
-const SPINE_SHOW := 200.0               # видимая часть корешка
-var spines: Array = []                  # [TextureButton, id]
+## Бумажная карточка с тенью (как shadow + paper в макете).
+func _tb_paper(pos: Vector2, sz: Vector2, radius: int, off: Vector2, blur: float, alpha: int) -> Control:
+	var c := Control.new()
+	c.position = pos
+	c.size = sz
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sh := Panel.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color8(214, 200, 168)
+	sb.set_corner_radius_all(radius)
+	sb.shadow_color = Color8(0, 0, 0, alpha)
+	sb.shadow_size = int(blur * 1.6)
+	sb.shadow_offset = off
+	sb.anti_aliasing = true
+	sh.add_theme_stylebox_override("panel", sb)
+	sh.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sh.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.add_child(sh)
+	var paper := TextureRect.new()
+	var at := AtlasTexture.new()
+	at.atlas = UiStyle.ui_tex("tb_paper.jpg")
+	at.region = Rect2(Vector2.ZERO, sz)
+	paper.texture = at
+	paper.set_meta("atlas", at)
+	paper.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	paper.stretch_mode = TextureRect.STRETCH_SCALE
+	paper.set_anchors_preset(Control.PRESET_FULL_RECT)
+	paper.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.add_child(paper)
+	c.set_meta("paper", paper)
+	top_bar.add_child(c)
+	return c
+
+
+func _tb_resize(c: Control, pos: Vector2, sz: Vector2) -> void:
+	c.position = pos
+	c.size = sz
+	var at: AtlasTexture = (c.get_meta("paper") as TextureRect).get_meta("atlas")
+	at.region = Rect2(Vector2.ZERO, sz)
+
+
+func _tb_label(font: Font, size: int, color: Color) -> Label:
+	var l := Label.new()
+	l.add_theme_font_override("font", font)
+	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_color_override("font_color", color)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
+
+
+## Раскладка полосы по ширине экрана (как top_bar макета).
+func _layout_top() -> void:
+	if top_bar == null:
+		return
+	var W := root.get_viewport_rect().size.x / UI_K
+	_tb_bg.size = Vector2(W, TB_H)
+	var osw: Font = nation_label.get_theme_font("font")
+	var name_w := osw.get_string_size(nation_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 44).x
+	var x0 := W - 20.0 - 6.0 * 62.0
+	for i in _tb_tags.size():
+		(_tb_tags[i] as Control).position = Vector2(x0 + i * 62.0, 14)
+	var df: Font = date_label.get_theme_font("font")
+	var dw := df.get_string_size(date_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x + 40.0
+	_tb_resize(_tb_date, Vector2(x0 - dw - 24.0, 14), Vector2(dw, 48))
+	var rx := 132.0 + name_w + 30.0
+	var rf: Font = res_label.get_theme_font("font")
+	var rw := rf.get_string_size(res_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x + 34.0
+	rw = minf(rw, x0 - dw - 24.0 - 16.0 - rx)
+	_tb_res.visible = rw > 80.0
+	_tb_resize(_tb_res, Vector2(rx, 20), Vector2(maxf(rw, 1.0), 36))
+	res_label.size = Vector2(maxf(rw - 34.0, 1.0), 26)
+
+
+# Стопка папок слева «один в один» с макетом: корешки 470×84 (в пикселях экрана
+# 1920×1080, узел масштабирован UI_K), шаг 92, наклон по часовой ~6°, видна
+# правая часть с наклейкой. Наведение — папка чуть выезжает, открытая —
+# выдвинута и выпрямлена (как stack() макета с out = 1).
+const SPINE := Vector2(470, 84)
+const SPINE_Y0 := 96.0
+const SPINE_STEP := 92.0
+var spines: Array = []                  # [TextureButton, id, номер, тень, выдвиг 0..1]
 var _side_active := ""
 
 
 func _build_side() -> void:
 	side = Control.new()
-	side.set_anchors_preset(Control.PRESET_LEFT_WIDE)
-	side.offset_top = 80
-	side.custom_minimum_size = Vector2(SPINE_SHOW + 60, 0)
+	side.scale = Vector2(UI_K, UI_K)
+	side.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	side.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(side)
 	var items := [
@@ -212,56 +294,224 @@ func _build_side() -> void:
 	for i in items.size():
 		var id: String = items[i][0]
 		var cb: Callable = items[i][1]
+		var shd := TextureRect.new()
+		shd.texture = UiStyle.ui_tex("spine_shadow.png")
+		shd.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		shd.stretch_mode = TextureRect.STRETCH_SCALE
+		shd.size = SPINE + Vector2(48, 48)
+		shd.pivot_offset = shd.size * 0.5
+		shd.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		side.add_child(shd)
 		var tb := TextureButton.new()
 		tb.texture_normal = UiStyle.ui_tex("spine_%s.png" % id)
 		tb.ignore_texture_size = true
 		tb.stretch_mode = TextureButton.STRETCH_SCALE
-		tb.size = SPINE_SIZE
-		tb.pivot_offset = Vector2(SPINE_SIZE.x, SPINE_SIZE.y * 0.5)
-		tb.rotation_degrees = -4.0 + float((i % 3) - 1) * 1.2
-		tb.set_meta("base_rot", tb.rotation_degrees)
-		tb.set_meta("base_x", -SPINE_SIZE.x + SPINE_SHOW + float(i % 2) * 6.0)
-		tb.position = Vector2(tb.get_meta("base_x"), i * (SPINE_SIZE.y + 4.0))
+		tb.size = SPINE
+		tb.pivot_offset = SPINE * 0.5
 		tb.pressed.connect(func(): cb.call(), CONNECT_DEFERRED)
-		tb.mouse_entered.connect(func(): _spine_slide(tb, id, 16.0))
-		tb.mouse_exited.connect(func(): _spine_slide(tb, id, 0.0))
 		side.add_child(tb)
-		spines.append([tb, id])
+		var entry := [tb, id, i, shd, 0.0]
+		spines.append(entry)
+		tb.mouse_entered.connect(func(): _spine_slide(entry, 0.25))
+		tb.mouse_exited.connect(func(): _spine_slide(entry, 0.0))
+		_spine_place(entry, 0.0)
+
+
+## Положение корешка при выдвиге o (0..1) — формулы stack() макета: угол
+## −6 + 5·o + (i mod 3 − 1)·1,1 (в PIL против часовой), левый верхний угол
+## повёрнутого холста x = −470 + 250 + 40 + 120·o + (i mod 2)·8.
+func _spine_place(entry: Array, o: float) -> void:
+	entry[4] = o
+	var tb: TextureButton = entry[0]
+	var shd: TextureRect = entry[3]
+	var i: int = entry[2]
+	var ang := -6.0 + 5.0 * o + float(i % 3 - 1) * 1.1
+	var a := deg_to_rad(absf(ang))
+	var ew := SPINE.x * cos(a) + SPINE.y * sin(a)
+	var eh := SPINE.x * sin(a) + SPINE.y * cos(a)
+	var tl := Vector2(-SPINE.x + 250.0 + 40.0 + 120.0 * o + float(i % 2) * 8.0, SPINE_Y0 + i * SPINE_STEP)
+	var center := tl + Vector2(ew, eh) * 0.5
+	tb.position = center - SPINE * 0.5
+	tb.rotation_degrees = -ang
+	shd.position = center - shd.size * 0.5 + Vector2(6, 8)
+	shd.rotation_degrees = -ang
+	shd.modulate.a = (0.5 + 0.2 * o) / 0.5
 
 
 ## Папка выезжает/возвращается (плавно, с замедлением).
-func _spine_slide(tb: TextureButton, id: String, extra: float) -> void:
-	var out := 34.0 if id == _side_active else extra
+func _spine_slide(entry: Array, hover: float) -> void:
+	var target := 1.0 if entry[1] == _side_active else hover
+	var tb: TextureButton = entry[0]
+	if entry[1] == _side_active:
+		# открытая папка — поверх соседних, как в макете
+		side.move_child(entry[3], side.get_child_count() - 1)
+		side.move_child(tb, side.get_child_count() - 1)
 	var tw := tb.create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tw.tween_property(tb, "position:x", float(tb.get_meta("base_x")) + out, 0.18)
-	tw.parallel().tween_property(tb, "rotation_degrees", -1.0 if out > 20.0 else float(tb.get_meta("base_rot")), 0.18)
+	tw.tween_method(func(v: float): _spine_place(entry, v), float(entry[4]), target, 0.22)
 
 
 func _set_side_active(id: String) -> void:
 	_side_active = id
 	for sp in spines:
-		_spine_slide(sp[0], sp[1], 0.0)
+		_spine_slide(sp, 0.0)
+
+
+# Нижняя карточка «один в один» с макетом (index_card): бумага, красная черта
+# под заголовком, синяя линовка через 30 пикс.; заголовок — машинопись 24,
+# строки — 18 на линейках, кнопки — бумажные карточки с квадратиком (текущий
+# приказ — с галочкой). Пиксели экрана 1920×1080, узел масштабирован UI_K.
+var info_title: Label
+var info_bg: NinePatchRect
+var info_body: Control
+var _info_rows := PackedStringArray()
 
 
 func _build_info() -> void:
-	info_panel = PanelContainer.new()
-	info_panel.add_theme_stylebox_override("panel", UiStyle.sbox("index_card.png", 30, 20))
-	info_panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	info_panel.offset_left = 230
-	info_panel.offset_right = -180
-	info_panel.offset_bottom = -8
-	info_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	info_panel = Control.new()
+	info_panel.scale = Vector2(UI_K, UI_K)
+	info_panel.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	info_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	root.add_child(info_panel)
-	var v := VBoxContainer.new()
-	info_panel.add_child(v)
-	info_label = Label.new()
-	info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info_label.add_theme_font_size_override("font_size", 18)
-	v.add_child(info_label)
-	info_actions = HBoxContainer.new()
-	info_actions.add_theme_constant_override("separation", 8)
-	v.add_child(info_actions)
+	var sh := Panel.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color8(214, 200, 168)
+	sb.set_corner_radius_all(4)
+	sb.shadow_color = Color8(0, 0, 0, 140)
+	sb.shadow_size = 13
+	sb.shadow_offset = Vector2(5, 6)
+	sb.anti_aliasing = true
+	sh.add_theme_stylebox_override("panel", sb)
+	sh.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sh.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	info_panel.add_child(sh)
+	info_bg = NinePatchRect.new()
+	info_bg.texture = UiStyle.ui_tex("ic_card.png")
+	info_bg.patch_margin_left = 10
+	info_bg.patch_margin_right = 10
+	info_bg.patch_margin_top = 82
+	info_bg.patch_margin_bottom = 28
+	info_bg.axis_stretch_horizontal = NinePatchRect.AXIS_STRETCH_MODE_TILE_FIT
+	info_bg.axis_stretch_vertical = NinePatchRect.AXIS_STRETCH_MODE_TILE
+	info_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	info_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	info_panel.add_child(info_bg)
+	info_title = _tb_label(UiStyle.mono_bold(), 24, INK_M)
+	info_title.position = Vector2(18, 10)
+	info_panel.add_child(info_title)
+	info_body = Control.new()
+	info_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	info_panel.add_child(info_body)
+	info_actions = HFlowContainer.new()
+	info_actions.add_theme_constant_override("h_separation", 12)
+	info_actions.add_theme_constant_override("v_separation", 12)
+	info_actions.theme = _info_theme()
+	info_panel.add_child(info_actions)
 	info_panel.hide()
+	get_viewport().size_changed.connect(_layout_info)
+
+
+## Кнопки карточки: бумага с квадратиком, машинопись 20; недоступная (= текущий
+## выбор) — с красной галочкой.
+func _info_theme() -> Theme:
+	var t := Theme.new()
+	var normal := UiStyle.sbox("ic_button.png", 8, 8)
+	normal.texture_margin_left = 40
+	normal.content_margin_left = 46
+	normal.content_margin_right = 18
+	var ticked := UiStyle.sbox("ic_button_pressed.png", 8, 8)
+	ticked.texture_margin_left = 40
+	ticked.content_margin_left = 46
+	ticked.content_margin_right = 18
+	var hover := normal.duplicate()
+	hover.modulate_color = Color(1.04, 1.03, 1.0)
+	t.set_stylebox("normal", "Button", normal)
+	t.set_stylebox("hover", "Button", hover)
+	t.set_stylebox("pressed", "Button", ticked)
+	t.set_stylebox("hover_pressed", "Button", ticked)
+	t.set_stylebox("disabled", "Button", ticked)
+	t.set_stylebox("focus", "Button", StyleBoxEmpty.new())
+	t.set_font("font", "Button", UiStyle.mono_bold())
+	t.set_font_size("font_size", "Button", 20)
+	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color", "font_disabled_color"]:
+		t.set_color(c, "Button", INK_M)
+	return t
+
+
+## Текст карточки: первая строка — заголовок, остальные — на линейках.
+func _info_text(s: String) -> void:
+	var lines := s.split("\n")
+	info_title.text = lines[0].to_upper()
+	_info_rows = lines.slice(1)
+	_layout_info.call_deferred()
+
+
+func _layout_info() -> void:
+	if info_panel == null:
+		return
+	var view := root.get_viewport_rect().size / UI_K
+	var mono := UiStyle.mono_font()
+	var bold := UiStyle.mono_bold()
+	# ширина: как в макете 540, шире — если не влезают заголовок или кнопки
+	var need := bold.get_string_size(info_title.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x + 36.0
+	var widths: Array = []
+	for b in info_actions.get_children():
+		var bt := b as Button
+		bt.custom_minimum_size = Vector2(48, 48)
+		widths.append(bold.get_string_size(bt.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x + 64.0)
+	var btn_w := 0.0
+	for bw in widths:
+		btn_w += float(bw) + 12.0
+	# не шире 720 и не заходит под планшет события — лишние кнопки во второй ряд
+	var cap := minf(720.0, view.x - 380.0)
+	if event_sheet != null and event_sheet.visible:
+		cap = minf(cap, view.x * 0.5 - 341.0 - 40.0)
+	var W := clampf(maxf(maxf(540.0, need), btn_w + 24.0), 540.0, maxf(540.0, cap))
+	# строки (с переносом по словам), по линейкам через 30
+	for c in info_body.get_children():
+		info_body.remove_child(c)
+		c.queue_free()
+	var rows: Array = []
+	for line in _info_rows:
+		var words: Array = Array(String(line).split(" ", false))
+		var cur := ""
+		for wd in words:
+			var t: String = (cur + " " + wd).strip_edges()
+			if mono.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x > W - 36.0 and cur != "":
+				rows.append(cur)
+				cur = wd
+			else:
+				cur = t
+		if cur != "":
+			rows.append(cur)
+	for i in rows.size():
+		var l := _tb_label(mono, 18, Color8(78, 64, 48))
+		l.text = rows[i]
+		l.position = Vector2(18, 58 + 30 * i)
+		info_body.add_child(l)
+	var btop := 166.0 + 30.0 * maxi(0, rows.size() - 3)
+	info_actions.position = Vector2(18, btop)
+	info_actions.size = Vector2(W - 36.0, 48)
+	var rows_b := 1
+	var x := 0.0
+	for bw in widths:
+		if x > 0.0 and x + float(bw) > W - 36.0:
+			rows_b += 1
+			x = 0.0
+		x += float(bw) + 12.0
+	var flow_h := 48.0 * rows_b + 12.0 * (rows_b - 1)
+	var H := btop + flow_h + 16.0 if info_actions.get_child_count() > 0 else 230.0 + 30.0 * maxi(0, rows.size() - 3)
+	info_panel.size = Vector2(W, H)
+	info_panel.position = (view - Vector2(W + 20.0, H + 30.0)) * UI_K
+
+
+static func _plural(n: int, one: String, few: String, many: String) -> String:
+	var m10 := n % 10
+	var m100 := n % 100
+	if m10 == 1 and m100 != 11:
+		return one
+	if m10 >= 2 and m10 <= 4 and (m100 < 12 or m100 > 14):
+		return few
+	return many
 
 
 # Окно — раскрытая папка-«дело»: левая створка (наклейка дела, фото) и правая
@@ -696,10 +946,14 @@ func refresh_top() -> void:
 	var n: World.Nation = w.nations[game.player()]
 	if swatch.spec != n.flag:
 		swatch.spec = n.flag
-	nation_label.text = n.name
+	nation_label.text = n.name.to_upper()
 	date_label.text = w.date_string()
-	res_label.text = "Винт. %d · Ору. %d · Танки %d · Груз. %d · Люди %dк · Див. %d" % [
+	res_label.text = "Винт. %d  Ору. %d  Танки %d  Груз. %d  Люди %dк  Див. %d" % [
 		n.stock[0], n.stock[1], n.stock[2], n.stock[3], n.manpower, n.division_count]
+	var key := nation_label.text + "|" + date_label.text + "|" + res_label.text
+	if key != _tb_key:
+		_tb_key = key
+		_layout_top()
 	for i in speed_buttons.size():
 		speed_buttons[i].button_pressed = game.speed == i
 	var phases := ""
@@ -767,7 +1021,7 @@ func on_tick() -> void:
 		elif not game.selected_divs.is_empty():
 			_update_selection_text()
 		elif _info_prov >= 0:
-			info_label.text = _province_text(_info_prov)
+			_info_text(_province_text(_info_prov))
 
 
 func toast(text: String) -> void:
@@ -789,7 +1043,7 @@ func _province_text(p: int) -> String:
 		return "Море %s" % w.p_name[p]
 	var own: World.Nation = w.nations[w.p_owner[p]]
 	var ctrl: World.Nation = w.nations[w.p_controller[p]]
-	var s := "%s  ·  %s  ·  %s" % [w.p_name[p], World.TERRAIN_NAMES[w.p_terrain[p]], own.name]
+	var s := "%s\n%s · %s" % [w.p_name[p], World.TERRAIN_NAMES[w.p_terrain[p]], own.name]
 	var fn := Diplomacy.faction_name(w, own.id)
 	if fn != "":
 		s += " («%s»)" % fn
@@ -815,7 +1069,7 @@ func _fmt_pop(k: int) -> String:
 func show_province(p: int) -> void:
 	var w: World = game.world
 	_info_prov = p
-	info_label.text = _province_text(p)
+	_info_text(_province_text(p))
 	_clear(info_actions)
 	if w.p_land[p] == 1:
 		var c := w.p_controller[p]
@@ -826,6 +1080,7 @@ func show_province(p: int) -> void:
 				open_tab("nation")))
 		info_actions.add_child(_button("Закрыть", func(): game.clear_selection()))
 	info_panel.show()
+	_layout_info.call_deferred()
 
 
 func show_selection() -> void:
@@ -836,6 +1091,7 @@ func show_selection() -> void:
 	info_actions.add_child(_button("Стоп", func(): game.stop_selected(); toast("Войска остановлены")))
 	info_actions.add_child(_button("Снять выделение", func(): game.clear_selection()))
 	info_panel.show()
+	_layout_info.call_deferred()
 
 
 ## Панель выбранной армии: приказ, противник, цель.
@@ -852,6 +1108,7 @@ func show_group(g: World.ArmyGroup) -> void:
 	info_actions.add_child(hold)
 	var atk := _button("Наступать", func():
 		g.mode = "attack"
+		toast("Коснитесь провинции — цель наступления")
 		show_group(g))
 	atk.disabled = g.mode == "attack"
 	info_actions.add_child(atk)
@@ -867,6 +1124,7 @@ func show_group(g: World.ArmyGroup) -> void:
 		game.clear_selection()))
 	info_actions.add_child(_button("✕", func(): game.clear_selection(), Vector2(56, 56)))
 	info_panel.show()
+	_layout_info.call_deferred()
 
 
 func _update_group_text(g: World.ArmyGroup) -> void:
@@ -883,15 +1141,16 @@ func _update_group_text(g: World.ArmyGroup) -> void:
 	var n := maxi(1, divs.size())
 	var order := "держит фронт" if g.mode == "hold" else "наступает"
 	if g.mode == "attack" and g.objective >= 0:
-		order += " на %s" % w.p_name[g.objective]
-	info_label.text = "%s · %d дивизий · %s · сила %d%% · снабжение %d%% · в бою %d\nКоснитесь провинции — цель наступления. Дивизии распределяются по фронту сами." % [
-		g.name, divs.size(), order, s / n, sup / n * 100.0, fights]
+		order += " · цель: %s" % w.p_name[g.objective]
+	_info_text("%s · %d %s\n%s · сила %d%%\nСнабжение %d%% · в бою %d" % [
+		g.name, divs.size(), _plural(divs.size(), "дивизия", "дивизии", "дивизий"), order[0].to_upper() + order.substr(1),
+		s / n, sup / n * 100.0, fights])
 
 
 func _update_selection_text() -> void:
 	var sel: Array = game.selected_divs
 	if sel.is_empty():
-		info_label.text = "Нет выделенных дивизий"
+		_info_text("Нет выделенных дивизий")
 		return
 	var w: World = game.world
 	var s := 0.0
@@ -905,13 +1164,31 @@ func _update_selection_text() -> void:
 			moving += 1
 		if d.in_battle:
 			fighting += 1
-	info_label.text = "Выбрано дивизий: %d · сила %d%% · организация %d%% · в пути %d · в бою %d\nКоснитесь провинции, чтобы отправить войска. Вражеская провинция — атака." % [
-		sel.size(), s / sel.size(), o / sel.size() * 100.0, moving, fighting]
+	_info_text("Выбрано: %d %s\nСила %d%% · организация %d%% · в пути %d · в бою %d\nКоснитесь провинции, чтобы отправить войска. Вражеская провинция — атака." % [
+		sel.size(), _plural(sel.size(), "дивизия", "дивизии", "дивизий"), s / sel.size(), o / sel.size() * 100.0, moving, fighting])
 
 
 # --- Всплывающие окна --------------------------------------------------------
 
 func open_tab(tab: String) -> void:
+	if tab == "event":
+		var first := not event_sheet.visible
+		popup_tab = "event"
+		popup.hide()
+		popup_cover.hide()
+		_set_side_active("")
+		var w: World = game.world
+		if w.pending_events.is_empty():
+			event_sheet.hide()
+			return
+		event_sheet.show_event(game, w, w.pending_events[0])
+		event_sheet.show()
+		if first:
+			event_sheet.animate_in()
+		_layout_info.call_deferred()
+		log_box.hide()
+		return
+	event_sheet.hide()
 	var was_open := popup.visible
 	var same_mode := was_open and ((popup_tab == "event") == (tab == "event"))
 	popup_tab = tab
@@ -930,7 +1207,18 @@ func open_tab(tab: String) -> void:
 		overlay.hide()
 
 
+## Открыто ли сейчас окно события (для main.gd).
+func event_open() -> bool:
+	return popup_tab == "event" and event_sheet.visible
+
+
 func close_popup() -> bool:
+	if event_sheet.visible:
+		event_sheet.hide()
+		popup_tab = ""
+		_layout_info.call_deferred()
+		log_box.show()
+		return true
 	if popup.visible:
 		popup.hide()
 		popup_cover.hide()
@@ -1021,7 +1309,10 @@ func _rebuild_popup() -> void:
 		"peace":
 			_build_peace(w)
 		"event":
-			_build_event(w)
+			# событие — отдельное окно-планшет (EventSheet), не лист в папке
+			if not w.pending_events.is_empty():
+				event_sheet.show_event(game, w, w.pending_events[0])
+			return
 	_update_popup_dynamic()
 
 
@@ -1569,9 +1860,9 @@ func _build_navy(w: World, me: int) -> void:
 func show_fleet(f: World.Fleet) -> void:
 	var w: World = game.world
 	_info_prov = -1
-	info_label.text = "%s · %s · сила %d · готовность %d%% · %s · %s%s\nКоснитесь моря (или берега), чтобы отправить флот. Готовность восстанавливается на военно-морской базе; флот на базе в бою не участвует." % [
+	_info_text("%s\n%s · сила %d · готовность %d%%\n%s · %s%s\nКоснитесь моря (или берега), чтобы отправить флот. Готовность восстанавливается на базе." % [
 		f.name, _ships_text(f), Forces.fleet_power(f), f.readiness * 100.0, w.p_name[f.zone], MISSION_NAMES.get(f.mission, f.mission),
-		(" · в пути %d дн." % f.path.size()) if not f.path.is_empty() else ""]
+		(" · в пути %d дн." % f.path.size()) if not f.path.is_empty() else ""])
 	_clear(info_actions)
 	for m in ["patrol", "raid", "port"]:
 		var mm: String = m
@@ -1584,14 +1875,15 @@ func show_fleet(f: World.Fleet) -> void:
 		info_actions.add_child(b)
 	info_actions.add_child(_button("✕", func(): game.clear_selection(), Vector2(56, 56)))
 	info_panel.show()
+	_layout_info.call_deferred()
 
 
 func show_wing(wg: World.AirWing) -> void:
 	var w: World = game.world
 	_info_prov = -1
 	var sup: float = w.air_sup[wg.region * w.nation_count + wg.owner] if w.air_sup.size() > wg.region * w.nation_count + wg.owner else 0.5
-	info_label.text = "%s · %d самолётов · район %s · превосходство %d%%\nКоснитесь карты, чтобы сменить район (дальность ограничена)." % [
-		wg.name, wg.planes, w.region_name[wg.region], sup * 100.0]
+	_info_text("%s\n%d самолётов · район %s · превосходство %d%%\nКоснитесь карты, чтобы сменить район (дальность ограничена)." % [
+		wg.name, wg.planes, w.region_name[wg.region], sup * 100.0])
 	_clear(info_actions)
 	var missions := ["sup"] if wg.kind == 0 else ["cas", "bomb", "naval"]
 	for m in missions:
@@ -1603,6 +1895,7 @@ func show_wing(wg: World.AirWing) -> void:
 		info_actions.add_child(b)
 	info_actions.add_child(_button("✕", func(): game.clear_selection(), Vector2(56, 56)))
 	info_panel.show()
+	_layout_info.call_deferred()
 
 
 func _build_production(w: World, me: int) -> void:
