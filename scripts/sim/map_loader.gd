@@ -159,6 +159,7 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	Diplomacy.load_setup(world, dir + "/diplomacy.json")
 	History.load(world, dir)
 	_load_forts(world, dir + "/forts.json")
+	Economy.load_resources(world, dir + "/resources.json")
 	# национальные черты: определения и стартовые черты стран
 	if FileAccess.file_exists(dir + "/spirits.json"):
 		world.spirit_defs = JSON.parse_string(FileAccess.get_file_as_string(dir + "/spirits.json")).get("spirits", {})

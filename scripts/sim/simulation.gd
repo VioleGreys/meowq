@@ -73,6 +73,8 @@ func tick() -> void:
 	_timed("флот", _phase_navy)
 	_timed("снабжение", _phase_supply)
 	_timed("ИИ", _phase_ai)
+	# в фоне, вместе с планами ИИ, — рейтинг и раздача экспорта на завтра (Economy)
+	_timed("торговля:фон", Economy.start_rank.bind(world))
 	_timed("авиация", Forces.daily_air.bind(world, Parallel.rng(world.seed_value, world.day, 6001)))
 	var battles := {}
 	_timed("сбор боёв", func(): battles.merge(_collect_battles()))
@@ -100,6 +102,9 @@ func _phase_economy() -> void:
 	var results := world.compute_all_income()
 	Prof.add("эк:доход", _pt)
 
+	_pt = Time.get_ticks_usec()
+	Economy.daily(world)
+	Prof.add("эк:внешняя экономика", _pt)
 	for i in n_count:
 		var nat: World.Nation = world.nations[i]
 		if not nat.alive:
@@ -142,7 +147,9 @@ func _phase_economy() -> void:
 				nat.research_points = 0.0
 
 		# строительство фабрик
-		nat.build_progress += nat.civ * BUILD_RATE * (1.0 + nat.b("construction"))
+		# закупки ресурсов оплачиваются гражданскими заводами, продажи их приносят
+		var civ_free := maxf(0.0, float(nat.civ) - nat.trade_civ + nat.trade_civ_in)
+		nat.build_progress += civ_free * BUILD_RATE * (1.0 + nat.b("construction"))
 		if nat.build_progress >= FACTORY_COST:
 			if _place_factory(i, nat.build_mode):
 				nat.build_progress -= FACTORY_COST
@@ -515,6 +522,7 @@ func _staging_enemy(nat: World.Nation) -> int:
 
 
 func _finish_ai() -> void:
+	Economy.finish_rank(world)
 	if _ai_jobs.is_empty():
 		return
 	Parallel.finish(_ai_gid)

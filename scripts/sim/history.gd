@@ -843,6 +843,12 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				for d in world.divisions:
 					if d.alive and d.owner == who:
 						d.org *= 1.0 - float(e.get("v", 0.5))
+			"synthetic":
+				# заводы синтетического горючего/каучука: ед. ресурса в день
+				var ri := ["oil", "steel", "aluminium", "rubber", "tungsten", "chromium"].find(String(e.get("res", "oil")))
+				if ri >= 0:
+					nat.res_synth[ri] += float(e.get("v", 0))
+					world.res_ctrl = PackedInt32Array()   # пересчитать добычу
 			"concede":
 				# уступка: влияние своей силы на шкале падает
 				Relations.add_diplo(world, who, -float(e.get("v", 10)))
@@ -1244,6 +1250,9 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sснятие гарантии: %s" % [who, tname])
 			"concede":
 				parts.append("%sуступка (влияние −%d)" % [who, int(e.get("v", 10))])
+			"synthetic":
+				var rn := {"oil": "горючее", "rubber": "каучук"}
+				parts.append("%sсинтетическое %s +%d в день" % [who, rn.get(String(e.get("res", "oil")), String(e.get("res", ""))), int(e.get("v", 0))])
 			"spirit_add":
 				parts.append("%sчерта «%s»" % [who, world.spirit_defs.get(e["id"], {}).get("name", e["id"])])
 			"spirit_remove":

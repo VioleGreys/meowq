@@ -359,8 +359,16 @@ static func aided(world: World, from: int, to: int) -> bool:
 	return world.aid.has(from * 100000 + to)
 
 
+## Вес экспорта страны: гражданские заводы + проданные за рубеж ресурсы.
+static func export_weight(nx: World.Nation) -> float:
+	var r := 0.0
+	for k in nx.res_out.size():
+		r += nx.res_out[k]
+	return float(nx.civ) + 1.0 + r
+
+
 ## Доля внешней торговли B, приходящаяся на A (0–100 %). Вес каждой страны:
-##  экспорт (пока — гражданская промышленность; ресурсов в игре ещё нет) ×
+##  экспорт (гражданская промышленность + проданные ресурсы, export_weight) ×
 ##  флот (кто возит товары: ×1…×2 по силе флота) ×
 ##  репутация у B (как B относится к стране: ×0.5…×1.5) ×
 ##  близость (столица ближе к B — больше; через 150 пикс. карты, ~750 км, вес вдвое меньше).
@@ -386,7 +394,7 @@ static func trade_influence(world: World, a: int, b: int) -> float:
 		if x == b or not nx.alive or nx.capital < 0 or world.is_at_war(x, b):
 			continue
 		var d := pb.distance_to(world.p_center[nx.capital]) / 150.0
-		var export := float(nx.civ) + 1.0
+		var export := export_weight(nx)
 		var fl := 1.0 + fleet[x] / (fleet[x] + 100.0)
 		var rp := 0.5 + rep(world, b, x) / 100.0
 		var w := export * fl * rp / (1.0 + d * d)

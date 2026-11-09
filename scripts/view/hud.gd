@@ -1053,6 +1053,14 @@ func _province_text(p: int) -> String:
 		s += " · колония"
 	s += "\nФабрики: %d гражд. / %d воен. · Население: %s · Резерв: %dк · Очки победы: %d" % [
 		w.p_civ[p], w.p_mil[p], _fmt_pop(w.p_population[p]), w.p_manpower[p], w.p_vp[p]]
+	var ri := w.res_prov.find(p)
+	if ri >= 0:
+		var rs: Array = []
+		for r in Economy.RES_COUNT:
+			var v: float = w.res_val[ri * Economy.RES_COUNT + r]
+			if v >= 0.05:
+				rs.append("%s %.1f" % [Economy.RES_NAMES[r].to_lower(), v])
+		s += "\nРесурсы: " + ", ".join(rs)
 	var counts := {}
 	for d in w.divs_in(p):
 		if d.alive:
@@ -1232,9 +1240,9 @@ func close_popup() -> bool:
 
 
 func _cycle_map_mode() -> void:
-	var m: int = (game.map_view.map_mode + 1) % 5
+	var m: int = (game.map_view.map_mode + 1) % 6
 	game.set_map_mode(m)
-	toast(["Политическая карта", "Местность", "Промышленность", "Фракции", "Снабжение"][m])
+	toast(["Политическая карта", "Местность", "Промышленность", "Фракции", "Снабжение", "Ресурсы"][m])
 
 
 func _rebuild_popup() -> void:
@@ -2079,9 +2087,168 @@ func show_wing(wg: World.AirWing) -> void:
 	_layout_info.call_deferred()
 
 
+# вкладка «Производство»: страница заводов или внешней экономики; ресурс,
+# для которого открыт выбор продавца (−1 — нет)
+var _prod_page := "factories"
+var _buy_res := -1
+
+
+func _prod_pages() -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	for pg in [["factories", "Заводы"], ["trade", "Внешняя экономика"]]:
+		var id: String = pg[0]
+		var b := _button(pg[1], func():
+			_prod_page = id
+			_buy_res = -1
+			_rebuild_popup(), Vector2(0, 46))
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.disabled = _prod_page == id
+		row.add_child(b)
+	popup_body.add_child(row)
+
+
+func _build_trade(w: World, me: int) -> void:
+	popup_title.text = "Внешняя экономика"
+	var n: World.Nation = w.nations[me]
+	_prod_pages()
+	if w.res_prov.is_empty():
+		popup_body.add_child(_small("В этом мире нет природных ресурсов."))
+		return
+	if _buy_res >= 0:
+		_build_sellers(w, me, _buy_res)
+		return
+	# курс
+	var law: Dictionary = Economy.LAWS[n.trade_law]
+	popup_body.add_child(_section("Курс: %s" % law["name"]))
+	popup_body.add_child(_small("На экспорт идёт до %d%% добычи. Покупатели ранжируются раз в месяц: экономическое влияние, близость, соседство и выход к морю, отношения и строй, союз, марионетки. Курс можно менять раз в %d дней." % [roundi(float(law["export"]) * 100.0), Economy.LAW_COOLDOWN]))
+	var grid := VBoxContainer.new()
+	grid.add_theme_constant_override("separation", 4)
+	for i in Economy.LAWS.size():
+		var li := i
+		var lw: Dictionary = Economy.LAWS[i]
+		var bon: Array = []
+		for k in lw["bonus"]:
+			bon.append("%s +%d%%" % [{"construction": "стройка", "research": "наука", "industry": "выпуск"}.get(k, k), roundi(float(lw["bonus"][k]) * 100.0)])
+		var b := _button("%s · %d%%%s" % [lw["name"], roundi(float(lw["export"]) * 100.0), ("\n" + ", ".join(bon)) if not bon.is_empty() else ""], func():
+			var why := Economy.set_law(w, n, li)
+			if why != "":
+				toast(why)
+			_rebuild_popup(), Vector2(0, 62))
+		b.add_theme_font_size_override("font_size", 14)
+		b.custom_minimum_size = Vector2(0, 54 if not bon.is_empty() else 40)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.disabled = i == n.trade_law
+		grid.add_child(b)
+	popup_body.add_child(grid)
+	popup_body.add_child(_button("Автозакупки: %s" % ("да" if n.trade_auto else "нет"), func():
+		n.trade_auto = not n.trade_auto
+		_rebuild_popup(), Vector2(0, 48)))
+	popup_body.add_child(_small("Гражданские заводы на оплату закупок: %.1f · приходит от продаж: %.1f (1 завод — %d ед. в день)" % [n.trade_civ, n.trade_civ_in, int(Economy.UNITS_PER_CIV)]))
+	# ресурсы
+	popup_body.add_child(_section("Ресурсы (ед. в день)"))
+	for r in Economy.RES_COUNT:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var fill: float = n.res_fill[r]
+		var l := _label("%s — обеспечено %d%%\nдобыча %.1f · нужно %.1f · куплено +%.1f · продано −%.1f" % [
+			Economy.RES_NAMES[r], roundi(fill * 100.0), n.res_prod[r], n.res_need[r], n.res_in[r], n.res_out[r]], 15)
+		if fill < 0.999:
+			l.add_theme_color_override("font_color", UiStyle.ink(Color(1.0, 0.45, 0.4)))
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		var rr := r
+		row.add_child(_button("Купить", func():
+			_buy_res = rr
+			_rebuild_popup(), Vector2(96, 48)))
+		popup_body.add_child(row)
+	# поставки
+	var mine: Array = []
+	var sold: Array = []
+	for i in w.contracts.size():
+		var c: Array = w.contracts[i]
+		if c[0] == me:
+			mine.append(i)
+		elif c[1] == me:
+			sold.append(i)
+	popup_body.add_child(_section("Закупки"))
+	if mine.is_empty():
+		popup_body.add_child(_small("Нет."))
+	for i in mine:
+		var c: Array = w.contracts[i]
+		var row := HBoxContainer.new()
+		var next := ""
+		if float(c[6]) >= 0.0:
+			next = " · с %s: %.1f" % [w.date_short(int(c[4])), float(c[6])] if float(c[6]) > 0.0 else " · отказ с %s" % w.date_short(int(c[4]))
+		var l := _label("%s: %s %.1f в день · оплачено до %s%s" % [w.nations[c[1]].name, Economy.RES_NAMES[c[2]].to_lower(), float(c[3]), w.date_short(int(c[4])), next], 15)
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		var ci: int = i
+		var cb := _button("Отказаться", func():
+			Economy.cancel(w, ci)
+			toast("Поставка идёт до конца оплаченного месяца")
+			_rebuild_popup(), Vector2(130, 44))
+		cb.disabled = float(c[6]) == 0.0
+		row.add_child(cb)
+		popup_body.add_child(row)
+	popup_body.add_child(_section("Экспорт"))
+	if sold.is_empty():
+		popup_body.add_child(_small("Нет."))
+	for i in sold:
+		var c: Array = w.contracts[i]
+		popup_body.add_child(_small("%s: %s %.1f в день до %s" % [w.nations[c[0]].name, Economy.RES_NAMES[c[2]].to_lower(), float(c[3]), w.date_short(int(c[4]))]))
+
+
+## Выбор продавца ресурса r: кто может продать, сколько и как высоко мы у него
+## в рейтинге (кто выше — тому он продаёт в первую очередь).
+func _build_sellers(w: World, me: int, r: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_body.add_child(_section("Купить: %s" % Economy.RES_NAMES[r].to_lower()))
+	popup_body.add_child(_small("Нужно %.1f, есть %.1f. Поставка — на месяц; отказ вступает в силу с конца оплаченного месяца. Продавец сначала обслуживает тех, кто у него выше в рейтинге." % [n.res_need[r], Economy.available(n, r)]))
+	popup_body.add_child(_button("← Назад", func():
+		_buy_res = -1
+		_rebuild_popup(), Vector2(0, 44)))
+	var nc := w.nation_count
+	var list: Array = []
+	for s in nc:
+		if s == me or not w.nations[s].alive:
+			continue
+		var free := Economy.exportable(w, w.nations[s], r)
+		if free < 0.1:
+			continue
+		var sc: float = w.trade_score[s * nc + me] if w.trade_score.size() == nc * nc else 0.0
+		list.append([sc, s, free])
+	list.sort_custom(func(a, b): return a[0] > b[0] or (a[0] == b[0] and a[1] < b[1]))
+	if list.is_empty():
+		popup_body.add_child(_small("Сейчас никто не продаёт."))
+	for it in list:
+		var s: int = it[1]
+		var free: float = it[2]
+		var why := Economy.can_trade(w, me, s)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var l := _label("%s\nсвободно %.1f · рейтинг у продавца %.2f%s" % [w.nations[s].name, free, float(it[0]), (" · " + why) if why != "" else ""], 15)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		for amount in [1.0, 5.0]:
+			var am: float = minf(amount, free)
+			var b := _button("+%s" % ("%.1f" % am if am < amount else "%d" % int(amount)), func():
+				if not Economy.buy(w, me, s, r, am, true):
+					toast("Не получилось купить")
+				_rebuild_popup(), Vector2(64, 44))
+			b.disabled = why != ""
+			row.add_child(b)
+		popup_body.add_child(row)
+
+
 func _build_production(w: World, me: int) -> void:
+	if _prod_page == "trade":
+		_build_trade(w, me)
+		return
 	popup_title.text = "Производство"
 	var n: World.Nation = w.nations[me]
+	_prod_pages()
 	_dynamic["prod"] = _label("", 17)
 	popup_body.add_child(_dynamic["prod"])
 	popup_body.add_child(_small("Военные заводы выпускают снаряжение для новых дивизий и пополнения. Новая линия разгоняется с 30% до 100% эффективности."))
@@ -2102,8 +2269,10 @@ func _build_production(w: World, me: int) -> void:
 				eff = line[2]
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
-		var l := _label("%s\nзаводов %d · эфф. %d%% · +%.1f/день · склад %d · не хватает %d" % [
-			Military.EQ_NAMES[k], f, eff * 100.0, n.daily_output[k], n.stock[k], need[k]], 16)
+		var rm := Economy.line_mult(n, k)
+		var l := _label("%s\nзаводов %d · эфф. %d%% · +%.1f/день · склад %d · не хватает %d%s" % [
+			Military.EQ_NAMES[k], f, eff * 100.0, n.daily_output[k], n.stock[k], need[k],
+			(" · ресурсы %d%%" % roundi(rm * 100.0)) if rm < 0.999 else ""], 16)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(l)
 		var kk := k
@@ -2149,6 +2318,8 @@ func _update_popup_dynamic() -> void:
 			_dynamic["army"].text = "Дивизий: %d · в подготовке: %d%s · людей в резерве: %dк" % [
 				n.division_count, n.training.size(), next, n.manpower]
 		"production":
+			if not _dynamic.has("prod"):
+				return   # страница внешней экономики
 			var used := Military.assigned_factories(n)
 			_dynamic["prod"].text = "Военных заводов: %d · на линиях: %d · свободно: %d" % [n.mil, used, n.mil - used]
 		"research":

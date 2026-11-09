@@ -255,6 +255,10 @@ func _auto_screenshot_locked() -> void:
 			hud.open_tab("army")
 			hud._open_tpl_editor(world, -1 if _arg("tpl") == "new" else int(_arg("tpl")), false)
 		elif _arg("tab") != "":
+			if _arg("trade") != "":
+				hud._prod_page = "trade"   # --trade=1: «Внешняя экономика»; --trade=oil и т. п. — выбор продавца
+				var rn := ["oil", "steel", "aluminium", "rubber", "tungsten", "chromium"].find(_arg("trade"))
+				hud._buy_res = rn
 			hud.open_tab(_arg("tab"))
 		if "--select" in OS.get_cmdline_user_args():
 			_on_province_tapped(world.nations[me].capital)

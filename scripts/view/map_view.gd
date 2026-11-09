@@ -11,7 +11,12 @@ const MIN_ZOOM := 0.1
 const MAX_ZOOM := 5.0
 const TAP_SLOP := 14.0
 
-enum MapMode { POLITICAL, TERRAIN, INDUSTRY, FACTIONS, SUPPLY }
+enum MapMode { POLITICAL, TERRAIN, INDUSTRY, FACTIONS, SUPPLY, RESOURCES }
+## Цвета ресурсов на карте: нефть, сталь, алюминий, каучук, вольфрам, хром.
+## Масштаб для сравнения ресурсов между собой (≈ мировой итог / 100).
+const RES_SCALE := [2.6, 5.3, 3.2, 1.4, 0.5, 1.3]
+const RES_COLORS := [Color(0.18, 0.15, 0.12), Color(0.36, 0.45, 0.58), Color(0.72, 0.8, 0.86),
+	Color(0.25, 0.6, 0.3), Color(0.55, 0.35, 0.7), Color(0.85, 0.55, 0.2)]
 
 var world: World
 var sprite: Sprite2D
@@ -356,6 +361,15 @@ func update_palette() -> void:
 	if map_mode == MapMode.POLITICAL and _pal_ctrl.size() != world.prov_count:
 		_pal_ctrl.resize(world.prov_count)
 		_pal_own.resize(world.prov_count)
+	var res_at := {}
+	var max_res := 0.1
+	if map_mode == MapMode.RESOURCES:
+		for i in world.res_prov.size():
+			res_at[world.res_prov[i]] = i
+			var tot := 0.0
+			for r in Economy.RES_COUNT:
+				tot += world.res_val[i * Economy.RES_COUNT + r] / RES_SCALE[r]
+			max_res = maxf(max_res, tot)
 	var max_ind := 1
 	if map_mode == MapMode.INDUSTRY:
 		for p in world.prov_count:
@@ -402,6 +416,21 @@ func update_palette() -> void:
 				col = world.factions[f].color if f >= 0 else Color(0.62, 0.6, 0.55)
 				if world.nations[c].overlord >= 0 and f < 0:
 					col = world.nations[r].color
+			MapMode.RESOURCES:
+				# главный ресурс провинции, насыщенность — по объёму
+				col = Color(0.86, 0.84, 0.78)
+				if res_at.has(p):
+					var i: int = res_at[p]
+					var best := 0
+					var bv := -1.0
+					var tot := 0.0
+					for r in Economy.RES_COUNT:
+						var v: float = world.res_val[i * Economy.RES_COUNT + r] / RES_SCALE[r]
+						tot += v
+						if v > bv:
+							bv = v
+							best = r
+					col = Color(0.86, 0.84, 0.78).lerp(RES_COLORS[best], 0.45 + 0.55 * sqrt(tot / max_res))
 			MapMode.INDUSTRY:
 				var v := float(world.p_civ[p] + world.p_mil[p]) / max_ind
 				var mil_share := float(world.p_mil[p]) / maxf(1.0, world.p_civ[p] + world.p_mil[p])

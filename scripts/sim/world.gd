@@ -76,6 +76,19 @@ class Nation:
 	var lines: Array = []       # производственные линии: [тип снаряжения, заводов, эффективность]
 	# распределение заводов (Military.plan_production): желаемые доли по типам,
 	# выпуск и склад с прошлого пересмотра, расход снаряжения в день (среднее)
+	# внешняя экономика (Economy): добыча, потребность линий, куплено/продано
+	# (ед. в день), обеспеченность 0..1; курс — доля добычи на экспорт
+	var res_prod := PackedFloat32Array([0, 0, 0, 0, 0, 0])
+	var res_need := PackedFloat32Array([0, 0, 0, 0, 0, 0])
+	var res_in := PackedFloat32Array([0, 0, 0, 0, 0, 0])
+	var res_out := PackedFloat32Array([0, 0, 0, 0, 0, 0])
+	var res_fill := PackedFloat32Array([1, 1, 1, 1, 1, 1])
+	var res_synth := PackedFloat32Array([0, 0, 0, 0, 0, 0])  # синтетика (эффект synthetic)
+	var trade_law := 2
+	var law_day := -1
+	var trade_civ := 0.0        # гражданских заводов уходит на оплату закупок
+	var trade_civ_in := 0.0     # и приходит от продаж
+	var trade_auto := true      # игрок: закупать ресурсы автоматически
 	var prod_split: Array = []
 	var prod_auto := true       # игрок: распределять заводы автоматически
 	var prod_acc := PackedFloat64Array([0, 0, 0, 0, 0, 0, 0])
@@ -353,6 +366,16 @@ var n_attack := PackedFloat32Array()
 var n_defense := PackedFloat32Array()
 var n_org := PackedFloat32Array()
 var n_speed := PackedFloat32Array()
+var res_prov := PackedInt32Array()       # провинции с ресурсами (Economy)
+var res_ctrl := PackedInt32Array()        # кэш: хозяин провинции с ресурсами при последнем пересчёте добычи
+var res_val := PackedFloat32Array()       # их добыча: i*6 + ресурс
+var contracts: Array = []                 # поставки: [покупатель, продавец, ресурс, ед., до дня, —, со след. месяца]
+var trade_score := PackedFloat32Array()
+var trade_adj := PackedByteArray()       # соседство стран N×N (Economy.refresh_geo, раз в месяц)
+var trade_coast := PackedByteArray()     # выход к морю
+var trade_geo_day := -100
+var trade_job := {}                       # фоновые строки рейтинга на завтра (Economy.start_rank)
+var trade_tab := {}                       # снимок для рейтинга (Economy.trade_tables, раз в месяц)   # рейтинг покупателей у продавца: s*N + b (раз в месяц)
 var templates: Array = []               # шаблоны дивизий (Military.make_template): 0–5 общие, дальше — проекты стран
 var tpl_eq := PackedFloat64Array()       # templates[t]["eq"][k] — шаблон*7 + k
 var tpl_cls := PackedInt32Array()        # класс шаблона (Military.T_*) — значок и роль
@@ -963,6 +986,8 @@ func set_war(a: int, b: int) -> void:
 	nations[b].at_war[a] = true
 	war[a * nation_count + b] = 1
 	war[b * nation_count + a] = 1
+	if not contracts.is_empty():
+		Economy.on_war(self, a, b)   # война рвёт поставки сразу
 
 
 func declare_war(a: int, b: int) -> void:
@@ -1524,4 +1549,8 @@ func recalc_spirits(nat: Nation) -> void:
 		var bon: Dictionary = spirit_defs.get(id, {}).get("bonus", {})
 		for key in bon:
 			nat.spirit_bonus[key] = float(nat.spirit_bonus.get(key, 0.0)) + float(bon[key]) * k
+	# экономический курс — как черта
+	var law: Dictionary = Economy.LAWS[clampi(nat.trade_law, 0, Economy.LAWS.size() - 1)]["bonus"]
+	for key in law:
+		nat.spirit_bonus[key] = float(nat.spirit_bonus.get(key, 0.0)) + float(law[key])
 	nat.stats_dirty = true

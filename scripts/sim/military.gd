@@ -355,7 +355,8 @@ static func produce(nat: World.Nation) -> void:
 		if f <= 0:
 			continue
 		var eff: float = line[2]
-		var units: float = f * mult * eff / EQ_COST[eq]
+		# нехватка ресурсов для того, что выпускает линия (Economy.RES_NEED)
+		var units: float = f * mult * eff * Economy.line_mult(nat, eq) / EQ_COST[eq]
 		nat.stock[eq] += units
 		nat.daily_output[eq] += units
 		nat.prod_acc[eq] += units
