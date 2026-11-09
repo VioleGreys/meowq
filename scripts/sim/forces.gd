@@ -592,6 +592,73 @@ static func own_reach(world: World, n: int, start: int) -> Array:
 	return [mask, neigh]
 
 
+## Упреждение (Spec): страны, у которых завтра решения ИИ флота, авиации и
+## высадок (день + номер кратен 10), — в фоне по сегодняшнему снимку
+## территории: с кем есть сухопутная граница от столицы (own_reach). Завтра
+## Diplomacy.reachable_neighbours берёт готовое (world.reach_job).
+static func spec(world: World, jobs: Array) -> void:
+	world.reach_job = {}
+	var due := PackedInt32Array()
+	var caps := PackedInt32Array()
+	for nat in world.nations:
+		if nat.alive and not nat.is_player and (world.day + 1 + nat.id) % 10 == 0 \
+				and (not nat.at_war.is_empty() or not nat.wargoals.is_empty() or not nat.planned_wars.is_empty()):
+			due.append(nat.id)
+			caps.append(nat.capital)
+	if due.is_empty():
+		return
+	var t := {"adj_start": world.adj_start.duplicate(), "adj_list": world.adj_list.duplicate(),
+		"land": world.p_land.duplicate(), "ctrl": world.p_controller.duplicate(), "nc": world.nation_count}
+	var res := {}
+	var job := {"day": world.day + 1, "reach": res}
+	world.reach_job = job
+	jobs.append(func():
+		var ctrl: PackedInt32Array = t["ctrl"]
+		for i in due.size():
+			var n := due[i]
+			var cap := caps[i]
+			if cap < 0 or ctrl[cap] != n:
+				res[n] = PackedInt32Array()
+				continue
+			if Native.core != null:
+				var r: Array = Native.core.call("own_reach", t["adj_start"], t["adj_list"], t["land"], ctrl, n, cap, t["nc"])
+				res[n] = r[1]
+			else:
+				res[n] = _reach_gd(t, n, cap))
+
+
+## GDScript-вариант own_reach по снимку: соседние страны (по порядку обнаружения).
+static func _reach_gd(t: Dictionary, n: int, start: int) -> PackedInt32Array:
+	var land: PackedByteArray = t["land"]
+	var ctrl: PackedInt32Array = t["ctrl"]
+	var a_start: PackedInt32Array = t["adj_start"]
+	var a_list: PackedInt32Array = t["adj_list"]
+	var nc: int = t["nc"]
+	var mask := PackedByteArray()
+	mask.resize(ctrl.size())
+	var neigh := PackedInt32Array()
+	var seen := PackedByteArray()
+	seen.resize(nc)
+	mask[start] = 1
+	var stack := PackedInt32Array([start])
+	while not stack.is_empty():
+		var p := stack[stack.size() - 1]
+		stack.resize(stack.size() - 1)
+		for k in range(a_start[p], a_start[p + 1]):
+			var q := a_list[k]
+			if land[q] == 0:
+				continue
+			var c := ctrl[q]
+			if c == n:
+				if mask[q] == 0:
+					mask[q] = 1
+					stack.append(q)
+			elif c >= 0 and seen[c] == 0:
+				seen[c] = 1
+				neigh.append(c)
+	return neigh
+
+
 ## ИИ: главный флот ищет более слабого противника рядом, подлодки — торговлю врага.
 static func ai_fleets(world: World, n: int) -> void:
 	var nat: World.Nation = world.nations[n]

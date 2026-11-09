@@ -172,7 +172,13 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 		Prof.add("ист:выбор фокуса", _pt)
 		_pt = Time.get_ticks_usec()
 		if not nat.is_player and world.day % 5 == nat.id % 5:
-			nat.planned_wars = planned_wars(world, nat.id)
+			# зависят только от фокусов (текущий, выполненные) и живы ли цели:
+			# пересчёт — при смене фокусов, иначе раз в 30 дней
+			var key := "%s|%d" % [nat.focus_current, nat.focus_done.size()]
+			if key != nat.pw_key or world.day - nat.pw_day >= 30:
+				nat.pw_key = key
+				nat.pw_day = world.day
+				nat.planned_wars = planned_wars(world, nat.id)
 		Prof.add("ист:планы войн", _pt)
 		_pt = Time.get_ticks_usec()
 		# план подготовки к событиям: в начале партии и после каждого фокуса

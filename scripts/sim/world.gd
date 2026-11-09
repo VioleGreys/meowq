@@ -64,6 +64,8 @@ class Nation:
 	var trade_penalty := 0.0    # потери выпуска от рейдов подлодок (0..0.3)
 	var ship_queue: Array = []  # заложенные корабли: типы Forces.SHIP_*
 	var planned_wars := {}      # ИИ: с кем война запланирована фокусами (готовиться заранее)
+	var pw_key := ""             # кэш planned_wars: фокус|выполнено (History)
+	var pw_day := -100
 	var improving := {}         # улучшение отношений: id страны -> true (не больше Relations.IMPROVE_SLOTS)
 	var prep_divs := 0          # ИИ: сколько дивизий нужно для условий будущих событий фокусов
 	var prep_day := -1          # день последней сверки плана подготовки (-1 — сверить)
@@ -379,6 +381,7 @@ var embargoes := {}                       # продавец*100000 + покуп
 var spec_gid := -1                        # фоновая группа упреждающих расчётов (Spec)
 var rel_job := {}                          # шкала сил/естественные отношения на завтра (Relations.spec)
 var prod_job := {}                         # доли заводов на завтра (Military.spec)
+var reach_job := {}                       # сухопутные соседи на завтра (Forces.spec)
 var trade_job := {}                       # фоновые строки рейтинга на завтра (Economy.start_rank)
 var trade_tab := {}                       # снимок для рейтинга (Economy.trade_tables, раз в месяц)   # рейтинг покупателей у продавца: s*N + b (раз в месяц)
 var templates: Array = []               # шаблоны дивизий (Military.make_template): 0–5 общие, дальше — проекты стран

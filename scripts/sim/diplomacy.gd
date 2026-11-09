@@ -533,6 +533,13 @@ static func ai_turn(world: World, n: int, rng: RandomNumberGenerator) -> void:
 ## (без морских высадок): Восточная Пруссия отрезана коридором, Ливия — морем.
 static func reachable_neighbours(world: World, n: int) -> Dictionary:
 	var res := {}
+	# готовое со вчера (упреждение, Forces.spec) — для решений ИИ флота и высадок
+	var job: Dictionary = world.reach_job
+	if int(job.get("day", -1)) == world.day and job["reach"].has(n):
+		Spec.finish(world)
+		for c in job["reach"][n]:
+			res[c] = true
+		return res
 	var cap: int = world.nations[n].capital
 	if world.p_controller[cap] != n:
 		return res
