@@ -118,7 +118,10 @@ public:
 	PackedByteArray air_reach(const PackedByteArray &land, const PackedInt32Array &ctrl, const PackedByteArray &ally,
 			int nc, int n, const PackedInt32Array &region, const PackedVector2Array &centers, double range) const;
 
-	String version() const { return "meowq-core 13"; }
+	// Снабжение по принципу жанра (Supply): поле подачи узлов и раздача по дивизиям.
+	Array supply_field(const Dictionary &t) const;
+	PackedFloat64Array supply_divs(const Dictionary &t) const;
+	String version() const { return "meowq-core 14"; }
 };
 
 } // namespace godot

@@ -390,6 +390,11 @@ var tpl_terrain := PackedFloat32Array()   # Military.TERRAIN_MULT построч
 var p_coastal := PackedByteArray()
 var p_supply_cap := PackedFloat32Array()  # пропускная способность снабжения провинции (дивизий)
 var ally := PackedByteArray()             # nation_count^2: 1 — одна сторона (фракция/сюзерен)
+var supply_regions := false              # снабжение по узлам районов (Supply), иначе — по удалённости от узлов
+var reg_adj_start := PackedInt32Array()   # соседство районов по суше (Supply._static)
+var reg_adj_list := PackedInt32Array()
+var sup_job := {}                         # поле подачи на завтра (Supply.spec)
+var sup_args: Array = []                  # стороны, источники, столицы сегодняшней фазы снабжения
 var supply_dist: Array = []               # по странам: PackedInt32Array, переходов до узла снабжения (-1 — нет)
 var groups: Array = []                    # Array[ArmyGroup]
 # Флот и авиация (этап 6)

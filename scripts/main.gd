@@ -43,6 +43,12 @@ var _ticks_seen := 0
 var _rate_time := 0.0
 var _rate_ticks := 0
 var _layer_dirty := true
+var _frame_mutex := Mutex.new()   # конвейер экрана (_publish/_take_frame)
+var _frame_top := {}
+var _frame_list: Array = []
+var _frame_day := -1
+var _frame_taken := true
+var _frame_new := false
 var _cmds: Array = []             # действия игрока, ждущие границы дня (act)
 var _cmd_mutex := Mutex.new()
 var large_map := false
@@ -114,6 +120,9 @@ func _bench_realtime(seconds: float) -> void:
 	_ui_last = 0
 	_ui_gap_max = 0
 	_ui_count = 0
+	_fresh_count = 0
+	_fresh_gap = 0
+	_fresh_last = 0
 	var start_day := ticks_done
 	var t0 := Time.get_ticks_msec()
 	var frames := 0
@@ -165,6 +174,8 @@ func _bench_realtime(seconds: float) -> void:
 	print("BENCH_RT: %.1f с, дней %d (%.1f дн/с), кадров %d, средний кадр %.2f мс, худший %.2f мс, ядер %d" % [
 		seconds, days, days / seconds, frames, total / 1000.0 / maxi(1, frames), worst / 1000.0, Parallel.thread_count()])
 	print("  интерфейс: обновлений %d (%.1f в с), самая долгая пауза %.0f мс" % [_ui_count, _ui_count / seconds, _ui_gap_max / 1000.0])
+	print("  свежие данные на экране (под замком или из буфера симуляции): %d кадров (%.1f в с), самая долгая пауза %.0f мс" % [
+		_fresh_count, _fresh_count / seconds, _fresh_gap / 1000.0])
 	print("  отрисовка экрана: ЦП %.2f мс, ГП %.2f мс в среднем за кадр" % [_rt_cpu / maxi(1, frames), _rt_gpu / maxi(1, frames)])
 	print("  карта: разрешение %d%%, цена полной перерисовки %.1f мс" % [int(map_view.res_scale * 100), map_view.last_cost_ms])
 	print("  палитра обновлялась %d раз; слой фишек рисовался %d раз, в среднем %.2f мс" % [map_view.palette_version,
@@ -372,6 +383,44 @@ func player() -> int:
 	return unit_layer.player
 
 
+## Конвейер экрана: сразу после дня поток симуляции (мир ещё под его замком)
+## снимает цифры верхней строки и, если интерфейс забрал прежний, собирает новый
+## список фишек; интерфейс в своём кадре подменяет буфер, не трогая мир
+## (_take_frame). Выделение и приказы по-прежнему пересобирают список сразу.
+func _publish() -> void:
+	if hud == null or world == null or state != "play":
+		return
+	var top := Hud.top_snapshot(world, player(), sim)
+	_frame_mutex.lock()
+	var want := _frame_taken
+	_frame_mutex.unlock()
+	var r: Array = []
+	if want:
+		r = unit_layer.build(selected_fleet, selected_wing)
+	_frame_mutex.lock()
+	_frame_top = top
+	if want:
+		_frame_list = r
+		_frame_day = world.day
+		_frame_taken = false
+	_frame_new = true
+	_frame_mutex.unlock()
+
+
+func _take_frame() -> void:
+	_frame_mutex.lock()
+	if _frame_new:
+		hud.top_data = _frame_top
+		if not _frame_taken and not _frame_list.is_empty():
+			unit_layer.take(_frame_list[0], _frame_list[1])
+			_frame_taken = true
+			_frame_list = []
+		_fresh_note()
+		_frame_new = false
+	_frame_mutex.unlock()
+	hud.show_top()
+
+
 ## Действие игрока без ожидания (конвейер ввода): если мир свободен — сразу,
 ## иначе в очередь; очередь выполняется в главном потоке на границе дней
 ## (_process, когда мьютекс свободен), поток симуляции уступает окно после
@@ -436,6 +485,7 @@ func _sim_loop() -> void:
 				while Time.get_ticks_usec() - t0 < _slow_tick_usec:
 					pass
 			ticks_done += 1
+			_publish()
 		sim_mutex.unlock()
 		_pending_mutex.lock()
 		_pending = maxi(0, _pending - 1)
@@ -455,6 +505,21 @@ var _ui_waiting := false      # главный поток ждёт мир: фо�
 var _ui_last := 0             # замер: время последнего обновления интерфейса
 var _ui_gap_max := 0
 var _ui_count := 0
+var _fresh_last := 0          # замер свежести экрана: новый день или новое состояние показано
+var _fresh_gap := 0
+var _fresh_count := 0
+var _fresh_tick := -1
+
+
+func _fresh_note() -> void:
+	if ticks_done == _fresh_tick:
+		return
+	_fresh_tick = ticks_done
+	var now := Time.get_ticks_usec()
+	if _fresh_last > 0:
+		_fresh_gap = maxi(_fresh_gap, now - _fresh_last)
+	_fresh_last = now
+	_fresh_count += 1
 const SINGLE_BUDGET_USEC := 8000   # однопоточный режим: время симуляции на кадр
 
 
@@ -466,6 +531,7 @@ func _request_days(n: int) -> void:
 			if state == "play" and sim != null:
 				sim.tick()
 				ticks_done += 1
+				_publish()
 			if Time.get_ticks_usec() - t0 > SINGLE_BUDGET_USEC:
 				break
 		return
@@ -512,6 +578,8 @@ func _process(dt: float) -> void:
 		days_per_sec = lerpf(days_per_sec, (t - _rate_ticks) / _rate_time, 0.5)
 		_rate_ticks = t
 		_rate_time = 0.0
+	# готовое от симуляции (верхняя строка, список фишек) — каждый кадр, без замка
+	_take_frame()
 	# интерфейс и список отрисовки — только когда мир не занят симуляцией
 	if sim_mutex.try_lock():
 		_ui_waiting = false
@@ -523,6 +591,7 @@ func _process(dt: float) -> void:
 			_ui_gap_max = maxi(_ui_gap_max, now - _ui_last)
 		_ui_last = now
 		_ui_count += 1
+		_fresh_note()
 	elif Time.get_ticks_usec() - _ui_last > UI_MAX_GAP_USEC or pending_actions() > 0:
 		_ui_waiting = true   # давно не обновлялись или ждут действия — попросить окно у симуляции
 
@@ -576,7 +645,9 @@ func _ui_update() -> void:
 		_palette_msec = Time.get_ticks_msec()
 		map_view.update_palette()
 	var t2 := Time.get_ticks_usec()
-	if new_day or _layer_dirty:
+	# список фишек нового дня уже собрал поток симуляции (_publish); здесь —
+	# только после выделения/приказов или если симуляция его не собирала
+	if _layer_dirty or (new_day and _frame_day != world.day):
 		unit_layer.rebuild(selected_fleet, selected_wing)
 		_layer_dirty = false
 	var t3 := Time.get_ticks_usec()

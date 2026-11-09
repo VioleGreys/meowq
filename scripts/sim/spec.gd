@@ -13,8 +13,10 @@ extends RefCounted
 ## Сейчас так считаются:
 ##  * торговля — рейтинг покупателей и план раздачи экспорта (Economy.spec);
 ##  * шкала сил и «естественные» отношения для сдвига репутации (Relations.spec);
-##  * пересмотр военных заводов у стран, чья очередь завтра (Military.spec).
-## Бои, движение, снабжение, восстановление, выпуск — каждый день по свежим
+##  * пересмотр военных заводов у стран, чья очередь завтра (Military.spec);
+##  * поле подачи снабжения при снабжении по узлам районов (Supply.spec).
+## Бои, движение, раздача снабжения по дивизиям, восстановление, выпуск —
+## каждый день по свежим
 ## данным, без упреждения.
 
 
@@ -24,6 +26,7 @@ static func start(world: World) -> void:
 	Economy.spec(world, jobs)
 	Relations.spec(world, jobs)
 	Military.spec(world, jobs)
+	Supply.spec(world, jobs)
 	if jobs.is_empty():
 		return
 	world.spec_gid = Parallel.start(jobs.size(), func(i: int): (jobs[i] as Callable).call(), "упреждение", 2)

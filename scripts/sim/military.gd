@@ -447,7 +447,7 @@ static func plan_prep(world: World, nat: World.Nation, target_divs: int, prepare
 		"buffer": PROD_BUFFER_WAR if (not nat.at_war.is_empty() or prepare_war) else PROD_BUFFER,
 		"mult": maxf(0.1, (1.0 + nat.b("industry")) * (1.0 - nat.trade_penalty)),
 		"doctrine": PackedFloat64Array(default_split(nat)),
-		"tpl_eq": world.tpl_eq, "tpl_motor": world.tpl_motor}
+		"tpl_eq": world.tpl_eq.duplicate(), "tpl_motor": world.tpl_motor.duplicate()}
 
 
 ## Расчёт долей заводов (только данные p и totals — можно в потоке).

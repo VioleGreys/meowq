@@ -171,11 +171,26 @@ func _wp(p: int) -> Vector2:
 
 ## Собрать список отрисовки. Вызывать ТОЛЬКО под блокировкой мира.
 func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
+	var r := build(sel_fleet, sel_wing)
+	items = r[0]
+	_has_battles = r[1]
+	_dirty = true
+
+
+## Принять список, собранный потоком симуляции (конвейер экрана, main._publish).
+func take(list: Array, battles: bool) -> void:
+	items = list
+	_has_battles = battles
+	_dirty = true
+
+
+## Собрать список отрисовки по миру → [список, есть ли бои]. Только чтение мира
+## и своих кэшей подписей и портов: вызывается под замком мира — из главного
+## потока (выделение) или из потока симуляции сразу после дня.
+func build(sel_fleet: int = -1, sel_wing: int = -1) -> Array:
 	var out: Array = []
 	if world == null:
-		items = out
-		_dirty = true
-		return
+		return [out, false]
 	# подписи стран пересчитываются (заливка по провинциям) только когда менялись
 	# владельцы — не чаще раза в 5 дней
 	var pv := map.palette_version if map != null else 0
@@ -242,7 +257,7 @@ func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
 			out.append([OBJECTIVE, _wp(g.objective), g.color])
 	for p in battle_provs:
 		out.append([BATTLE, _wp(p)])
-	_has_battles = not battle_provs.is_empty()
+	var has_battles := not battle_provs.is_empty()
 	# фишки: по одной на (провинция, страна) — стопки считает ядро World.k_counters
 	# (C++ или GDScript); выделение и цвет армии игрока — здесь, по ключу
 	# провинция·страна
@@ -281,8 +296,7 @@ func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
 		out.append([COUNTER, centers[p] * sc, k, nat_cols[o], n, c_tpl[ci],
 			c_str[ci] / (100.0 * n), c_org[ci] / n, m[0], m[1], c_sup[ci] < 0.3, o == player])
 	_rebuild_navy_air(out, sel_fleet, sel_wing)
-	items = out
-	_dirty = true
+	return [out, has_battles]
 
 
 func _rebuild_navy_air(out: Array, sel_fleet: int, sel_wing: int) -> void:

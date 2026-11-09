@@ -938,17 +938,38 @@ func show_game_over(result: String) -> void:
 
 # --- Обновление --------------------------------------------------------------
 
+## Снимок цифр верхней строки (читает мир — под замком или в потоке симуляции
+## сразу после дня; конвейер экрана, main._publish).
+static func top_snapshot(w: World, me: int, sim: Simulation) -> Dictionary:
+	if w == null or me < 0:
+		return {}
+	var n: World.Nation = w.nations[me]
+	return {"flag": n.flag, "name": n.name.to_upper(), "date": w.date_string(),
+		"res": "Винт. %d  Ору. %d  Танки %d  Груз. %d  Люди %dк  Див. %d" % [
+			n.stock[0], n.stock[1], n.stock[2], n.stock[3], n.manpower, n.division_count],
+		"phases": sim.phase_usec.duplicate() if sim != null else {}, "tick": sim.last_tick_usec if sim != null else 0}
+
+
+var top_data := {}   # последний снимок верхней строки (main._publish или refresh_top)
+
+
 func refresh_top() -> void:
-	var w: World = game.world
-	if w == null or game.player() < 0:
+	# мир доступен (под замком) — свежий снимок; иначе — опубликованный
+	if game.world != null and game.player() >= 0:
+		top_data = top_snapshot(game.world, game.player(), game.sim)
+	show_top()
+
+
+## Верхняя строка по снимку top_data — без обращения к миру (каждый кадр).
+func show_top() -> void:
+	var d := top_data
+	if d.is_empty():
 		return
-	var n: World.Nation = w.nations[game.player()]
-	if swatch.spec != n.flag:
-		swatch.spec = n.flag
-	nation_label.text = n.name.to_upper()
-	date_label.text = w.date_string()
-	res_label.text = "Винт. %d  Ору. %d  Танки %d  Груз. %d  Люди %dк  Див. %d" % [
-		n.stock[0], n.stock[1], n.stock[2], n.stock[3], n.manpower, n.division_count]
+	if swatch.spec != d["flag"]:
+		swatch.spec = d["flag"]
+	nation_label.text = d["name"]
+	date_label.text = d["date"]
+	res_label.text = d["res"]
 	var key := nation_label.text + "|" + date_label.text + "|" + res_label.text
 	if key != _tb_key:
 		_tb_key = key
@@ -956,21 +977,22 @@ func refresh_top() -> void:
 	for i in speed_buttons.size():
 		speed_buttons[i].button_pressed = game.speed == i
 	var phases := ""
-	for k in game.sim.phase_usec:
-		phases += " %s %.1f" % [k, game.sim.phase_usec[k] / 1000.0]
+	var ph: Dictionary = d["phases"]
+	for k in ph:
+		phases += " %s %.1f" % [k, ph[k] / 1000.0]
 	if OS.has_feature("mobile"):
 		phases = ""   # на телефоне без фаз — они закрывали бы карту
 	var gpu: Vector2 = game.map_view.gpu_ms()
 	if gpu.x <= 0.0:
 		gpu.x = game.map_view.last_cost_ms   # OpenGL ES: оценка по времени кадра
-	Report.sample(Engine.get_frames_per_second(), game.sim.last_tick_usec / 1000.0,
+	Report.sample(Engine.get_frames_per_second(), int(d["tick"]) / 1000.0,
 		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, game.unit_layer.draw_usec / 1000.0,
 		gpu.x, game.days_per_sec)
 	phases += "\nкадр: логика %.1f · фишки %.1f · ГП карта %.1f (%d%%) · ГП экран %.1f мс · карта %d раз/с\nдень (макс. за с): панели %.1f · палитра %.1f · список %.1f · строка %.1f мс" % [
 		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, game.unit_layer.draw_usec / 1000.0,
 		gpu.x, int(game.map_view.res_scale * 100), gpu.y, _redraw_rate(), game.ui_prof[0] / 1000.0, game.ui_prof[1] / 1000.0,
 		game.ui_prof[2] / 1000.0, game.ui_prof[3] / 1000.0]
-	perf_label.text = "%s\n%d FPS · %s · ядер %d · %.1f дн/с · тик %.2f мс" % [phases.strip_edges(), Engine.get_frames_per_second(), "C++" if Native.available() else "GDScript", Parallel.thread_count(), game.days_per_sec, game.sim.last_tick_usec / 1000.0]
+	perf_label.text = "%s\n%d FPS · %s · ядер %d · %.1f дн/с · тик %.2f мс" % [phases.strip_edges(), Engine.get_frames_per_second(), "C++" if Native.available() else "GDScript", Parallel.thread_count(), game.days_per_sec, int(d["tick"]) / 1000.0]
 	if _toast_t > 0.0:
 		_toast_t -= get_process_delta_time()
 		toast_label.modulate.a = clampf(_toast_t, 0.0, 1.0)

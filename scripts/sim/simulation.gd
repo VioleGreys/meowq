@@ -19,6 +19,8 @@ var land_totals_day := -100
 func _init(w: World) -> void:
 	Native.init()
 	world = w
+	if "--supply=regions" in OS.get_cmdline_user_args():
+		world.supply_regions = true
 	refresh_income()
 	# процедурный мир и прочие сценарии без линий: доктринные линии и базовый склад
 	for nat in world.nations:
@@ -326,6 +328,19 @@ func _phase_supply() -> void:
 	Prof.add("снаб:узлы", _pt0)
 	for i in reps.size():
 		hubs[i] = PackedInt32Array(hubs[i])
+	if world.supply_regions:
+		# по принципу жанра: узлы районов, железная дорога, подвоз (Supply)
+		var so := PackedInt32Array()
+		so.resize(nc)
+		var caps := PackedInt32Array()
+		for a in nc:
+			so[a] = reps.find(rep[a]) if world.nations[a].alive else -1
+			if world.nations[a].alive:
+				caps.append(world.nations[a].capital)
+		Supply.regions(world, so, hubs, caps)
+		world.sup_args = [so, hubs, caps]   # для упреждения поля на завтра (Supply.spec)
+		Prof.add("снаб:сети", _pt0)
+		return
 	var results: Array = []
 	results.resize(reps.size())
 	var native: Object = Native.core
