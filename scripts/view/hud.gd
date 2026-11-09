@@ -1162,18 +1162,20 @@ func _update_group_text(g: World.ArmyGroup) -> void:
 	var s := 0.0
 	var sup := 0.0
 	var fights := 0
+	var pl := 0.0
 	for d in divs:
 		s += d.strength
 		sup += d.supply
+		pl += d.plan
 		if d.in_battle:
 			fights += 1
 	var n := maxi(1, divs.size())
 	var order := "держит фронт" if g.mode == "hold" else "наступает"
 	if g.mode == "attack" and g.objective >= 0:
 		order += " · цель: %s" % w.p_name[g.objective]
-	_info_text("%s · %d %s\n%s · сила %d%%\nСнабжение %d%% · в бою %d" % [
+	_info_text("%s · %d %s\n%s · сила %d%%\nСнабжение %d%% · план %d%% (+%d%% к атаке) · в бою %d" % [
 		g.name, divs.size(), _plural(divs.size(), "дивизия", "дивизии", "дивизий"), order[0].to_upper() + order.substr(1),
-		s / n, sup / n * 100.0, fights])
+		s / n, sup / n * 100.0, pl / n * 100.0, pl / n * Simulation.PLAN_MAX * 100.0, fights])
 
 
 func _update_selection_text() -> void:
@@ -1186,15 +1188,18 @@ func _update_selection_text() -> void:
 	var o := 0.0
 	var moving := 0
 	var fighting := 0
+	var pl := 0.0
 	for d in sel:
 		s += d.strength
+		pl += d.plan
 		o += d.org / maxf(1.0, d.max_org)
 		if not d.path.is_empty():
 			moving += 1
 		if d.in_battle:
 			fighting += 1
-	_info_text("Выбрано: %d %s\nСила %d%% · организация %d%% · в пути %d · в бою %d\nКоснитесь провинции, чтобы отправить войска. Вражеская провинция — атака." % [
-		sel.size(), _plural(sel.size(), "дивизия", "дивизии", "дивизий"), s / sel.size(), o / sel.size() * 100.0, moving, fighting])
+	_info_text("Выбрано: %d %s\nСила %d%% · организация %d%% · план %d%% · в пути %d · в бою %d\nПлан копится, пока войска стоят у фронта (до +%d%% к атаке), и тает в наступлении. Коснитесь провинции, чтобы отправить войска." % [
+		sel.size(), _plural(sel.size(), "дивизия", "дивизии", "дивизий"), s / sel.size(), o / sel.size() * 100.0, pl / sel.size() * 100.0, moving, fighting,
+		roundi(Simulation.PLAN_MAX * 100.0)])
 
 
 # --- Всплывающие окна --------------------------------------------------------

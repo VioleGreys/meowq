@@ -170,6 +170,9 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	}
 
 	std::vector<char> used(ndv, 0);
+	// направление главного удара: лучшие цели атаки (3), к ним стягиваем силы
+	std::vector<char> main_axis(pc, 0);
+	bool has_axis = false;
 	if (attack_allowed) {
 		struct Entry {
 			double score;
@@ -197,6 +200,10 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		std::sort(target_list.begin(), target_list.end(), [](const Entry &a, const Entry &b) {
 			return a.score < b.score || (a.score == b.score && a.t < b.t);
 		});
+		for (size_t j = 0; j < target_list.size() && j < 3; j++) {
+			main_axis[target_list[j].t] = 1;
+			has_axis = true;
+		}
 		std::vector<int32_t> left(pc, INT_MIN);   // сколько наших дивизий останется в провинции
 		std::vector<int32_t> group, chosen;
 		for (const Entry &entry : target_list) {
@@ -300,6 +307,13 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			}
 		}
 		weight[f] = 1.0 + threat + vp[f] * 0.15;
+		if (has_axis) {
+			for (int32_t k = a_start[f]; k < a_start[f + 1]; k++)
+				if (main_axis[a_list[k]]) {
+					weight[f] += 3.0;
+					break;
+				}
+		}
 		wsum += weight[f];
 	}
 	std::vector<int32_t> desired(pc, 0);

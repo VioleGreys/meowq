@@ -236,6 +236,11 @@ class Division:
 			return w.d_transit[slot]
 		set(v):
 			w.ds_transit(slot, v)
+	var plan: float:  # планирование 0…1 (атака × (1 + PLAN_MAX × план), Simulation.PLAN_*)
+		get:
+			return w.d_plan[slot]
+		set(v):
+			w.d_plan[slot] = v
 	var reserved_until: int:  # ИИ держит дивизию под десант до этого дня
 		get:
 			return w.d_resv[slot]
@@ -452,6 +457,7 @@ var d_prov := PackedInt32Array()
 var d_tpl := PackedInt32Array()
 var d_transit := PackedInt32Array()
 var d_resv := PackedInt32Array()
+var d_plan := PackedFloat64Array()        # планирование наступления 0…1 (k_plan)
 var d_inv := PackedInt32Array()
 var d_next := PackedInt32Array()      # path[0] или -1
 var d_id := PackedInt32Array()
@@ -1149,6 +1155,7 @@ func _d_append() -> int:
 	d_tpl.append(0)
 	d_transit.append(0)
 	d_resv.append(0)
+	d_plan.append(0.0)
 	d_inv.append(-1)
 	d_next.append(-1)
 	d_id.append(0)
@@ -1195,6 +1202,7 @@ func compact_divisions() -> void:
 	d_tpl = Native.gather_i32(d_tpl, keep)
 	d_transit = Native.gather_i32(d_transit, keep)
 	d_resv = Native.gather_i32(d_resv, keep)
+	d_plan = Native.gather_f64(d_plan, keep)
 	d_inv = Native.gather_i32(d_inv, keep)
 	d_next = Native.gather_i32(d_next, keep)
 	d_id = Native.gather_i32(d_id, keep)
@@ -1231,6 +1239,7 @@ func clear_divisions() -> void:
 	d_tpl = PackedInt32Array()
 	d_transit = PackedInt32Array()
 	d_resv = PackedInt32Array()
+	d_plan = PackedFloat64Array()
 	d_inv = PackedInt32Array()
 	d_next = PackedInt32Array()
 	d_id = PackedInt32Array()
@@ -1478,9 +1487,16 @@ func k_snapshot() -> void:
 ## Бои: provs — провинции сражений по порядку, att_start/att_list — атакующие
 ## (слоты) каждой; seeds — зерно ГСЧ сражения. Сначала потери считаются по
 ## состоянию до боя, потом применяются по порядку провинций.
-func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: PackedInt32Array, seeds: PackedInt64Array) -> void:
+func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: PackedInt32Array, seeds: PackedInt64Array,
+		plan_max: float = 0.0) -> void:
+	# атака с учётом планирования — только у наступающих
+	var atk := d_atk
+	if plan_max > 0.0 and d_plan.size() == d_atk.size():
+		atk = d_atk.duplicate()
+		for i in att_list:
+			atk[i] = d_atk[i] * (1.0 + plan_max * d_plan[i])
 	if Native.core != null:
-		var r: Array = Native.core.call("combat", provs, att_start, att_list, seeds, d_str, d_org, d_eq, d_def, d_atk,
+		var r: Array = Native.core.call("combat", provs, att_start, att_list, seeds, d_str, d_org, d_eq, d_def, atk,
 				d_ent, d_land, d_sup, d_tpl, d_hard, d_owner, d_battle, pl_head, d_nx, war, nation_count, p_def_mult,
 				p_terrain, p_region, cas_mult, tpl_terrain)
 		d_org = r[0]
@@ -1509,8 +1525,8 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 		rng.seed = seeds[b]
 		var terrain_def: float = p_def_mult[p]
 		var terr: int = p_terrain[p]
-		var sa := _side_power(att_list.slice(a0, a1), terr, false)
-		var sd := _side_power(defenders, terr, true)
+		var sa := _side_power(att_list.slice(a0, a1), terr, false, atk)
+		var sd := _side_power(defenders, terr, true, atk)
 		var reg := p_region[p]
 		var att_power: float = sa[0] * cas_mult[reg * nc + att_owner]
 		var att_hard: float = sa[1]
@@ -1542,17 +1558,50 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 
 
 ## Сила стороны (как Military.side_power, по массивам): [сила, бронированность].
-func _side_power(slots: PackedInt32Array, terr: int, defending: bool) -> PackedFloat64Array:
+func _side_power(slots: PackedInt32Array, terr: int, defending: bool, atk: PackedFloat64Array) -> PackedFloat64Array:
 	var power := 0.0
 	var hard := 0.0
 	var wsum := 0.0
 	for i in slots:
 		var w: float = d_str[i] / 100.0
-		var base: float = d_def[i] * (1.0 + 0.3 * d_ent[i]) if defending else d_atk[i] * (0.5 if d_land[i] == 1 else 1.0)
+		var base: float = d_def[i] * (1.0 + 0.3 * d_ent[i]) if defending else atk[i] * (0.5 if d_land[i] == 1 else 1.0)
 		power += base * w * (0.4 + 0.6 * d_eq[i]) * (0.5 + 0.5 * d_sup[i]) * tpl_terrain[d_tpl[i] * 8 + terr]
 		hard += d_hard[i] * w
 		wsum += w
 	return PackedFloat64Array([power, hard / maxf(wsum, 0.01)])
+
+
+## Планирование наступления (как в жанре): дивизия, стоящая на фронте (сосед —
+## противник или будущий противник: hostile N×N), копит план на gain в день до 1;
+## идущая, атакующая, в пути — теряет active в день; стоящая в тылу — rear.
+## C++ — MeowqCore.plan_update, результаты совпадают.
+func k_plan(hostile: PackedByteArray, gain: float, active: float, rear: float) -> void:
+	if d_plan.size() != d_alive.size():
+		d_plan.resize(d_alive.size())
+	if Native.core != null:
+		d_plan = Native.core.call("plan_update", d_alive, d_transit, d_next, d_battle, d_prov, d_owner, p_controller,
+				adj_start, adj_list, p_land, hostile, nation_count, d_plan, gain, active, rear)
+		return
+	var nc := nation_count
+	var ctrl := p_controller
+	for i in d_alive.size():
+		if d_alive[i] == 0:
+			continue
+		var v := d_plan[i]
+		if d_next[i] >= 0 or d_transit[i] > 0 or d_battle[i] != 0:
+			v = maxf(0.0, v - active)
+		else:
+			var p := d_prov[i]
+			var o := d_owner[i]
+			var front := false
+			for k in range(adj_start[p], adj_start[p + 1]):
+				var q := adj_list[k]
+				var c := ctrl[q]
+				if p_land[q] == 1 and c >= 0 and hostile[o * nc + c] == 1:
+					front = true
+					break
+			v = minf(1.0, v + gain) if front else maxf(0.0, v - rear)
+		d_plan[i] = v
 
 
 ## Пересчитать бонусы национальных черт страны (после добавления, снятия, ослабления).

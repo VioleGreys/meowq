@@ -8,6 +8,13 @@ const FACTORY_COST := 60.0
 const BUILD_RATE := 0.05      # очков стройки в день на гражданскую фабрику
 const MAX_FACTORIES := 12
 const AI_PERIOD := 3
+# Планирование наступления (как в жанре): стоящая на фронте или у будущего фронта
+# дивизия копит план (полный — за 20 дней), в наступлении он тает за ~2 недели,
+# в тылу — за 2 месяца; полный план — +30 % к атаке.
+const PLAN_MAX := 0.3
+const PLAN_GAIN := 0.05
+const PLAN_ACTIVE := 0.07
+const PLAN_REAR := 0.016
 
 var world: World
 var last_tick_usec := 0
@@ -83,6 +90,7 @@ func tick() -> void:
 	_timed("движение", _phase_movement.bind(battles))
 	_timed("бои", _phase_combat.bind(battles))
 	_timed("восстановление", _phase_recovery)
+	_timed("планирование", _phase_planning)
 	_timed("дипломатия", _phase_diplomacy)
 	_timed("капитуляции", _check_capitulation)
 	_timed("ИИ:ожидание", _finish_ai)
@@ -843,7 +851,7 @@ func _phase_combat(battles: Dictionary) -> void:
 			att_list.append(a.slot)
 		att_start.append(att_list.size())
 		seeds.append(hash([world.seed_value, world.day, p]))   # как Parallel.rng
-	world.k_combat(pv, att_start, att_list, seeds)
+	world.k_combat(pv, att_start, att_list, seeds, PLAN_MAX)
 	# последствия: разбитые атакующие останавливаются, защитники отступают
 	for i in provs.size():
 		var p: int = provs[i]
@@ -885,6 +893,20 @@ func _destroy(d: World.Division, why: String) -> void:
 	d.alive = false
 	if world.nations[d.owner].is_player:
 		world.log_event("Наша дивизия %s: %s" % [why, world.p_name[d.prov]])
+
+
+## Планирование: «противник» — с кем война или будущая война (фокусы, претензии).
+func _phase_planning() -> void:
+	var nc := world.nation_count
+	var hostile := world.war.duplicate()
+	for nat in world.nations:
+		if not nat.alive:
+			continue
+		for t in nat.planned_wars:
+			hostile[nat.id * nc + int(t)] = 1
+		for t in nat.wargoals:
+			hostile[nat.id * nc + int(t)] = 1
+	world.k_plan(hostile, PLAN_GAIN, PLAN_ACTIVE, PLAN_REAR)
 
 
 func _phase_recovery() -> void:

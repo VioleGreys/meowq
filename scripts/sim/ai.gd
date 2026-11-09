@@ -233,6 +233,8 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 
 	var used := {}
 	var orders: Array = []
+	# направление главного удара: лучшие цели атаки (AXIS_N), к ним стягиваем силы
+	var main_axis := {}
 	if attack_allowed:
 		# Атакуем слабые вражеские провинции превосходящими силами; при цели —
 		# в первую очередь те, что ближе к ней.
@@ -258,6 +260,8 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			target_list.append([score, t, enemy_str * def_mult])
 		# порядок однозначный (при равенстве — номер провинции): так же сортирует C++
 		target_list.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+		for j in mini(3, target_list.size()):
+			main_axis[int(target_list[j][1])] = true
 		var left := {}   # сколько наших дивизий останется в провинции
 		for entry in target_list:
 			var t: int = entry[1]
@@ -346,6 +350,12 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				if eo != nid and (ally.size() == 0 or ally[nid * nc + eo] == 0):
 					threat += 1.0 if war[nid * nc + eo] == 1 or not at_war else 0.3
 		weight[f] = 1.0 + threat + vp[f] * 0.15   # крупные города держим плотнее
+		# участки у направления главного удара — плотнее (в пределах снабжения)
+		if not main_axis.is_empty():
+			for k in range(a_start[f], a_start[f + 1]):
+				if main_axis.has(a_list[k]):
+					weight[f] = float(weight[f]) + 3.0
+					break
 		wsum += weight[f]
 	var desired := {}
 	for f in fronts:

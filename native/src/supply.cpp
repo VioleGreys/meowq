@@ -258,3 +258,39 @@ PackedFloat64Array MeowqCore::supply_divs(const Dictionary &t) const {
 	}
 	return sup_a;
 }
+
+// Планирование наступления (World.k_plan — двойник): стоящая на фронте дивизия
+// копит план, идущая/атакующая/в пути — теряет, стоящая в тылу — медленно теряет.
+PackedFloat64Array MeowqCore::plan_update(const PackedByteArray &alive_a, const PackedInt32Array &transit_a,
+		const PackedInt32Array &next_a, const PackedByteArray &battle_a, const PackedInt32Array &prov_a,
+		const PackedInt32Array &owner_a, const PackedInt32Array &ctrl_a, const PackedInt32Array &adj_start_a,
+		const PackedInt32Array &adj_list_a, const PackedByteArray &land_a, const PackedByteArray &hostile_a, int nc,
+		const PackedFloat64Array &plan_in, double gain, double active, double rear) const {
+	const uint8_t *alive = alive_a.ptr(), *battle = battle_a.ptr(), *land = land_a.ptr(), *hostile = hostile_a.ptr();
+	const int32_t *transit = transit_a.ptr(), *next = next_a.ptr(), *prov = prov_a.ptr(), *owner = owner_a.ptr();
+	const int32_t *ctrl = ctrl_a.ptr(), *adj_start = adj_start_a.ptr(), *adj_list = adj_list_a.ptr();
+	PackedFloat64Array out = plan_in;
+	double *v = out.ptrw();
+	const int n = alive_a.size();
+	for (int i = 0; i < n; i++) {
+		if (alive[i] == 0)
+			continue;
+		if (next[i] >= 0 || transit[i] > 0 || battle[i] != 0) {
+			v[i] = std::max(0.0, v[i] - active);
+			continue;
+		}
+		const int p = prov[i];
+		const int o = owner[i];
+		bool front = false;
+		for (int k = adj_start[p]; k < adj_start[p + 1]; k++) {
+			const int q = adj_list[k];
+			const int c = ctrl[q];
+			if (land[q] == 1 && c >= 0 && hostile[int64_t(o) * nc + c] == 1) {
+				front = true;
+				break;
+			}
+		}
+		v[i] = front ? std::min(1.0, v[i] + gain) : std::max(0.0, v[i] - rear);
+	}
+	return out;
+}

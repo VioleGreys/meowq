@@ -121,7 +121,13 @@ public:
 	// Снабжение по принципу жанра (Supply): поле подачи узлов и раздача по дивизиям.
 	Array supply_field(const Dictionary &t) const;
 	PackedFloat64Array supply_divs(const Dictionary &t) const;
-	String version() const { return "meowq-core 19"; }
+	// Планирование наступления (World.k_plan).
+	PackedFloat64Array plan_update(const PackedByteArray &alive, const PackedInt32Array &transit,
+			const PackedInt32Array &next, const PackedByteArray &battle, const PackedInt32Array &prov,
+			const PackedInt32Array &owner, const PackedInt32Array &ctrl, const PackedInt32Array &adj_start,
+			const PackedInt32Array &adj_list, const PackedByteArray &land, const PackedByteArray &hostile, int nc,
+			const PackedFloat64Array &plan_in, double gain, double active, double rear) const;
+	String version() const { return "meowq-core 21"; }
 };
 
 } // namespace godot
