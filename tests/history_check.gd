@@ -57,7 +57,7 @@ func _init() -> void:
 				print("  %s — %s" % [w.date_string(), e])
 		w.events.clear()
 		if w.date_short().begins_with("01.01.") or w.date_short().begins_with("01.07."):
-			print("  %s  %s | %s | %s" % [w.date_short(), Relations.threat_text(w, "fascism"), Relations.threat_text(w, "communism"), Relations.threat_text(w, "democracy")])
+			print("  %s  %s" % [w.date_short(), Relations.balance_text(w)])
 		for m in milestones:
 			if not marks.has(m) and w.day >= w.day_of(m):
 				marks[m] = true

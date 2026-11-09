@@ -162,8 +162,11 @@ static func daily(world: World) -> void:
 
 # --- Угроза нацизма и коммунизма ----------------------------------------------------
 
-const THREATS := {"fascism": "угроза нацизма", "communism": "угроза коммунизма", "democracy": "влияние демократии"}
-const BLOC_SHARE := 0.5       # надбавка к шансу события: половина показателя альянса (до +50 %)
+## Общая шкала сил мира: четыре силы делят 100 % (у каждой — сырые очки за
+## армию, экономику, науку, союз и агрессию, затем доля от суммы).
+const THREATS := {"fascism": "угроза нацизма", "communism": "угроза коммунизма",
+	"democracy": "влияние демократии", "authoritarian": "нейтралитет"}
+const BLOC_CAP := 50.0        # надбавка к шансу события: доля альянса на общей шкале, не больше +50 %
 const THREAT_PART := 20.0     # каждая из пяти составляющих — до 20 очков (всего до 100 %)
 const THREAT_FULL := 0.30     # доля мира, при которой армия/экономика/наука дают полные 20
 const THREAT_ALLY_FULL := 0.35  # доля мира у фракций этого строя (2+ страны) — полные 20 за союз
@@ -231,30 +234,44 @@ static func update_threat(world: World) -> void:
 			"союз": THREAT_PART * minf(1.0, (al / maxf(tot_m + tot_e * 0.5, 1.0)) / THREAT_ALLY_FULL),
 			"агрессия": THREAT_PART * minf(1.0, ag / THREAT_AGGR_FULL),
 		}
-		var pct := 0.0
+		var raw := 0.0
 		for k in parts:
-			pct += parts[k]
-		world.threat[ideo] = {"pct": pct, "parts": parts}
+			raw += parts[k]
+		world.threat[ideo] = {"pct": raw, "raw": raw, "parts": parts}
+	# общая шкала: доля каждой силы от суммы сырых очков
+	var total := 0.0
+	for ideo in THREATS:
+		total += float(world.threat[ideo]["raw"])
+	for ideo in THREATS:
+		world.threat[ideo]["pct"] = 100.0 * float(world.threat[ideo]["raw"]) / total if total > 0.0 else 25.0
 
 
 static func threat_pct(world: World, ideo: String) -> float:
 	return float(world.threat.get(ideo, {}).get("pct", 0.0))
 
 
-## Показатель альянса страны: строй самой страны, а у авторитарной — строй
-## лидера её фракции (у вне блоков — нет). [строй или "", %]
+## Сила, к которой относится страна: строй лидера её фракции, без фракции —
+## свой строй (авторитарные вне блоков — нейтралитет). [строй, доля %]
 static func bloc_of(world: World, n: int) -> Array:
 	if n < 0:
 		return ["", 0.0]
 	var ideo: String = world.nations[n].ideology
-	if not THREATS.has(ideo):
-		var f: int = world.nations[Diplomacy.root(world, n)].faction
-		if f < 0:
-			return ["", 0.0]
+	var f: int = world.nations[Diplomacy.root(world, n)].faction
+	if f >= 0:
 		ideo = world.nations[world.factions[f].leader].ideology
-		if not THREATS.has(ideo):
-			return ["", 0.0]
+	if not THREATS.has(ideo):
+		return ["", 0.0]
 	return [ideo, threat_pct(world, ideo)]
+
+
+## «Баланс сил: демократия 41 %, нацизм 23 %, …» — общая шкала.
+static func balance_text(world: World) -> String:
+	if world.threat.is_empty():
+		return ""
+	var ps: Array = []
+	for ideo in THREATS:
+		ps.append("%s %d %%" % [String(THREATS[ideo]), roundi(threat_pct(world, ideo))])
+	return "Баланс сил: " + ", ".join(ps)
 
 
 ## «Угроза нацизма 34 % (армия 8, экономика 7, …)».
@@ -266,7 +283,7 @@ static func threat_text(world: World, ideo: String) -> String:
 	for k in t["parts"]:
 		ps.append("%s %d" % [k, roundi(t["parts"][k])])
 	var title := String(THREATS[ideo])
-	return "%s: %d %% (%s)" % [title[0].to_upper() + title.substr(1), roundi(t["pct"]), ", ".join(ps)]
+	return "%s: %d %% шкалы (очки: %s)" % [title[0].to_upper() + title.substr(1), roundi(t["pct"]), ", ".join(ps)]
 
 
 static func add_aggression(world: World, n: int, v: float) -> void:
@@ -578,9 +595,9 @@ static func chance(world: World, spec: Dictionary, ctx: Dictionary) -> Dictionar
 	if spec.get("bloc", false):
 		var bl := bloc_of(world, int(ctx.get("from", -1)))
 		if String(bl[0]) != "":
-			var bonus := float(bl[1]) * BLOC_SHARE
+			var bonus := minf(float(bl[1]), BLOC_CAP)
 			pct += bonus
-			lines.append("+%d %% — %s %d %% (половина)" % [roundi(bonus), THREATS[bl[0]], roundi(float(bl[1]))])
+			lines.append("+%d %% — %s: %d %% общей шкалы" % [roundi(bonus), THREATS[bl[0]], roundi(float(bl[1]))])
 	var res := maxf(pct, 0.0)
 	var sure: bool = res >= 100.0
 	if res > 100.0:

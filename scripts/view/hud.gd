@@ -1364,7 +1364,8 @@ func _build_diplomacy(w: World, me: int) -> void:
 	_dynamic["tbar"] = bar
 	popup_body.add_child(bar)
 	popup_body.add_child(_small("Напряжённость растёт от претензий, войн и аннексий. Демократиям нужна напряжённость 50% для претензий, авторитарным режимам — 25%."))
-	# угрозы нацизма и коммунизма: по 20 очков за армию, экономику, науку, союз и агрессию
+	# общая шкала сил мира (4 силы делят 100 %) и очки каждой силы
+	popup_body.add_child(_label(Relations.balance_text(w), 16))
 	for ideo in Relations.THREATS:
 		var tt := Relations.threat_text(w, ideo)
 		if tt != "":
