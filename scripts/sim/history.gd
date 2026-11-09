@@ -629,6 +629,9 @@ static func choose_option(world: World, id: String, option: int, rng: RandomNumb
 	var o: Dictionary = opts[option]
 	world.log_event("%s — %s: %s" % [ev.get("title", id), world.nations[target].name, o.get("name", "")])
 	world.ev_ctx = event_ctx(world, id)
+	if ev.has("chance"):
+		# требование к другой стране — ультиматум: агрессивность того, кто требует
+		Relations.add_aggression(world, int(world.ev_ctx.get("from", -1)), 5.0)
 	apply(world, target, o.get("effects", []), rng)
 	world.ev_ctx = {}
 	world.event_snap.erase(id)

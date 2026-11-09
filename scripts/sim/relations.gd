@@ -131,6 +131,7 @@ static func daily(world: World) -> void:
 	if world.rep_n != world.nations.size():
 		init(world)
 		return
+	update_threat(world)
 	for nat in world.nations:
 		if nat.improving.is_empty() or not nat.alive:
 			continue
@@ -141,6 +142,8 @@ static func daily(world: World) -> void:
 				add_rep(world, t, nat.id, IMPROVE_PER_DAY)
 	if world.day % DRIFT_EVERY != 0:
 		return
+	for nat in world.nations:
+		nat.aggression *= 0.95
 	var n := world.rep_n
 	for a in n:
 		if not world.nations[a].alive:
@@ -157,10 +160,108 @@ static func daily(world: World) -> void:
 				world.rep[i] = maxf(nat, cur - 1.0)
 
 
+# --- Угроза нацизма и коммунизма ----------------------------------------------------
+
+const THREATS := {"fascism": "угроза нацизма", "communism": "угроза коммунизма"}
+const THREAT_PART := 20.0     # каждая из пяти составляющих — до 20 очков (всего до 100 %)
+const THREAT_FULL := 0.30     # доля мира, при которой армия/экономика/наука дают полные 20
+const THREAT_ALLY_FULL := 0.35  # доля мира у фракций этого строя (2+ страны) — полные 20 за союз
+const THREAT_AGGR_FULL := 60.0
+
+
+## Сила страны для угрозы: армия (дивизии, флот, авиация), экономика, наука.
+static func _strength(world: World) -> Array:
+	var n := world.nations.size()
+	var mil := PackedFloat32Array()
+	mil.resize(n)
+	for nat in world.nations:
+		if nat.alive:
+			mil[nat.id] = float(nat.division_count)
+	for f in world.fleets:
+		if f.alive and f.owner >= 0 and f.owner < n:
+			mil[f.owner] += Forces.fleet_power(f) / 20.0
+	for wg in world.wings:
+		if wg.alive and wg.owner >= 0 and wg.owner < n:
+			mil[wg.owner] += wg.planes / 200.0
+	return [mil]
+
+
+## Угроза строя (fascism / communism), %: очки армии, экономики, науки, союза и
+## агрессивности всех стран этого строя (и их фракций — союз).
+static func update_threat(world: World) -> void:
+	var mil: PackedFloat32Array = _strength(world)[0]
+	var tot_m := 0.0
+	var tot_e := 0.0
+	var tot_s := 0.0
+	for nat in world.nations:
+		if nat.alive:
+			tot_m += mil[nat.id]
+			tot_e += float(nat.civ + nat.mil)
+			tot_s += float(nat.techs.size())
+	for ideo in THREATS:
+		var m := 0.0
+		var e := 0.0
+		var s := 0.0
+		var ag := 0.0
+		var bloc := {}
+		var factions := {}
+		for nat in world.nations:
+			if nat.alive and nat.ideology == ideo:
+				bloc[nat.id] = true
+				m += mil[nat.id]
+				e += float(nat.civ + nat.mil)
+				s += float(nat.techs.size())
+				ag += nat.aggression
+				if nat.faction >= 0:
+					factions[nat.faction] = true
+		# союз: вся сила фракций, где состоят страны этого строя (если в фракции 2+ страны)
+		var fsize := {}
+		for nat in world.nations:
+			if nat.alive and factions.has(nat.faction):
+				fsize[nat.faction] = int(fsize.get(nat.faction, 0)) + 1
+		var al := 0.0
+		for nat in world.nations:
+			if nat.alive and factions.has(nat.faction) and int(fsize[nat.faction]) > 1:
+				al += mil[nat.id] + float(nat.civ + nat.mil) * 0.5
+		var parts := {
+			"армия": THREAT_PART * minf(1.0, (m / maxf(tot_m, 1.0)) / THREAT_FULL),
+			"экономика": THREAT_PART * minf(1.0, (e / maxf(tot_e, 1.0)) / THREAT_FULL),
+			"наука": THREAT_PART * minf(1.0, (s / maxf(tot_s, 1.0)) / THREAT_FULL),
+			"союз": THREAT_PART * minf(1.0, (al / maxf(tot_m + tot_e * 0.5, 1.0)) / THREAT_ALLY_FULL),
+			"агрессия": THREAT_PART * minf(1.0, ag / THREAT_AGGR_FULL),
+		}
+		var pct := 0.0
+		for k in parts:
+			pct += parts[k]
+		world.threat[ideo] = {"pct": pct, "parts": parts}
+
+
+static func threat_pct(world: World, ideo: String) -> float:
+	return float(world.threat.get(ideo, {}).get("pct", 0.0))
+
+
+## «Угроза нацизма 34 % (армия 8, экономика 7, …)».
+static func threat_text(world: World, ideo: String) -> String:
+	var t: Dictionary = world.threat.get(ideo, {})
+	if t.is_empty():
+		return ""
+	var ps: Array = []
+	for k in t["parts"]:
+		ps.append("%s %d" % [k, roundi(t["parts"][k])])
+	var title := String(THREATS[ideo])
+	return "%s: %d %% (%s)" % [title[0].to_upper() + title.substr(1), roundi(t["pct"]), ", ".join(ps)]
+
+
+static func add_aggression(world: World, n: int, v: float) -> void:
+	if n >= 0 and n < world.nations.size():
+		world.nations[n].aggression += v
+
+
 # --- Мировые поводы ---------------------------------------------------------------
 
 ## Объявление войны: жертва, её гарантии и союзники резко хуже думают о нападающем.
 static func on_war(world: World, a: int, b: int) -> void:
+	add_aggression(world, a, 15.0)
 	if world.rep_n == 0:
 		return
 	add_rep(world, b, a, -40.0)
@@ -175,6 +276,7 @@ static func on_war(world: World, a: int, b: int) -> void:
 
 
 static func on_annex(world: World, who: int, _target: int) -> void:
+	add_aggression(world, who, 10.0)
 	if world.rep_n > 0:
 		add_rep_all(world, who, -10.0)
 
@@ -304,6 +406,11 @@ static func cond(world: World, c: Dictionary, ctx: Dictionary) -> Array:
 		var a := _who(world, s.get("of", "$from"), ctx)
 		var b := _who(world, s.get("in", "$target"), ctx)
 		return _cmp(trade_influence(world, a, b), s, "торговое влияние %s у %s, %%" % [_gen(world, a), _name(world, b)])
+	if c.has("threat"):
+		# {"threat": {"of": "fascism"|"communism", "above"|"below": v}}
+		var st: Dictionary = c["threat"]
+		var ideo := String(st.get("of", "fascism"))
+		return _cmp(threat_pct(world, ideo), st, String(THREATS.get(ideo, "угроза")) + ", %")
 	if c.has("trade_top"):
 		# {"trade_top": {"of": A, "in": B}} — A главный торговый партнёр B
 		var s2: Dictionary = c["trade_top"]

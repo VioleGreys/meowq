@@ -133,6 +133,7 @@ static func start_justify(world: World, a: int, b: int) -> bool:
 	na.justify_days = justify_days(world, b)
 	na.justify_total = na.justify_days
 	add_tension(world, 0.5)
+	Relations.add_aggression(world, a, 3.0)
 	if na.is_player or world.nations[b].is_player or is_major(world, a):
 		world.log_event("%s обосновывает претензии к стране %s" % [na.name, world.nations[b].name])
 	return true

@@ -71,7 +71,9 @@
   событий (`History._ai_prepare`: план с начала партии, сверка после каждого
   фокуса, `prep_day`; таблица шансов — `world.chance_log`, печатает history_check):
   `prep_divs` → `AIPlanner.plan_economy`, гарантии, пакты, `improving`
-  (улучшение отношений, и у игрока), помощь (`Relations.give_aid`). `History._ai_pick_historical`
+  (улучшение отношений, и у игрока), помощь (`Relations.give_aid`).
+  Угрозы нацизма/коммунизма — `Relations.update_threat` (каждый день,
+  `world.threat`), агрессивность `Nation.aggression`; условие `threat`. `History._ai_pick_historical`
   планирует по срокам: срок — у датированных
   фокусов с историческими эффектами (событие, война, договор…), считается запас
   до всех сроков сразу. Запись focuses.json — `tools/focus_json.py`. Дерево
