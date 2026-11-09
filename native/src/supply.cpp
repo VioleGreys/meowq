@@ -196,11 +196,22 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 			}
 		}
 	}
+	// ёмкость провинции для военного ИИ: подача + местное (в котле — урезанное)
+	const double k_loc = kk_a[4], k_pock = kk_a[9];
+	PackedFloat32Array supcap_a;
+	supcap_a.resize(pc);
+	float *supcap = supcap_a.ptrw();
+	for (int p = 0; p < pc; p++) {
+		supcap[p] = 0.0f;
+		if (ps[p] >= 0)
+			supcap[p] = float(got[p] + k_loc * double(pcap[p]) * (conn[p] == 1 ? 1.0 : k_pock));
+	}
 	Array res;
 	res.push_back(ps_a);
 	res.push_back(got_a);
 	res.push_back(gsrc_a);
 	res.push_back(conn_a);
+	res.push_back(supcap_a);
 	return res;
 }
 

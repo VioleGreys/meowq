@@ -60,6 +60,11 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	const float *dv_org = dv_org_a.ptr(), *dv_power = dv_power_a.ptr(), *dv_defw = dv_defw_a.ptr();
 	const bool has_ally = ally_a.size() > 0;
 	const int pc = int(land_a.size());
+	// ёмкость снабжения провинций (Supply): не скапливать войска сверх неё
+	const PackedFloat32Array supcap_a = tables.has("supcap") ? PackedFloat32Array(tables["supcap"]) : PackedFloat32Array();
+	const bool has_cap = supcap_a.size() == pc;
+	const float *supcap = supcap_a.ptr();
+	auto capd = [&](int32_t p) { return std::max(1, int(std::floor(double(supcap[p])))); };
 	const int64_t ndv = dv_owner_a.size();
 
 	Dictionary result;
@@ -298,7 +303,10 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		wsum += weight[f];
 	}
 	std::vector<int32_t> desired(pc, 0);
-	for (int32_t f : fronts.order) desired[f] = std::max(1, int(std::round(divs.size() * weight[f] / wsum)));
+	for (int32_t f : fronts.order) {
+		desired[f] = std::max(1, int(std::round(divs.size() * weight[f] / wsum)));
+		if (has_cap) desired[f] = std::min(desired[f], capd(f));
+	}
 
 	// поиск пути к ближайшему участку (как Pathfinder.nearest_goal)
 	std::vector<char> goal(pc, 0);
@@ -340,10 +348,71 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		for (int32_t cur = found; cur != pv; cur = parent[cur]) w[--len] = cur;
 		per_front[found] += 1;
 		if (fronts.has[pv]) per_front[pv] -= 1;
+		used[i] = 1;
 		Array o;
 		o.push_back(i);
 		o.push_back(path);
 		orders.push_back(o);
+	}
+	// перегруз: лишние дивизии из провинции фронта сверх снабжения — во вторую
+	// линию (ближайшая наша провинция у фронта с запасом снабжения)
+	if (has_cap) {
+		OrderedSet reserve(pc);
+		std::vector<int32_t> rcount(pc, 0);
+		for (int32_t f : fronts.order) {
+			for (int32_t k = a_start[f]; k < a_start[f + 1]; k++) {
+				const int32_t q = a_list[k];
+				if (land[q] == 1 && ctrl[q] == nid && !fronts.has[q] && !reserve.has[q]) {
+					reserve.add(q);
+					int cnt = 0;
+					for (int32_t m = pd_start[q]; m < pd_start[q + 1]; m++)
+						if (dv_owner[pd_list[m]] == nid) cnt++;
+					rcount[q] = cnt;
+				}
+			}
+		}
+		for (int32_t i : idle) {
+			if (used[i]) continue;
+			const int32_t pv = dv_prov[i];
+			if (!fronts.has[pv] || per_front[pv] <= capd(pv)) continue;
+			std::vector<int32_t> goals;
+			for (int32_t q : reserve.order)
+				if (rcount[q] < capd(q)) goals.push_back(q);
+			if (goals.empty()) break;
+			for (int32_t g : goals) goal[g] = 1;
+			std::fill(parent.begin(), parent.end(), -1);
+			queue.clear();
+			parent[pv] = pv;
+			queue.push_back(pv);
+			int32_t found = -1;
+			for (size_t head = 0; head < queue.size(); head++) {
+				const int32_t p = queue[head];
+				if (goal[p]) { found = p; break; }
+				for (int32_t k = a_start[p]; k < a_start[p + 1]; k++) {
+					const int32_t q = a_list[k];
+					if (parent[q] >= 0 || land[q] == 0) continue;
+					const int32_t c = ctrl[q];
+					if (c != nid && (c < 0 || war_row[c] == 0)) continue;
+					parent[q] = p;
+					queue.push_back(q);
+				}
+			}
+			for (int32_t g : goals) goal[g] = 0;
+			if (found < 0) continue;
+			int len = 0;
+			for (int32_t cur = found; cur != pv; cur = parent[cur]) len++;
+			PackedInt32Array path;
+			path.resize(len);
+			int32_t *w = path.ptrw();
+			for (int32_t cur = found; cur != pv; cur = parent[cur]) w[--len] = cur;
+			rcount[found] += 1;
+			per_front[pv] -= 1;
+			used[i] = 1;
+			Array o;
+			o.push_back(i);
+			o.push_back(path);
+			orders.push_back(o);
+		}
 	}
 	return result;
 }

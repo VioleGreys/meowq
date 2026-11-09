@@ -137,7 +137,9 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var dv_defw: PackedFloat32Array = tb["dv_defw"]
 	var pd_start: PackedInt32Array = tb["pd_start"]
 	var pd_list: PackedInt32Array = tb["pd_list"]
+	var supcap: PackedFloat32Array = tb.get("supcap", PackedFloat32Array())
 	var prov_count := land.size()
+	var has_cap := supcap.size() == prov_count
 
 	var at_war := false
 	for e in enemies:
@@ -348,6 +350,9 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var desired := {}
 	for f in fronts:
 		desired[f] = maxi(1, int(round(divs.size() * weight[f] / wsum)))
+		# не больше, чем провинция прокормит (снабжение по узлам районов)
+		if has_cap:
+			desired[f] = mini(int(desired[f]), maxi(1, int(floor(supcap[f]))))
 	for i in idle:
 		if used.has(i):
 			continue
@@ -367,7 +372,43 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		per_front[dest] = int(per_front.get(dest, 0)) + 1
 		if fronts.has(pv):
 			per_front[pv] = int(per_front.get(pv, 0)) - 1
+		used[i] = true
 		orders.append([i, path])
+	# Перегруз: лишние дивизии из провинции фронта, которую снабжение не тянет,
+	# отходят во вторую линию — ближайшую нашу провинцию у фронта с запасом снабжения.
+	if has_cap:
+		var reserve := {}
+		var rcount := {}
+		for f in fronts:
+			for k in range(a_start[f], a_start[f + 1]):
+				var q := a_list[k]
+				if land[q] == 1 and ctrl[q] == nid and not fronts.has(q) and not reserve.has(q):
+					reserve[q] = true
+					var cnt := 0
+					for m in range(pd_start[q], pd_start[q + 1]):
+						if dv_owner[pd_list[m]] == nid:
+							cnt += 1
+					rcount[q] = cnt
+		for i in idle:
+			if used.has(i):
+				continue
+			var pv := dv_prov[i]
+			if not fronts.has(pv) or int(per_front.get(pv, 0)) <= maxi(1, int(floor(supcap[pv]))):
+				continue
+			var goal := {}
+			for q in reserve:
+				if int(rcount[q]) < maxi(1, int(floor(supcap[q]))):
+					goal[q] = true
+			if goal.is_empty():
+				break
+			var path := _nearest(tb, nid, pv, goal)
+			if path.is_empty():
+				continue
+			var dest := path[path.size() - 1]
+			rcount[dest] = int(rcount[dest]) + 1
+			per_front[pv] = int(per_front.get(pv, 0)) - 1
+			used[i] = true
+			orders.append([i, path])
 	result["orders"] = orders
 	return result
 
@@ -389,7 +430,7 @@ static func ai_tables(world: World) -> Dictionary:
 		"war": world.war, "ally": world.ally, "nc": world.nation_count, "def": world.p_def_mult, "vp": world.p_vp,
 		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
-		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list}
+		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list, "supcap": world.p_supcap}
 
 
 ## Путь к ближайшей провинции из goal по таблицам (как Pathfinder.nearest_goal).

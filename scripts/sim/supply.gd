@@ -91,7 +91,7 @@ static func field_snapshot(world: World, side_of: PackedInt32Array, sources: Arr
 		"pcap": world.p_supply_cap.duplicate(), "side_of": side_of.duplicate(), "ns": sources.size(), "nr": world.region_count,
 		"reg_adj_start": world.reg_adj_start.duplicate(), "reg_adj_list": world.reg_adj_list.duplicate(),
 		"src": src_flat, "src_off": src_off, "capitals": capitals.duplicate(), "fall": fall,
-		"k": PackedFloat64Array([CAPITAL, PORT_BASE, PORT_VP, LEVEL_K, LOCAL, float(HUB_RANGE), RAIL_LOSS, RAIL_MIN, GAUGE_LOSS])}
+		"k": PackedFloat64Array([CAPITAL, PORT_BASE, PORT_VP, LEVEL_K, LOCAL, float(HUB_RANGE), RAIL_LOSS, RAIL_MIN, GAUGE_LOSS, POCKET_LOCAL])}
 
 
 ## Поле подачи по снимку → [сторона провинции, подача].
@@ -115,6 +115,7 @@ static func regions(world: World, side_of: PackedInt32Array, sources: Array, cap
 	var t := {"ps": f[0], "got": f[1], "gsrc": f[2], "conn": f[3], "pocket": POCKET_LOCAL, "side_of": side_of, "ctrl": world.p_controller, "pcap": world.p_supply_cap,
 		"d_alive": world.d_alive, "d_prov": world.d_prov, "d_owner": world.d_owner,
 		"mot": Native.gather_i32(world.tpl_motor, world.d_tpl), "local": LOCAL}
+	world.p_supcap = f[4]   # для расстановки войск ИИ (AIPlanner: не скапливать сверх снабжения)
 	if Native.core != null:
 		world.d_sup = Native.core.call("supply_divs", t)
 	else:
@@ -295,7 +296,16 @@ static func field_gd(t: Dictionary) -> Array:
 			if out[j + 1] > got[p]:
 				got[p] = out[j + 1]
 				gsrc[p] = int(out[j + 2])
-	return [ps, got, gsrc, conn]
+	# ёмкость провинции для военного ИИ (сколько «дивизий» она прокормит):
+	# подача + местное снабжение (в котле — урезанное)
+	var k_loc := kk[4]
+	var k_pock := kk[9]
+	var supcap := PackedFloat32Array()
+	supcap.resize(pc)
+	for p in pc:
+		if ps[p] >= 0:
+			supcap[p] = got[p] + k_loc * float(pcap[p]) * (1.0 if conn[p] == 1 else k_pock)
+	return [ps, got, gsrc, conn, supcap]
 
 
 ## Волна подачи от источников района r (тройки: провинция, подача, источник) → parts[r].
