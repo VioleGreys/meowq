@@ -47,6 +47,10 @@ static func check(world: World, n: int, cond: Dictionary, ahead: int = 0) -> Str
 		var t := tag_id(world, cond["alive"])
 		if t < 0 or not world.nations[t].alive:
 			return "страны %s больше нет" % (world.nations[t].name if t >= 0 else cond["alive"])
+	if cond.has("dead"):
+		var td := tag_id(world, cond["dead"])
+		if td >= 0 and world.nations[td].alive:
+			return "пока существует страна %s" % world.nations[td].name
 	if cond.has("flag") and not world.flags.has(cond["flag"]):
 		return "нужно событие «%s»" % cond["flag"]
 	if cond.has("not_flag") and world.flags.has(cond["not_flag"]):
@@ -339,7 +343,7 @@ static func _ai_pick_historical(world: World, n: int, avail: Array) -> void:
 static func _is_key(fd: Dictionary) -> bool:
 	for e in fd.get("effects", []):
 		if e.get("t", "") in ["event", "war", "annex", "transfer", "release", "faction", "join_faction_of",
-				"pact", "break_pact", "guarantee", "peace", "civil_war", "later"]:
+				"pact", "break_pact", "guarantee", "peace", "civil_war", "later", "leader", "ideology", "rep", "concede"]:
 			return true
 	return false
 
