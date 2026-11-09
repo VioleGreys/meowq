@@ -404,21 +404,19 @@ static func _acc(world: World, n: int) -> String:
 
 
 ## Шанс по описанию {"base": 60, "mods": [{"if": {...}, "v": 20, "text": "..."}]}.
-## Итог — 0–95 %; если выполнены ВСЕ условия (сработали все плюсовые поправки
-## и ни одной минусовой) — исход гарантирован, 100 %.
-## Возвращает {"pct", "lines": ["основа 60 %", "+20 % — …"], "missing": [чего
-## не хватает до гарантии], "sure": гарантировано ли}.
+## Основа плюс поправки; сверху не ограничен: 100 % и больше — исход
+## гарантирован, излишек (например 150 %) — запас против помех (чужие
+## гарантии, союзы, мнение). Снизу — 0 %.
+## Возвращает {"pct", "lines": ["основа 60 %", "+20 % — …"], "missing": [что
+## ещё можно добавить или убрать], "sure": pct >= 100}.
 static func chance(world: World, spec: Dictionary, ctx: Dictionary) -> Dictionary:
 	var pct := float(spec.get("base", 50))
 	var lines: Array = ["основа %d %%" % int(pct)]
 	var missing: Array = []
-	var has_plus := false
 	for m in spec.get("mods", []):
 		var r := cond(world, m.get("if", {}), ctx)
 		var v := float(m.get("v", 0))
 		var txt: String = m.get("text", r[1])
-		if v > 0.0:
-			has_plus = true
 		if bool(r[0]):
 			pct += v
 			lines.append("%s%d %% — %s" % ["+" if v >= 0.0 else "−", absi(int(v)), txt])
@@ -426,10 +424,10 @@ static func chance(world: World, spec: Dictionary, ctx: Dictionary) -> Dictionar
 				missing.append("убрать: " + txt)
 		elif v > 0.0:
 			missing.append(txt)
-	var sure := has_plus and missing.is_empty()
-	var res := 100.0 if sure else clampf(pct, 0.0, 95.0)
-	if sure:
-		lines.append("все условия выполнены — гарантировано")
+	var res := maxf(pct, 0.0)
+	var sure: bool = res >= 100.0
+	if res > 100.0:
+		lines.append("запас %d %% сверх гарантии" % int(res - 100.0))
 	return {"pct": int(roundf(res)), "lines": lines, "missing": missing, "sure": sure}
 
 

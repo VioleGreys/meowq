@@ -63,12 +63,13 @@
   лист для прочтения (`info_events`, `world.event_front()`).
   Репутация, помощь, торговое влияние, шансы — `scripts/sim/relations.gd`
   (`World.rep` N×N, `aid`, `trade_bonus`; условия `Relations.cond`, шанс
-  `Relations.chance`: все условия выполнены — 100 %). У события `chance` —
+  `Relations.chance`: без потолка, ≥100 % — гарантия, излишек — запас). У события `chance` —
   шанс исторического ответа ИИ (`History._ai_answer`), снимок условий на день
   фокуса (`event_snap`); эффекты `roll`, `rep`, `aid`, `trade`,
   `drop_guarantee`; прогноз на карточке фокуса — `History.forecast_text`.
   data_check проверяет условия шансов. ИИ готовит условия своих будущих
-  событий (`History._ai_prepare`, раз в 5 дней, за `PREP_AHEAD`=240 дней):
+  событий (`History._ai_prepare`: план с начала партии, сверка после каждого
+  фокуса, `prep_day`; таблица шансов — `world.chance_log`, печатает history_check):
   `prep_divs` → `AIPlanner.plan_economy`, гарантии, пакты, `improving`
   (улучшение отношений, и у игрока), помощь (`Relations.give_aid`). `History._ai_pick_historical`
   планирует по срокам: срок — у датированных

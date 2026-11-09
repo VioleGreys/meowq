@@ -75,6 +75,11 @@ func _init() -> void:
 	lines.sort_custom(func(a, b): return a[0] > b[0])
 	for l in lines.slice(0, 12):
 		print("  ", l[1])
+	# баланс: к своей ли дате страны набрали условия событий (100 % — все условия)
+	print("Шансы событий (исторический ответ):")
+	for r in w.chance_log:
+		print("  %s  %-14s %3d %%  %s%s" % [w.date_short(int(r[0])), r[1], int(r[2]), "да " if r[3] else "НЕТ",
+			("  не хватало: " + String(r[4])) if String(r[4]) != "" else ""])
 	if errors == 0:
 		print("История: OK")
 	quit(1 if errors > 0 else 0)

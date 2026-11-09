@@ -145,10 +145,13 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 					if fe.get("t", "") == "event":
 						world.event_snap[String(fe["id"])] = snapshot(world, String(fe["id"]), nat.id)
 				apply(world, nat.id, fd.get("effects", []), rng)
+				nat.prep_day = -1   # сверить план подготовки
 		if nat.focus_current == "" and not nat.is_player:
 			_ai_pick_focus(world, nat.id, rng)
 		if not nat.is_player and world.day % 5 == nat.id % 5:
 			nat.planned_wars = planned_wars(world, nat.id)
+		# план подготовки к событиям: в начале партии и после каждого фокуса
+		if not nat.is_player and nat.prep_day < 0:
 			_ai_prepare(world, nat.id)
 	# события, автоматически срабатывающие по дате
 	for id in world.event_defs:
@@ -466,7 +469,7 @@ static func forecast_text(world: World, n: int, fd: Dictionary) -> String:
 			var c := Relations.chance(world, ev["chance"], ctx)
 			line += ": «%s» — шанс %d %% (%s)" % [opts[hist].get("name", ""), c["pct"], "; ".join(c["lines"])]
 			if not c["sure"] and not c["missing"].is_empty():
-				line += "\n  до гарантии: " + "; ".join(c["missing"])
+				line += "\n  до гарантии не хватает %d %%: %s" % [100 - int(c["pct"]), "; ".join(c["missing"])]
 		else:
 			line += ": «%s» — гарантировано" % opts[hist].get("name", "")
 		out.append(line)
@@ -476,17 +479,13 @@ static func forecast_text(world: World, n: int, fd: Dictionary) -> String:
 					var c2 := Relations.chance(world, e.get("chance", {}), ctx)
 					out.append("  если «%s»: %s — шанс %d %% (%s)" % [o.get("name", ""), e.get("name", "бросок"), c2["pct"], "; ".join(c2["lines"])])
 					if not c2["sure"] and not c2["missing"].is_empty():
-						out.append("    до гарантии: " + "; ".join(c2["missing"]))
+						out.append("    до гарантии не хватает %d %%: %s" % [100 - int(c2["pct"]), "; ".join(c2["missing"])])
 	return "\n".join(out)
 
 
 # --- Подготовка ИИ к событиям своих фокусов --------------------------------------
 
-const PREP_AHEAD := 240   # за сколько дней до даты фокуса ИИ начинает готовить условия
-
-
-## События будущих фокусов исторического пути: текущий фокус и те, до даты
-## которых не больше PREP_AHEAD дней.
+## События всех ещё не пройденных фокусов исторического пути.
 static func upcoming_events(world: World, n: int) -> Array:
 	var nat: World.Nation = world.nations[n]
 	var res: Array = []
@@ -494,23 +493,20 @@ static func upcoming_events(world: World, n: int) -> Array:
 		var fid: String = fd["id"]
 		if nat.focus_done.has(fid) or _is_alternative(world, n, fd) or _excluded(world, n, fd):
 			continue
-		if fid != nat.focus_current:
-			var av: Dictionary = fd.get("available", {})
-			if av.has("date") and world.day_of(av["date"]) - world.day > PREP_AHEAD:
-				continue
-			if not av.has("date") and check(world, n, av) != "":
-				continue
 		for e in fd.get("effects", []):
 			if e.get("t", "") == "event" and world.event_defs.has(e["id"]) and not world.events_fired.has(e["id"]):
 				res.append(String(e["id"]))
 	return res
 
 
-## ИИ заранее выполняет условия шансов своих будущих событий («шаблоны»):
-## гарантии, пакты, улучшение отношений, помощь, армия нужного размера.
-## Чего ИИ сделать не может (чужие союзы, чужие гарантии) — может сбить игрок.
+## План подготовки ИИ: с начала партии — условия шансов всех событий своего
+## исторического пути («шаблоны»): армия нужного размера, свои гарантии, пакты,
+## улучшение отношений, помощь. Составляется в начале и сверяется после каждого
+## фокуса (не каждый день). Чего ИИ сделать не может (чужие союзы, чужие
+## гарантии) — может сбить игрок.
 static func _ai_prepare(world: World, n: int) -> void:
 	var nat: World.Nation = world.nations[n]
+	nat.prep_day = world.day
 	nat.prep_divs = 0
 	var want_improve := {}
 	for id in upcoming_events(world, n):
@@ -608,8 +604,11 @@ static func _ai_answer(world: World, id: String, ev: Dictionary, rng: RandomNumb
 	if not ev.has("chance") or hist < 0:
 		return hist
 	var snap: Dictionary = world.event_snap.get(id, {})
-	var pct: int = int(snap["accept"]) if snap.has("accept") else int(Relations.chance(world, ev["chance"], event_ctx(world, id))["pct"])
-	if rng.randf() * 100.0 < float(pct):
+	var c := Relations.chance(world, ev["chance"], event_ctx(world, id))
+	var pct: int = int(snap["accept"]) if snap.has("accept") else int(c["pct"])
+	var ok := rng.randf() * 100.0 < float(pct)
+	world.chance_log.append([world.day, id, pct, ok, "; ".join(c["missing"])])
+	if ok:
 		return hist
 	var opts: Array = ev.get("options", [])
 	var alt := -1
