@@ -37,19 +37,19 @@ const BAT_COUNT := 6
 # местности (равнины, лес, холмы, горы, город, море, пустыня, болота);
 # motor — моторизован (скорость от бонуса «speed» полностью, снабжение ×1,5)
 const BATTALIONS := [
-	{"name": "Пехотный", "short": "пех.", "icon": "pistol-gun", "men": 1.0, "eq": [10.0, 1.2, 0.0, 0.0], "atk": 1.0, "def": 1.2, "org": 40.0, "spd": 1.0, "hard": 0.0, "days": 14, "req": "", "motor": false,
+	{"name": "Пехотный", "short": "пех.", "icon": "inf", "men": 1.0, "eq": [10.0, 1.2, 0.0, 0.0], "atk": 1.0, "def": 1.2, "org": 40.0, "spd": 1.0, "hard": 0.0, "days": 14, "req": "", "motor": false,
 		"terr": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]},
-	{"name": "Горнострелковый", "short": "горн.", "icon": "mountain-climbing", "men": 1.0, "eq": [11.0, 0.6, 0.0, 0.0], "atk": 0.9, "def": 1.2, "org": 45.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "mnt1", "motor": false,
+	{"name": "Горнострелковый", "short": "горн.", "icon": "mnt", "men": 1.0, "eq": [11.0, 0.6, 0.0, 0.0], "atk": 0.9, "def": 1.2, "org": 45.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "mnt1", "motor": false,
 		"terr": [1.0, 1.1, 1.35, 1.5, 1.0, 1.0, 0.9, 1.0]},
-	{"name": "Кавалерийский", "short": "кав.", "icon": "horse-head", "men": 1.0, "eq": [10.0, 0.0, 0.0, 0.0], "atk": 1.0, "def": 1.0, "org": 50.0, "spd": 1.5, "hard": 0.0, "days": 14, "req": "", "motor": false,
+	{"name": "Кавалерийский", "short": "кав.", "icon": "cav", "men": 1.0, "eq": [10.0, 0.0, 0.0, 0.0], "atk": 1.0, "def": 1.0, "org": 50.0, "spd": 1.5, "hard": 0.0, "days": 14, "req": "", "motor": false,
 		"terr": [1.1, 0.8, 0.9, 0.7, 0.8, 1.0, 1.1, 0.7]},
 	# артиллерия: 2 батальона к 10 пехотным дают прежнюю «пехоту с артиллерией»;
 	# на трудной местности она обуза (значения ниже 1 тянут среднее вниз)
-	{"name": "Артиллерийский", "short": "арт.", "icon": "cannon", "men": 0.5, "eq": [0.0, 12.0, 0.0, 0.0], "atk": 3.0, "def": 1.0, "org": 18.0, "spd": 0.9, "hard": 0.0, "days": 18, "req": "", "motor": false,
+	{"name": "Артиллерийский", "short": "арт.", "icon": "art", "men": 0.5, "eq": [0.0, 12.0, 0.0, 0.0], "atk": 3.0, "def": 1.0, "org": 18.0, "spd": 0.9, "hard": 0.0, "days": 18, "req": "", "motor": false,
 		"terr": [1.55, 0.45, 0.45, -0.65, 1.0, 1.0, 1.55, -0.1]},
-	{"name": "Моторизованный", "short": "мот.", "icon": "jeep", "men": 1.0, "eq": [10.0, 1.2, 0.0, 6.0], "atk": 1.1, "def": 1.2, "org": 40.0, "spd": 2.0, "hard": 0.1, "days": 20, "req": "mot1", "motor": true,
+	{"name": "Моторизованный", "short": "мот.", "icon": "mot", "men": 1.0, "eq": [10.0, 1.2, 0.0, 6.0], "atk": 1.1, "def": 1.2, "org": 40.0, "spd": 2.0, "hard": 0.1, "days": 20, "req": "mot1", "motor": true,
 		"terr": [1.1, 0.85, 0.9, 0.75, 0.9, 1.0, 1.1, 0.7]},
-	{"name": "Танковый", "short": "танк.", "icon": "tank", "men": 1.0, "eq": [5.0, 0.0, 7.5, 5.0], "atk": 3.75, "def": 1.5, "org": 35.0, "spd": 1.8, "hard": 0.7, "days": 30, "req": "armor1", "motor": true,
+	{"name": "Танковый", "short": "танк.", "icon": "arm", "men": 1.0, "eq": [5.0, 0.0, 7.5, 5.0], "atk": 3.75, "def": 1.5, "org": 35.0, "spd": 1.8, "hard": 0.7, "days": 30, "req": "armor1", "motor": true,
 		"terr": [1.15, 0.75, 0.75, 0.55, 0.75, 1.0, 1.15, 0.55]},
 ]
 const MAX_BATTALIONS := 15
@@ -358,7 +358,169 @@ static func produce(nat: World.Nation) -> void:
 		var units: float = f * mult * eff / EQ_COST[eq]
 		nat.stock[eq] += units
 		nat.daily_output[eq] += units
+		nat.prod_acc[eq] += units
 		line[2] = minf(1.0, eff + 0.01)
+
+
+## Пересмотр распределения заводов (раз в месяц, ИИ и игрок с автораспределением).
+## Сухопутные линии — по нужде: нехватка в дивизиях + снаряжение для
+## дивизий, которые ещё будут сформированы (target_divs), + запас (у воюющих
+## и готовящихся к войне больше) — всё за вычетом склада, на PROD_HORIZON
+## дней, плюс средний расход. Минимум флота и авиации — доли из forces.json;
+## излишек сухопутных заводов — наполовину в запас по доктрине, наполовину
+## в авиацию и флот. Линии сдвигаются постепенно (PROD_MOVE в месяц): новые
+## заводы на линии разгоняются заново.
+const PROD_HORIZON := 90.0
+const PROD_MOVE := 0.15
+const PROD_BUFFER := 0.3        # запас в мирное время — доля снаряжения армии
+const PROD_BUFFER_WAR := 0.6    # на войне и при подготовке к ней
+const PROD_SURPLUS_LAND := 0.7  # доля излишка, остающаяся на сухопутных линиях
+const PROD_LAND_MIN := 0.6      # сухопутным линиям — не меньше этой доли их места
+
+
+## Снаряжение армий всех стран одним проходом по плоским массивам дивизий:
+## [дивизий по странам, по всему (страна*4 + k), нехватка (страна*4 + k)].
+static func land_totals(world: World) -> Array:
+	var nc := world.nation_count
+	var cnt := PackedInt32Array()
+	cnt.resize(nc)
+	var full := PackedFloat64Array()
+	full.resize(nc * EQ_LAND)
+	var lack := PackedFloat64Array()
+	lack.resize(nc * EQ_LAND)
+	var alive := world.d_alive
+	var owner := world.d_owner
+	var tpl := world.d_tpl
+	var eqf := world.d_eq
+	var te := world.tpl_eq
+	for i in alive.size():
+		if alive[i] == 0:
+			continue
+		var o := owner[i]
+		cnt[o] += 1
+		var t := tpl[i] * EQ_COUNT
+		var miss := 1.0 - eqf[i]
+		for k in EQ_LAND:
+			full[o * EQ_LAND + k] += te[t + k]
+			lack[o * EQ_LAND + k] += te[t + k] * miss
+	return [cnt, full, lack]
+
+
+static func plan_production(world: World, nat: World.Nation, target_divs: int, prepare_war: bool, totals: Array) -> void:
+	# средний расход с прошлого пересмотра: склад был + выпуск − склад сейчас
+	if nat.prod_day >= 0 and world.day > nat.prod_day:
+		var days := float(world.day - nat.prod_day)
+		for k in EQ_COUNT:
+			var used := maxf(0.0, nat.prod_stock[k] + nat.prod_acc[k] - nat.stock[k]) / days
+			nat.eq_use[k] = 0.5 * nat.eq_use[k] + 0.5 * used
+	nat.prod_day = world.day
+	for k in EQ_COUNT:
+		nat.prod_stock[k] = nat.stock[k]
+		nat.prod_acc[k] = 0.0
+	if nat.mil <= 0:
+		nat.prod_split = default_split(nat)
+		return
+	# нужда сухопутных войск по очередям: 1 — пополнение и пехотное снаряжение
+	# будущих дивизий (без него не сформировать ни одной), 2 — техника для
+	# моторизованных и танковых, 3 — запас (у воюющих и готовящихся больше)
+	var fielded := [0.0, 0.0, 0.0, 0.0]
+	var tiers := [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
+	var divs: int = totals[0][nat.id]
+	for k in EQ_LAND:
+		fielded[k] = totals[1][nat.id * EQ_LAND + k]
+		tiers[0][k] = totals[2][nat.id * EQ_LAND + k]
+	var up := maxi(0, target_divs - divs - nat.training.size())
+	for i in up:
+		var t := ai_template(world, nat, nat.trained_count + i, false)
+		var tt: Dictionary = world.templates[t]
+		var ti := 1 if tt["motor"] else 0
+		for k in EQ_LAND:
+			tiers[ti][k] += float(tt["eq"][k])
+	var buffer := PROD_BUFFER_WAR if (not nat.at_war.is_empty() or prepare_war) else PROD_BUFFER
+	for k in EQ_LAND:
+		tiers[2][k] = buffer * fielded[k]
+	var mult := maxf(0.1, (1.0 + nat.b("industry")) * (1.0 - nat.trade_penalty))
+	var total := float(nat.mil)
+	var land_cap := total * maxf(0.0, 1.0 - nat.naval_share - nat.air_share)
+	var split := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	# средний расход — в первую очередь
+	var left := land_cap
+	var stock := [0.0, 0.0, 0.0, 0.0]
+	for k in EQ_LAND:
+		stock[k] = nat.stock[k]
+	var use := [0.0, 0.0, 0.0, 0.0]
+	var use_sum := 0.0
+	for k in EQ_LAND:
+		use[k] = nat.eq_use[k] * EQ_COST[k] / mult
+		use_sum += use[k]
+	var take := minf(1.0, left / maxf(use_sum, 0.001))
+	for k in EQ_LAND:
+		split[k] += use[k] * take
+	left -= use_sum * take
+	for tier in tiers:
+		if left <= 0.0:
+			break
+		var want := [0.0, 0.0, 0.0, 0.0]
+		var want_sum := 0.0
+		for k in EQ_LAND:
+			var gap := maxf(0.0, float(tier[k]) - stock[k])
+			stock[k] = maxf(0.0, stock[k] - float(tier[k]))
+			want[k] = gap / PROD_HORIZON * EQ_COST[k] / mult
+			want_sum += want[k]
+		take = minf(1.0, left / maxf(want_sum, 0.001))
+		for k in EQ_LAND:
+			split[k] += want[k] * take
+		left -= want_sum * take
+	# излишек: большая часть — в запас по доктрине (сухопутным линиям не
+	# меньше PROD_LAND_MIN своей доли), остальное — в авиацию и флот
+	var doctrine := default_split(nat)
+	var dsum := 0.0
+	for k in EQ_LAND:
+		dsum += float(doctrine[k])
+	var land_now := land_cap - left
+	var keep := maxf(left * PROD_SURPLUS_LAND, land_cap * PROD_LAND_MIN - land_now)
+	keep = clampf(keep, 0.0, left)
+	for k in EQ_LAND:
+		split[k] += keep * (float(doctrine[k]) / dsum if dsum > 0.0 else 0.25)
+	var to_air := left - keep
+	var ship_w := nat.naval_share
+	var air_w := maxf(nat.air_share, 0.05)
+	var aw := air_w / (air_w + ship_w)
+	split[EQ_SHIP] = total * nat.naval_share + to_air * (1.0 - aw)
+	split[EQ_FIG] = total * nat.air_share * 0.6 + to_air * aw * 0.6
+	split[EQ_BOMB] = total * nat.air_share * 0.4 + to_air * aw * 0.4
+	for k in EQ_COUNT:
+		split[k] = split[k] / total
+	nat.prod_split = split
+	_shift_lines(nat, split)
+
+
+## Сдвинуть линии к долям split: не больше PROD_MOVE заводов в месяц.
+static func _shift_lines(nat: World.Nation, split: Array) -> void:
+	var current := [0, 0, 0, 0, 0, 0, 0]
+	for line in nat.lines:
+		current[line[0]] += int(line[1])
+	var budget := maxi(1, int(nat.mil * PROD_MOVE))
+	while budget > 0:
+		var from := -1
+		var to := -1
+		var best_over := 0.99
+		var best_under := 0.99
+		for k in EQ_COUNT:
+			var gap: float = float(split[k]) * nat.mil - current[k]
+			if -gap > best_over and current[k] > 0:
+				best_over = -gap
+				from = k
+			if gap > best_under:
+				best_under = gap
+				to = k
+		if from < 0 or to < 0:
+			break
+		_add_to_line(nat, from, -1)
+		_add_to_line(nat, to, 1)
+		current[from] -= 1
+		current[to] += 1
+		budget -= 1
 
 
 # --- Подготовка и пополнение -------------------------------------------------

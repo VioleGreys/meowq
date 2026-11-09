@@ -1345,6 +1345,9 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 		if d.alive and d.owner == n and d.prov == port and d.path.is_empty() and not d.in_battle \
 				and d.transit_days == 0 and d.org > d.max_org * 0.5:
 			ready.append(d)
+	# уже собравшиеся в порту ждут остальных — фронт их не забирает
+	for d in ready:
+		d.reserved_until = maxi(d.reserved_until, world.day + 20)
 	if ready.size() < 3:
 		# собираем десант: ближайшие свободные дивизии не с фронта идут в порт
 		var on_way := 0
@@ -1368,7 +1371,8 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 				d.path = path
 				d.progress = 0.0
 				d.group = -1
-				d.reserved_until = world.day + 40
+				# резерв — на дорогу (пехота идёт ~0,28 провинции в день) и сбор
+				d.reserved_until = world.day + int(path.size() * 1.5 / maxf(0.05, d.spd)) + 20
 				need -= 1
 		return
 	var group := ready.slice(0, mini(6, ready.size()))

@@ -20,10 +20,7 @@ static func plan_economy(world: World, nid: int, rng: RandomNumberGenerator, min
 
 	# --- Экономика: сколько дивизий заказать (шаблоны выбираются в главном потоке)
 	# потолок армии по населению; закон о призыве (бонус conscription) поднимает его
-	var cap := (4.0 + nat.population * 1.3) * (1.0 + nat.b("conscription"))
-	var target_divs := int(minf(6.0 + nat.mil * 2.5 + nat.civ * 0.3, cap) * (1.4 if at_war else 1.0))
-	# условия будущих событий фокусов («армия больше в N раз») — History._ai_prepare
-	target_divs = maxi(target_divs, mini(nat.prep_divs, int(cap * 1.5)))
+	var target_divs := target_divisions(nat)
 	var pending := mine + nat.training.size()
 	while pending < target_divs and result["train"] < 3 and nat.manpower > 10.0 * (result["train"] + 1):
 		result["train"] += 1
@@ -49,6 +46,15 @@ static func plan_economy(world: World, nid: int, rng: RandomNumberGenerator, min
 				best = other
 		result["war"] = best
 	return result
+
+
+## Сколько дивизий страна ИИ хочет держать: от заводов, не больше потолка
+## по населению (закон о призыве — бонус conscription), на войне больше;
+## условия будущих событий фокусов («армия больше в N раз») — prep_divs.
+static func target_divisions(nat: World.Nation) -> int:
+	var cap := (4.0 + nat.population * 1.3) * (1.0 + nat.b("conscription"))
+	var t := int(minf(6.0 + nat.mil * 2.5 + nat.civ * 0.3, cap) * (1.4 if not nat.at_war.is_empty() else 1.0))
+	return maxi(t, mini(nat.prep_divs, int(cap * 1.5)))
 
 
 ## Аргументы военного плана всех дивизий страны ИИ (главный поток).

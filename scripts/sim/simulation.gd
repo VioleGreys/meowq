@@ -12,6 +12,8 @@ const AI_PERIOD := 3
 var world: World
 var last_tick_usec := 0
 var phase_usec := {}
+var land_totals: Array = []   # Military.land_totals — для пересмотра заводов, раз в 10 дней
+var land_totals_day := -100
 
 
 func _init(w: World) -> void:
@@ -112,8 +114,18 @@ func _phase_economy() -> void:
 		# производство снаряжения: свободные заводы ИИ сам раскладывает по линиям
 		_pt = Time.get_ticks_usec()
 		Military.trim_lines(nat)
-		if not nat.is_player:
-			Military.assign_free_factories(nat, Military.default_split(nat))
+		if not nat.is_player or nat.prod_auto:
+			# раз в месяц — пересмотр линий по нужде (Military.plan_production)
+			if (world.day + nat.id) % 30 == 0 or nat.prod_split.is_empty():
+				var _p2 := Time.get_ticks_usec()
+				if land_totals.is_empty() or world.day - land_totals_day >= 10:
+					land_totals = Military.land_totals(world)
+					land_totals_day = world.day
+					Prof.add("эк:снаряжение армий", _p2)
+				_p2 = Time.get_ticks_usec()
+				Military.plan_production(world, nat, AIPlanner.target_divisions(nat), not nat.planned_wars.is_empty(), land_totals)
+				Prof.add("эк:план заводов", _p2)
+			Military.assign_free_factories(nat, nat.prod_split)
 		Military.produce(nat)
 		Prof.add("эк:производство", _pt)
 		_pt = Time.get_ticks_usec()

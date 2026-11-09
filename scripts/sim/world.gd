@@ -74,6 +74,14 @@ class Nation:
 	var inv_target := -1        # ИИ: цель готовящейся высадки
 	var inv_port := -1          # ИИ: порт посадки
 	var lines: Array = []       # производственные линии: [тип снаряжения, заводов, эффективность]
+	# распределение заводов (Military.plan_production): желаемые доли по типам,
+	# выпуск и склад с прошлого пересмотра, расход снаряжения в день (среднее)
+	var prod_split: Array = []
+	var prod_auto := true       # игрок: распределять заводы автоматически
+	var prod_acc := PackedFloat64Array([0, 0, 0, 0, 0, 0, 0])
+	var prod_stock := PackedFloat64Array([0, 0, 0, 0, 0, 0, 0])
+	var prod_day := -1
+	var eq_use := PackedFloat64Array([0, 0, 0, 0, 0, 0, 0])
 	var trained_count := 0
 	var stats_dirty := true
 	var dormant := false        # появится по событию

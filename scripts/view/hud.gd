@@ -1769,11 +1769,138 @@ func _eq_text(eq: Array) -> String:
 	var parts: Array = []
 	for k in Military.EQ_COUNT:
 		if eq[k] > 0:
-			parts.append("%s %d" % [Military.EQ_SHORT[k], eq[k]])
+			parts.append(("%s %d" if float(eq[k]) == floorf(float(eq[k])) else "%s %.1f") % [Military.EQ_SHORT[k], eq[k]])
 	return ", ".join(parts)
 
 
+# конструктор шаблонов: -2 — закрыт, -1 — новый шаблон, иначе правка своего
+var _tpl_edit := -2
+var _tpl_bat: Array = []
+var _tpl_name := ""
+
+
+func _tpl_stats_text(tp: Dictionary) -> String:
+	var best := ""
+	var bv := 0.0
+	var worst := ""
+	var wv := 9.0
+	for k in [World.T_FOREST, World.T_HILLS, World.T_MOUNTAIN, World.T_URBAN, World.T_MARSH, World.T_DESERT]:
+		var v: float = tp["terr"][k]
+		if v > bv:
+			bv = v
+			best = TERRAIN_SHORT[k]
+		if v < wv:
+			wv = v
+			worst = TERRAIN_SHORT[k]
+	return "атака %.1f · оборона %.1f · орг. %d · скорость ×%.1f · броня %d%% · %.1fк чел. · %d дн.\n%s\nместность: лучше всего — %s (×%.2f), хуже — %s (×%.2f)" % [
+		tp["atk"], tp["def"], tp["org"], tp["spd"], tp["hard"] * 100.0, tp["men"], tp["days"], _eq_text(tp["eq"]), best, bv, worst, wv]
+
+
+const TERRAIN_SHORT := ["равнины", "лес", "холмы", "горы", "город", "море", "пустыня", "болота"]
+
+
+func _open_tpl_editor(w: World, t: int, own: bool) -> void:
+	var tp: Dictionary = w.templates[t] if t >= 0 else {}
+	_tpl_bat = (tp["bat"] as Array).duplicate() if t >= 0 else [9, 0, 0, 0, 0, 0]
+	_tpl_name = tp["name"] if own else ((tp["name"] + " (нов.)") if t >= 0 else "Новая дивизия")
+	_tpl_edit = t if own else -1
+	_rebuild_popup()
+
+
+func _build_tpl_editor(w: World, me: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_title.text = "Шаблон дивизии"
+	var name_edit := LineEdit.new()
+	name_edit.text = _tpl_name
+	name_edit.max_length = 32
+	name_edit.custom_minimum_size = Vector2(0, 48)
+	name_edit.text_changed.connect(func(tx: String): _tpl_name = tx)
+	popup_body.add_child(name_edit)
+	var total := 0
+	for b in Military.BAT_COUNT:
+		total += int(_tpl_bat[b])
+	var tp := Military.make_template(_tpl_name, "", _tpl_bat, me)
+	popup_body.add_child(_label(_tpl_stats_text(tp) if total > 0 else "Нет батальонов.", 15))
+	popup_body.add_child(_section("Батальоны: %d из %d" % [total, Military.MAX_BATTALIONS]))
+	for b in Military.BAT_COUNT:
+		var bt: Dictionary = Military.BATTALIONS[b]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 4)
+		var ic := TextureRect.new()
+		ic.texture = UiStyle.icon(bt["icon"], 32)
+		ic.custom_minimum_size = Vector2(32, 32)
+		ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		ic.modulate = UiStyle.ink(Color(0.93, 0.9, 0.82))
+		row.add_child(ic)
+		var lock: String = bt["req"]
+		var locked := lock != "" and not n.techs.has(lock)
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 0)
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col.add_child(_label("%s × %d" % [bt["name"], int(_tpl_bat[b])], 16))
+		col.add_child(_small(("нужна технология «%s»" % Tech.get_tech(lock).get("name", lock)) if locked else _bat_line(bt)))
+		row.add_child(col)
+		var bb := b
+		var minus := _button("−", func():
+			_tpl_bat[bb] = maxi(0, int(_tpl_bat[bb]) - 1)
+			_rebuild_popup(), Vector2(44, 44))
+		minus.disabled = int(_tpl_bat[b]) <= 0
+		row.add_child(minus)
+		var plus := _button("+", func():
+			_tpl_bat[bb] = int(_tpl_bat[bb]) + 1
+			_rebuild_popup(), Vector2(44, 44))
+		plus.disabled = total >= Military.MAX_BATTALIONS
+		row.add_child(plus)
+		popup_body.add_child(row)
+	popup_body.add_child(_small("Атака, оборона, люди и снаряжение складываются; организация, броня и местность — средние; скорость — по самому медленному батальону."))
+	var miss := Military.tech_missing(tp, n)
+	if miss != "":
+		popup_body.add_child(_small("Пока нельзя готовить: нужна технология «%s»." % Tech.get_tech(miss).get("name", miss)))
+	var used := 0
+	if _tpl_edit >= 0:
+		for d in w.divisions:
+			if d.alive and d.tpl == _tpl_edit:
+				used += 1
+		if used > 0:
+			popup_body.add_child(_small("Правка изменит %d дивизий: снаряжение и люди пересчитаются под новый состав, лишнее вернётся на склад, недостающее придёт пополнением." % used))
+	var row2 := HBoxContainer.new()
+	row2.add_theme_constant_override("separation", 8)
+	var save := _button("Сохранить", func():
+		var nm := _tpl_name.strip_edges()
+		if nm == "":
+			nm = "Дивизия"
+		if Military.save_template(w, me, nm, _tpl_bat, _tpl_edit) < 0:
+			toast("Нужен хотя бы один батальон")
+			return
+		toast("Шаблон «%s» сохранён" % nm)
+		_tpl_edit = -2
+		_rebuild_popup(), Vector2(0, 52))
+	save.disabled = total <= 0
+	save.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row2.add_child(save)
+	if _tpl_edit >= 0:
+		var del := _button("Убрать из списка", func():
+			Military.hide_template(w, me, _tpl_edit)
+			_tpl_edit = -2
+			_rebuild_popup(), Vector2(0, 52))
+		del.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row2.add_child(del)
+	var cancel := _button("Отмена", func():
+		_tpl_edit = -2
+		_rebuild_popup(), Vector2(0, 52))
+	cancel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row2.add_child(cancel)
+	popup_body.add_child(row2)
+
+
+func _bat_line(bt: Dictionary) -> String:
+	return "ат. %.2f · об. %.2f · орг. %d · ×%.1f" % [bt["atk"], bt["def"], bt["org"], bt["spd"]]
+
+
 func _build_army(w: World, me: int) -> void:
+	if _tpl_edit != -2:
+		_build_tpl_editor(w, me)
+		return
 	popup_title.text = "Армия"
 	var n: World.Nation = w.nations[me]
 	_dynamic["army"] = _label("", 17)
@@ -1806,9 +1933,13 @@ func _build_army(w: World, me: int) -> void:
 		var b5 := _button("×5", func(): _train(5, t), Vector2(60, 48))
 		b5.disabled = why != ""
 		row.add_child(b5)
+		var own := int(tp["owner"]) == me
+		var be := _button("Изм." if own else "Копия", func(): _open_tpl_editor(w, t, own), Vector2(84, 48))
+		row.add_child(be)
 		popup_body.add_child(row)
-		popup_body.add_child(_small("   атака %d · оборона %d · скорость ×%.1f · %dк чел. · %s · %d дн.%s" % [
+		popup_body.add_child(_small("   атака %.1f · оборона %.1f · скорость ×%.1f · %.1fк чел. · %s · %d дн.%s" % [
 			tp["atk"], tp["def"], tp["spd"], tp["men"], _eq_text(tp["eq"]), tp["days"], ("\n   " + why) if why != "" else ""]))
+	popup_body.add_child(_button("Новый шаблон дивизии", func(): _open_tpl_editor(w, -1, false), Vector2(0, 50)))
 
 
 func _ships_text(f: World.Fleet) -> String:
@@ -1954,6 +2085,13 @@ func _build_production(w: World, me: int) -> void:
 	_dynamic["prod"] = _label("", 17)
 	popup_body.add_child(_dynamic["prod"])
 	popup_body.add_child(_small("Военные заводы выпускают снаряжение для новых дивизий и пополнения. Новая линия разгоняется с 30% до 100% эффективности."))
+	var auto := _button("Автораспределение: %s" % ("да" if n.prod_auto else "нет"), func():
+		n.prod_auto = not n.prod_auto
+		if n.prod_auto:
+			n.prod_split = []   # пересмотр — в ближайший день
+		_rebuild_popup(), Vector2(0, 50))
+	popup_body.add_child(auto)
+	popup_body.add_child(_small("Автоматически — раз в месяц, как у ИИ: сначала пополнение и пехотное снаряжение новых дивизий, затем техника, затем запас; излишек — в авиацию и флот. Ручная правка линии выключает автоматику."))
 	var need := Military.shortage(w, me)
 	for k in Military.EQ_COUNT:
 		var f := 0
@@ -1970,9 +2108,11 @@ func _build_production(w: World, me: int) -> void:
 		row.add_child(l)
 		var kk := k
 		row.add_child(_button("−", func():
+			n.prod_auto = false
 			Military.change_line(n, kk, -1)
 			_rebuild_popup(), Vector2(52, 48)))
 		row.add_child(_button("+", func():
+			n.prod_auto = false
 			if not Military.change_line(n, kk, 1):
 				toast("Нет свободных заводов")
 			_rebuild_popup(), Vector2(52, 48)))
@@ -1998,6 +2138,8 @@ func _update_popup_dynamic() -> void:
 			else:
 				_dynamic["justify"].text = ""
 		"army":
+			if not _dynamic.has("army"):
+				return   # открыт конструктор шаблонов
 			var next := ""
 			if not n.training.is_empty():
 				var m := 9999

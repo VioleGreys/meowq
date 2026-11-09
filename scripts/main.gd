@@ -250,7 +250,11 @@ func _auto_screenshot_locked() -> void:
 				hud.focus_view._select(_arg("fsel"))   # карточка фокуса с прогнозом шансов
 		if _arg("peace") != "":
 			world.pending_peace.append([nation_by_tag(_arg("peace")), me])
-		if _arg("tab") != "":
+		if _arg("tpl") != "":
+			# конструктор шаблонов: --tpl=N (на основе шаблона N) или --tpl=new
+			hud.open_tab("army")
+			hud._open_tpl_editor(world, -1 if _arg("tpl") == "new" else int(_arg("tpl")), false)
+		elif _arg("tab") != "":
 			hud.open_tab(_arg("tab"))
 		if "--select" in OS.get_cmdline_user_args():
 			_on_province_tapped(world.nations[me].capital)
