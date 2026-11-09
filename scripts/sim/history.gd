@@ -726,9 +726,15 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 			"divisions":
 				var keys := {"inf": Military.T_INF, "mnt": Military.T_MNT, "cav": Military.T_CAV,
 					"art": Military.T_ART, "mot": Military.T_MOT, "arm": Military.T_ARM}
-				if world.p_controller[nat.capital] == who:
+				# "at": столица другой страны (союзника), например Квантунская армия в Маньчжурии
+				var at := nat.capital
+				if e.has("at"):
+					var an := tag_id(world, e["at"])
+					if an >= 0 and world.nations[an].alive and world.nations[an].capital >= 0:
+						at = world.nations[an].capital
+				if at >= 0 and (world.p_controller[at] == who or Diplomacy.same_side(world, world.p_controller[at], who)):
 					for k in int(e.get("n", 1)):
-						world.spawn_division(who, nat.capital, keys.get(e.get("tpl", "inf"), 0))
+						world.spawn_division(who, at, keys.get(e.get("tpl", "inf"), 0))
 			"manpower":
 				nat.manpower += float(e["v"])
 			"event":
@@ -811,6 +817,22 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 			"aid":
 				if target >= 0:
 					Relations.give_aid(world, who, target)
+			"spirit_add":
+				nat.spirits[String(e["id"])] = float(e.get("v", 1.0))
+				world.recalc_spirits(nat)
+			"spirit_remove":
+				nat.spirits.erase(String(e["id"]))
+				world.recalc_spirits(nat)
+			"spirit_scale":
+				# ослабить (или усилить) черту: множитель её силы
+				if nat.spirits.has(String(e["id"])):
+					nat.spirits[String(e["id"])] = float(nat.spirits[String(e["id"])]) * float(e.get("v", 0.5))
+					world.recalc_spirits(nat)
+			"org_hit":
+				# внезапный удар: дивизии страны теряют часть организации
+				for d in world.divisions:
+					if d.alive and d.owner == who:
+						d.org *= 1.0 - float(e.get("v", 0.5))
 			"concede":
 				# уступка: влияние своей силы на шкале падает
 				Relations.add_diplo(world, who, -float(e.get("v", 10)))
@@ -1064,18 +1086,42 @@ static func _fix_capital(world: World, n: int) -> void:
 ## true — капитуляция обработана здесь.
 static func capitulation_hook(world: World, loser: int, winner: int, rng: RandomNumberGenerator) -> bool:
 	for rule in world.capitulation_rules:
-		if tag_id(world, rule["loser"]) != loser or tag_id(world, rule["winner"]) != winner:
+		if tag_id(world, rule["loser"]) != loser:
 			continue
+		if rule.has("winner") and tag_id(world, rule["winner"]) != winner:
+			continue
+		if rule.get("mode", "") == "partition":
+			_partition(world, loser, winner)
+			if rule.has("log"):
+				world.log_event(rule["log"])
+			return true
 		if rule.has("mode"):
 			Diplomacy.make_peace(world, loser, winner, rule["mode"])
 			return true
 		for e in rule.get("effects", []):
 			if e["t"] == "vichy":
 				_vichy(world, loser, winner, e["tag"])
+			else:
+				apply(world, loser, [e], rng)   # например, мир с передачей области
+		if rule.has("fire"):
+			world.events_fired[rule["fire"]] = true   # событие уже исполнено правилом
 		if rule.has("log"):
 			world.log_event(rule["log"])
 		return true
 	return false
+
+
+## Раздел по линии фронта: провинции, занятые другими противниками, отходят
+## им, остальное — главному победителю (раздел Польши 1939 г.).
+static func _partition(world: World, loser: int, winner: int) -> void:
+	for p in world.prov_count:
+		if world.p_owner[p] != loser:
+			continue
+		var c := world.p_controller[p]
+		if c >= 0 and c != loser and c != winner and world.is_at_war(c, loser) \
+				and not Diplomacy.same_side(world, c, winner):
+			world.p_owner[p] = Diplomacy.root(world, c)
+	annex(world, winner, loser)
 
 
 static func _vichy(world: World, loser: int, winner: int, tag: String) -> void:
@@ -1188,6 +1234,14 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sснятие гарантии: %s" % [who, tname])
 			"concede":
 				parts.append("%sуступка (влияние −%d)" % [who, int(e.get("v", 10))])
+			"spirit_add":
+				parts.append("%sчерта «%s»" % [who, world.spirit_defs.get(e["id"], {}).get("name", e["id"])])
+			"spirit_remove":
+				parts.append("%sснять черту «%s»" % [who, world.spirit_defs.get(e["id"], {}).get("name", e["id"])])
+			"spirit_scale":
+				parts.append("%sчерта «%s» ×%s" % [who, world.spirit_defs.get(e["id"], {}).get("name", e["id"]), str(e.get("v", 0.5))])
+			"org_hit":
+				parts.append("%sорганизация дивизий −%d %%" % [who, roundi(100 * float(e.get("v", 0.5)))])
 			"trade":
 				parts.append("торговое влияние в %s %+d %%" % [tname, int(e["v"])])
 			"roll":

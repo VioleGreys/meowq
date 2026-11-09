@@ -124,6 +124,8 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		var bon: Dictionary = d.get("bonus", {})
 		for k in bon:
 			nat.bonus[k] = float(nat.bonus.get(k, 0.0)) + float(bon[k])
+		for sid in d.get("spirits", []):
+			nat.spirits[String(sid)] = 1.0
 
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 1936
@@ -156,6 +158,12 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	world.ai_wars = true
 	Diplomacy.load_setup(world, dir + "/diplomacy.json")
 	History.load(world, dir)
+	_load_forts(world, dir + "/forts.json")
+	# национальные черты: определения и стартовые черты стран
+	if FileAccess.file_exists(dir + "/spirits.json"):
+		world.spirit_defs = JSON.parse_string(FileAccess.get_file_as_string(dir + "/spirits.json")).get("spirits", {})
+	for nat in world.nations:
+		world.recalc_spirits(nat)
 	Relations.init(world)
 	world.build_caches()
 	Forces.setup(world, dir)
@@ -333,3 +341,30 @@ static func _mountain_spot(world: World, nid: int, home: Array, k: int) -> int:
 	if hills.is_empty():
 		return world.nations[nid].capital
 	return hills[(k * 5) % hills.size()]
+
+
+## Укрепления (forts.json): провинции владельца в рамке [запад, юг, восток, север]
+## (долгота/широта) или в исторической области получают добавку к обороне.
+static func _load_forts(world: World, path: String) -> void:
+	world.p_fort.resize(world.prov_count)
+	world.p_fort.fill(0.0)
+	if not FileAccess.file_exists(path):
+		return
+	var data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
+	for f in data.get("forts", []):
+		var owner := world.nation_tags.find(String(f.get("owner", "")))
+		var level := float(f.get("level", 0.3))
+		var provs: Array = []
+		if f.has("area"):
+			provs = History.area(world, f["area"])
+		elif f.has("box"):
+			var b: Array = f["box"]
+			for p in world.prov_count:
+				var ll := world.p_lonlat[p]
+				if world.p_owner[p] == owner and ll.x >= float(b[0]) and ll.y >= float(b[1]) \
+						and ll.x <= float(b[2]) and ll.y <= float(b[3]):
+					provs.append(p)
+		for p in provs:
+			world.p_fort[p] = maxf(world.p_fort[p], level)
+	world._def_month = -1
+	world.refresh_def_mult()

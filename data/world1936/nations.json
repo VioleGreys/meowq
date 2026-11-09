@@ -51,7 +51,7 @@
    ]
   },
   "SOV": {
-   "capitulate_at": 0.15,
+   "spirits": ["sov_purge", "sov_vastness"],
    "major": true,
    "full_name": "Союз Советских Социалистических Республик",
    "ideology": "communism",
@@ -165,6 +165,7 @@
    ]
   },
   "FRA": {
+   "spirits": ["fra_defeatism"],
    "major": true,
    "full_name": "Французская республика",
    "ideology": "democracy",
@@ -729,9 +730,7 @@
    }
   },
   "FIN": {
-   "bonus": {
-    "defense": 0.3
-   },
+   "spirits": ["fin_sisu", "fin_winter"],
    "full_name": "Финляндская республика",
    "ideology": "democracy",
    "leader": "Пер Эвинд Свинхувуд",
@@ -1551,6 +1550,7 @@
    "techs": []
   },
   "JAP": {
+   "spirits": ["jap_bushido"],
    "full_name": "Японская империя",
    "ideology": "fascism",
    "leader": "Кэйсукэ Окада",
@@ -1615,7 +1615,7 @@
    "techs": []
   },
   "CHI": {
-   "capitulate_at": 0.1,
+   "spirits": ["chi_weak_army", "chi_vastness"],
    "full_name": "Китайская Республика",
    "ideology": "authoritarian",
    "leader": "Чан Кайши",
@@ -1640,6 +1640,7 @@
    "techs": []
   },
   "PRC": {
+   "spirits": ["warlord_army"],
    "full_name": "Китайская Советская Республика",
    "ideology": "communism",
    "leader": "Мао Цзэдун",
@@ -1661,6 +1662,7 @@
    "techs": []
   },
   "GXC": {
+   "spirits": ["warlord_army"],
    "full_name": "Гуанси",
    "ideology": "authoritarian",
    "leader": "Ли Цзунжэнь",
@@ -1683,6 +1685,7 @@
    "techs": []
   },
   "YUN": {
+   "spirits": ["warlord_army"],
    "full_name": "Юньнань",
    "ideology": "authoritarian",
    "leader": "Лун Юнь",
@@ -1705,6 +1708,7 @@
    "techs": []
   },
   "SHX": {
+   "spirits": ["warlord_army"],
    "full_name": "Шаньси",
    "ideology": "authoritarian",
    "leader": "Янь Сишань",
@@ -1727,6 +1731,7 @@
    "techs": []
   },
   "XSM": {
+   "spirits": ["warlord_army"],
    "full_name": "Клика Ма",
    "ideology": "authoritarian",
    "leader": "Ма Буфан",
@@ -1750,6 +1755,7 @@
    "techs": []
   },
   "SIK": {
+   "spirits": ["warlord_army"],
    "full_name": "Синьцзян",
    "ideology": "authoritarian",
    "leader": "Шэн Шицай",

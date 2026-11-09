@@ -50,6 +50,7 @@ func tick() -> void:
 		return
 	var t0 := Time.get_ticks_usec()
 	world.day += 1
+	world.refresh_def_mult()   # зима и укрепления (раз в месяц)
 	_timed("подготовка", func():
 		var _pt := Time.get_ticks_usec()
 		world.rebuild_prov_divs()
@@ -384,6 +385,11 @@ func _phase_ai() -> void:
 	for nat in world.nations:
 		if nat.alive and not nat.is_player:
 			jobs.append({"nation": nat.id})
+			# развёртывание к запланированной фокусами войне: часть армии заранее
+			# держит фронт на границе с будущим противником (как армия игрока)
+			var x := _staging_enemy(nat)
+			if x >= 0:
+				jobs.append({"stage_of": nat.id, "enemy": x})
 	jobs.append_array(_group_jobs())
 	if jobs.is_empty():
 		return
@@ -400,10 +406,26 @@ func _phase_ai() -> void:
 		by_nation[owner[i]].append(i)
 	for n in world.nation_count:
 		by_nation[n] = PackedInt32Array(by_nation[n])
+	# дивизии на развёртывание: STAGE_SHARE армии (по id — состав не скачет)
+	var staged := {}
 	for job in jobs:
-		var rng := Parallel.rng(seed_value, day, job["nation"] if job.has("nation") else 5000 + int(job["group"]))
+		if job.has("stage_of"):
+			staged[int(job["stage_of"])] = true
+	for job in jobs:
+		var rng: RandomNumberGenerator
+		if job.has("stage_of"):
+			rng = Parallel.rng(seed_value, day, 7000 + int(job["stage_of"]))
+		else:
+			rng = Parallel.rng(seed_value, day, job["nation"] if job.has("nation") else 5000 + int(job["group"]))
 		job["rng"] = rng
-		if job.has("group"):
+		if job.has("stage_of"):
+			var sn: int = job["stage_of"]
+			var part := PackedInt32Array()
+			for slot in by_nation[sn]:
+				if _is_staged(slot):
+					part.append(slot)
+			job["args"] = AIPlanner.military_args(world, sn, part, {"mode": "hold", "enemy": int(job["enemy"])})
+		elif job.has("group"):
 			var idx := PackedInt32Array()
 			for i in world.divisions.size():
 				if world.divisions[i].group == job["group"]:
@@ -424,6 +446,12 @@ func _phase_ai() -> void:
 					nat.current_research = av[mini(av.size() - 1, (world.day + nid) % 2)]["id"]
 			if eco["war"] >= 0:
 				Diplomacy.declare_war(world, nid, eco["war"])
+			if staged.has(nid):
+				var rest := PackedInt32Array()
+				for slot in mine:
+					if not _is_staged(slot):
+						rest.append(slot)
+				mine = rest
 			job["args"] = AIPlanner.nation_args(world, nid, mine)
 	# глубокая копия: часть записей в массивы мира идёт на месте, без
 	# копирования при записи, — потоки должны читать замороженное состояние
@@ -446,6 +474,34 @@ var _ai_gid := -1
 
 
 ## Дождаться военных планов ИИ и применить приказы (конец дня).
+const STAGE_SHARE := 6   # из 10: доля армии на развёртывание к запланированной войне
+
+
+func _is_staged(slot: int) -> bool:
+	return world.d_id[slot] % 10 < STAGE_SHARE
+
+
+## Будущий противник для развёртывания: война из текущего или следующего фокуса,
+## ещё не начатая, и есть общая сухопутная граница.
+func _staging_enemy(nat: World.Nation) -> int:
+	if nat.planned_wars.is_empty():
+		return -1
+	var keys: Array = nat.planned_wars.keys()
+	keys.sort()
+	for x in keys:
+		var xi: int = x
+		if xi < 0 or not world.nations[xi].alive or world.is_at_war(nat.id, xi):
+			continue
+		var ctrl := world.p_controller
+		for p in world.prov_count:
+			if ctrl[p] != nat.id:
+				continue
+			for k in range(world.adj_start[p], world.adj_start[p + 1]):
+				if ctrl[world.adj_list[k]] == xi:
+					return xi
+	return -1
+
+
 func _finish_ai() -> void:
 	if _ai_jobs.is_empty():
 		return
@@ -800,7 +856,8 @@ func _check_capitulation() -> void:
 		if not nat.alive or nat.at_war.is_empty() or total[nat.id] == 0 or _peace_pending(nat.id):
 			continue
 		var ratio := float(held[nat.id]) / float(total[nat.id])
-		if ratio < nat.capitulate_at:
+		# порог капитуляции: базовый + черты (пораженчество, бескрайние просторы)
+		if ratio < nat.capitulate_at + nat.b("surrender"):
 			_capitulate(nat.id)
 		elif world.p_controller[nat.capital] != nat.id:
 			_move_capital(nat)

@@ -98,8 +98,11 @@ class Nation:
 	var daily_research := 0.0
 	var daily_manpower := 0.0
 
+	var spirits := {}           # национальные черты: id -> множитель силы (1 — полная)
+	var spirit_bonus := {}      # сумма бонусов черт (World.recalc_spirits)
+
 	func b(key: String) -> float:
-		return float(bonus.get(key, 0.0))
+		return float(bonus.get(key, 0.0)) + float(spirit_bonus.get(key, 0.0))
 
 
 class Faction:
@@ -334,7 +337,9 @@ var war := PackedByteArray()          # nation_count^2, 1 = война
 var adj_start := PackedInt32Array()   # CSR-соседство: adj_list[adj_start[p] .. adj_start[p+1])
 var adj_list := PackedInt32Array()
 var p_move_mult := PackedFloat32Array()  # копии констант местности по провинциям:
-var p_def_mult := PackedFloat32Array()   # константные Array/Dictionary скриптов из потоков не трогаем
+var p_def_mult := PackedFloat32Array()   # оборона провинции: местность + укрепления + зима (refresh_def_mult)
+var p_fort := PackedFloat32Array()       # укрепления провинции (forts.json): добавка к обороне
+var _def_month := -1                     # месяц, для которого посчитана зимняя добавка   # константные Array/Dictionary скриптов из потоков не трогаем
 var n_attack := PackedFloat32Array()
 var n_defense := PackedFloat32Array()
 var n_org := PackedFloat32Array()
@@ -429,6 +434,7 @@ var historical := true          # исторический ИИ: фокусы и
 var flags := {}
 var focus_trees := {}           # тег -> Array фокусов (Dictionary); "_generic" — для остальных
 var focus_index := {}           # тег -> {id: фокус} — History.focus_def
+var spirit_defs := {}           # национальные черты (spirits.json): id -> {name, desc, bonus}
 var focus_epoch := 0            # растёт при войнах, мире, союзах, событиях — будит ждущих ИИ
 var event_defs := {}            # id -> Dictionary
 var areas := {}
@@ -467,6 +473,44 @@ func event_front() -> Array:
 
 ## Номер дня по дате «ГГГГ-ММ-ДД» (день 0 — 1 января 1936 г.).
 var _day_of_cache := {}
+
+
+## Месяц (0–11) дня игры.
+func month_of(at: int) -> int:
+	var d := at
+	var year := START_YEAR
+	while d >= _year_days(year):
+		d -= _year_days(year)
+		year += 1
+	var m := 0
+	while d >= _month_days(m, year):
+		d -= _month_days(m, year)
+		m += 1
+	return m
+
+
+## Оборона провинций: местность + укрепления + зима. Зима (как погода в жанре):
+## декабрь–март севернее 60° — +0,4, севернее 55° — +0,25, декабрь–февраль
+## 48–55° — +0,12. Пересчёт раз в месяц; одинаково для GDScript и C++ (массив).
+func refresh_def_mult() -> void:
+	var m := month_of(day)
+	if m == _def_month and p_def_mult.size() == prov_count:
+		return
+	_def_month = m
+	p_def_mult.resize(prov_count)
+	var deep := m == 11 or m <= 2
+	var mid := m == 11 or m <= 1
+	for p in prov_count:
+		var v: float = TERRAIN_DEFENSE[p_terrain[p]] + (p_fort[p] if p < p_fort.size() else 0.0)
+		if p_land[p] == 1:
+			var lat := p_lonlat[p].y
+			if deep and lat >= 60.0:
+				v += 0.4   # полярная зима: Карелия, Финляндия, север России
+			elif deep and lat >= 55.0:
+				v += 0.25
+			elif mid and lat >= 48.0:
+				v += 0.12
+		p_def_mult[p] = v
 
 
 func day_of(date: String) -> int:
@@ -562,9 +606,12 @@ func build_caches() -> void:
 	adj_start[prov_count] = adj_list.size()
 	p_move_mult.resize(prov_count)
 	p_def_mult.resize(prov_count)
+	if p_fort.size() != prov_count:
+		p_fort.resize(prov_count)
 	for p in prov_count:
 		p_move_mult[p] = TERRAIN_MOVE[p_terrain[p]]
-		p_def_mult[p] = TERRAIN_DEFENSE[p_terrain[p]]
+	_def_month = -1
+	refresh_def_mult()
 	war.resize(nation_count * nation_count)
 	war.fill(0)
 	for n in nations:
@@ -1452,3 +1499,14 @@ func _side_power(slots: PackedInt32Array, terr: int, defending: bool) -> PackedF
 		hard += d_hard[i] * w
 		wsum += w
 	return PackedFloat64Array([power, hard / maxf(wsum, 0.01)])
+
+
+## Пересчитать бонусы национальных черт страны (после добавления, снятия, ослабления).
+func recalc_spirits(nat: Nation) -> void:
+	nat.spirit_bonus = {}
+	for id in nat.spirits:
+		var k: float = nat.spirits[id]
+		var bon: Dictionary = spirit_defs.get(id, {}).get("bonus", {})
+		for key in bon:
+			nat.spirit_bonus[key] = float(nat.spirit_bonus.get(key, 0.0)) + float(bon[key]) * k
+	nat.stats_dirty = true

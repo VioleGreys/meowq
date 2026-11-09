@@ -19,7 +19,8 @@ static func plan_economy(world: World, nid: int, rng: RandomNumberGenerator, min
 	var at_war := not nat.at_war.is_empty()
 
 	# --- Экономика: сколько дивизий заказать (шаблоны выбираются в главном потоке)
-	var cap := 4.0 + nat.population * 1.3
+	# потолок армии по населению; закон о призыве (бонус conscription) поднимает его
+	var cap := (4.0 + nat.population * 1.3) * (1.0 + nat.b("conscription"))
 	var target_divs := int(minf(6.0 + nat.mil * 2.5 + nat.civ * 0.3, cap) * (1.4 if at_war else 1.0))
 	# условия будущих событий фокусов («армия больше в N раз») — History._ai_prepare
 	target_divs = maxi(target_divs, mini(nat.prep_divs, int(cap * 1.5)))
