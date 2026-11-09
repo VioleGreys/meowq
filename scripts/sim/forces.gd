@@ -26,8 +26,11 @@ static func setup(world: World, dir: String) -> void:
 	var data: Dictionary = d.get("nations", {}) if typeof(d) == TYPE_DICTIONARY else {}
 	world.p_naval_base.resize(world.prov_count)
 	world.p_naval_base.fill(0)
+	var base_provs := {}   # тег -> провинции баз по порядку списка (−1 — не нашлась)
 	for nat in world.nations:
 		var fd0: Dictionary = data.get(nat.tag, {})
+		var bl: Array = []
+		base_provs[nat.tag] = bl
 		for ll in fd0.get("bases", []):
 			var best := -1
 			var best_d := INF
@@ -37,6 +40,7 @@ static func setup(world: World, dir: String) -> void:
 					if dd < best_d:
 						best_d = dd
 						best = p
+			bl.append(best)
 			if best >= 0:
 				world.p_naval_base[best] = 1
 	for nat in world.nations:
@@ -50,8 +54,35 @@ static func setup(world: World, dir: String) -> void:
 			var home := home_zone(world, nat.id)
 			if home >= 0:
 				var surface := PackedInt32Array([int(navy.get("bb", 0)), int(navy.get("cr", 0)), int(navy.get("dd", 0)), 0])
-				if surface[0] + surface[1] + surface[2] > 0:
+				var squads: Array = fd.get("squadrons", [])
+				if surface[0] + surface[1] + surface[2] > 0 and squads.is_empty():
 					create_fleet(world, nat.id, home, surface, "Основной флот")
+				elif surface[0] + surface[1] + surface[2] > 0:
+					# деление по базам: доля кораблей каждого типа, остаток — первому
+					var left := surface.duplicate()
+					var made: Array = []
+					for i in squads.size():
+						var sq: Array = squads[i]
+						var zone := home
+						var bl2: Array = base_provs.get(nat.tag, [])
+						var bi := int(sq[1])
+						if bi >= 0 and bi < bl2.size() and int(bl2[bi]) >= 0:
+							for q in world.p_adj[int(bl2[bi])]:
+								if world.p_land[q] == 0:
+									zone = q
+									break
+						var part := PackedInt32Array([0, 0, 0, 0])
+						if i > 0:
+							for t in 3:
+								part[t] = mini(left[t], int(round(surface[t] * float(sq[2]))))
+								left[t] -= part[t]
+						made.append([zone, part, String(sq[0]), float(sq[2])])
+					made[0][1] = PackedInt32Array([left[0], left[1], left[2], 0])
+					for m in made:
+						var pp: PackedInt32Array = m[1]
+						if pp[0] + pp[1] + pp[2] > 0:
+							var nf := create_fleet(world, nat.id, int(m[0]), pp, String(m[2]))
+							nf.share = float(m[3])
 				if int(navy.get("ss", 0)) > 0:
 					var subs := create_fleet(world, nat.id, home, PackedInt32Array([0, 0, 0, int(navy.get("ss", 0))]), "Подводные силы")
 					subs.mission = "raid"
@@ -479,11 +510,16 @@ static func _build_ships(world: World) -> void:
 			continue
 		nat.stock[Military.EQ_SHIP] -= SHIP_COST[t]
 		nat.ship_queue.pop_front()
+		# новый корабль — во флот своего рода, у которого меньше всего сил
+		# относительно его доли (подлодки — к рейдерам)
 		var target: World.Fleet = null
+		var tp := INF
 		for f in world.fleets:
 			if f.alive and f.owner == nat.id and ((t == SHIP_SS) == (f.mission == "raid")):
-				target = f
-				break
+				var fp := fleet_power(f) / maxf(0.05, f.share)
+				if fp < tp:
+					tp = fp
+					target = f
 		if target == null:
 			var home := home_zone(world, nat.id)
 			if home < 0:
@@ -701,10 +737,15 @@ static func ai_fleets(world: World, n: int) -> void:
 						best_len = l
 						best = z
 		else:
+			# охота — в своём районе (до 8 зон от базы), без цели — блокада
+			# ближайших к базе вражеских портов (держит дальнюю блокаду торговли)
 			var mine := fleet_power(f)
+			var from_base := sea_dist(world, f.home)
+			# флот, поделённый по базам (доля < 1), держит свой район — 5 зон
+			var reach_n := 8 if f.share >= 0.99 else 5
 			for z in world.zone_fleets:
 				var l: int = from_here[z] if from_here[z] >= 0 else 1 << 20
-				if l > 8 or l >= best_len:
+				if l >= best_len or from_base[z] < 0 or from_base[z] > reach_n:
 					continue
 				var enemy := 0.0
 				for o in world.zone_fleets[z]:
@@ -713,6 +754,20 @@ static func ai_fleets(world: World, n: int) -> void:
 				if enemy > 0.0 and mine > enemy * 1.2:
 					best_len = l
 					best = z
+			if best < 0:
+				var bl3 := reach_n + 1
+				for e in nat.at_war:
+					for z in trade_zones(world, e):
+						var dz: int = from_base[z]
+						if dz >= 0 and dz < bl3:
+							# не лезть под более сильный флот противника
+							var enemy2 := 0.0
+							for o in world.zone_fleets.get(z, []):
+								if world.is_at_war(n, o.owner):
+									enemy2 += fleet_power(o)
+							if enemy2 * 1.2 < mine:
+								bl3 = dz
+								best = z
 			if best < 0 and f.zone != f.home:
 				best = f.home
 		if best >= 0 and best != f.zone:

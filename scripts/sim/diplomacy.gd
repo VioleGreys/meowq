@@ -403,6 +403,13 @@ static func make_peace(world: World, loser: int, winner: int, mode: String) -> v
 			elif world.p_controller[p] == loser:
 				world.p_controller[p] = world.p_owner[p]
 		nl.alive = false
+		# флот и авиация аннексированной страны не достаются никому
+		for f in world.fleets:
+			if f.owner == loser:
+				f.alive = false
+		for wg in world.wings:
+			if wg.owner == loser:
+				wg.alive = false
 		for o in world.nations:
 			o.guarantees.erase(loser)
 			o.pacts.erase(loser)

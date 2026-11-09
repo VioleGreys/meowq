@@ -20,11 +20,17 @@ func fresh() -> Array:
 	return [w, Simulation.new(w)]
 
 
+## Флот по названию; «Основной флот» — сильнейший надводный (у Британии
+## флот поделён по базам: Флот метрополии, Средиземноморский, Восточный).
 func fleet_of(w: World, n: int, name: String) -> World.Fleet:
+	var best: World.Fleet = null
 	for f in w.fleets:
 		if f.alive and f.owner == n and f.name == name:
 			return f
-	return null
+		if name == "Основной флот" and f.alive and f.owner == n and f.mission != "raid" \
+				and (best == null or Forces.fleet_power(f) > Forces.fleet_power(best)):
+			best = f
+	return best
 
 
 func _init() -> void:
@@ -38,7 +44,7 @@ func _init() -> void:
 	var eng_main := fleet_of(w, ENG, "Основной флот")
 	var ger_main := fleet_of(w, GER, "Основной флот")
 	check(eng_main != null and ger_main != null, "у Британии и Германии есть флоты")
-	check(Forces.fleet_power(eng_main) > Forces.fleet_power(ger_main) * 5.0, "британский флот многократно сильнее (%.0f против %.0f)" % [Forces.fleet_power(eng_main), Forces.fleet_power(ger_main)])
+	check(Forces.fleet_power(eng_main) > Forces.fleet_power(ger_main) * 3.5, "Флот метрополии многократно сильнее (%.0f против %.0f)" % [Forces.fleet_power(eng_main), Forces.fleet_power(ger_main)])
 	var ger_wings := 0
 	for wg in w.wings:
 		if wg.owner == GER:

@@ -283,6 +283,7 @@ class Fleet:
 	var in_battle := false
 	var task_until := 0             # прикрывает высадку до этого дня (ИИ не уводит в порт)
 	var readiness := 1.0            # готовность 0..1: падает в боях, восстанавливается на военно-морской базе
+	var share := 1.0                # доля новых кораблей своего рода (флоты по базам, squadrons)
 
 
 ## План морской высадки: подготовка 30–60 дней, войска ждут в порту посадки.
@@ -380,6 +381,9 @@ var res_val := PackedFloat32Array()       # их добыча: i*6 + ресур�
 var contracts: Array = []                 # поставки: [покупатель, продавец, ресурс, ед., до дня, —, со след. месяца]
 var trade_score := PackedFloat32Array()
 var trade_adj := PackedByteArray()       # соседство стран N×N (Economy.refresh_geo, раз в месяц)
+var p_mass := PackedInt32Array()          # номер материка (связной суши) провинции; −1 — море
+var trade_mass: Dictionary = {}           # узел «материк*N + страна» -> соседние узлы (Economy.refresh_geo)
+var trade_block := PackedByteArray()     # морская блокада: [покупатель*N + продавец] = 1 — путь отрезан (Economy.refresh_blockade)
 var trade_coast := PackedByteArray()     # выход к морю
 var trade_geo_day := -100
 var embargoes := {}                       # продавец*100000 + покупатель → эмбарго (Economy.embargo)

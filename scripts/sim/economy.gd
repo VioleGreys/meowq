@@ -164,6 +164,8 @@ static func can_trade(world: World, buyer: int, seller: int) -> String:
 		return "война"
 	if world.embargoes.has(seller * 100000 + buyer):
 		return "эмбарго"
+	if is_blocked(world, buyer, seller):
+		return "блокада"
 	var sn: World.Nation = world.nations[seller]
 	if sn.trade_closed and sn.overlord >= 0 and sn.overlord != buyer:
 		return "марионетка торгует только с сюзереном"
@@ -171,6 +173,220 @@ static func can_trade(world: World, buyer: int, seller: int) -> String:
 			and world.rep[seller * world.nation_count + buyer] < -30.0:
 		return "продавец не хочет торговать"
 	return ""
+
+
+## Отрезан ли путь от продавца к покупателю морской блокадой.
+static func is_blocked(world: World, buyer: int, seller: int) -> bool:
+	var nc := world.nation_count
+	return world.trade_block.size() == nc * nc and world.trade_block[buyer * nc + seller] == 1
+
+
+## Морская блокада (раз в SWEEP_DAYS, главный поток — читает флоты): у
+## воюющей страны продавец доступен, если до него есть путь по суше через
+## страны, не воюющие с ней (World.trade_adj), или по морю — от её портов до
+## портов продавца через открытые для неё морские зоны. Зона открыта: если в
+## ней есть боевые флоты противника — по местному господству (≥ BLOCK_SHARE,
+## как у блокады портов); если нет — у своих и союзных берегов открыта, а в
+## открытом море — по перевесу флотов в округе (≥ BLOCK_OPEN; флоты в пределах BLOCK_RANGE
+## зон, вес BLOCK_FALL за зону, и в порту — «флот в наличии»): так сильный
+## флот держит дальнюю блокаду, как Британия в обе войны.
+## Мирные страны не блокируются.
+const BLOCK_SHARE := 0.3   # местное господство в зоне с боевыми флотами (как у блокады портов)
+const BLOCK_OPEN := 0.4    # перевес в округе, чтобы прорвать дальнюю блокаду
+const BLOCK_RANGE := 5
+const BLOCK_FALL := 0.7
+
+static func refresh_blockade(world: World) -> void:
+	var nc := world.nation_count
+	world.trade_block = PackedByteArray()
+	world.trade_block.resize(nc * nc)
+	if world.fleets.is_empty() or world.trade_adj.size() != nc * nc:
+		return
+	var zf := world.zone_fleets
+	if zf.is_empty():
+		return
+	var land := world.p_land
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	var ctrl := world.p_controller
+	# морские зоны у портов каждой страны
+	var zones: Array = []
+	zones.resize(nc)
+	for x in nc:
+		zones[x] = PackedInt32Array()
+	var zl: Array = []
+	zl.resize(nc)
+	for x in nc:
+		zl[x] = []
+	for p in world.prov_count:
+		var c := ctrl[p]
+		if c < 0 or land[p] == 0 or not Forces.is_port(world, p):
+			continue
+		for k in range(a_start[p], a_start[p + 1]):
+			var q := a_list[k]
+			if land[q] == 0:
+				zl[c].append(q)
+	for x in nc:
+		zones[x] = PackedInt32Array(zl[x])
+	var war := world.war
+	# соседи по суше (на одном материке) — для транзита через их порты
+	var transit: Array = []
+	transit.resize(nc)
+	for x in nc:
+		transit[x] = PackedInt32Array()
+	var tl: Array = []
+	tl.resize(nc)
+	for x in nc:
+		tl[x] = {}
+	for key in world.trade_mass:
+		var x: int = int(key) % nc
+		for k2 in world.trade_mass[key]:
+			tl[x][int(k2) % nc] = true
+	for x in nc:
+		var ks: Array = tl[x].keys()
+		ks.sort()
+		transit[x] = PackedInt32Array(ks)
+	# у каждого флота — округа: зоны в пределах BLOCK_RANGE и вес силы в них
+	var reach: Array = []
+	for f in world.fleets:
+		if not f.alive or f.owner < 0:
+			continue
+		var pw := Forces.combat_power(f)
+		if pw <= 0.0:
+			continue
+		var zs := PackedInt32Array([f.zone])
+		var ws := PackedFloat32Array([pw])
+		var dist := {f.zone: 0}
+		var hh := 0
+		while hh < zs.size():
+			var z := zs[hh]
+			var dz: int = dist[z]
+			hh += 1
+			if dz >= BLOCK_RANGE:
+				continue
+			for k in range(a_start[z], a_start[z + 1]):
+				var q := a_list[k]
+				if land[q] == 0 and not dist.has(q):
+					dist[q] = dz + 1
+					zs.append(q)
+					ws.append(pw * pow(BLOCK_FALL, dz + 1))
+		reach.append([f.owner, zs, ws])
+	for b in nc:
+		var bn: World.Nation = world.nations[b]
+		if not bn.alive or bn.at_war.is_empty():
+			continue
+		# флоты в округе: своя сторона (союзники) против врагов
+		var own_r := PackedFloat32Array()
+		var en_r := PackedFloat32Array()
+		var any_enemy := false
+		for fr in reach:
+			var o: int = fr[0]
+			var dst: PackedFloat32Array
+			if war[b * nc + o] == 1:
+				if en_r.is_empty():
+					en_r.resize(world.prov_count)
+				dst = en_r
+				any_enemy = true
+			elif world.ally[b * nc + o] == 1 or o == b:
+				if own_r.is_empty():
+					own_r.resize(world.prov_count)
+				dst = own_r
+			else:
+				continue
+			var zs: PackedInt32Array = fr[1]
+			var ws: PackedFloat32Array = fr[2]
+			for i in zs.size():
+				dst[zs[i]] += ws[i]
+			if dst == en_r:
+				en_r = dst
+			else:
+				own_r = dst
+		if not any_enemy:
+			continue
+		if own_r.is_empty():
+			own_r.resize(world.prov_count)
+		# у своих и союзных берегов
+		var near := {}
+		for x in nc:
+			if world.ally[b * nc + x] == 1 or x == b:
+				for z in zones[x]:
+					near[z] = true
+		# по суше: страны на нашем материке (материк столицы), связанные с нами
+		# через невоюющих с нами (узел — страна на материке, без морских звеньев)
+		var by_land := PackedByteArray()
+		by_land.resize(nc)
+		by_land[b] = 1
+		var h := 0
+		if bn.capital >= 0 and world.p_mass.size() == world.prov_count and world.p_mass[bn.capital] >= 0:
+			var start := world.p_mass[bn.capital] * nc + b
+			var seen_n := {start: true}
+			var qn := PackedInt32Array([start])
+			while h < qn.size():
+				var key := qn[h]
+				h += 1
+				var nb: PackedInt32Array = world.trade_mass.get(key, PackedInt32Array())
+				for k2 in nb:
+					var y := k2 % nc
+					if seen_n.has(k2) or war[b * nc + y] == 1 or not world.nations[y].alive:
+						continue
+					seen_n[k2] = true
+					by_land[y] = 1
+					qn.append(k2)
+		h = 0
+		# по морю: зоны, достижимые от наших портов без господства противника
+		var seen := {}
+		var open := {}
+		var qz := PackedInt32Array()
+		for z in zones[b]:
+			if not seen.has(z):
+				seen[z] = true
+				if _zone_open(world, b, z, zf, near, own_r, en_r):
+					open[z] = true
+					qz.append(z)
+		while h < qz.size():
+			var z := qz[h]
+			h += 1
+			for k in range(a_start[z], a_start[z + 1]):
+				var q := a_list[k]
+				if land[q] != 0 or seen.has(q):
+					continue
+				seen[q] = true
+				if _zone_open(world, b, q, zf, near, own_r, en_r):
+					open[q] = true
+					qz.append(q)
+		for s in nc:
+			if s == b or by_land[s] == 1 or war[b * nc + s] == 1 or not world.nations[s].alive:
+				continue
+			var ok := false
+			for z in zones[s]:
+				if open.has(z):
+					ok = true
+					break
+			if not ok:
+				# транзит через порты невоюющего с нами соседа по суше
+				for y in transit[s]:
+					if war[b * nc + y] == 1 or not world.nations[y].alive:
+						continue
+					for z in zones[y]:
+						if open.has(z):
+							ok = true
+							break
+					if ok:
+						break
+			if not ok:
+				world.trade_block[b * nc + s] = 1
+
+
+static func _zone_open(world: World, b: int, z: int, zf: Dictionary, near: Dictionary,
+		own_r: PackedFloat32Array, en_r: PackedFloat32Array) -> bool:
+	var fl: Array = zf.get(z, [])
+	var nc := world.nation_count
+	for f in fl:
+		if f.alive and f.mission != "port" and world.war[b * nc + f.owner] == 1:
+			return Forces.supremacy(world, b, z) >= BLOCK_SHARE
+	if near.has(z) or en_r[z] <= 0.0:
+		return true
+	return own_r[z] / (own_r[z] + en_r[z]) >= BLOCK_OPEN
 
 
 ## Купить units ресурса r у продавца на месяц (сверх уже купленного; только
@@ -318,6 +534,8 @@ static func rank_row(t: Dictionary, s: int) -> PackedFloat32Array:
 	var rn: int = t["rep_n"]
 	var emb: PackedByteArray = t["emb"]
 	var closed: PackedByteArray = t["closed"]
+	var block: PackedByteArray = t["block"]
+	var has_block := block.size() == nc * nc
 	var row := PackedFloat32Array()
 	row.resize(nc)
 	if alive[s] == 0:
@@ -340,6 +558,8 @@ static func rank_row(t: Dictionary, s: int) -> PackedFloat32Array:
 			continue
 		if (closed[s] == 1 and over[s] != b) or emb[s * nc + b] == 1:
 			continue   # марионетка торгует только с сюзереном; эмбарго
+		if has_block and block[b * nc + s] == 1:
+			continue   # путь отрезан морской блокадой
 		var rp := rep[s * rn + b] if s < rn and b < rn else 50.0
 		if rp < -30.0:
 			continue
@@ -369,6 +589,10 @@ static func rank_row(t: Dictionary, s: int) -> PackedFloat32Array:
 ## пересчитывается раз в CONTRACT_DAYS дней (World.trade_adj/trade_coast).
 static func refresh_geo(world: World) -> void:
 	var nc := world.nation_count
+	if world.p_mass.size() != world.prov_count:
+		_build_mass(world)
+	var mass := world.p_mass
+	var edges := {}
 	world.trade_adj = PackedByteArray()
 	world.trade_adj.resize(nc * nc)
 	world.trade_coast = PackedByteArray()
@@ -385,7 +609,42 @@ static func refresh_geo(world: World) -> void:
 			var d := ctrl[q]
 			if d >= 0 and d != c and world.p_land[q] == 1:
 				world.trade_adj[c * nc + d] = 1
+				var ka := mass[p] * nc + c
+				var kb := mass[p] * nc + d
+				if not edges.has(ka):
+					edges[ka] = {}
+				edges[ka][kb] = true
+	world.trade_mass = {}
+	for k in edges:
+		world.trade_mass[k] = PackedInt32Array(edges[k].keys())
 	world.trade_geo_day = world.day
+
+
+## Материки — связные куски суши (с проливами, как в графе соседства).
+static func _build_mass(world: World) -> void:
+	var n := world.prov_count
+	world.p_mass = PackedInt32Array()
+	world.p_mass.resize(n)
+	world.p_mass.fill(-1)
+	var land := world.p_land
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	var m := 0
+	for p0 in n:
+		if land[p0] == 0 or world.p_mass[p0] >= 0:
+			continue
+		world.p_mass[p0] = m
+		var q := PackedInt32Array([p0])
+		var h := 0
+		while h < q.size():
+			var p := q[h]
+			h += 1
+			for k in range(a_start[p], a_start[p + 1]):
+				var r := a_list[k]
+				if land[r] == 1 and world.p_mass[r] < 0:
+					world.p_mass[r] = m
+					q.append(r)
+		m += 1
 
 
 ## Раз в месяц продавец раздаёт экспортную долю по рейтингу: заявка покупателя —
@@ -500,9 +759,15 @@ static func daily(world: World) -> void:
 	# и рассорившихся стран снимаются; война рвёт поставки сразу — on_war)
 	if first or world.day % SWEEP_DAYS == 0:
 		refresh(world)
+		refresh_blockade(world)
 		dirty = true
 		var keep: Array = []
+		var cut := {}
 		for c in world.contracts:
+			if is_blocked(world, int(c[0]), int(c[1])):
+				# морская блокада рвёт и договорные поставки
+				cut[int(c[0])] = int(cut.get(int(c[0]), 0)) + 1
+				continue
 			if world.day >= int(c[4]):
 				if can_trade(world, c[0], c[1]) != "":
 					continue
@@ -515,6 +780,8 @@ static func daily(world: World) -> void:
 					c[4] = int(c[4]) + CONTRACT_DAYS
 			keep.append(c)
 		world.contracts = keep
+		for b in cut:
+			world.log_event("Морская блокада: %s теряет заморские поставки (%d)" % [world.nations[b].name, cut[b]])
 		_recount(world)
 	if world.trade_adj.size() != nc * nc or world.day - world.trade_geo_day >= CONTRACT_DAYS:
 		refresh_geo(world)
@@ -693,6 +960,7 @@ static func _snapshot(world: World, due: PackedInt32Array) -> Dictionary:
 		if a < nc and b < nc:
 			emb[a * nc + b] = 1
 	t["emb"] = emb
+	t["block"] = world.trade_block.duplicate()
 	t["cur"] = cur_all
 	t["c3"] = c3_all
 	return t

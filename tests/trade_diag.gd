@@ -8,11 +8,15 @@ func _init() -> void:
 	MapLoader.load_world(w)
 	var sim := Simulation.new(w)
 	var tag := "GER"
+	var dates := ["1939-11-01", "1940-09-01", "1941-06-01"]
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--nation="):
 			tag = a.split("=")[1]
+		if a.begins_with("--seed="):
+			w.seed_value = int(a.split("=")[1])
+		if a.begins_with("--dates="):
+			dates = Array(a.split("=")[1].split(","))
 	var n := w.nation_tags.find(tag)
-	var dates := ["1940-09-01", "1941-06-01"]
 	for ds in dates:
 		var end := w.day_of(ds)
 		while w.day < end:
@@ -40,6 +44,11 @@ func _init() -> void:
 							who.append("%s:%.1f" % [w.nation_tags[int(c[0])], float(c[3])])
 					lines.append("%s[%s](добыча %.0f нужда %.0f предел %.1f свободно %.1f рейт %.2f%s)" % [w.nation_tags[s], " ".join(who), sn.res_prod[r], sn.res_need[r], cap, ex, sc, (" " + why) if why != "" else ""])
 				print("     продавцы: " + ", ".join(lines))
+		var bl: Array = []
+		for s in w.nation_count:
+			if Economy.is_blocked(w, n, s):
+				bl.append(w.nation_tags[s])
+		print("  блокада (%d): %s" % [bl.size(), " ".join(bl)])
 		var cs: Array = []
 		for c in w.contracts:
 			if int(c[0]) == n:

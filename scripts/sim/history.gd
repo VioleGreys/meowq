@@ -1277,8 +1277,14 @@ static func effects_text(world: World, effects: Array) -> String:
 			"embargo":
 				parts.append("%sэмбарго: %s" % [who, tname])
 			"synthetic":
-				var rn := {"oil": "горючее", "rubber": "каучук"}
-				parts.append("%sсинтетическое %s +%d в день" % [who, rn.get(String(e.get("res", "oil")), String(e.get("res", ""))), int(e.get("v", 0))])
+				var rn := {"oil": "горючее", "rubber": "каучук", "steel": "сталь", "aluminium": "алюминий", "tungsten": "вольфрам", "chromium": "хром"}
+				var sv := float(e.get("v", 0))
+				var num := str(snappedf(absf(sv), 0.1)).trim_suffix(".0")
+				var res_n: String = rn.get(String(e.get("res", "oil")), String(e.get("res", "")))
+				if String(e.get("res", "oil")) in ["oil", "rubber"] and sv > 0.0:
+					parts.append("%sсинтетическое %s +%s в день" % [who, res_n, num])
+				else:
+					parts.append("%s%s %s%s в день%s" % [who, res_n, "+" if sv > 0.0 else "−", num, " (запасы)" if sv > 0.0 else ""])
 			"spirit_add":
 				parts.append("%sчерта «%s»" % [who, world.spirit_defs.get(e["id"], {}).get("name", e["id"])])
 			"spirit_remove":
