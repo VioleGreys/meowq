@@ -61,6 +61,8 @@ static func nation_args(world: World, nid: int, mine: PackedInt32Array) -> Array
 			ratio = 2.2
 		"authoritarian":
 			ratio = 1.7
+	# черты с ключом caution — наступать только при большем перевесе
+	ratio *= 1.0 + maxf(0.0, nat.b("caution"))
 	return military_args(world, nid, mine, {"mode": "auto", "ratio": ratio})
 
 

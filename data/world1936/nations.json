@@ -81,6 +81,7 @@
    ]
   },
   "ENG": {
+   "spirits": ["eng_peacetime"],
    "major": true,
    "full_name": "Соединённое Королевство",
    "ideology": "democracy",
@@ -234,6 +235,7 @@
    ]
   },
   "ITA": {
+   "spirits": ["ita_colonial"],
    "major": true,
    "full_name": "Королевство Италия",
    "ideology": "fascism",
@@ -1042,6 +1044,7 @@
    }
   },
   "USA": {
+   "spirits": ["usa_isolation"],
    "full_name": "Соединённые Штаты Америки",
    "ideology": "democracy",
    "leader": "Франклин Рузвельт",
