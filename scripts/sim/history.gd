@@ -25,10 +25,16 @@ static func tree_of(world: World, n: int) -> Array:
 
 
 static func focus_def(world: World, n: int, id: String) -> Dictionary:
-	for fd in tree_of(world, n):
-		if fd["id"] == id:
-			return fd
-	return {}
+	# индекс id -> фокус по деревьям (строится один раз)
+	var tag: String = world.nation_tags[n]
+	if not world.focus_trees.has(tag):
+		tag = "_generic"
+	var idx: Dictionary = world.focus_index.get(tag, {})
+	if idx.is_empty():
+		for fd in world.focus_trees.get(tag, []):
+			idx[fd["id"]] = fd
+		world.focus_index[tag] = idx
+	return idx.get(id, {})
 
 
 static func tag_id(world: World, tag: String) -> int:
@@ -150,13 +156,19 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 						world.event_snap[String(fe["id"])] = snapshot(world, String(fe["id"]), nat.id)
 				apply(world, nat.id, fd.get("effects", []), rng)
 				nat.prep_day = -1   # сверить план подготовки
+		var _pt := Time.get_ticks_usec()
 		if nat.focus_current == "" and not nat.is_player:
 			_ai_pick_focus(world, nat.id, rng)
+		Prof.add("ист:выбор фокуса", _pt)
+		_pt = Time.get_ticks_usec()
 		if not nat.is_player and world.day % 5 == nat.id % 5:
 			nat.planned_wars = planned_wars(world, nat.id)
+		Prof.add("ист:планы войн", _pt)
+		_pt = Time.get_ticks_usec()
 		# план подготовки к событиям: в начале партии и после каждого фокуса
 		if not nat.is_player and nat.prep_day < 0:
 			_ai_prepare(world, nat.id)
+		Prof.add("ист:подготовка", _pt)
 	# события, автоматически срабатывающие по дате
 	for id in world.event_defs:
 		var ev: Dictionary = world.event_defs[id]
@@ -276,11 +288,17 @@ static func planned_wars(world: World, n: int) -> Dictionary:
 
 
 static func _ai_pick_focus(world: World, n: int, rng: RandomNumberGenerator) -> void:
+	var nat: World.Nation = world.nations[n]
+	# фокусы проверяются, когда закончен предыдущий; если взять было нечего —
+	# снова в день, когда по дате откроется ближайший, или когда мир изменился
+	if world.day < nat.focus_wait_until and nat.focus_wait_epoch == world.focus_epoch:
+		return
 	var avail: Array = []
 	for fd in tree_of(world, n):
 		if focus_block(world, n, fd) == "":
 			avail.append(fd["id"])
 	if avail.is_empty():
+		_ai_wait(world, n)
 		return
 	# ИИ идёт строго по исторической ветке в любом режиме: развилки — первый путь
 	# в списке, сроки — исторические. Варианты для ИИ добавим позже.
@@ -336,6 +354,22 @@ static func _ai_pick_historical(world: World, n: int, avail: Array) -> void:
 			start_focus(world, n, id)
 			return
 	# 3) иначе ждём (цепочки сроков ещё недоступны по дате)
+	_ai_wait(world, n)
+
+
+## Ждать до дня, когда откроется ближайший по дате фокус; условия войн и
+## событий будят раньше через World.focus_epoch; на всякий случай — не дольше месяца.
+static func _ai_wait(world: World, n: int) -> void:
+	var nat: World.Nation = world.nations[n]
+	nat.focus_wait_epoch = world.focus_epoch
+	var wake := world.day + 30
+	for fd in tree_of(world, n):
+		var cnd: Dictionary = fd.get("available", {})
+		if cnd.has("date") and not nat.focus_done.has(fd["id"]):
+			var open_day := world.day_of(cnd["date"]) - int(fd.get("days", 70))
+			if open_day > world.day:
+				wake = mini(wake, open_day)
+	nat.focus_wait_until = wake
 
 
 ## Срок важен для истории: событие, война, договор, присоединение. Даты у
@@ -645,6 +679,10 @@ static func choose_option(world: World, id: String, option: int, rng: RandomNumb
 
 static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerator) -> void:
 	for e in effects:
+		# то, от чего зависят условия фокусов (войны, мир, страны, флаги, строй) —
+		# будит ждущих ИИ; бонусы и заводы условий не меняют
+		if e.get("t", "") in ["war", "peace", "annex", "release", "civil_war", "flag", "ideology", "transfer"]:
+			world.focus_epoch += 1
 		var who := n
 		if e.has("who"):
 			who = tag_id(world, e["who"])

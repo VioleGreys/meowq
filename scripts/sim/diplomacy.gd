@@ -201,6 +201,7 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 				world.set_war(x, y)
 	add_tension(world, 8.0 if is_major(world, b) else (1.0 if world.nations[b].province_count <= 2 else 2.5))
 	Relations.on_war(world, a, b)
+	world.focus_epoch += 1
 	world.log_event("%s объявляет войну: %s!" % [na.name, world.nations[b].name])
 	for y in defenders:
 		if y != b and y != rb:
@@ -268,6 +269,7 @@ static func join_faction(world: World, n: int, f: int) -> void:
 	if f < 0 or nat.faction == f:
 		return
 	nat.faction = f
+	world.focus_epoch += 1
 	nat.justify_target = -1
 	Relations.add_diplo(world, n, 6.0)
 	Relations.add_diplo(world, world.factions[f].leader, 3.0)
@@ -369,6 +371,7 @@ static func ai_accepts(world: World, from: int, to: int, kind: String) -> Array:
 ## Капитуляция: mode = "annex" (оккупанты забирают занятое, остальное — победитель)
 ## или "puppet" (проигравший сохраняет земли и становится марионеткой победителя).
 static func make_peace(world: World, loser: int, winner: int, mode: String) -> void:
+	world.focus_epoch += 1
 	var nl: World.Nation = world.nations[loser]
 	var nw: World.Nation = world.nations[winner]
 	for d in world.divisions:

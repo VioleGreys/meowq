@@ -67,6 +67,8 @@ class Nation:
 	var improving := {}         # улучшение отношений: id страны -> true (не больше Relations.IMPROVE_SLOTS)
 	var prep_divs := 0          # ИИ: сколько дивизий нужно для условий будущих событий фокусов
 	var prep_day := -1          # день последней сверки плана подготовки (-1 — сверить)
+	var focus_wait_until := 0   # ИИ ждёт: следующий пересмотр фокусов не раньше этого дня…
+	var focus_wait_epoch := -1  # …если в мире ничего не изменилось (World.focus_epoch)
 	var aggression := 0.0       # агрессивность: войны, аннексии, ультиматумы (тает ~5 % в месяц)
 	var diplo := 0.0            # дипломатическая активность: гарантии, союзы, пакты, помощь, вступление за жертву
 	var inv_target := -1        # ИИ: цель готовящейся высадки
@@ -426,6 +428,8 @@ var pending_peace: Array = []
 var historical := true          # исторический ИИ: фокусы и события по истории, без случайной агрессии
 var flags := {}
 var focus_trees := {}           # тег -> Array фокусов (Dictionary); "_generic" — для остальных
+var focus_index := {}           # тег -> {id: фокус} — History.focus_def
+var focus_epoch := 0            # растёт при войнах, мире, союзах, событиях — будит ждущих ИИ
 var event_defs := {}            # id -> Dictionary
 var areas := {}
 var capitulation_rules: Array = []
@@ -462,7 +466,20 @@ func event_front() -> Array:
 # --- Время -------------------------------------------------------------------
 
 ## Номер дня по дате «ГГГГ-ММ-ДД» (день 0 — 1 января 1936 г.).
+var _day_of_cache := {}
+
+
 func day_of(date: String) -> int:
+	# даты условий фокусов и событий проверяются каждый день — разбирать один раз
+	var cached = _day_of_cache.get(date)
+	if cached != null:
+		return cached
+	var r := _day_of_parse(date)
+	_day_of_cache[date] = r
+	return r
+
+
+func _day_of_parse(date: String) -> int:
 	var parts := date.split("-")
 	if parts.size() < 3:
 		return 0
