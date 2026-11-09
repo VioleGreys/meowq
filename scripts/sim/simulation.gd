@@ -872,6 +872,7 @@ func _phase_diplomacy() -> void:
 		return
 	var _pt := Time.get_ticks_usec()
 	Diplomacy.daily(world)
+	Relations.daily(world)
 	Prof.add("дип:daily", _pt)
 	_pt = Time.get_ticks_usec()
 	History.daily(world, Parallel.rng(world.seed_value, world.day, 7777))

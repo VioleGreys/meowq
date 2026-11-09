@@ -77,6 +77,23 @@ func _init() -> void:
 			var cell := "%d,%d" % [int(fd["x"]), int(fd["y"])]
 			check(not cells.has(cell), "%s/%s: та же клетка, что у %s" % [tag, fd["id"], cells.get(cell, "")])
 			cells[cell] = fd["id"]
+	# шансы событий: известные условия и существующие страны (иначе в тексте «?»)
+	for id in w.event_defs:
+		var ev: Dictionary = w.event_defs[id]
+		var ctx := History.event_ctx(w, id, 0)
+		var specs: Array = []
+		if ev.has("chance"):
+			specs.append(ev["chance"])
+		for o in ev.get("options", []):
+			for e in o.get("effects", []):
+				if e.get("t", "") == "roll":
+					specs.append(e.get("chance", {}))
+		for spec in specs:
+			for m in spec.get("mods", []):
+				var r := Relations.cond(w, m.get("if", {}), ctx)
+				check(not String(r[1]).contains("?"), "%s: непонятное условие %s" % [id, JSON.stringify(m.get("if", {}))])
+		if ev.has("chance"):
+			check(History.event_has_choice(ev), "%s: шанс у события без выбора" % id)
 	if errors == 0:
 		print("Данные 1936 г.: OK")
 	quit(1 if errors > 0 else 0)

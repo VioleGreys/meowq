@@ -160,8 +160,14 @@ func _draw_lines() -> void:
 			tree.draw_dashed_line(p1, p2, Color(0.66, 0.13, 0.11), 3.0, 10.0)
 
 
+var _forecast := ""   # прогноз шансов: считается при выборе фокуса, а не каждый день
+
+
 func _select(id: String) -> void:
 	selected = id
+	game.world_lock()
+	_forecast = History.forecast_text(world, nid, History.focus_def(world, nid, id))
+	game.world_unlock()
 	refresh()
 
 
@@ -173,6 +179,8 @@ func _update_detail() -> void:
 	var fd := History.focus_def(world, nid, selected)
 	var st := History.focus_block(world, nid, fd)
 	var txt := "%s (%d дн.) — %s\n%s" % [fd["name"], fd.get("days", 70), fd.get("desc", ""), History.effects_text(world, fd.get("effects", []))]
+	if _forecast != "":
+		txt += "\n" + _forecast
 	if st != "":
 		txt += "\n⟶ " + st
 	detail.text = txt

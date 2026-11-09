@@ -60,7 +60,14 @@
   `"guaranteed"`) — в `pending_events`, ход не останавливает: пауза при приходе
   (`main._ui_update`, `_event_seen`), срок `World.EVENT_ANSWER_DAYS`=14
   (`pending_since`, `History._answer_overdue`). Без выбора — применяется сразу,
-  лист для прочтения (`info_events`, `world.event_front()`). `History._ai_pick_historical`
+  лист для прочтения (`info_events`, `world.event_front()`).
+  Репутация, помощь, торговое влияние, шансы — `scripts/sim/relations.gd`
+  (`World.rep` N×N, `aid`, `trade_bonus`; условия `Relations.cond`, шанс
+  `Relations.chance`: все условия выполнены — 100 %). У события `chance` —
+  шанс исторического ответа ИИ (`History._ai_answer`), снимок условий на день
+  фокуса (`event_snap`); эффекты `roll`, `rep`, `aid`, `trade`,
+  `drop_guarantee`; прогноз на карточке фокуса — `History.forecast_text`.
+  data_check проверяет условия шансов. `History._ai_pick_historical`
   планирует по срокам: срок — у датированных
   фокусов с историческими эффектами (событие, война, договор…), считается запас
   до всех сроков сразу. Запись focuses.json — `tools/focus_json.py`. Дерево

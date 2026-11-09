@@ -140,6 +140,10 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 				var fd := focus_def(world, nat.id, id)
 				if nat.is_player or nat.major:
 					world.log_event("%s: «%s»" % [nat.name, fd.get("name", id)])
+				# условия шансов событий фокуса — на день его завершения
+				for fe in fd.get("effects", []):
+					if fe.get("t", "") == "event":
+						world.event_snap[String(fe["id"])] = snapshot(world, String(fe["id"]), nat.id)
 				apply(world, nat.id, fd.get("effects", []), rng)
 		if nat.focus_current == "" and not nat.is_player:
 			_ai_pick_focus(world, nat.id, rng)
@@ -171,6 +175,7 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 			keep.append(q)
 			continue
 		world.events_fired[id] = true
+		world.event_from[id] = int(q[1])
 		if target < 0 or not world.nations[target].alive:
 			# адресата нет — исторический исход по первому варианту не нужен
 			continue
@@ -184,7 +189,7 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 			world.info_events.append(id)
 			world.info_option[id] = k
 		else:
-			choose_option(world, id, _ai_option(world, ev, rng), rng)
+			choose_option(world, id, _ai_answer(world, id, ev, rng), rng)
 	world.event_queue = keep
 	_answer_overdue(world, rng)
 
@@ -413,6 +418,84 @@ static func _ai_option(world: World, ev: Dictionary, rng: RandomNumberGenerator)
 	return best
 
 
+## Контекст события для условий: адресат и кто его вызвал.
+static func event_ctx(world: World, id: String, from: int = -2) -> Dictionary:
+	var ev: Dictionary = world.event_defs.get(id, {})
+	var f: int = int(world.event_from.get(id, -1)) if from == -2 else from
+	return {"id": id, "target": tag_id(world, ev.get("target", "")), "from": f}
+
+
+## Шанс исторического ответа страны ИИ («шанс согласия») и бросков в вариантах.
+## Ключи: "accept", "roll:<имя>".
+static func snapshot(world: World, id: String, from: int) -> Dictionary:
+	var ev: Dictionary = world.event_defs.get(id, {})
+	var ctx := event_ctx(world, id, from)
+	var res := {}
+	if ev.has("chance"):
+		res["accept"] = int(Relations.chance(world, ev["chance"], ctx)["pct"])
+	for o in ev.get("options", []):
+		for e in o.get("effects", []):
+			if e.get("t", "") == "roll":
+				res["roll:" + String(e.get("name", ""))] = int(Relations.chance(world, e.get("chance", {}), ctx, false)["pct"])
+	return res
+
+
+## Прогноз для карточки фокуса: события фокуса, кто отвечает и шансы по
+## сегодняшнему состоянию мира (считается, только когда карточку открыли).
+static func forecast_text(world: World, n: int, fd: Dictionary) -> String:
+	var out: Array = []
+	for fe in fd.get("effects", []):
+		if fe.get("t", "") != "event":
+			continue
+		var id := String(fe["id"])
+		var ev: Dictionary = world.event_defs.get(id, {})
+		if ev.is_empty():
+			continue
+		var ctx := event_ctx(world, id, n)
+		var t: int = ctx["target"]
+		var tname: String = world.nations[t].name if t >= 0 else "?"
+		var line := "Событие «%s» → %s" % [ev.get("title", id), tname]
+		var opts: Array = ev.get("options", [])
+		var hist := _ai_option(world, ev, null)
+		if t >= 0 and world.nations[t].is_player:
+			line += ": решает игрок"
+		elif not event_has_choice(ev):
+			line += ": исход гарантирован"
+		elif ev.has("chance"):
+			var c := Relations.chance(world, ev["chance"], ctx)
+			line += ": «%s» — шанс %d %% (%s)" % [opts[hist].get("name", ""), c["pct"], "; ".join(c["lines"])]
+			if not c["sure"] and not c["missing"].is_empty():
+				line += "\n  до гарантии: " + "; ".join(c["missing"])
+		else:
+			line += ": «%s» — гарантировано" % opts[hist].get("name", "")
+		out.append(line)
+		for o in opts:
+			for e in o.get("effects", []):
+				if e.get("t", "") == "roll":
+					var c2 := Relations.chance(world, e.get("chance", {}), ctx, false)
+					out.append("  если «%s»: %s — шанс %d %% (%s)" % [o.get("name", ""), e.get("name", "бросок"), c2["pct"], "; ".join(c2["lines"])])
+	return "\n".join(out)
+
+
+## Ответ страны ИИ: исторический вариант; если у события есть шанс —
+## исторический только при удачном броске, иначе лучший из остальных.
+static func _ai_answer(world: World, id: String, ev: Dictionary, rng: RandomNumberGenerator) -> int:
+	var hist := _ai_option(world, ev, rng)
+	if not ev.has("chance") or hist < 0:
+		return hist
+	var snap: Dictionary = world.event_snap.get(id, {})
+	var pct: int = int(snap["accept"]) if snap.has("accept") else int(Relations.chance(world, ev["chance"], event_ctx(world, id))["pct"])
+	if rng.randf() * 100.0 < float(pct):
+		return hist
+	var opts: Array = ev.get("options", [])
+	var alt := -1
+	for i in opts.size():
+		if i != hist and (alt < 0 or float(opts[i].get("ai", 0)) > float(opts[alt].get("ai", 0))):
+			alt = i
+	world.log_event("«%s»: история пошла иначе (шанс был %d %%)" % [ev.get("title", id), pct])
+	return alt if alt >= 0 else hist
+
+
 ## Выбор варианта события (ИИ или игрок).
 static func choose_option(world: World, id: String, option: int, rng: RandomNumberGenerator) -> void:
 	var ev: Dictionary = world.event_defs.get(id, {})
@@ -422,7 +505,10 @@ static func choose_option(world: World, id: String, option: int, rng: RandomNumb
 	var target := tag_id(world, ev.get("target", ""))
 	var o: Dictionary = opts[option]
 	world.log_event("%s — %s: %s" % [ev.get("title", id), world.nations[target].name, o.get("name", "")])
+	world.ev_ctx = event_ctx(world, id)
 	apply(world, target, o.get("effects", []), rng)
+	world.ev_ctx = {}
+	world.event_snap.erase(id)
 
 
 # --- Эффекты ---------------------------------------------------------------------
@@ -544,7 +630,47 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				pass   # обрабатывается при капитуляции (capitulation_hook)
 			"log":
 				world.log_event(e["text"])
+			"rep":
+				# {"t": "rep", "by": кто меняет мнение (по умолчанию who; "all" — все), "of": о ком, "v": ±}
+				var of := Relations._who(world, e.get("of", "$from"), world.ev_ctx) if e.has("of") else target
+				if of < 0:
+					continue
+				if String(e.get("by", "")) == "all":
+					Relations.add_rep_all(world, of, float(e["v"]))
+				else:
+					var by := Relations._who(world, e["by"], world.ev_ctx) if e.has("by") else who
+					Relations.add_rep(world, by, of, float(e["v"]))
+			"aid":
+				if target >= 0:
+					Relations.give_aid(world, who, target)
+			"drop_guarantee":
+				if target >= 0 and nat.guarantees.has(target):
+					nat.guarantees.erase(target)
+					world.log_event("%s снимает гарантию независимости страны %s" % [nat.name, world.nations[target].name])
+			"trade":
+				if target >= 0:
+					var k := who * 100000 + target
+					world.trade_bonus[k] = float(world.trade_bonus.get(k, 0.0)) + float(e["v"])
+			"roll":
+				# бросок: {"name", "chance": {base, mods}, "ok": [...], "fail": [...]}
+				var pct := roll_pct(world, e, who)
+				var ok := rng.randf() * 100.0 < float(pct)
+				world.log_event("%s: %s (шанс %d %%)" % [e.get("name", "Бросок"), "да" if ok else "нет", pct])
+				apply(world, who, e.get("ok" if ok else "fail", []), rng)
 	world.palette_dirty = true
+
+
+## Шанс броска: снимок на день завершения фокуса, если есть, иначе по миру сейчас.
+static func roll_pct(world: World, e: Dictionary, who: int, ctx_in: Dictionary = {}) -> int:
+	var key := "roll:" + String(e.get("name", ""))
+	var base_ctx: Dictionary = ctx_in if not ctx_in.is_empty() else world.ev_ctx
+	var eid: String = base_ctx.get("id", "")
+	if eid != "" and world.event_snap.has(eid) and world.event_snap[eid].has(key):
+		return int(world.event_snap[eid][key])
+	var ctx := base_ctx.duplicate()
+	if not ctx.has("target"):
+		ctx["target"] = who
+	return int(Relations.chance(world, e.get("chance", {}), ctx, false)["pct"])
 
 
 ## Провинции исторической области (по владельцу на текущий момент).
@@ -657,6 +783,7 @@ static func _move(world: World, d: World.Division, p: int) -> void:
 
 ## Мирное присоединение: земли, армия и заводы переходят целиком.
 static func annex(world: World, who: int, target: int) -> void:
+	Relations.on_annex(world, who, target)
 	var nt: World.Nation = world.nations[target]
 	for p in world.prov_count:
 		if world.p_owner[p] == target:
@@ -878,4 +1005,20 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("строй: %s" % world.ideology_names.get(e["v"], e["v"]))
 			"leader":
 				parts.append("новый глава: %s" % e["name"])
+			"rep":
+				var of := tag_id(world, e.get("of", "")) if e.has("of") else tag_id(world, e.get("target", ""))
+				var by := String(e.get("by", ""))
+				var by_t: String = "у всех" if by == "all" else ("у " + world.nations[tag_id(world, by)].name if tag_id(world, by) >= 0 else "")
+				parts.append("репутация %s %s %+d" % [world.nations[of].name if of >= 0 else "?", by_t, int(e["v"])])
+			"aid":
+				parts.append("помощь: %s" % tname)
+			"drop_guarantee":
+				parts.append("%sснятие гарантии: %s" % [who, tname])
+			"trade":
+				parts.append("торговое влияние в %s %+d %%" % [tname, int(e["v"])])
+			"roll":
+				var pct := roll_pct(world, e, tag_id(world, e.get("who", "")))
+				var ok_t := effects_text(world, e.get("ok", [])).trim_prefix("Эффекты: ")
+				var fail_t := effects_text(world, e.get("fail", [])).trim_prefix("Эффекты: ")
+				parts.append("%s — шанс %d %%: %s; иначе: %s" % [e.get("name", "бросок"), pct, ok_t if ok_t != "" else "—", fail_t if fail_t != "" else "—"])
 	return "Эффекты: " + ", ".join(parts) if not parts.is_empty() else ""

@@ -430,6 +430,14 @@ var pending_events: Array = []  # [id события] — ждут выбора 
 var pending_since := {}         # id события -> день, когда оно пришло игроку
 const EVENT_ANSWER_DAYS := 14   # срок ответа на событие с выбором; потом вариант выбирается сам
 var info_events: Array = []     # [id события] — уже применены (без выбора), игроку показать лист
+# отношения (Relations): репутация A→B в rep[A * rep_n + B], 0–100
+var rep := PackedFloat32Array()
+var rep_n := 0
+var aid := {}                   # from * 100000 + to -> день помощи
+var trade_bonus := {}           # from * 100000 + to -> добавка к торговому влиянию, %
+var event_from := {}            # id события -> кто его вызвал (номер страны)
+var event_snap := {}            # id события -> {ключ шанса: %} — условия на день завершения фокуса
+var ev_ctx := {}                # контекст выполняемого события: {"target", "from"}
 var info_option := {}           # id события -> применённый вариант
 
 

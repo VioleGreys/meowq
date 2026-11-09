@@ -235,6 +235,11 @@ func show_event(g, w: World, id: String, info := false) -> void:
 			desc = History.effects_text(w, o.get("effects", [])).trim_prefix("Эффекты:").strip_edges()
 			if desc != "":
 				desc = desc[0].to_upper() + desc.substr(1)
+		elif not info:
+			# шансы бросков варианта (снимок условий на день фокуса)
+			for ef in o.get("effects", []):
+				if ef.get("t", "") == "roll":
+					desc += ". %s — шанс %d %%" % [ef.get("name", "Бросок"), History.roll_pct(w, ef, -1, History.event_ctx(w, id))]
 		if desc != "":
 			var dl := _wrap(Array(desc.split(" ", false)), mono, 15, TEXT_W - 44.0)
 			for j in dl.size():

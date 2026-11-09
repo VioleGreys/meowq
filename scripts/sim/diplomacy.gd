@@ -199,6 +199,7 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 			if x != y and not attackers.has(y):
 				world.set_war(x, y)
 	add_tension(world, 8.0 if is_major(world, b) else (1.0 if world.nations[b].province_count <= 2 else 2.5))
+	Relations.on_war(world, a, b)
 	world.log_event("%s объявляет войну: %s!" % [na.name, world.nations[b].name])
 	for y in defenders:
 		if y != b and y != rb:
@@ -287,12 +288,14 @@ static func leave_faction(world: World, n: int) -> void:
 
 static func guarantee(world: World, a: int, b: int) -> void:
 	world.nations[a].guarantees[b] = true
+	Relations.on_guarantee(world, a, b)
 	world.log_event("%s гарантирует независимость страны %s" % [world.nations[a].name, world.nations[b].name])
 
 
 static func sign_pact(world: World, a: int, b: int) -> void:
 	world.nations[a].pacts[b] = true
 	world.nations[b].pacts[a] = true
+	Relations.on_pact(world, a, b)
 	world.nations[a].wargoals.erase(b)
 	world.nations[b].wargoals.erase(a)
 	for x in [[a, b], [b, a]]:
@@ -304,6 +307,7 @@ static func sign_pact(world: World, a: int, b: int) -> void:
 static func break_pact(world: World, a: int, b: int) -> void:
 	world.nations[a].pacts.erase(b)
 	world.nations[b].pacts.erase(a)
+	Relations.on_break_pact(world, a, b)
 	add_tension(world, 3.0)
 	world.log_event("%s расторгает пакт о ненападении со страной %s" % [world.nations[a].name, world.nations[b].name])
 

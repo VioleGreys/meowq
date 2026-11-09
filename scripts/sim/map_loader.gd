@@ -155,6 +155,7 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	world.ai_wars = true
 	Diplomacy.load_setup(world, dir + "/diplomacy.json")
 	History.load(world, dir)
+	Relations.init(world)
 	world.build_caches()
 	Forces.setup(world, dir)
 	world.rebuild_prov_divs()

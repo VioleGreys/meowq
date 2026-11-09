@@ -1443,6 +1443,24 @@ func _build_nation_card(w: World, me: int, oid: int) -> void:
 		info += "\nТрадиционный нейтралитет"
 	popup_body.add_child(_small(info))
 	popup_body.add_child(_label("Отношения: " + _relation(w, me, oid), 17))
+	if oid != me:
+		# репутация (0–100) и торговое влияние (доля во внешней торговле)
+		var rl: Array = ["Их мнение о нас: %d · наше о них: %d" % [roundi(Relations.rep(w, oid, me)), roundi(Relations.rep(w, me, oid))]]
+		var of_name := Diplomacy.faction_name(w, oid)
+		if of_name != "":
+			rl.append("Мнение фракции «%s» о нас: %d" % [of_name, roundi(Relations.faction_rep(w, oid, me))])
+		var mf_name := Diplomacy.faction_name(w, me)
+		if mf_name != "" and mf_name != of_name:
+			rl.append("Мнение нашей фракции «%s» о них: %d" % [mf_name, roundi(Relations.faction_rep(w, me, oid))])
+		rl.append("Торговое влияние: наше у них %d %% · их у нас %d %%" % [roundi(Relations.trade_influence(w, me, oid)), roundi(Relations.trade_influence(w, oid, me))])
+		var aid_t: Array = []
+		if Relations.aided(w, me, oid):
+			aid_t.append("мы им помогали")
+		if Relations.aided(w, oid, me):
+			aid_t.append("они нам помогали")
+		if not aid_t.is_empty():
+			rl.append("Помощь: " + ", ".join(aid_t))
+		popup_body.add_child(_small("\n".join(rl)))
 	popup_body.add_child(_section("Действия"))
 	# претензии и война
 	if w.nations[me].wargoals.has(oid):

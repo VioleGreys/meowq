@@ -246,6 +246,8 @@ func _auto_screenshot_locked() -> void:
 				world.info_events.append(eid)   # лист применённого события (без выбора)
 		if "--focus" in OS.get_cmdline_user_args():
 			hud.focus_view.open(self, world, me)
+			if _arg("fsel") != "":
+				hud.focus_view._select(_arg("fsel"))   # карточка фокуса с прогнозом шансов
 		if _arg("peace") != "":
 			world.pending_peace.append([nation_by_tag(_arg("peace")), me])
 		if _arg("tab") != "":
