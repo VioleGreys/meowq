@@ -9,6 +9,9 @@ class_name Relations
 const REP_MIN := 0.0
 const REP_MAX := 100.0
 const DRIFT_EVERY := 30      # раз в 30 дней репутация на 1 сдвигается к «естественной» (обида −30 помнится ~2,5 года)
+const IMPROVE_SLOTS := 2     # одновременно улучшать отношения можно с двумя странами
+const IMPROVE_PER_DAY := 0.15  # +4,5 в месяц (минус возврат к естественной ~1)
+const IMPROVE_CAP := 85.0
 
 # сродство строёв: как строй строки видит строй столбца (добавка к 50)
 const IDEO := ["democracy", "authoritarian", "fascism", "communism"]
@@ -107,11 +110,35 @@ static func faction_rep(world: World, a: int, b: int) -> float:
 	return s / w if w > 0.0 else 50.0
 
 
-## Раз в DRIFT_EVERY дней — на 1 к естественному отношению.
+## Улучшение отношений (дипломаты, визиты): мнение страны t о n растёт каждый день.
+static func can_improve(world: World, n: int, t: int) -> String:
+	if n == t or not world.nations[t].alive:
+		return "невозможно"
+	if world.is_at_war(n, t):
+		return "мы воюем"
+	if world.nations[n].improving.has(t):
+		return ""
+	if world.nations[n].improving.size() >= IMPROVE_SLOTS:
+		return "уже улучшаем отношения с %d странами" % IMPROVE_SLOTS
+	if rep(world, t, n) >= IMPROVE_CAP:
+		return "отношения и так лучшие"
+	return ""
+
+
+## Раз в DRIFT_EVERY дней — на 1 к естественному отношению; каждый день —
+## улучшение отношений.
 static func daily(world: World) -> void:
 	if world.rep_n != world.nations.size():
 		init(world)
 		return
+	for nat in world.nations:
+		if nat.improving.is_empty() or not nat.alive:
+			continue
+		for t in nat.improving.keys():
+			if not world.nations[t].alive or world.is_at_war(nat.id, t):
+				nat.improving.erase(t)
+			elif rep(world, t, nat.id) < IMPROVE_CAP:
+				add_rep(world, t, nat.id, IMPROVE_PER_DAY)
 	if world.day % DRIFT_EVERY != 0:
 		return
 	var n := world.rep_n
@@ -168,9 +195,15 @@ static func on_break_pact(world: World, a: int, b: int) -> void:
 
 # --- Помощь и торговля ------------------------------------------------------------
 
+## Помощь: отметка, репутация и часть снаряжения пехоты (5 % склада).
 static func give_aid(world: World, from: int, to: int) -> void:
 	world.aid[from * 100000 + to] = world.day
 	add_rep(world, to, from, 15.0)
+	var nf: World.Nation = world.nations[from]
+	var nt: World.Nation = world.nations[to]
+	var part := nf.stock[Military.EQ_INF] * 0.05
+	nf.stock[Military.EQ_INF] -= part
+	nt.stock[Military.EQ_INF] += part
 
 
 static func aided(world: World, from: int, to: int) -> bool:
@@ -375,9 +408,7 @@ static func _acc(world: World, n: int) -> String:
 ## и ни одной минусовой) — исход гарантирован, 100 %.
 ## Возвращает {"pct", "lines": ["основа 60 %", "+20 % — …"], "missing": [чего
 ## не хватает до гарантии], "sure": гарантировано ли}.
-## allow_sure = false — для бросков внутри вариантов (кто вступится и т. п.):
-## там гарантии нет, потолок 95 %.
-static func chance(world: World, spec: Dictionary, ctx: Dictionary, allow_sure := true) -> Dictionary:
+static func chance(world: World, spec: Dictionary, ctx: Dictionary) -> Dictionary:
 	var pct := float(spec.get("base", 50))
 	var lines: Array = ["основа %d %%" % int(pct)]
 	var missing: Array = []
@@ -395,12 +426,10 @@ static func chance(world: World, spec: Dictionary, ctx: Dictionary, allow_sure :
 				missing.append("убрать: " + txt)
 		elif v > 0.0:
 			missing.append(txt)
-	var sure := allow_sure and has_plus and missing.is_empty()
+	var sure := has_plus and missing.is_empty()
 	var res := 100.0 if sure else clampf(pct, 0.0, 95.0)
 	if sure:
 		lines.append("все условия выполнены — гарантировано")
-	if not allow_sure:
-		missing.clear()
 	return {"pct": int(roundf(res)), "lines": lines, "missing": missing, "sure": sure}
 
 

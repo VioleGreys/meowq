@@ -149,6 +149,7 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 			_ai_pick_focus(world, nat.id, rng)
 		if not nat.is_player and world.day % 5 == nat.id % 5:
 			nat.planned_wars = planned_wars(world, nat.id)
+			_ai_prepare(world, nat.id)
 	# события, автоматически срабатывающие по дате
 	for id in world.event_defs:
 		var ev: Dictionary = world.event_defs[id]
@@ -436,7 +437,7 @@ static func snapshot(world: World, id: String, from: int) -> Dictionary:
 	for o in ev.get("options", []):
 		for e in o.get("effects", []):
 			if e.get("t", "") == "roll":
-				res["roll:" + String(e.get("name", ""))] = int(Relations.chance(world, e.get("chance", {}), ctx, false)["pct"])
+				res["roll:" + String(e.get("name", ""))] = int(Relations.chance(world, e.get("chance", {}), ctx)["pct"])
 	return res
 
 
@@ -472,9 +473,132 @@ static func forecast_text(world: World, n: int, fd: Dictionary) -> String:
 		for o in opts:
 			for e in o.get("effects", []):
 				if e.get("t", "") == "roll":
-					var c2 := Relations.chance(world, e.get("chance", {}), ctx, false)
+					var c2 := Relations.chance(world, e.get("chance", {}), ctx)
 					out.append("  если «%s»: %s — шанс %d %% (%s)" % [o.get("name", ""), e.get("name", "бросок"), c2["pct"], "; ".join(c2["lines"])])
+					if not c2["sure"] and not c2["missing"].is_empty():
+						out.append("    до гарантии: " + "; ".join(c2["missing"]))
 	return "\n".join(out)
+
+
+# --- Подготовка ИИ к событиям своих фокусов --------------------------------------
+
+const PREP_AHEAD := 240   # за сколько дней до даты фокуса ИИ начинает готовить условия
+
+
+## События будущих фокусов исторического пути: текущий фокус и те, до даты
+## которых не больше PREP_AHEAD дней.
+static func upcoming_events(world: World, n: int) -> Array:
+	var nat: World.Nation = world.nations[n]
+	var res: Array = []
+	for fd in tree_of(world, n):
+		var fid: String = fd["id"]
+		if nat.focus_done.has(fid) or _is_alternative(world, n, fd) or _excluded(world, n, fd):
+			continue
+		if fid != nat.focus_current:
+			var av: Dictionary = fd.get("available", {})
+			if av.has("date") and world.day_of(av["date"]) - world.day > PREP_AHEAD:
+				continue
+			if not av.has("date") and check(world, n, av) != "":
+				continue
+		for e in fd.get("effects", []):
+			if e.get("t", "") == "event" and world.event_defs.has(e["id"]) and not world.events_fired.has(e["id"]):
+				res.append(String(e["id"]))
+	return res
+
+
+## ИИ заранее выполняет условия шансов своих будущих событий («шаблоны»):
+## гарантии, пакты, улучшение отношений, помощь, армия нужного размера.
+## Чего ИИ сделать не может (чужие союзы, чужие гарантии) — может сбить игрок.
+static func _ai_prepare(world: World, n: int) -> void:
+	var nat: World.Nation = world.nations[n]
+	nat.prep_divs = 0
+	var want_improve := {}
+	for id in upcoming_events(world, n):
+		var ev: Dictionary = world.event_defs[id]
+		var ctx := event_ctx(world, id, n)
+		var specs: Array = []
+		if ev.has("chance"):
+			specs.append(ev["chance"])
+		var opts: Array = ev.get("options", [])
+		var hist := _ai_option(world, ev, null)
+		if hist >= 0:
+			for e in opts[hist].get("effects", []):
+				if e.get("t", "") == "roll":
+					specs.append(e.get("chance", {}))
+		for spec in specs:
+			for m in spec.get("mods", []):
+				var v := float(m.get("v", 0))
+				if v == 0.0:
+					continue
+				_prep_cond(world, n, m.get("if", {}), v > 0.0, ctx, want_improve)
+	# улучшение отношений: ИИ ведёт только нужные сейчас
+	for t in nat.improving.keys():
+		if not want_improve.has(t):
+			nat.improving.erase(t)
+	for t in want_improve:
+		if Relations.can_improve(world, n, t) == "":
+			nat.improving[t] = true
+
+
+## Сделать условие истинным (want) или ложным — то, что в силах страны n.
+static func _prep_cond(world: World, n: int, c: Dictionary, want: bool, ctx: Dictionary, improve: Dictionary) -> void:
+	if bool(Relations.cond(world, c, ctx)[0]) == want:
+		return
+	var nat: World.Nation = world.nations[n]
+	if c.has("not"):
+		_prep_cond(world, n, c["not"], not want, ctx, improve)
+	elif c.has("all") or c.has("any"):
+		for sub in c.get("all", c.get("any", [])):
+			_prep_cond(world, n, sub, want, ctx, improve)
+	elif c.has("army"):
+		var s: Dictionary = c["army"]
+		var a := Relations._who(world, s.get("a", "$target"), ctx)
+		var b := Relations._who(world, s.get("b", "$from"), ctx)
+		var r := float(s.get("ratio", 1.0))
+		if a == n and want and b >= 0:
+			nat.prep_divs = maxi(nat.prep_divs, int(ceilf(world.nations[b].division_count * r)) + 1)
+		elif b == n and not want and a >= 0 and r > 0.0:
+			nat.prep_divs = maxi(nat.prep_divs, int(floorf(world.nations[a].division_count / r)) + 1)
+	elif c.has("guarantee"):
+		var a := Relations._who(world, c["guarantee"][0], ctx)
+		var b := Relations._who(world, c["guarantee"][1], ctx)
+		if a == n and b >= 0 and world.nations[b].alive:
+			if want and not Diplomacy.same_side(world, n, b) and not world.is_at_war(n, b):
+				Diplomacy.guarantee(world, n, b)
+			elif not want and nat.guarantees.has(b):
+				nat.guarantees.erase(b)
+	elif c.has("pact"):
+		var a := Relations._who(world, c["pact"][0], ctx)
+		var b := Relations._who(world, c["pact"][1], ctx)
+		var other := b if a == n else (a if b == n else -1)
+		if other >= 0 and want and not world.is_at_war(n, other):
+			var o: World.Nation = world.nations[other]
+			if o.is_player:
+				return
+			var ans: Array = Diplomacy.ai_accepts(world, n, other, "pact")
+			if ans[0]:
+				Diplomacy.sign_pact(world, n, other)
+			else:
+				improve[other] = true
+	elif c.has("rep") or c.has("faction_rep"):
+		var s: Dictionary = c.get("rep", c.get("faction_rep", {}))
+		var by := Relations._who(world, s.get("by", "$target"), ctx)
+		var of := Relations._who(world, s.get("of", "$from"), ctx)
+		# нам нужно лучшее мнение о нас — улучшаем отношения
+		if of == n and by >= 0 and ((want and s.has("above")) or (not want and s.has("below"))):
+			improve[by] = true
+	elif c.has("trade"):
+		var s: Dictionary = c["trade"]
+		var a := Relations._who(world, s.get("of", "$from"), ctx)
+		var b := Relations._who(world, s.get("in", "$target"), ctx)
+		if a == n and b >= 0 and want:
+			improve[b] = true   # репутация входит в торговое влияние
+	elif c.has("aid"):
+		var a := Relations._who(world, c["aid"][0], ctx)
+		var b := Relations._who(world, c["aid"][1], ctx)
+		if a == n and want and b >= 0 and world.nations[b].alive and not world.nations[b].at_war.is_empty() \
+				and not world.is_at_war(n, b):
+			Relations.give_aid(world, n, b)
 
 
 ## Ответ страны ИИ: исторический вариант; если у события есть шанс —
@@ -670,7 +794,7 @@ static func roll_pct(world: World, e: Dictionary, who: int, ctx_in: Dictionary =
 	var ctx := base_ctx.duplicate()
 	if not ctx.has("target"):
 		ctx["target"] = who
-	return int(Relations.chance(world, e.get("chance", {}), ctx, false)["pct"])
+	return int(Relations.chance(world, e.get("chance", {}), ctx)["pct"])
 
 
 ## Провинции исторической области (по владельцу на текущий момент).

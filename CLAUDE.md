@@ -67,7 +67,10 @@
   шанс исторического ответа ИИ (`History._ai_answer`), снимок условий на день
   фокуса (`event_snap`); эффекты `roll`, `rep`, `aid`, `trade`,
   `drop_guarantee`; прогноз на карточке фокуса — `History.forecast_text`.
-  data_check проверяет условия шансов. `History._ai_pick_historical`
+  data_check проверяет условия шансов. ИИ готовит условия своих будущих
+  событий (`History._ai_prepare`, раз в 5 дней, за `PREP_AHEAD`=240 дней):
+  `prep_divs` → `AIPlanner.plan_economy`, гарантии, пакты, `improving`
+  (улучшение отношений, и у игрока), помощь (`Relations.give_aid`). `History._ai_pick_historical`
   планирует по срокам: срок — у датированных
   фокусов с историческими эффектами (событие, война, договор…), считается запас
   до всех сроков сразу. Запись focuses.json — `tools/focus_json.py`. Дерево

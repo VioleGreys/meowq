@@ -21,6 +21,8 @@ static func plan_economy(world: World, nid: int, rng: RandomNumberGenerator, min
 	# --- Экономика: сколько дивизий заказать (шаблоны выбираются в главном потоке)
 	var cap := 4.0 + nat.population * 1.3
 	var target_divs := int(minf(6.0 + nat.mil * 2.5 + nat.civ * 0.3, cap) * (1.4 if at_war else 1.0))
+	# условия будущих событий фокусов («армия больше в N раз») — History._ai_prepare
+	target_divs = maxi(target_divs, mini(nat.prep_divs, int(cap * 1.5)))
 	var pending := mine + nat.training.size()
 	while pending < target_divs and result["train"] < 3 and nat.manpower > 10.0 * (result["train"] + 1):
 		result["train"] += 1

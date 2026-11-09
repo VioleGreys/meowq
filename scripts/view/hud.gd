@@ -1482,6 +1482,13 @@ func _build_nation_card(w: World, me: int, oid: int) -> void:
 			why = "" if ans[0] else "откажут: " + ans[1]
 		_action("Предложить пакт о ненападении", why, func():
 			Diplomacy.sign_pact(w, me, oid))
+	# улучшение отношений (их мнение о нас растёт каждый день)
+	if n.improving.has(oid):
+		_action("Прекратить улучшение отношений", "", func():
+			n.improving.erase(oid))
+	else:
+		_action("Улучшать отношения (+4 в месяц)", Relations.can_improve(w, me, oid), func():
+			n.improving[oid] = true)
 	# гарантия
 	if not n.guarantees.has(oid):
 		var gwhy := ""
