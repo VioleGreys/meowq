@@ -144,6 +144,7 @@ static func daily(world: World) -> void:
 		return
 	for nat in world.nations:
 		nat.aggression *= 0.95
+		nat.diplo *= 0.95
 	var n := world.rep_n
 	for a in n:
 		if not world.nations[a].alive:
@@ -166,14 +167,16 @@ static func daily(world: World) -> void:
 ## армию, экономику, науку, союз и агрессию, затем доля от суммы).
 const THREATS := {"fascism": "угроза нацизма", "communism": "угроза коммунизма",
 	"democracy": "влияние демократии", "authoritarian": "нейтралитет"}
-const BLOC_CAP := 50.0        # надбавка к шансу события: доля альянса на общей шкале, не больше +50 %
-const THREAT_PART := 20.0     # каждая из пяти составляющих — до 20 очков (всего до 100 %)
-const THREAT_FULL := 0.30     # доля мира, при которой армия/экономика/наука дают полные 20
-const THREAT_ALLY_FULL := 0.35  # доля мира у фракций этого строя (2+ страны) — полные 20 за союз
-const THREAT_AGGR_FULL := 60.0
+const BLOC_MAX := 50.0        # надбавка к шансу события: 50 × доля / (доля + BLOC_HALF) — до +50 %
+const BLOC_HALF := 30.0       # при доле 30 % — +25; убывает: 15 % → +17, 25 % → +23, 70 % → +35
+const POTENTIAL_MAX := 10.0   # потенциал (армия, экономика, наука) — не больше 10 очков: важны действия
+const POTENTIAL_FULL := 0.30  # доля мира, при которой составляющая потенциала полная
+const NEUTRAL_POTENTIAL := 0.3  # нейтралитет на мир почти не влияет — потенциал ×0,3
+const ACTION_MAX := 90.0      # действия — до 90 очков
+const ACTION_FULL := 80.0     # очков действий (агрессия + дипломатия) для полных 80
 
 
-## Сила страны для угрозы: армия (дивизии, флот, авиация), экономика, наука.
+## Сила страны для шкалы: армия (дивизии, флот, авиация).
 static func _strength(world: World) -> Array:
 	var n := world.nations.size()
 	var mil := PackedFloat32Array()
@@ -190,8 +193,9 @@ static func _strength(world: World) -> Array:
 	return [mil]
 
 
-## Угроза строя (fascism / communism), %: очки армии, экономики, науки, союза и
-## агрессивности всех стран этого строя (и их фракций — союз).
+## Общая шкала сил. Очки силы: потенциал (армия, экономика, наука — до 20,
+## у нейтралитета ×0,3) + действия (до 80): агрессия и дипломатия стран
+## силы и их союзников по фракции. Доля на шкале — очки / сумма очков всех сил.
 static func update_threat(world: World) -> void:
 	var mil: PackedFloat32Array = _strength(world)[0]
 	var tot_m := 0.0
@@ -202,11 +206,11 @@ static func update_threat(world: World) -> void:
 			tot_m += mil[nat.id]
 			tot_e += float(nat.civ + nat.mil)
 			tot_s += float(nat.techs.size())
+	var total := 0.0
 	for ideo in THREATS:
 		var m := 0.0
 		var e := 0.0
 		var s := 0.0
-		var ag := 0.0
 		var bloc := {}
 		var factions := {}
 		for nat in world.nations:
@@ -215,33 +219,30 @@ static func update_threat(world: World) -> void:
 				m += mil[nat.id]
 				e += float(nat.civ + nat.mil)
 				s += float(nat.techs.size())
-				ag += nat.aggression
 				if nat.faction >= 0:
 					factions[nat.faction] = true
-		# союз: вся сила фракций, где состоят страны этого строя (если в фракции 2+ страны)
-		var fsize := {}
+		var ag := 0.0
+		var dp := 0.0
 		for nat in world.nations:
-			if nat.alive and factions.has(nat.faction):
-				fsize[nat.faction] = int(fsize.get(nat.faction, 0)) + 1
-		var al := 0.0
-		for nat in world.nations:
-			if nat.alive and factions.has(nat.faction) and int(fsize[nat.faction]) > 1:
-				al += mil[nat.id] + float(nat.civ + nat.mil) * 0.5
+			if nat.alive and (bloc.has(nat.id) or factions.has(nat.faction)):
+				ag += nat.aggression
+				dp += nat.diplo
+		var k := NEUTRAL_POTENTIAL if ideo == "authoritarian" else 1.0
+		var third := POTENTIAL_MAX / 3.0 * k
+		# уступки (отрицательная дипломатия) уменьшают действия силы
+		var act := ACTION_MAX * clampf((ag + dp) / ACTION_FULL, 0.0, 1.0)
 		var parts := {
-			"армия": THREAT_PART * minf(1.0, (m / maxf(tot_m, 1.0)) / THREAT_FULL),
-			"экономика": THREAT_PART * minf(1.0, (e / maxf(tot_e, 1.0)) / THREAT_FULL),
-			"наука": THREAT_PART * minf(1.0, (s / maxf(tot_s, 1.0)) / THREAT_FULL),
-			"союз": THREAT_PART * minf(1.0, (al / maxf(tot_m + tot_e * 0.5, 1.0)) / THREAT_ALLY_FULL),
-			"агрессия": THREAT_PART * minf(1.0, ag / THREAT_AGGR_FULL),
+			"армия": third * minf(1.0, (m / maxf(tot_m, 1.0)) / POTENTIAL_FULL),
+			"экономика": third * minf(1.0, (e / maxf(tot_e, 1.0)) / POTENTIAL_FULL),
+			"наука": third * minf(1.0, (s / maxf(tot_s, 1.0)) / POTENTIAL_FULL),
+			"агрессия": act * (ag / maxf(ag + maxf(dp, 0.0), 0.001)),
+			"дипломатия": act * (maxf(dp, 0.0) / maxf(ag + maxf(dp, 0.0), 0.001)),
 		}
 		var raw := 0.0
-		for k in parts:
-			raw += parts[k]
-		world.threat[ideo] = {"pct": raw, "raw": raw, "parts": parts}
-	# общая шкала: доля каждой силы от суммы сырых очков
-	var total := 0.0
-	for ideo in THREATS:
-		total += float(world.threat[ideo]["raw"])
+		for key in parts:
+			raw += parts[key]
+		world.threat[ideo] = {"pct": 0.0, "raw": raw, "parts": parts}
+		total += raw
 	for ideo in THREATS:
 		world.threat[ideo]["pct"] = 100.0 * float(world.threat[ideo]["raw"]) / total if total > 0.0 else 25.0
 
@@ -283,12 +284,18 @@ static func threat_text(world: World, ideo: String) -> String:
 	for k in t["parts"]:
 		ps.append("%s %d" % [k, roundi(t["parts"][k])])
 	var title := String(THREATS[ideo])
-	return "%s: %d %% шкалы (очки: %s)" % [title[0].to_upper() + title.substr(1), roundi(t["pct"]), ", ".join(ps)]
+	return "%s: %d %% шкалы (очки %d: %s)" % [title[0].to_upper() + title.substr(1), roundi(t["pct"]), roundi(t["raw"]), ", ".join(ps)]
 
 
 static func add_aggression(world: World, n: int, v: float) -> void:
-	if n >= 0 and n < world.nations.size():
+	if n >= 0 and n < world.nations.size() and world.day > 0:
 		world.nations[n].aggression += v
+
+
+## Дипломатическая активность (стартовые договоры 1936 г. — день 0 — не в счёт).
+static func add_diplo(world: World, n: int, v: float) -> void:
+	if n >= 0 and n < world.nations.size() and world.day > 0:
+		world.nations[n].diplo += v
 
 
 # --- Мировые поводы ---------------------------------------------------------------
@@ -335,6 +342,7 @@ static func on_break_pact(world: World, a: int, b: int) -> void:
 static func give_aid(world: World, from: int, to: int) -> void:
 	world.aid[from * 100000 + to] = world.day
 	add_rep(world, to, from, 15.0)
+	add_diplo(world, from, 4.0)
 	var nf: World.Nation = world.nations[from]
 	var nt: World.Nation = world.nations[to]
 	var part := nf.stock[Military.EQ_INF] * 0.05
@@ -595,7 +603,7 @@ static func chance(world: World, spec: Dictionary, ctx: Dictionary) -> Dictionar
 	if spec.get("bloc", false):
 		var bl := bloc_of(world, int(ctx.get("from", -1)))
 		if String(bl[0]) != "":
-			var bonus := minf(float(bl[1]), BLOC_CAP)
+			var bonus := BLOC_MAX * float(bl[1]) / (float(bl[1]) + BLOC_HALF)
 			pct += bonus
 			lines.append("+%d %% — %s: %d %% общей шкалы" % [roundi(bonus), THREATS[bl[0]], roundi(float(bl[1]))])
 	var res := maxf(pct, 0.0)

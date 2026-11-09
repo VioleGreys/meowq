@@ -769,9 +769,13 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 			"aid":
 				if target >= 0:
 					Relations.give_aid(world, who, target)
+			"concede":
+				# уступка: влияние своей силы на шкале падает
+				Relations.add_diplo(world, who, -float(e.get("v", 10)))
 			"drop_guarantee":
 				if target >= 0 and nat.guarantees.has(target):
 					nat.guarantees.erase(target)
+					Relations.add_diplo(world, who, -5.0)
 					world.log_event("%s снимает гарантию независимости страны %s" % [nat.name, world.nations[target].name])
 			"trade":
 				if target >= 0:
@@ -1140,6 +1144,8 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("помощь: %s" % tname)
 			"drop_guarantee":
 				parts.append("%sснятие гарантии: %s" % [who, tname])
+			"concede":
+				parts.append("%sуступка (влияние −%d)" % [who, int(e.get("v", 10))])
 			"trade":
 				parts.append("торговое влияние в %s %+d %%" % [tname, int(e["v"])])
 			"roll":

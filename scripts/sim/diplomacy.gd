@@ -204,9 +204,11 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 	world.log_event("%s объявляет войну: %s!" % [na.name, world.nations[b].name])
 	for y in defenders:
 		if y != b and y != rb:
+			Relations.add_diplo(world, y, 8.0)   # вступил в войну за жертву
 			world.log_event("%s вступает в войну на стороне страны %s" % [world.nations[y].name, world.nations[b].name])
 	for x in attackers:
 		if x != a:
+			Relations.add_aggression(world, x, 8.0)
 			world.log_event("%s поддерживает страну %s" % [world.nations[x].name, na.name])
 	return true
 
@@ -253,6 +255,7 @@ static func create_faction(world: World, n: int, name: String = "") -> int:
 	f.color = FACTION_COLORS.get(name, nat.color.darkened(0.2))
 	world.factions.append(f)
 	nat.faction = f.id
+	Relations.add_diplo(world, n, 8.0)
 	if nat.ideology == "fascism" or nat.ideology == "communism":
 		add_tension(world, 2.0)
 	world.log_event("%s создаёт фракцию «%s»" % [nat.name, f.name])
@@ -266,6 +269,8 @@ static func join_faction(world: World, n: int, f: int) -> void:
 		return
 	nat.faction = f
 	nat.justify_target = -1
+	Relations.add_diplo(world, n, 6.0)
+	Relations.add_diplo(world, world.factions[f].leader, 3.0)
 	_inherit_wars(world, n, world.factions[f].leader)
 	world.log_event("%s вступает во фракцию «%s»" % [nat.name, world.factions[f].name])
 	world.palette_dirty = true
@@ -290,6 +295,7 @@ static func leave_faction(world: World, n: int) -> void:
 static func guarantee(world: World, a: int, b: int) -> void:
 	world.nations[a].guarantees[b] = true
 	Relations.on_guarantee(world, a, b)
+	Relations.add_diplo(world, a, 5.0)
 	world.log_event("%s гарантирует независимость страны %s" % [world.nations[a].name, world.nations[b].name])
 
 
@@ -297,6 +303,8 @@ static func sign_pact(world: World, a: int, b: int) -> void:
 	world.nations[a].pacts[b] = true
 	world.nations[b].pacts[a] = true
 	Relations.on_pact(world, a, b)
+	Relations.add_diplo(world, a, 3.0)
+	Relations.add_diplo(world, b, 3.0)
 	world.nations[a].wargoals.erase(b)
 	world.nations[b].wargoals.erase(a)
 	for x in [[a, b], [b, a]]:
