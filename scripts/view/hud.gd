@@ -1460,6 +1460,23 @@ func _build_nation_card(w: World, me: int, oid: int) -> void:
 			aid_t.append("они нам помогали")
 		if not aid_t.is_empty():
 			rl.append("Помощь: " + ", ".join(aid_t))
+		# что страна готовит: ближайшие события её фокусов и шанс сейчас —
+		# игрок видит, на что можно повлиять (гарантии, союзы, отношения)
+		if not o.is_player:
+			var shown := 0
+			for eid in History.upcoming_events(w, oid):
+				var ev: Dictionary = w.event_defs[eid]
+				if not ev.has("chance") or shown >= 2:
+					continue
+				var c := Relations.chance(w, ev["chance"], History.event_ctx(w, eid, oid))
+				var tgt := History.tag_id(w, ev.get("target", ""))
+				rl.append("Готовит: «%s» → %s — шанс %d %%" % [ev.get("title", eid), w.nations[tgt].name if tgt >= 0 else "?", c["pct"]])
+				var neg: Array = []
+				for line in c["lines"].slice(1):
+					neg.append(line)
+				if not neg.is_empty():
+					rl.append("   " + "; ".join(neg))
+				shown += 1
 		popup_body.add_child(_small("\n".join(rl)))
 	popup_body.add_child(_section("Действия"))
 	# претензии и война

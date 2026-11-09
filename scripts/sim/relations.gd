@@ -413,10 +413,24 @@ static func chance(world: World, spec: Dictionary, ctx: Dictionary) -> Dictionar
 	var pct := float(spec.get("base", 50))
 	var lines: Array = ["основа %d %%" % int(pct)]
 	var missing: Array = []
+	# чужая гарантия снижает шанс один раз: из сработавших «гарантийных»
+	# минусов берётся только самый сильный
+	var guar_v := 0.0
+	for m in spec.get("mods", []):
+		var gv := float(m.get("v", 0))
+		if gv < 0.0 and _is_guarantee(m.get("if", {})) and bool(cond(world, m.get("if", {}), ctx)[0]):
+			guar_v = minf(guar_v, gv)
+	var guar_used := false
 	for m in spec.get("mods", []):
 		var r := cond(world, m.get("if", {}), ctx)
 		var v := float(m.get("v", 0))
 		var txt: String = m.get("text", r[1])
+		if bool(r[0]) and v < 0.0 and _is_guarantee(m.get("if", {})):
+			if guar_used or v != guar_v:
+				lines.append("(гарантия уже учтена) — %s" % txt)
+				missing.append("убрать: " + txt)
+				continue
+			guar_used = true
 		if bool(r[0]):
 			pct += v
 			lines.append("%s%d %% — %s" % ["+" if v >= 0.0 else "−", absi(int(v)), txt])
@@ -429,6 +443,17 @@ static func chance(world: World, spec: Dictionary, ctx: Dictionary) -> Dictionar
 	if res > 100.0:
 		lines.append("запас %d %% сверх гарантии" % int(res - 100.0))
 	return {"pct": int(roundf(res)), "lines": lines, "missing": missing, "sure": sure}
+
+
+## Условие про чужие гарантии (сами или внутри any/all).
+static func _is_guarantee(c: Dictionary) -> bool:
+	if c.has("guarantee") or c.has("guaranteed"):
+		return true
+	for k in ["any", "all"]:
+		for sub in c.get(k, []):
+			if _is_guarantee(sub):
+				return true
+	return false
 
 
 ## Все поправки с отметкой, выполнены ли они (для карточки фокуса).

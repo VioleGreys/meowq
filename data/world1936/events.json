@@ -116,7 +116,7 @@
       ],
       "photo": "GER",
       "chance": {
-        "base": 85,
+        "base": 125,
         "mods": [
           {
             "if": {
@@ -227,7 +227,7 @@
       ],
       "photo": "GER",
       "chance": {
-        "base": 60,
+        "base": 90,
         "mods": [
           {
             "if": {
@@ -413,7 +413,7 @@
       ],
       "photo": "GER",
       "chance": {
-        "base": 60,
+        "base": 95,
         "mods": [
           {
             "if": {
@@ -608,7 +608,7 @@
         }
       ],
       "chance": {
-        "base": 80,
+        "base": 115,
         "mods": [
           {
             "if": {
@@ -732,7 +732,7 @@
       ],
       "photo": "GER",
       "chance": {
-        "base": 80,
+        "base": 115,
         "mods": [
           {
             "if": {
@@ -794,7 +794,7 @@
       ],
       "photo": "GER",
       "chance": {
-        "base": 90,
+        "base": 125,
         "mods": [
           {
             "if": {
@@ -854,7 +854,7 @@
       ],
       "photo": "ITA",
       "chance": {
-        "base": 75,
+        "base": 110,
         "mods": [
           {
             "if": {
@@ -937,7 +937,7 @@
       ],
       "photo": "GER",
       "chance": {
-        "base": 40,
+        "base": 80,
         "mods": [
           {
             "if": {
@@ -1029,7 +1029,7 @@
       ],
       "photo": "SOV",
       "chance": {
-        "base": 85,
+        "base": 115,
         "mods": [
           {
             "if": {
@@ -1090,7 +1090,7 @@
       ],
       "photo": "SOV",
       "chance": {
-        "base": 85,
+        "base": 115,
         "mods": [
           {
             "if": {
@@ -1151,7 +1151,7 @@
       ],
       "photo": "SOV",
       "chance": {
-        "base": 85,
+        "base": 115,
         "mods": [
           {
             "if": {
@@ -1214,7 +1214,7 @@
       ],
       "photo": "SOV",
       "chance": {
-        "base": 70,
+        "base": 105,
         "mods": [
           {
             "if": {
@@ -1291,7 +1291,7 @@
       ],
       "photo": "SOV",
       "chance": {
-        "base": 85,
+        "base": 120,
         "mods": [
           {
             "if": {
