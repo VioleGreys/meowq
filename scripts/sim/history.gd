@@ -583,8 +583,8 @@ static func _prep_cond(world: World, n: int, c: Dictionary, want: bool, ctx: Dic
 		# нам нужно лучшее мнение о нас — улучшаем отношения
 		if of == n and by >= 0 and ((want and s.has("above")) or (not want and s.has("below"))):
 			improve[by] = true
-	elif c.has("trade"):
-		var s: Dictionary = c["trade"]
+	elif c.has("trade") or c.has("trade_top"):
+		var s: Dictionary = c.get("trade", c.get("trade_top", {}))
 		var a := Relations._who(world, s.get("of", "$from"), ctx)
 		var b := Relations._who(world, s.get("in", "$target"), ctx)
 		if a == n and b >= 0 and want:
@@ -607,7 +607,7 @@ static func _ai_answer(world: World, id: String, ev: Dictionary, rng: RandomNumb
 	var c := Relations.chance(world, ev["chance"], event_ctx(world, id))
 	var pct: int = int(snap["accept"]) if snap.has("accept") else int(c["pct"])
 	var ok := rng.randf() * 100.0 < float(pct)
-	world.chance_log.append([world.day, id, pct, ok, "; ".join(c["missing"])])
+	world.chance_log.append([world.day, id, pct, ok, "; ".join(c["missing"]), c["lines"]])
 	if ok:
 		return hist
 	var opts: Array = ev.get("options", [])

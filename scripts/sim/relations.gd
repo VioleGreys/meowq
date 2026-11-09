@@ -214,7 +214,7 @@ static func aided(world: World, from: int, to: int) -> bool:
 ##  экспорт (пока — гражданская промышленность; ресурсов в игре ещё нет) ×
 ##  флот (кто возит товары: ×1…×2 по силе флота) ×
 ##  репутация у B (как B относится к стране: ×0.5…×1.5) ×
-##  близость (столица ближе к B — больше; через 400 пикс. карты вес вдвое меньше).
+##  близость (столица ближе к B — больше; через 150 пикс. карты, ~750 км, вес вдвое меньше).
 ## Конкуренция: доля — вес A, делённый на сумму весов всех экспортёров для B,
 ## поэтому сильный и близкий соперник отнимает долю.
 ## Война с B — ноль. Сверху — договорённости (эффект trade).
@@ -236,7 +236,7 @@ static func trade_influence(world: World, a: int, b: int) -> float:
 		var nx: World.Nation = world.nations[x]
 		if x == b or not nx.alive or nx.capital < 0 or world.is_at_war(x, b):
 			continue
-		var d := pb.distance_to(world.p_center[nx.capital]) / 400.0
+		var d := pb.distance_to(world.p_center[nx.capital]) / 150.0
 		var export := float(nx.civ) + 1.0
 		var fl := 1.0 + fleet[x] / (fleet[x] + 100.0)
 		var rp := 0.5 + rep(world, b, x) / 100.0
@@ -304,6 +304,18 @@ static func cond(world: World, c: Dictionary, ctx: Dictionary) -> Array:
 		var a := _who(world, s.get("of", "$from"), ctx)
 		var b := _who(world, s.get("in", "$target"), ctx)
 		return _cmp(trade_influence(world, a, b), s, "торговое влияние %s у %s, %%" % [_gen(world, a), _name(world, b)])
+	if c.has("trade_top"):
+		# {"trade_top": {"of": A, "in": B}} — A главный торговый партнёр B
+		var s2: Dictionary = c["trade_top"]
+		var a2 := _who(world, s2.get("of", "$from"), ctx)
+		var b2 := _who(world, s2.get("in", "$target"), ctx)
+		var mine := trade_influence(world, a2, b2)
+		var top := true
+		for x in world.nations.size():
+			if x != a2 and x != b2 and world.nations[x].alive and trade_influence(world, x, b2) > mine:
+				top = false
+				break
+		return [top, "%s — главный торговый партнёр страны «%s»" % [_name(world, a2), _name(world, b2)]]
 	if c.has("tension"):
 		return _cmp(world.tension, c["tension"], "напряжённость, %")
 	if c.has("guarantee"):

@@ -80,6 +80,8 @@ func _init() -> void:
 	for r in w.chance_log:
 		print("  %s  %-14s %3d %%  %s%s" % [w.date_short(int(r[0])), r[1], int(r[2]), "да " if r[3] else "НЕТ",
 			("  не хватало: " + String(r[4])) if String(r[4]) != "" else ""])
+		if r.size() > 5:
+			print("      ", "; ".join(r[5]))
 	if errors == 0:
 		print("История: OK")
 	quit(1 if errors > 0 else 0)
