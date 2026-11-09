@@ -33,6 +33,7 @@ var sheet: Control
 var _content: Control
 var _buttons: Array = []
 var _event_id := ""
+var _info := false   # событие уже применено: лист только для прочтения
 
 
 func _ready() -> void:
@@ -121,10 +122,11 @@ func _wrap(words: Array, font: Font, size: int, width: float) -> Array:
 	return lines
 
 
-func show_event(g, w: World, id: String) -> void:
+func show_event(g, w: World, id: String, info := false) -> void:
 	game = g
 	world = w
 	_event_id = id
+	_info = info
 	for c in _content.get_children():
 		_content.remove_child(c)
 		c.queue_free()
@@ -135,7 +137,8 @@ func show_event(g, w: World, id: String) -> void:
 	var serif := UiStyle.serif_font()
 	var osw := UiStyle._font("res://assets/fonts/Oswald.ttf")
 	# шапка, заголовок, черта
-	_text(_content, Vector2(48, 70), "ТЕЛЕГРАММА · %s" % w.date_short(), mono_b, 18, INK_SOFT)
+	var since: int = int(w.pending_since.get(id, w.day))
+	_text(_content, Vector2(48, 70), "ТЕЛЕГРАММА · %s" % w.date_short(since), mono_b, 18, INK_SOFT)
 	var title := String(ev.get("title", id)).to_upper()
 	var ts := 38
 	while ts > 24 and osw.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, ts).x > TEXT_W:
@@ -195,6 +198,9 @@ func show_event(g, w: World, id: String) -> void:
 		y = maxf(y, PHOTO_BOTTOM)   # варианты — всегда ниже фото
 	# пометка исторического выбора и варианты
 	var opts: Array = ev.get("options", [])
+	if info and not opts.is_empty():
+		# показываем только применённый вариант; нажатие закрывает лист
+		opts = [opts[clampi(int(w.info_option.get(id, 0)), 0, opts.size() - 1)]]
 	var best := 0
 	for i in opts.size():
 		if float(opts[i].get("ai", 0)) > float(opts[best].get("ai", 0)):
@@ -202,6 +208,11 @@ func show_event(g, w: World, id: String) -> void:
 	if opts.size() > 1:
 		_content.add_child(_tex_rect("ev_star18.png", Vector2(48, y + 8), Vector2(18, 22)))
 		_text(_content, Vector2(72, y + 8), "— так поступили в истории", mono, 16, INK_SOFT)
+	if not info and History.event_has_choice(ev):
+		# срок ответа: без выбора вариант назначится сам
+		var due := "ответ до %s" % w.date_short(History.event_deadline(w, id))
+		var dw: float = mono_b.get_string_size(due, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+		_text(_content, Vector2(554.0 - dw, y + 8), due, mono_b, 16, UiStyle.RED_INK)
 	var extra := 0.0   # длинные описания эффектов в несколько строк сдвигают следующие варианты
 	for i in opts.size():
 		var o: Dictionary = opts[i]
@@ -241,7 +252,10 @@ func _choose(k: int) -> void:
 	for b in _buttons:
 		b.disabled = true
 	game.world_lock()
-	game.resolve_event(k)
+	if _info:
+		game.dismiss_info_event()
+	else:
+		game.resolve_event(k)
 	game.world_unlock()
 
 

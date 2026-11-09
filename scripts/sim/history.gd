@@ -154,13 +154,17 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 				if q[0] == id:
 					already = true
 			if not already:
-				world.event_queue.append([id, -1])
+				world.event_queue.append([id, -1, 0])
 	# очередь событий: срабатывают, когда выполнены условия
 	var keep: Array = []
 	for q in world.event_queue:
 		var id: String = q[0]
 		var ev: Dictionary = world.event_defs.get(id, {})
 		if ev.is_empty() or world.events_fired.has(id):
+			continue
+		# событие от фокуса или другого события наступает не раньше следующего дня
+		if q.size() > 2 and world.day < int(q[2]):
+			keep.append(q)
 			continue
 		var target := tag_id(world, ev.get("target", ""))
 		if check(world, target, ev.get("trigger", {})) != "":
@@ -170,11 +174,61 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 		if target < 0 or not world.nations[target].alive:
 			# адресата нет — исторический исход по первому варианту не нужен
 			continue
-		if world.nations[target].is_player:
+		if world.nations[target].is_player and event_has_choice(ev):
 			world.pending_events.append(id)
+			world.pending_since[id] = world.day
+		elif world.nations[target].is_player:
+			# гарантированное или с одним вариантом — применяется сразу, игроку лист
+			var k := _ai_option(world, ev, rng)
+			choose_option(world, id, k, rng)
+			world.info_events.append(id)
+			world.info_option[id] = k
 		else:
 			choose_option(world, id, _ai_option(world, ev, rng), rng)
 	world.event_queue = keep
+	_answer_overdue(world, rng)
+
+
+## Есть ли у события выбор: несколько вариантов и исход не гарантирован
+## (поле "guaranteed" — событие фокуса с гарантированным исходом).
+static func event_has_choice(ev: Dictionary) -> bool:
+	return ev.get("options", []).size() > 1 and not ev.get("guaranteed", false)
+
+
+## День, после которого событие игрока выбирается само (через
+## EVENT_ANSWER_DAYS дней); гарантированные и с одним вариантом применяются
+## сразу при наступлении и сюда не попадают.
+static func event_deadline(world: World, id: String) -> int:
+	var since: int = int(world.pending_since.get(id, world.day))
+	var ev: Dictionary = world.event_defs.get(id, {})
+	return since + (World.EVENT_ANSWER_DAYS if event_has_choice(ev) else 0)
+
+
+## Игрок не ответил в срок: исторический вариант в историческом режиме,
+## иначе случайный.
+static func _answer_overdue(world: World, rng: RandomNumberGenerator) -> void:
+	if world.pending_events.is_empty():
+		return
+	var left: Array = []
+	for id in world.pending_events:
+		var sid: String = id
+		if world.day <= event_deadline(world, sid):
+			left.append(sid)
+			continue
+		var ev: Dictionary = world.event_defs.get(sid, {})
+		var opts: Array = ev.get("options", [])
+		var k := 0
+		if not event_has_choice(ev):
+			k = _ai_option(world, ev, rng)   # гарантированный исход — исторический вариант
+		elif world.historical:
+			k = _ai_option(world, ev, rng)
+		else:
+			k = rng.randi_range(0, opts.size() - 1)
+		world.pending_since.erase(sid)
+		if event_has_choice(ev):
+			world.log_event("Ответ не дан в срок — выбрано само")
+		choose_option(world, sid, k, rng)
+	world.pending_events = left
 
 
 ## С кем у страны запланирована война: текущий фокус и ближайший следующий
@@ -424,7 +478,7 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 			"manpower":
 				nat.manpower += float(e["v"])
 			"event":
-				world.event_queue.append([e["id"], who])
+				world.event_queue.append([e["id"], who, world.day + 1])
 			"flag":
 				world.flags[e["id"]] = true
 			"war":

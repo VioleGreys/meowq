@@ -44,7 +44,9 @@ func refresh_income() -> void:
 
 
 func tick() -> void:
-	if world.game_over != "" or not world.pending_peace.is_empty() or not world.pending_events.is_empty():
+	# события игрока не останавливают ход: пауза ставится при их приходе (main.gd),
+	# без ответа в срок вариант выбирается сам (History._answer_overdue)
+	if world.game_over != "" or not world.pending_peace.is_empty():
 		return
 	var t0 := Time.get_ticks_usec()
 	world.day += 1
@@ -852,6 +854,7 @@ func resolve_event(option: int) -> void:
 	if world.pending_events.is_empty():
 		return
 	var id: String = world.pending_events.pop_front()
+	world.pending_since.erase(id)
 	History.choose_option(world, id, option, Parallel.rng(world.seed_value, world.day, 9999))
 	_fix_capitals()
 

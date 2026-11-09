@@ -1178,10 +1178,11 @@ func open_tab(tab: String) -> void:
 		popup_cover.hide()
 		_set_side_active("")
 		var w: World = game.world
-		if w.pending_events.is_empty():
+		var ef := w.event_front()
+		if ef.is_empty():
 			event_sheet.hide()
 			return
-		event_sheet.show_event(game, w, w.pending_events[0])
+		event_sheet.show_event(game, w, ef[0], ef[1])
 		event_sheet.show()
 		if first:
 			event_sheet.animate_in()
@@ -1310,8 +1311,9 @@ func _rebuild_popup() -> void:
 			_build_peace(w)
 		"event":
 			# событие — отдельное окно-планшет (EventSheet), не лист в папке
-			if not w.pending_events.is_empty():
-				event_sheet.show_event(game, w, w.pending_events[0])
+			var ef := w.event_front()
+			if not ef.is_empty():
+				event_sheet.show_event(game, w, ef[0], ef[1])
 			return
 	_update_popup_dynamic()
 

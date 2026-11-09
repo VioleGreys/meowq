@@ -100,6 +100,7 @@ func _bench_realtime(seconds: float) -> void:
 			if not world.pending_peace.is_empty():
 				sim.resolve_peace("annex")
 			world.pending_events.clear()
+			world.info_events.clear()
 			sim.tick()
 		world.events.clear()
 	world_unlock()
@@ -134,8 +135,10 @@ func _bench_realtime(seconds: float) -> void:
 		worst = maxi(worst, ft)
 		if ft > 30000:
 			print("  долгий кадр %d: %.1f мс (день %d)" % [frames, ft / 1000.0, ticks_done - start_day])
-		if not world.pending_events.is_empty() or not world.pending_peace.is_empty():
+		if not world.event_front().is_empty() or not world.pending_peace.is_empty():
 			world_lock()
+			world.info_events.clear()
+			world.info_option.clear()
 			if not world.pending_events.is_empty():
 				sim.resolve_event(0)
 			if not world.pending_peace.is_empty():
@@ -236,7 +239,11 @@ func _auto_screenshot_locked() -> void:
 		if _arg("mapmode") != "":
 			set_map_mode(int(_arg("mapmode")))
 		if _arg("event") != "":
-			world.pending_events.append(_arg("event"))
+			var eid := _arg("event")
+			if History.event_has_choice(world.event_defs.get(eid, {})):
+				world.pending_events.append(eid)
+			else:
+				world.info_events.append(eid)   # лист применённого события (без выбора)
 		if "--focus" in OS.get_cmdline_user_args():
 			hud.focus_view.open(self, world, me)
 		if _arg("peace") != "":
@@ -439,21 +446,38 @@ const PALETTE_MIN_MSEC := 500
 var _palette_msec := 0
 
 
+var _event_seen := ""   # событие, на которое уже поставлена пауза
+var _speed_prev := 0
+
+
 func _ui_update() -> void:
 	if world.game_over != "":
 		state = "over"
 		hud.show_game_over(world.game_over)
 		return
-	if not world.pending_events.is_empty():
-		if not hud.event_open():
+	var ef := world.event_front()
+	if not ef.is_empty():
+		# новое событие: пауза и окно; если игрок закрыл окно и снял паузу,
+		# событие с выбором ждёт ответа до срока (окно вернётся на паузе)
+		var front: String = ef[0]
+		if front != _event_seen:
+			_event_seen = front
 			speed = 0
 			_accum = 0.0
 			hud.open_tab("event")
-	elif not world.pending_peace.is_empty():
+		elif not hud.event_open() and speed == 0 and _speed_prev > 0 and not hud.popup.visible:
+			hud.open_tab("event")
+	elif hud.event_open():
+		_event_seen = ""
+		hud.close_popup()
+	if ef.is_empty():
+		_event_seen = ""
+	if ef.is_empty() and not world.pending_peace.is_empty():
 		if hud.popup_tab != "peace" or not hud.popup.visible:
 			speed = 0
 			_accum = 0.0
 			hud.open_tab("peace")
+	_speed_prev = speed
 	var new_day := ticks_done != _ticks_seen
 	var t0 := Time.get_ticks_usec()
 	if new_day:
@@ -728,9 +752,20 @@ func declare_war_on(target: int) -> void:
 
 func resolve_event(option: int) -> void:
 	sim.resolve_event(option)
+	_after_event()
+
+
+## Лист уже применённого события прочитан.
+func dismiss_info_event() -> void:
+	if not world.info_events.is_empty():
+		world.info_option.erase(world.info_events.pop_front())
+	_after_event()
+
+
+func _after_event() -> void:
 	hud.close_popup()
 	hud.on_tick()
-	if not world.pending_events.is_empty():
+	if not world.event_front().is_empty():
 		hud.open_tab("event")
 
 

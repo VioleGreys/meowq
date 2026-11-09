@@ -426,7 +426,21 @@ var capitulation_rules: Array = []
 var event_queue: Array = []     # [id события, номер страны-инициатора] — ждут условий
 var scheduled: Array = []       # [день, номер страны, эффекты] — отложенные эффекты («через N дней»)
 var events_fired := {}
-var pending_events: Array = []  # [id события] — ждут выбора игрока   # [проигравший, победитель] — ждут решения игрока
+var pending_events: Array = []  # [id события] — ждут выбора игрока (игра идёт, если игрок снял паузу)
+var pending_since := {}         # id события -> день, когда оно пришло игроку
+const EVENT_ANSWER_DAYS := 14   # срок ответа на событие с выбором; потом вариант выбирается сам
+var info_events: Array = []     # [id события] — уже применены (без выбора), игроку показать лист
+var info_option := {}           # id события -> применённый вариант
+
+
+## Какое событие показать игроку: сначала ждущие выбора, потом уже применённые.
+## [id, только для прочтения] или [] — показывать нечего.
+func event_front() -> Array:
+	if not pending_events.is_empty():
+		return [pending_events[0], false]
+	if not info_events.is_empty():
+		return [info_events[0], true]
+	return []   # [проигравший, победитель] — ждут решения игрока
 
 
 # --- Время -------------------------------------------------------------------
@@ -447,9 +461,9 @@ func day_of(date: String) -> int:
 	return total + d
 
 
-## Короткая дата «29.IX.1938» (для телеграмм и документов).
-func date_short() -> String:
-	var d := day
+## Короткая дата «29.09.1938» (для телеграмм и документов).
+func date_short(at: int = -1) -> String:
+	var d := day if at < 0 else at
 	var year := START_YEAR
 	while d >= _year_days(year):
 		d -= _year_days(year)
@@ -458,8 +472,7 @@ func date_short() -> String:
 	while d >= _month_days(m, year):
 		d -= _month_days(m, year)
 		m += 1
-	var roman := ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"]
-	return "%d.%s.%d" % [d + 1, roman[m], year]
+	return "%02d.%02d.%d" % [d + 1, m + 1, year]
 
 
 func date_string() -> String:
