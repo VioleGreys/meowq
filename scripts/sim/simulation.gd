@@ -19,8 +19,8 @@ var land_totals_day := -100
 func _init(w: World) -> void:
 	Native.init()
 	world = w
-	if "--supply=regions" in OS.get_cmdline_user_args():
-		world.supply_regions = true
+	if "--supply=old" in OS.get_cmdline_user_args():
+		world.supply_regions = false   # прежняя модель (по удалённости от узлов) — для сравнения
 	refresh_income()
 	# процедурный мир и прочие сценарии без линий: доктринные линии и базовый склад
 	for nat in world.nations:
@@ -330,15 +330,24 @@ func _phase_supply() -> void:
 		hubs[i] = PackedInt32Array(hubs[i])
 	if world.supply_regions:
 		# по принципу жанра: узлы районов, железная дорога, подвоз (Supply)
+		# номер стороны — номер её ведущей страны (не сдвигается, когда другие
+		# страны исчезают: вчерашнее поле подачи остаётся за той же стороной)
 		var so := PackedInt32Array()
 		so.resize(nc)
+		so.fill(-1)
+		var srcs: Array = []
+		srcs.resize(nc)
+		for a in nc:
+			srcs[a] = PackedInt32Array()
+		for i in reps.size():
+			srcs[reps[i]] = hubs[i]
 		var caps := PackedInt32Array()
 		for a in nc:
-			so[a] = reps.find(rep[a]) if world.nations[a].alive else -1
-			if world.nations[a].alive:
+			if world.nations[a].alive and rep_index.has(rep[a]):
+				so[a] = rep[a]
 				caps.append(world.nations[a].capital)
-		Supply.regions(world, so, hubs, caps)
-		world.sup_args = [so, hubs, caps]   # для упреждения поля на завтра (Supply.spec)
+		Supply.regions(world, so, srcs, caps)
+		world.sup_args = [so, srcs, caps]   # для упреждения поля на завтра (Supply.spec)
 		Prof.add("снаб:сети", _pt0)
 		return
 	var results: Array = []

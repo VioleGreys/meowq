@@ -121,7 +121,7 @@ public:
 	// Снабжение по принципу жанра (Supply): поле подачи узлов и раздача по дивизиям.
 	Array supply_field(const Dictionary &t) const;
 	PackedFloat64Array supply_divs(const Dictionary &t) const;
-	String version() const { return "meowq-core 15"; }
+	String version() const { return "meowq-core 18"; }
 };
 
 } // namespace godot

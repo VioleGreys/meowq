@@ -24,6 +24,11 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	const double *fall = fall_a.ptr();
 	const double k_cap = kk_a[0], k_port = kk_a[1], k_pvp = kk_a[2], k_level = kk_a[3];
 	const int hub_range = int(kk_a[5]);
+	const double rail_loss = kk_a[6], rail_min = kk_a[7], gauge_loss = kk_a[8];
+	const PackedInt32Array owner_a = t["owner"];
+	const PackedByteArray gauge_a = t["gauge"];
+	const int32_t *owner = owner_a.ptr();
+	const uint8_t *gauge = gauge_a.ptr();
 	const int pc = ctrl_a.size();
 	const bool has_pop = pop_a.size() == pc;
 	const int nk = ns * nr;
@@ -42,12 +47,39 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 			continue;
 		ps[p] = s;
 		const int k = s * nr + preg[p];
-		capsum[k] += double(pcap[p]);
+		const int o = owner[p];
+		capsum[k] += double(pcap[p]) * ((o >= 0 && gauge[o] != gauge[ctrl[p]]) ? gauge_loss : 1.0);
 		pcount[k] += 1;
 		const double sc = double(vp[p]) * 1.0e6 + (has_pop ? double(pop[p]) : 0.0);
 		if (hub[k] < 0 || sc > hscore[k]) {
 			hub[k] = p;
 			hscore[k] = sc;
+		}
+	}
+	PackedByteArray conn_a;
+	conn_a.resize(pc);
+	uint8_t *conn = conn_a.ptrw();
+	std::fill(conn, conn + pc, 0);
+	{
+		std::vector<int32_t> cq;
+		for (int s = 0; s < ns; s++)
+			for (int j = src_off[s]; j < src_off[s + 1]; j++) {
+				const int h = src[j];
+				if (ps[h] == s && conn[h] == 0) {
+					conn[h] = 1;
+					cq.push_back(h);
+				}
+			}
+		for (size_t ch = 0; ch < cq.size(); ch++) {
+			const int p = cq[ch];
+			const int s = ps[p];
+			for (int e = adj_start[p]; e < adj_start[p + 1]; e++) {
+				const int q = adj_list[e];
+				if (conn[q] == 0 && ps[q] == s) {
+					conn[q] = 1;
+					cq.push_back(q);
+				}
+			}
 		}
 	}
 	for (int k = 0; k < nk; k++)
@@ -56,15 +88,28 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 
 	std::vector<int32_t> best_src(nk, -1);
 	std::vector<double> best_f(nk, 0.0), best(nr, -1.0);
-	std::vector<int32_t> open, nxt;
+	std::vector<int32_t> open, nxt, rd(nr, -1), q2;
 	for (int s = 0; s < ns; s++) {
 		std::fill(best.begin(), best.end(), -1.0);
+		std::fill(rd.begin(), rd.end(), -1);
 		open.clear();
 		for (int j = src_off[s]; j < src_off[s + 1]; j++) {
 			const int r = preg[src[j]];
 			if (best[r] < 99.0) {
 				best[r] = 99.0;
+				rd[r] = 0;
 				open.push_back(r);
+			}
+		}
+		q2 = open;
+		for (size_t head2 = 0; head2 < q2.size(); head2++) {
+			const int r0 = q2[head2];
+			for (int j = radj_s[r0]; j < radj_s[r0 + 1]; j++) {
+				const int r2 = radj_l[j];
+				if (rd[r2] >= 0 || pcount[s * nr + r2] == 0)
+					continue;
+				rd[r2] = rd[r0] + 1;
+				q2.push_back(r2);
 			}
 		}
 		while (!open.empty()) {
@@ -86,9 +131,9 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 		}
 		for (int r = 0; r < nr; r++) {
 			const int k = s * nr + r;
-			if (hub[k] >= 0 && best[r] > 0.0) {
+			if (hub[k] >= 0 && best[r] > 0.0 && conn[hub[k]] == 1) {
 				best_src[k] = hub[k];
-				best_f[k] = k_level * std::min(best[r], level[k]);
+				best_f[k] = k_level * std::min(best[r], level[k]) * std::max(rail_min, 1.0 - rail_loss * double(rd[r]));
 			}
 		}
 		for (int j = src_off[s]; j < src_off[s + 1]; j++) {
@@ -155,6 +200,7 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	res.push_back(ps_a);
 	res.push_back(got_a);
 	res.push_back(gsrc_a);
+	res.push_back(conn_a);
 	return res;
 }
 
@@ -163,6 +209,9 @@ PackedFloat64Array MeowqCore::supply_divs(const Dictionary &t) const {
 	const PackedFloat64Array got_a = t["got"];
 	const PackedInt32Array gsrc_a = t["gsrc"];
 	const int32_t *gsrc = gsrc_a.ptr();
+	const PackedByteArray conn_a = t["conn"];
+	const uint8_t *conn = conn_a.ptr();
+	const double k_pocket = double(t["pocket"]);
 	const PackedFloat32Array pcap_a = t["pcap"];
 	const PackedByteArray alive_a = t["d_alive"];
 	const PackedInt32Array prov_a = t["d_prov"], owner_a = t["d_owner"], mot_a = t["mot"];
@@ -189,7 +238,7 @@ PackedFloat64Array MeowqCore::supply_divs(const Dictionary &t) const {
 		const int c = ctrl[p];
 		if (s < 0 || c < 0 || side_of[c] != s)
 			continue;
-		double have = k_local * double(pcap[p]);
+		double have = k_local * double(pcap[p]) * ((ps[p] == s && conn[p] == 1) ? 1.0 : k_pocket);
 		const int g = gsrc[p];
 		if (ps[p] == s && g >= 0 && ctrl[g] >= 0 && side_of[ctrl[g]] == s)
 			have += got[p];

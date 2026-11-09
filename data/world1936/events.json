@@ -203,6 +203,10 @@
               "id": "spr_militias"
             },
             {
+              "t": "spirit_add",
+              "id": "spr_no_pasaran"
+            },
+            {
               "t": "tension",
               "v": 3
             },

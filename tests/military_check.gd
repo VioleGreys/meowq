@@ -72,12 +72,18 @@ func _init() -> void:
 	for q in w.p_adj[pocket]:
 		if w.p_land[q] == 1:
 			w.p_controller[q] = GER
-	sim.tick()
+	# поле снабжения считается упреждением по вчерашней территории — котёл
+	# чувствуется со второго дня; остаётся лишь урезанное местное снабжение
+	for i in 2:
+		for q in w.p_adj[pocket]:
+			if w.p_land[q] == 1:
+				w.p_controller[q] = GER
+		sim.tick()
 	var trapped: Array = []
 	for d in w.divs_in(pocket):
 		if d.owner == POL:
 			trapped.append(d)
-	check(not trapped.is_empty() and trapped[0].supply == 0.0, "дивизии в котле без снабжения (%s)" % w.p_name[pocket])
+	check(not trapped.is_empty() and trapped[0].supply < 0.5, "дивизии в котле почти без снабжения (%s, %d%%)" % [w.p_name[pocket], roundi(100.0 * (trapped[0].supply if not trapped.is_empty() else 1.0))])
 	for i in 10:
 		for q in w.p_adj[pocket]:
 			if w.p_land[q] == 1:

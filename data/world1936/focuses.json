@@ -81,7 +81,7 @@
       {"id": "ger_tripartite", "name": "Тройственный пакт", "desc": "Германия, Италия и Япония делят мир на сферы и обещают друг другу помощь.", "days": 35, "x": 5, "y": 11, "requires": ["ger_west"], "available": {"date": "1940-09-27"},
        "effects": [{"t": "join_faction_of", "who": "JAP", "target": "GER"}, {"t": "tension", "v": 2}]},
       {"id": "ger_balkans", "name": "Балканская кампания", "desc": "После переворота в Белграде разгромить Югославию и прийти на помощь Италии в Греции.", "days": 35, "x": 4, "y": 12, "requires": ["ger_tripartite"], "available": {"alive": "YUG", "date": "1941-04-06"},
-       "effects": [{"t": "war", "target": "YUG"}, {"t": "war", "target": "GRE"}]},
+       "effects": [{"t": "war", "target": "YUG"}, {"t": "war", "target": "GRE"}, {"t": "spirit_add", "who": "YUG", "id": "yug_april"}, {"t": "org_hit", "who": "YUG", "v": 0.5}]},
       {"id": "ger_east", "name": "Поход на Восток", "desc": "Разорвать договор с СССР и начать войну на уничтожение.", "days": 70, "x": 4, "y": 13, "requires": ["ger_tripartite"], "available": {"alive": "SOV", "date": "1941-06-22"},
        "effects": [{"t": "break_pact", "target": "SOV"}, {"t": "war", "target": "SOV"}]}
     ],
@@ -1283,7 +1283,7 @@
       {"id": "spr_x04", "name": "Тринадцать пунктов Негрина", "desc": "Условия мира.", "days": 35, "x": 5, "y": 1, "requires": ["spr_x02"], "available": {"date": "1938-04-30"},
        "effects": [{"t": "bonus", "key": "org", "v": 0.02}, {"t": "bonus", "key": "industry", "v": 0.02}]},
       {"id": "spr_x05", "name": "Прощание с бригадами", "desc": "Интернациональные бригады уходят.", "days": 35, "x": 3, "y": 2, "requires": ["spr_x03"], "available": {"date": "1938-10-28"},
-       "effects": [{"t": "manpower", "v": -20}, {"t": "spirit_remove", "id": "spr_soviet_aid"}]},
+       "effects": [{"t": "manpower", "v": -20}, {"t": "spirit_remove", "id": "spr_soviet_aid"}, {"t": "spirit_remove", "id": "spr_no_pasaran"}]},
       {"id": "spr_x06", "name": "Хунта Касадо", "desc": "Переворот в Мадриде.", "days": 35, "x": 5, "y": 2, "requires": ["spr_x04"], "available": {"date": "1939-03-05"},
        "effects": [{"t": "bonus", "key": "org", "v": -0.03}]},
       {"id": "spr_x07", "name": "Золото в Москву", "desc": "Оплата советской помощи.", "days": 35, "x": 0, "y": 0, "available": {"date": "1936-10-25"},

@@ -10,8 +10,10 @@ func _init():
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--until="):
 			until = a.split("=")[1]
-	var dates := ["1937-06-01", "1939-10-01", "1940-06-01", "1941-08-01", "1941-12-01"]
-	var tags := ["GER", "SOV", "FRA", "ENG", "ITA", "JAP", "CHI", "POL"]
+		if a.begins_with("--seed="):
+			w.seed_value = int(a.split("=")[1])
+	var dates := ["1937-06-01", "1937-12-01", "1938-04-01", "1939-10-01", "1940-03-01", "1940-06-01", "1941-08-01", "1941-12-01"]
+	var tags := ["GER", "SOV", "FRA", "ENG", "ITA", "JAP", "MAN", "CHI", "POL"]
 	var t_sum := 0
 	var t_n := 0
 	var end := w.day_of(until)

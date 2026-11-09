@@ -8,13 +8,16 @@ extends RefCounted
 ##    сторона держит провинции; узел работает, если связан с источником
 ##    железной дорогой по районам своей стороны;
 ##  * пропускная способность дороги — по самому слабому району пути (уровень
-##    дороги района — средняя ёмкость его провинций), самый широкий путь;
+##    дороги района — средняя ёмкость его провинций), самый широкий путь; длинная
+##    дорога теряет подачу (RAIL_LOSS за район, не ниже RAIL_MIN); захваченная
+##    дорога другой колеи (широкая — СССР, Финляндия) даёт вдвое меньше;
 ##  * в районе действует один источник стороны — самый сильный из узла,
 ##    столицы и портов; он подаёт снабжение в провинции в радиусе HUB_RANGE
 ##    переходов, с каждым переходом меньше (FALLOFF); провинция берёт лучшую
 ##    подачу плюс своё местное снабжение (LOCAL × ёмкость провинции);
 ##  * дивизии в провинции делят её снабжение (моторизованные — ×1,5 нагрузки);
-##    в окружении остаётся только местное.
+##    в окружении (нет связи с источником по своей территории) узлы не работают,
+##    местного — POCKET_LOCAL.
 ##
 ## Поле подачи (field) — упреждением: накануне в фоне по снимку территории
 ## (Spec), вчерашние данные — естественное отставание подвоза: провинция,
@@ -30,6 +33,12 @@ const CAPITAL := 14.0         # подача столицы
 const PORT_BASE := 4.0        # подача порта: 4 + 1,5 × очки победы (до 5)
 const PORT_VP := 1.5
 const LEVEL_K := 3.0          # подача узла = 3 × уровень дороги (самое узкое место пути)
+const RAIL_LOSS := 0.05       # длина дороги: −5 % подачи узла за каждый район пути от источника
+const RAIL_MIN := 0.3         # дальше не падает
+const GAUGE_LOSS := 0.5       # чужая колея: провинция даёт дороге вдвое меньше
+const POCKET_LOCAL := 0.3     # отрезанная от источников провинция: местного снабжения — 30 %
+## Широкая колея (как было: СССР, Финляндия); у остальных — стандартная.
+const BROAD_GAUGE := ["SOV", "FIN"]
 
 
 ## Неизменные таблицы: соседство районов по суше (CSR).
@@ -72,13 +81,17 @@ static func field_snapshot(world: World, side_of: PackedInt32Array, sources: Arr
 		fall.append(pow(FALLOFF, maxi(0, h - 1)))
 	# только копии: снимок читается в фоне, пока мир идёт дальше (правило
 	# многопоточности — часть записей в массивы мира идёт на месте)
-	return {"adj_start": world.adj_start.duplicate(), "adj_list": world.adj_list.duplicate(), "land": world.p_land.duplicate(),
+	var gauge := PackedByteArray()
+	gauge.resize(world.nation_count)
+	for nat in world.nations:
+		gauge[nat.id] = 1 if BROAD_GAUGE.has(nat.tag) else 0
+	return {"owner": world.p_owner.duplicate(), "gauge": gauge, "adj_start": world.adj_start.duplicate(), "adj_list": world.adj_list.duplicate(), "land": world.p_land.duplicate(),
 		"ctrl": world.p_controller.duplicate(), "preg": world.p_region.duplicate(), "vp": world.p_vp.duplicate(),
 		"pop": world.p_population.duplicate() if world.p_population.size() == world.prov_count else PackedInt32Array(),
 		"pcap": world.p_supply_cap.duplicate(), "side_of": side_of.duplicate(), "ns": sources.size(), "nr": world.region_count,
 		"reg_adj_start": world.reg_adj_start.duplicate(), "reg_adj_list": world.reg_adj_list.duplicate(),
 		"src": src_flat, "src_off": src_off, "capitals": capitals.duplicate(), "fall": fall,
-		"k": PackedFloat64Array([CAPITAL, PORT_BASE, PORT_VP, LEVEL_K, LOCAL, float(HUB_RANGE)])}
+		"k": PackedFloat64Array([CAPITAL, PORT_BASE, PORT_VP, LEVEL_K, LOCAL, float(HUB_RANGE), RAIL_LOSS, RAIL_MIN, GAUGE_LOSS])}
 
 
 ## Поле подачи по снимку → [сторона провинции, подача].
@@ -99,7 +112,7 @@ static func regions(world: World, side_of: PackedInt32Array, sources: Array, cap
 	else:
 		f = field(field_snapshot(world, side_of, sources, capitals))
 	world.sup_job = {}
-	var t := {"ps": f[0], "got": f[1], "gsrc": f[2], "side_of": side_of, "ctrl": world.p_controller, "pcap": world.p_supply_cap,
+	var t := {"ps": f[0], "got": f[1], "gsrc": f[2], "conn": f[3], "pocket": POCKET_LOCAL, "side_of": side_of, "ctrl": world.p_controller, "pcap": world.p_supply_cap,
 		"d_alive": world.d_alive, "d_prov": world.d_prov, "d_owner": world.d_owner,
 		"mot": Native.gather_i32(world.tpl_motor, world.d_tpl), "local": LOCAL}
 	if Native.core != null:
@@ -147,6 +160,11 @@ static func field_gd(t: Dictionary) -> Array:
 	var k_pvp := kk[2]
 	var k_level := kk[3]
 	var hub_range := int(kk[5])
+	var rail_loss := kk[6]
+	var rail_min := kk[7]
+	var gauge_loss := kk[8]
+	var owner: PackedInt32Array = t["owner"]
+	var gauge: PackedByteArray = t["gauge"]
 	var pc := ctrl.size()
 	var has_pop := pop.size() == pc
 	# сторона провинции; узел района — главный город; уровень дороги
@@ -170,12 +188,34 @@ static func field_gd(t: Dictionary) -> Array:
 			continue
 		ps[p] = s
 		var k := s * nr + preg[p]
-		capsum[k] += float(pcap[p])
+		# дорога чужой колеи (владелец и хозяин сейчас — разной ширины) — хуже
+		var o := owner[p]
+		capsum[k] += float(pcap[p]) * (gauge_loss if o >= 0 and gauge[o] != gauge[ctrl[p]] else 1.0)
 		pcount[k] += 1
 		var sc := float(vp[p]) * 1.0e6 + (float(pop[p]) if has_pop else 0.0)
 		if hub[k] < 0 or sc > hscore[k]:
 			hub[k] = p
 			hscore[k] = sc
+	# связь с источником по своей территории (котлы): узел вне связи не работает
+	var conn := PackedByteArray()
+	conn.resize(pc)
+	var cq := PackedInt32Array()
+	for s in ns:
+		for j in range(src_off[s], src_off[s + 1]):
+			var h := src[j]
+			if ps[h] == s and conn[h] == 0:
+				conn[h] = 1
+				cq.append(h)
+	var chead := 0
+	while chead < cq.size():
+		var p := cq[chead]
+		chead += 1
+		var s := ps[p]
+		for e in range(adj_start[p], adj_start[p + 1]):
+			var q := adj_list[e]
+			if conn[q] == 0 and ps[q] == s:
+				conn[q] = 1
+				cq.append(q)
 	var level := PackedFloat64Array()
 	level.resize(ns * nr)
 	for k in ns * nr:
@@ -189,14 +229,30 @@ static func field_gd(t: Dictionary) -> Array:
 	best_f.resize(ns * nr)
 	var best := PackedFloat64Array()
 	best.resize(nr)
+	var rd := PackedInt32Array()   # районов пути от ближайшего источника
+	rd.resize(nr)
 	for s in ns:
 		best.fill(-1.0)
+		rd.fill(-1)
 		var open := PackedInt32Array()
 		for j in range(src_off[s], src_off[s + 1]):
 			var r := preg[src[j]]
 			if best[r] < 99.0:
 				best[r] = 99.0
+				rd[r] = 0
 				open.append(r)
+		# длина пути: волна по районам стороны
+		var q2 := open.duplicate()
+		var head2 := 0
+		while head2 < q2.size():
+			var r0 := q2[head2]
+			head2 += 1
+			for j in range(radj_s[r0], radj_s[r0 + 1]):
+				var r2 := radj_l[j]
+				if rd[r2] >= 0 or pcount[s * nr + r2] == 0:
+					continue
+				rd[r2] = rd[r0] + 1
+				q2.append(r2)
 		while not open.is_empty():
 			var nxt := PackedInt32Array()
 			for r in open:
@@ -212,9 +268,9 @@ static func field_gd(t: Dictionary) -> Array:
 			open = nxt
 		for r in nr:
 			var k := s * nr + r
-			if hub[k] >= 0 and best[r] > 0.0:
+			if hub[k] >= 0 and best[r] > 0.0 and conn[hub[k]] == 1:
 				best_src[k] = hub[k]
-				best_f[k] = k_level * minf(best[r], level[k])
+				best_f[k] = k_level * minf(best[r], level[k]) * maxf(rail_min, 1.0 - rail_loss * float(rd[r]))
 		for j in range(src_off[s], src_off[s + 1]):
 			var h := src[j]
 			var f := k_cap if capitals.has(h) else k_port + k_pvp * minf(5.0, float(vp[h]))
@@ -239,7 +295,7 @@ static func field_gd(t: Dictionary) -> Array:
 			if out[j + 1] > got[p]:
 				got[p] = out[j + 1]
 				gsrc[p] = int(out[j + 2])
-	return [ps, got, gsrc]
+	return [ps, got, gsrc, conn]
 
 
 ## Волна подачи от источников района r (тройки: провинция, подача, источник) → parts[r].
@@ -295,6 +351,8 @@ static func divisions_gd(t: Dictionary) -> PackedFloat64Array:
 	var ps: PackedInt32Array = t["ps"]
 	var got: PackedFloat64Array = t["got"]
 	var gsrc: PackedInt32Array = t["gsrc"]
+	var conn: PackedByteArray = t["conn"]
+	var k_pocket: float = t["pocket"]
 	var side_of: PackedInt32Array = t["side_of"]
 	var ctrl: PackedInt32Array = t["ctrl"]
 	var pcap: PackedFloat32Array = t["pcap"]
@@ -319,7 +377,8 @@ static func divisions_gd(t: Dictionary) -> PackedFloat64Array:
 		var c := ctrl[p]
 		if s < 0 or c < 0 or side_of[c] != s:
 			continue   # не своя сторона — снабжения нет
-		var have := k_local * float(pcap[p])
+		# местное снабжение; в котле (провинция вчера без связи с источником) — меньше
+		var have := k_local * float(pcap[p]) * (1.0 if ps[p] == s and conn[p] == 1 else k_pocket)
 		# подача вчерашнего поля — если провинция и её источник (узел, порт,
 		# столица) и сегодня за этой стороной: захваченный за сутки узел не кормит
 		var g := gsrc[p]

@@ -576,6 +576,9 @@ static func check_stalemates(world: World) -> void:
 			var ne: World.Nation = world.nations[e]
 			if ne.is_player or world.day - ne.war_activity_day < 365:
 				continue
+			# гражданская война миром не кончается — только победой одной из сторон
+			if nat.spirits.has("civil_war_attrition") and ne.spirits.has("civil_war_attrition"):
+				continue
 			nat.at_war.erase(e)
 			ne.at_war.erase(nat.id)
 			world.war[nat.id * world.nation_count + e] = 0
