@@ -73,8 +73,8 @@ func tick() -> void:
 	_timed("флот", _phase_navy)
 	_timed("снабжение", _phase_supply)
 	_timed("ИИ", _phase_ai)
-	# в фоне, вместе с планами ИИ, — рейтинг и раздача экспорта на завтра (Economy)
-	_timed("торговля:фон", Economy.start_rank.bind(world))
+	# в фоне, вместе с планами ИИ, — упреждающие расчёты на завтра (Spec)
+	_timed("упреждение", Spec.start.bind(world))
 	_timed("авиация", Forces.daily_air.bind(world, Parallel.rng(world.seed_value, world.day, 6001)))
 	var battles := {}
 	_timed("сбор боёв", func(): battles.merge(_collect_battles()))
@@ -123,12 +123,17 @@ func _phase_economy() -> void:
 			# раз в месяц — пересмотр линий по нужде (Military.plan_production)
 			if (world.day + nat.id) % 30 == 0 or nat.prod_split.is_empty():
 				var _p2 := Time.get_ticks_usec()
-				if land_totals.is_empty() or world.day - land_totals_day >= 10:
-					land_totals = Military.land_totals(world)
-					land_totals_day = world.day
-					Prof.add("эк:снаряжение армий", _p2)
-				_p2 = Time.get_ticks_usec()
-				Military.plan_production(world, nat, AIPlanner.target_divisions(nat), not nat.planned_wars.is_empty(), land_totals)
+				# готовые доли со вчера (упреждение, Spec) или пересмотр сейчас
+				var pj: Dictionary = world.prod_job
+				var ready: Dictionary = pj.get("splits", {}) if int(pj.get("day", -1)) == world.day else {}
+				if ready.has(nat.id):
+					Spec.finish(world)
+					Military.plan_apply(nat, ready[nat.id])
+				else:
+					if land_totals.is_empty() or world.day - land_totals_day >= 10:
+						land_totals = Military.land_totals(world)
+						land_totals_day = world.day
+					Military.plan_production(world, nat, AIPlanner.target_divisions(nat), not nat.planned_wars.is_empty(), land_totals)
 				Prof.add("эк:план заводов", _p2)
 			Military.assign_free_factories(nat, nat.prod_split)
 		Military.produce(nat)
@@ -522,7 +527,7 @@ func _staging_enemy(nat: World.Nation) -> int:
 
 
 func _finish_ai() -> void:
-	Economy.finish_rank(world)
+	Spec.finish(world)
 	if _ai_jobs.is_empty():
 		return
 	Parallel.finish(_ai_gid)

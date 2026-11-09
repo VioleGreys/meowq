@@ -843,6 +843,19 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				for d in world.divisions:
 					if d.alive and d.owner == who:
 						d.org *= 1.0 - float(e.get("v", 0.5))
+			"supply":
+				# поставка по договору (обязательство): продавец (who) отдаёт ресурс
+				# покупателю (target) даже в ущерб себе; рвёт только война
+				var ri := ["oil", "steel", "aluminium", "rubber", "tungsten", "chromium"].find(String(e.get("res", "oil")))
+				if ri >= 0 and target >= 0:
+					Economy.oblige(world, who, target, ri, float(e.get("v", 1)), int(e.get("days", 365)))
+			"closed_trade":
+				# марионетка торгует только с сюзереном (v: false — открыть)
+				nat.trade_closed = bool(e.get("v", true))
+			"embargo":
+				# эмбарго: who не продаёт target, поставки рвутся
+				if target >= 0:
+					Economy.embargo(world, who, target)
 			"synthetic":
 				# заводы синтетического горючего/каучука: ед. ресурса в день
 				var ri := ["oil", "steel", "aluminium", "rubber", "tungsten", "chromium"].find(String(e.get("res", "oil")))
@@ -1250,6 +1263,13 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sснятие гарантии: %s" % [who, tname])
 			"concede":
 				parts.append("%sуступка (влияние −%d)" % [who, int(e.get("v", 10))])
+			"supply":
+				var rn2 := {"oil": "нефть", "steel": "сталь", "aluminium": "алюминий", "rubber": "каучук", "tungsten": "вольфрам", "chromium": "хром"}
+				parts.append("%sпоставки по договору: %s %d в день → %s" % [who, rn2.get(String(e.get("res", "oil")), ""), int(e.get("v", 1)), tname])
+			"closed_trade":
+				parts.append("%s%s" % [who, "торговля только с сюзереном" if bool(e.get("v", true)) else "свободная торговля марионетки"])
+			"embargo":
+				parts.append("%sэмбарго: %s" % [who, tname])
 			"synthetic":
 				var rn := {"oil": "горючее", "rubber": "каучук"}
 				parts.append("%sсинтетическое %s +%d в день" % [who, rn.get(String(e.get("res", "oil")), String(e.get("res", ""))), int(e.get("v", 0))])

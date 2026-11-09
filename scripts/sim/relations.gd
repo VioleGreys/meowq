@@ -61,6 +61,83 @@ static func natural(world: World, a: int, b: int) -> float:
 	return clampf(v, REP_MIN, REP_MAX)
 
 
+## Снимок для фоновых расчётов отношений и шкалы сил (Packed-копии).
+static func _rel_snapshot(world: World) -> Dictionary:
+	var n := world.rep_n
+	var ideo := PackedInt32Array()
+	ideo.resize(n)
+	var fac := PackedInt32Array()
+	fac.resize(n)
+	var over := PackedInt32Array()
+	over.resize(n)
+	var guar := PackedByteArray()
+	guar.resize(n * n)
+	var pact := PackedByteArray()
+	pact.resize(n * n)
+	var aff := PackedInt32Array()
+	for row in IDEO_AFF:
+		for v in row:
+			aff.append(int(v))
+	for a in n:
+		var na: World.Nation = world.nations[a]
+		ideo[a] = _ideo(na.ideology)
+		fac[a] = na.faction
+		over[a] = na.overlord
+		for b in na.guarantees:
+			if int(b) < n:
+				guar[a * n + int(b)] = 1   # a гарантирует b
+		for b in na.pacts:
+			if int(b) < n:
+				pact[a * n + int(b)] = 1
+	return {"n": n, "nc": world.nation_count, "ideo": ideo, "fac": fac, "over": over, "guar": guar,
+		"pact": pact, "aff": aff, "war": world.war.duplicate()}
+
+
+## Матрица «естественных» отношений (как natural) — только по снимку, можно в потоке.
+static func natural_matrix(t: Dictionary) -> PackedFloat32Array:
+	var n: int = t["n"]
+	var nc: int = t["nc"]
+	var ideo: PackedInt32Array = t["ideo"]
+	var fac: PackedInt32Array = t["fac"]
+	var over: PackedInt32Array = t["over"]
+	var guar: PackedByteArray = t["guar"]
+	var pact: PackedByteArray = t["pact"]
+	var aff: PackedInt32Array = t["aff"]
+	var war: PackedByteArray = t["war"]
+	var m := PackedFloat32Array()
+	m.resize(n * n)
+	for a in n:
+		for b in n:
+			var v := 50.0 + float(aff[ideo[a] * 4 + ideo[b]])
+			if fac[a] >= 0 and fac[a] == fac[b]:
+				v += 20.0
+			if over[a] == b or over[b] == a:
+				v += 20.0
+			if guar[b * n + a] == 1:
+				v += 10.0
+			if pact[a * n + b] == 1:
+				v += 5.0
+			if war[a * nc + b] == 1:
+				v -= 40.0
+			m[a * n + b] = clampf(v, REP_MIN, REP_MAX)
+	return m
+
+
+## Упреждение (Spec): шкала сил на завтра и, перед днём сдвига репутации,
+## матрица естественных отношений — в фоне по снимку на сегодня.
+static func spec(world: World, jobs: Array) -> void:
+	world.rel_job = {}
+	if world.rep_n != world.nations.size() or world.rep_n == 0:
+		return
+	var job := {"day": world.day + 1}
+	world.rel_job = job
+	var ts := _threat_snapshot(world)
+	jobs.append(func(): job["threat"] = threat_compute(ts))
+	if (world.day + 1) % DRIFT_EVERY == 0:
+		var rs := _rel_snapshot(world)
+		jobs.append(func(): job["natural"] = natural_matrix(rs))
+
+
 ## Как A относится к B.
 static func rep(world: World, a: int, b: int) -> float:
 	if a < 0 or b < 0 or a >= world.rep_n or b >= world.rep_n:
@@ -131,7 +208,13 @@ static func daily(world: World) -> void:
 	if world.rep_n != world.nations.size():
 		init(world)
 		return
-	update_threat(world)
+	# шкала сил — готовая со вчера (упреждение, Spec) или сейчас
+	var job: Dictionary = world.rel_job
+	if int(job.get("day", -1)) == world.day and job.has("threat"):
+		Spec.finish(world)
+		world.threat = job["threat"]
+	else:
+		update_threat(world)
 	for nat in world.nations:
 		if nat.improving.is_empty() or not nat.alive:
 			continue
@@ -146,6 +229,13 @@ static func daily(world: World) -> void:
 		nat.aggression *= 0.95
 		nat.diplo *= 0.95 if nat.diplo > 0.0 else 0.98   # уступки помнятся дольше
 	var n := world.rep_n
+	# «естественные» отношения — матрица, посчитанная вчера в фоне, или сейчас
+	var nat_m: PackedFloat32Array
+	if int(job.get("day", -1)) == world.day and job.has("natural"):
+		Spec.finish(world)
+		nat_m = job["natural"]
+	else:
+		nat_m = natural_matrix(_rel_snapshot(world))
 	for a in n:
 		if not world.nations[a].alive:
 			continue
@@ -153,7 +243,7 @@ static func daily(world: World) -> void:
 			if a == b or not world.nations[b].alive:
 				continue
 			var i := a * n + b
-			var nat := natural(world, a, b)
+			var nat := nat_m[i]
 			var cur := world.rep[i]
 			if cur < nat - 0.5:
 				world.rep[i] = minf(nat, cur + 1.0)
@@ -198,37 +288,89 @@ static func _strength(world: World) -> Array:
 ## у нейтралитета ×0,3) + действия (до 80): агрессия и дипломатия стран
 ## силы и их союзников по фракции. Доля на шкале — очки / сумма очков всех сил.
 static func update_threat(world: World) -> void:
+	world.threat = threat_compute(_threat_snapshot(world))
+
+
+## Снимок для шкалы сил (Packed-копии; строи — номерами Relations.IDEO).
+static func _threat_snapshot(world: World) -> Dictionary:
+	var n := world.nations.size()
 	var mil: PackedFloat32Array = _strength(world)[0]
+	var alive := PackedByteArray()
+	alive.resize(n)
+	var ideo := PackedInt32Array()
+	ideo.resize(n)
+	var fac := PackedInt32Array()
+	fac.resize(n)
+	var econ := PackedFloat32Array()
+	econ.resize(n)
+	var sci := PackedFloat32Array()
+	sci.resize(n)
+	var ag := PackedFloat32Array()
+	ag.resize(n)
+	var dp := PackedFloat32Array()
+	dp.resize(n)
+	for nat in world.nations:
+		var i: int = nat.id
+		alive[i] = 1 if nat.alive else 0
+		ideo[i] = IDEO.find(nat.ideology)
+		fac[i] = nat.faction
+		econ[i] = float(nat.civ + nat.mil)
+		sci[i] = float(nat.techs.size())
+		ag[i] = nat.aggression
+		dp[i] = nat.diplo
+	return {"n": n, "mil": mil, "alive": alive, "ideo": ideo, "fac": fac, "econ": econ, "sci": sci, "ag": ag, "dp": dp}
+
+
+## Шкала сил по снимку (можно в потоке). Очки силы: потенциал (армия, экономика,
+## наука — до POTENTIAL_MAX, у нейтралитета ×0,3) + действия (до ACTION_MAX):
+## агрессия и дипломатия стран силы и их союзников по фракции. Доля — очки /
+## сумма очков всех сил.
+static func threat_compute(t: Dictionary) -> Dictionary:
+	var n: int = t["n"]
+	var mil: PackedFloat32Array = t["mil"]
+	var alive: PackedByteArray = t["alive"]
+	var ideo: PackedInt32Array = t["ideo"]
+	var fac: PackedInt32Array = t["fac"]
+	var econ: PackedFloat32Array = t["econ"]
+	var sci: PackedFloat32Array = t["sci"]
+	var aga: PackedFloat32Array = t["ag"]
+	var dpa: PackedFloat32Array = t["dp"]
+	var res := {}
 	var tot_m := 0.0
 	var tot_e := 0.0
 	var tot_s := 0.0
-	for nat in world.nations:
-		if nat.alive:
-			tot_m += mil[nat.id]
-			tot_e += float(nat.civ + nat.mil)
-			tot_s += float(nat.techs.size())
+	for i in n:
+		if alive[i] == 1:
+			tot_m += mil[i]
+			tot_e += econ[i]
+			tot_s += sci[i]
 	var total := 0.0
-	for ideo in THREATS:
+	# порядок сил — как в THREATS: fascism, communism, democracy, authoritarian
+	var order := PackedInt32Array([2, 3, 0, 1])
+	var keys := PackedStringArray(["fascism", "communism", "democracy", "authoritarian"])
+	for oi in 4:
+		var iv := order[oi]
 		var m := 0.0
 		var e := 0.0
-		var s := 0.0
-		var bloc := {}
-		var factions := {}
-		for nat in world.nations:
-			if nat.alive and nat.ideology == ideo:
-				bloc[nat.id] = true
-				m += mil[nat.id]
-				e += float(nat.civ + nat.mil)
-				s += float(nat.techs.size())
-				if nat.faction >= 0:
-					factions[nat.faction] = true
+		var sc := 0.0
+		var in_bloc := PackedByteArray()
+		in_bloc.resize(n)
+		var facs := {}
+		for i in n:
+			if alive[i] == 1 and ideo[i] == iv:
+				in_bloc[i] = 1
+				m += mil[i]
+				e += econ[i]
+				sc += sci[i]
+				if fac[i] >= 0:
+					facs[fac[i]] = true
 		var ag := 0.0
 		var dp := 0.0
-		for nat in world.nations:
-			if nat.alive and (bloc.has(nat.id) or factions.has(nat.faction)):
-				ag += nat.aggression
-				dp += nat.diplo
-		var k := NEUTRAL_POTENTIAL if ideo == "authoritarian" else 1.0
+		for i in n:
+			if alive[i] == 1 and (in_bloc[i] == 1 or facs.has(fac[i])):
+				ag += aga[i]
+				dp += dpa[i]
+		var k := NEUTRAL_POTENTIAL if iv == 1 else 1.0
 		var third := POTENTIAL_MAX / 3.0 * k
 		# действия: агрессия и дипломатия; уступки (отрицательная дипломатия)
 		# уходят в минус и снимают очки и с потенциала (дискредитация)
@@ -237,7 +379,7 @@ static func update_threat(world: World) -> void:
 		var parts := {
 			"армия": third * minf(1.0, (m / maxf(tot_m, 1.0)) / POTENTIAL_FULL),
 			"экономика": third * minf(1.0, (e / maxf(tot_e, 1.0)) / POTENTIAL_FULL),
-			"наука": third * minf(1.0, (s / maxf(tot_s, 1.0)) / POTENTIAL_FULL),
+			"наука": third * minf(1.0, (sc / maxf(tot_s, 1.0)) / POTENTIAL_FULL),
 			"агрессия": maxf(act, 0.0) * (ag / maxf(pos, 0.001)),
 			"дипломатия": maxf(act, 0.0) * (maxf(dp, 0.0) / maxf(pos, 0.001)),
 			"уступки": minf(act, 0.0),
@@ -246,10 +388,12 @@ static func update_threat(world: World) -> void:
 		for key in parts:
 			raw += parts[key]
 		raw = maxf(raw, 0.0)
-		world.threat[ideo] = {"pct": 0.0, "raw": raw, "parts": parts}
+		res[keys[oi]] = {"pct": 0.0, "raw": raw, "parts": parts}
 		total += raw
-	for ideo in THREATS:
-		world.threat[ideo]["pct"] = 100.0 * float(world.threat[ideo]["raw"]) / total if total > 0.0 else 25.0
+	for oi in 4:
+		var d: Dictionary = res[keys[oi]]
+		d["pct"] = 100.0 * float(d["raw"]) / total if total > 0.0 else 25.0
+	return res
 
 
 static func threat_pct(world: World, ideo: String) -> float:

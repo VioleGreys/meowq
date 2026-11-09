@@ -44,6 +44,11 @@ const LAWS := [
 const START_LAW := {"GER": 1, "SOV": 1, "JAP": 1, "ITA": 1, "MAN": 1, "SPR": 1, "NSP": 1, "POR": 1,
 	"USA": 3, "ENG": 3, "HOL": 3, "BEL": 3, "SWI": 3, "DEN": 3, "CAN": 3, "AST": 3, "NZL": 3, "SAF": 3, "RAJ": 3}
 const LAW_COOLDOWN := 60     # дней между сменами курса
+## Марионетки с закрытой торговлей — только со своим сюзереном (как было:
+## экономика Маньчжоу-го под Японией, Словакия по договору о «защите» 1939 г.,
+## Виши по условиям перемирия). Другим можно закрыть эффектом closed_trade
+## или решением сюзерена-игрока.
+const CLOSED_PUPPETS := {"MAN": true, "SLO": true, "VIC": true}
 
 const CONTRACT_DAYS := 30    # поставка покупается на месяц
 const SWEEP_DAYS := 14       # обход поставок (сроки, отказы) — раз в 2 недели
@@ -70,6 +75,7 @@ static func load_resources(world: World, path: String) -> void:
 				world.res_val.append(float(row[r]))
 	for nat in world.nations:
 		nat.trade_law = int(START_LAW.get(nat.tag, 2))
+		nat.trade_closed = CLOSED_PUPPETS.has(nat.tag)
 	refresh(world)
 
 
@@ -119,17 +125,19 @@ static func available(nat: World.Nation, r: int) -> float:
 
 
 ## Сколько ресурса r страна ещё может продать (её курс минус уже проданное).
-## ИИ не продаёт то, что нужно ему самому (игрок решает сам — курсом).
+## Продают только излишек сверх своей нужды (как было в войну: стратегическое
+## сырьё, нужное самим, не вывозили — кроме договоров, см. oblige).
 static func exportable(world: World, seller: World.Nation, r: int) -> float:
 	return maxf(0.0, export_cap(seller, r) - seller.res_out[r])
 
 
-## Сколько всего ресурса r страна готова продавать в день.
+## Сколько всего ресурса r страна готова продавать в день: доля курса, но не
+## больше излишка.
 static func export_cap(seller: World.Nation, r: int) -> float:
-	var cap: float = seller.res_prod[r] * float(LAWS[seller.trade_law]["export"])
-	if not seller.is_player:
-		cap = minf(cap, maxf(0.0, seller.res_prod[r] - seller.res_need[r] * 1.1))
-	return cap
+	# закрытая марионетка отдаёт сюзерену весь излишек, независимо от курса
+	var share: float = 1.0 if (seller.trade_closed and seller.overlord >= 0) else float(LAWS[seller.trade_law]["export"])
+	var cap: float = seller.res_prod[r] * share
+	return minf(cap, maxf(0.0, seller.res_prod[r] - seller.res_need[r] * 1.1))
 
 
 ## Можно ли торговать: не враги, не в войне, репутация не ниже −30.
@@ -140,6 +148,11 @@ static func can_trade(world: World, buyer: int, seller: int) -> String:
 		return "страны нет"
 	if world.is_at_war(buyer, seller):
 		return "война"
+	if world.embargoes.has(seller * 100000 + buyer):
+		return "эмбарго"
+	var sn: World.Nation = world.nations[seller]
+	if sn.trade_closed and sn.overlord >= 0 and sn.overlord != buyer:
+		return "марионетка торгует только с сюзереном"
 	if world.rep.size() == world.nation_count * world.nation_count \
 			and world.rep[seller * world.nation_count + buyer] < -30.0:
 		return "продавец не хочет торговать"
@@ -162,8 +175,8 @@ static func buy(world: World, buyer: int, seller: int, r: int, units: float, log
 		if float(c[6]) >= 0.0:
 			c[6] = float(c[6]) + units   # отказ/урезка на следующий месяц отменяется на эту часть
 	else:
-		# [покупатель, продавец, ресурс, ед. в день, оплачено до, —, со следующего месяца (−1 — как есть)]
-		world.contracts.append([buyer, seller, r, units, world.day + CONTRACT_DAYS, false, -1.0])
+		# [покупатель, продавец, ресурс, ед. в день, оплачено до, договор до (0 — нет), со следующего месяца (−1 — как есть)]
+		world.contracts.append([buyer, seller, r, units, world.day + CONTRACT_DAYS, 0, -1.0])
 	_add(bn, sn, r, units)
 	if log:
 		world.log_event("Поставка: %s → %s, %s +%.1f в день" % [sn.name, bn.name, RES_NAMES[r].to_lower(), units])
@@ -173,7 +186,7 @@ static func buy(world: World, buyer: int, seller: int, r: int, units: float, log
 ## Отказаться от поставки (покупатель): она идёт и оплачивается до конца
 ## оплаченного месяца, потом снимается.
 static func cancel(world: World, idx: int) -> void:
-	if idx >= 0 and idx < world.contracts.size():
+	if idx >= 0 and idx < world.contracts.size() and int(world.contracts[idx][5]) <= world.day:
 		world.contracts[idx][6] = 0.0
 
 
@@ -289,6 +302,8 @@ static func rank_row(t: Dictionary, s: int) -> PackedFloat32Array:
 	var war: PackedByteArray = t["war"]
 	var rep: PackedFloat32Array = t["rep"]
 	var rn: int = t["rep_n"]
+	var emb: PackedByteArray = t["emb"]
+	var closed: PackedByteArray = t["closed"]
 	var row := PackedFloat32Array()
 	row.resize(nc)
 	if alive[s] == 0:
@@ -309,6 +324,8 @@ static func rank_row(t: Dictionary, s: int) -> PackedFloat32Array:
 	for b in nc:
 		if b == s or alive[b] == 0 or war[b * nc + s] == 1:
 			continue
+		if (closed[s] == 1 and over[s] != b) or emb[s * nc + b] == 1:
+			continue   # марионетка торгует только с сюзереном; эмбарго
 		var rp := rep[s * rn + b] if s < rn and b < rn else 50.0
 		if rp < -30.0:
 			continue
@@ -372,8 +389,8 @@ static func plan_sales(t: Dictionary, i: int, s: int, row: PackedFloat32Array) -
 	var prod: PackedFloat32Array = t["prod"]
 	var out: PackedFloat32Array = t["out"]
 	var share: PackedFloat32Array = t["share"]
-	var player: PackedByteArray = t["player"]
 	var auto: PackedByteArray = t["auto"]
+	var oblig: PackedFloat32Array = t["oblig"]
 	var cur_all: Array = t["cur"]
 	var c3_all: Array = t["c3"]
 	var cur: PackedFloat32Array = cur_all[i]
@@ -383,8 +400,8 @@ static func plan_sales(t: Dictionary, i: int, s: int, row: PackedFloat32Array) -
 		return plan
 	for r in RES_COUNT:
 		var cap: float = prod[s * RES_COUNT + r] * share[s]
-		if player[s] == 0:
-			cap = minf(cap, maxf(0.0, prod[s * RES_COUNT + r] - need[s * RES_COUNT + r] * 1.1))
+		cap = minf(cap, maxf(0.0, prod[s * RES_COUNT + r] - need[s * RES_COUNT + r] * 1.1))
+		cap = maxf(0.0, cap - oblig[s * RES_COUNT + r])   # договорные поставки — вне доли
 		if cap < 0.1 and out[s * RES_COUNT + r] <= 0.0:
 			continue
 		var order: Array = []
@@ -417,9 +434,11 @@ static func apply_sales(world: World, s: int, plan: Array, index: Dictionary) ->
 		var r: int = p[1]
 		var give: float = p[2]
 		var c: Array = index.get(s * 100000 + b * 8 + r, [])
+		if not c.is_empty() and int(c[5]) > world.day:
+			continue   # договорная поставка — не трогаем
 		if c.is_empty():
 			if give >= 0.1 and can_trade(world, b, s) == "" and _budget(world, b) >= give / UNITS_PER_CIV:
-				var nc_: Array = [b, s, r, give, world.day + CONTRACT_DAYS, false, -1.0]
+				var nc_: Array = [b, s, r, give, world.day + CONTRACT_DAYS, 0, -1.0]
 				world.contracts.append(nc_)
 				index[s * 100000 + b * 8 + r] = nc_
 				_add(world.nations[b], sn, r, give)
@@ -490,7 +509,7 @@ static func daily(world: World) -> void:
 		var plans: Array = []
 		var job: Dictionary = world.trade_job
 		if not first and not job.is_empty() and int(job["day"]) == world.day and job["due"] == due:
-			finish_rank(world)
+			Spec.finish(world)
 			rows = job["rows"]
 			plans = job["plans"]
 		else:
@@ -523,6 +542,34 @@ static func daily(world: World) -> void:
 			_ai_cut(world, nat)
 	if dirty:
 		_update_fill(world)
+
+
+## Поставка по договору (эффект supply): seller отдаёт buyer units ресурса r в
+## день days дней — даже если нужно самому; оплата как у обычной поставки.
+static func oblige(world: World, seller: int, buyer: int, r: int, units: float, days: int) -> void:
+	if can_trade(world, buyer, seller) != "" or world.res_prov.is_empty():
+		return
+	var c := _find(world, buyer, seller, r)
+	if c.is_empty():
+		c = [buyer, seller, r, 0.0, world.day + CONTRACT_DAYS, 0, -1.0]
+		world.contracts.append(c)
+	c[3] = float(c[3]) + units
+	c[5] = maxi(int(c[5]), world.day + days)
+	c[6] = -1.0
+	_recount(world)
+	_update_fill(world)
+	world.log_event("Договор о поставках: %s → %s, %s %.0f в день" % [world.nations[seller].name, world.nations[buyer].name, RES_NAMES[r].to_lower(), units])
+
+
+## Эмбарго (эффект embargo): seller больше не продаёт buyer, поставки рвутся.
+static func embargo(world: World, seller: int, buyer: int) -> void:
+	world.embargoes[seller * 100000 + buyer] = true
+	var before := world.contracts.size()
+	world.contracts = world.contracts.filter(func(c): return not (c[0] == buyer and c[1] == seller))
+	if world.contracts.size() != before:
+		_recount(world)
+		_update_fill(world)
+	world.log_event("Эмбарго: %s против страны %s" % [world.nations[seller].name, world.nations[buyer].name])
 
 
 ## Война между a и b: их взаимные поставки снимаются сразу.
@@ -566,9 +613,12 @@ static func _snapshot(world: World, due: PackedInt32Array) -> Dictionary:
 	player.resize(nc)
 	var auto := PackedByteArray()
 	auto.resize(nc)
+	var closed := PackedByteArray()
+	closed.resize(nc)
 	for x in nc:
 		var nx: World.Nation = world.nations[x]
-		share[x] = float(LAWS[nx.trade_law]["export"]) if nx.alive else 0.0
+		share[x] = (1.0 if (nx.trade_closed and nx.overlord >= 0) else float(LAWS[nx.trade_law]["export"])) if nx.alive else 0.0
+		closed[x] = 1 if nx.trade_closed and nx.overlord >= 0 else 0
 		player[x] = 1 if nx.is_player else 0
 		auto[x] = 1 if nx.alive and (not nx.is_player or nx.trade_auto) else 0
 		for r in RES_COUNT:
@@ -588,7 +638,12 @@ static func _snapshot(world: World, due: PackedInt32Array) -> Dictionary:
 		var b := PackedFloat32Array()
 		b.resize(nc * RES_COUNT)
 		c3_all.append(b)
+	var oblig := PackedFloat32Array()
+	oblig.resize(nc * RES_COUNT)
 	for c in world.contracts:
+		if int(c[5]) > world.day:
+			oblig[int(c[1]) * RES_COUNT + int(c[2])] += float(c[3])
+			continue   # договорные — вне раздачи
 		if idx.has(c[1]):
 			var i: int = idx[c[1]]
 			var k := int(c[0]) * RES_COUNT + int(c[2])
@@ -605,16 +660,26 @@ static func _snapshot(world: World, due: PackedInt32Array) -> Dictionary:
 	t["share"] = share
 	t["player"] = player
 	t["auto"] = auto
+	t["closed"] = closed
+	t["oblig"] = oblig
+	var emb := PackedByteArray()
+	emb.resize(nc * nc)
+	for k in world.embargoes:
+		var a := int(k) / 100000
+		var b := int(k) % 100000
+		if a < nc and b < nc:
+			emb[a * nc + b] = 1
+	t["emb"] = emb
 	t["cur"] = cur_all
 	t["c3"] = c3_all
 	return t
 
 
-## Спекулятивно, на устаревших на день данных: в фазе ИИ запускаем в фоне
+## Упреждение (Spec), на устаревших на день данных: в фазе ИИ — в фоне
 ## строки рейтинга продавцов завтрашнего дня (снимок — на этот момент дня, так
 ## что результат не зависит от потоков). Завтра Economy.daily берёт готовое;
 ## война, объявленная за это время, всё равно проверяется при раздаче (can_trade).
-static func start_rank(world: World) -> void:
+static func spec(world: World, jobs: Array) -> void:
 	world.trade_job = {}
 	var nc := world.nation_count
 	if world.res_prov.is_empty() or world.trade_tab.is_empty() or world.trade_score.size() != nc * nc:
@@ -628,19 +693,13 @@ static func start_rank(world: World) -> void:
 	rows.resize(due.size())
 	var plans: Array = []
 	plans.resize(due.size())
-	var gid := Parallel.start(due.size(), func(i: int):
-		var row := rank_row(t, due[i])
-		rows[i] = row
-		plans[i] = plan_sales(t, i, due[i], row), "торговля:рейтинг", 2)
-	world.trade_job = {"day": world.day + 1, "due": due, "rows": rows, "plans": plans, "gid": gid}
-
-
-## Дождаться фоновых строк (конец дня или начало следующего).
-static func finish_rank(world: World) -> void:
-	var job: Dictionary = world.trade_job
-	if not job.is_empty() and int(job["gid"]) >= 0:
-		Parallel.finish(int(job["gid"]))
-		job["gid"] = -1
+	for i in due.size():
+		var ii := i
+		jobs.append(func():
+			var row := rank_row(t, due[ii])
+			rows[ii] = row
+			plans[ii] = plan_sales(t, ii, due[ii], row))
+	world.trade_job = {"day": world.day + 1, "due": due, "rows": rows, "plans": plans}
 
 
 static func _update_fill(world: World) -> void:
@@ -706,7 +765,7 @@ static func _ai_cut(world: World, nat: World.Nation) -> void:
 			continue
 		for i in range(world.contracts.size() - 1, -1, -1):
 			var c: Array = world.contracts[i]
-			if c[0] == nat.id and c[2] == r and float(c[6]) < 0.0 and float(c[3]) <= extra:
+			if c[0] == nat.id and c[2] == r and float(c[6]) < 0.0 and float(c[3]) <= extra and int(c[5]) <= world.day:
 				c[6] = 0.0
 				extra -= float(c[3])
 
@@ -728,7 +787,7 @@ static func set_law(world: World, nat: World.Nation, law: int) -> String:
 			if over <= 0.0:
 				break
 			var c: Array = world.contracts[i]
-			if c[1] == nat.id and c[2] == r:
+			if c[1] == nat.id and c[2] == r and int(c[5]) <= world.day:
 				var now := float(c[3]) if float(c[6]) < 0.0 else float(c[6])
 				var cut := minf(over, now)
 				c[6] = now - cut

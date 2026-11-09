@@ -382,33 +382,46 @@ const PROD_LAND_MIN := 0.6      # сухопутным линиям — не м�
 ## Снаряжение армий всех стран одним проходом по плоским массивам дивизий:
 ## [дивизий по странам, по всему (страна*4 + k), нехватка (страна*4 + k)].
 static func land_totals(world: World) -> Array:
-	var nc := world.nation_count
+	return _land_totals({"d_alive": world.d_alive, "d_owner": world.d_owner, "d_tpl": world.d_tpl,
+		"d_eq": world.d_eq, "tpl_eq": world.tpl_eq, "n": world.nation_count})
+
+
+static func _land_totals(t: Dictionary) -> Array:
+	var nc: int = t["n"]
 	var cnt := PackedInt32Array()
 	cnt.resize(nc)
 	var full := PackedFloat64Array()
 	full.resize(nc * EQ_LAND)
 	var lack := PackedFloat64Array()
 	lack.resize(nc * EQ_LAND)
-	var alive := world.d_alive
-	var owner := world.d_owner
-	var tpl := world.d_tpl
-	var eqf := world.d_eq
-	var te := world.tpl_eq
+	var alive: PackedByteArray = t["d_alive"]
+	var owner: PackedInt32Array = t["d_owner"]
+	var tpl: PackedInt32Array = t["d_tpl"]
+	var eqf: PackedFloat64Array = t["d_eq"]
+	var te: PackedFloat64Array = t["tpl_eq"]
 	for i in alive.size():
 		if alive[i] == 0:
 			continue
 		var o := owner[i]
 		cnt[o] += 1
-		var t := tpl[i] * EQ_COUNT
+		var ti := tpl[i] * EQ_COUNT
 		var miss := 1.0 - eqf[i]
 		for k in EQ_LAND:
-			full[o * EQ_LAND + k] += te[t + k]
-			lack[o * EQ_LAND + k] += te[t + k] * miss
+			full[o * EQ_LAND + k] += te[ti + k]
+			lack[o * EQ_LAND + k] += te[ti + k] * miss
 	return [cnt, full, lack]
 
 
 static func plan_production(world: World, nat: World.Nation, target_divs: int, prepare_war: bool, totals: Array) -> void:
-	# средний расход с прошлого пересмотра: склад был + выпуск − склад сейчас
+	var p := plan_prep(world, nat, target_divs, prepare_war)
+	if not p.is_empty():
+		plan_apply(nat, plan_compute(p, totals))
+
+
+## Подготовка пересмотра (главный поток): средний расход с прошлого пересмотра
+## (склад был + выпуск − склад сейчас) и все входные данные расчёта — копиями,
+## чтобы plan_compute мог идти в потоке. Пусто — заводов нет (доли по доктрине).
+static func plan_prep(world: World, nat: World.Nation, target_divs: int, prepare_war: bool) -> Dictionary:
 	if nat.prod_day >= 0 and world.day > nat.prod_day:
 		var days := float(world.day - nat.prod_day)
 		for k in EQ_COUNT:
@@ -420,39 +433,73 @@ static func plan_production(world: World, nat: World.Nation, target_divs: int, p
 		nat.prod_acc[k] = 0.0
 	if nat.mil <= 0:
 		nat.prod_split = default_split(nat)
-		return
-	# нужда сухопутных войск по очередям: 1 — пополнение и пехотное снаряжение
-	# будущих дивизий (без него не сформировать ни одной), 2 — техника для
-	# моторизованных и танковых, 3 — запас (у воюющих и готовящихся больше)
-	var fielded := [0.0, 0.0, 0.0, 0.0]
-	var tiers := [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
-	var divs: int = totals[0][nat.id]
+		return {}
+	# очередь шаблонов ИИ (как ai_template): номера по кругу
+	var avail := available_templates(world, nat)
+	var cycle := PackedInt32Array([T_INF, T_INF, T_ART, T_INF])
+	if avail.has(T_MOT):
+		cycle.append(T_MOT)
+	if avail.has(T_ARM):
+		cycle.append(T_ARM)
+	return {"id": nat.id, "mil": float(nat.mil), "naval": nat.naval_share, "air": nat.air_share,
+		"use": nat.eq_use.duplicate(), "stock": PackedFloat64Array([nat.stock[0], nat.stock[1], nat.stock[2], nat.stock[3]]),
+		"target": target_divs, "training": nat.training.size(), "trained": nat.trained_count, "cycle": cycle,
+		"buffer": PROD_BUFFER_WAR if (not nat.at_war.is_empty() or prepare_war) else PROD_BUFFER,
+		"mult": maxf(0.1, (1.0 + nat.b("industry")) * (1.0 - nat.trade_penalty)),
+		"doctrine": PackedFloat64Array(default_split(nat)),
+		"tpl_eq": world.tpl_eq, "tpl_motor": world.tpl_motor}
+
+
+## Расчёт долей заводов (только данные p и totals — можно в потоке).
+## Сухопутные линии — по очередям: средний расход; 1 — пополнение и пехотное
+## снаряжение будущих дивизий, 2 — техника моторизованных и танковых, 3 — запас;
+## излишек — большая часть в запас по доктрине (сухопутным не меньше
+## PROD_LAND_MIN своей доли), остальное — в авиацию и флот.
+static func plan_compute(p: Dictionary, totals: Array) -> PackedFloat64Array:
+	var id: int = p["id"]
+	var tpl_eq: PackedFloat64Array = p["tpl_eq"]
+	var tpl_motor: PackedInt32Array = p["tpl_motor"]
+	var cycle: PackedInt32Array = p["cycle"]
+	var use_in: PackedFloat64Array = p["use"]
+	var stock_in: PackedFloat64Array = p["stock"]
+	var doctrine: PackedFloat64Array = p["doctrine"]
+	var cnt: PackedInt32Array = totals[0]
+	var full: PackedFloat64Array = totals[1]
+	var lack: PackedFloat64Array = totals[2]
+	var fielded := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
+	var tiers := [PackedFloat64Array([0.0, 0.0, 0.0, 0.0]), PackedFloat64Array([0.0, 0.0, 0.0, 0.0]), PackedFloat64Array([0.0, 0.0, 0.0, 0.0])]
+	var t0: PackedFloat64Array = tiers[0]
+	var t1: PackedFloat64Array = tiers[1]
+	var t2: PackedFloat64Array = tiers[2]
 	for k in EQ_LAND:
-		fielded[k] = totals[1][nat.id * EQ_LAND + k]
-		tiers[0][k] = totals[2][nat.id * EQ_LAND + k]
-	var up := maxi(0, target_divs - divs - nat.training.size())
+		fielded[k] = full[id * EQ_LAND + k]
+		t0[k] = lack[id * EQ_LAND + k]
+	var up := maxi(0, int(p["target"]) - cnt[id] - int(p["training"]))
+	var trained: int = p["trained"]
 	for i in up:
-		var t := ai_template(world, nat, nat.trained_count + i, false)
-		var tt: Dictionary = world.templates[t]
-		var ti := 1 if tt["motor"] else 0
+		var t := cycle[(trained + i) % cycle.size()]
 		for k in EQ_LAND:
-			tiers[ti][k] += float(tt["eq"][k])
-	var buffer := PROD_BUFFER_WAR if (not nat.at_war.is_empty() or prepare_war) else PROD_BUFFER
+			if tpl_motor[t] == 1:
+				t1[k] += tpl_eq[t * EQ_COUNT + k]
+			else:
+				t0[k] += tpl_eq[t * EQ_COUNT + k]
+	var buffer: float = p["buffer"]
 	for k in EQ_LAND:
-		tiers[2][k] = buffer * fielded[k]
-	var mult := maxf(0.1, (1.0 + nat.b("industry")) * (1.0 - nat.trade_penalty))
-	var total := float(nat.mil)
-	var land_cap := total * maxf(0.0, 1.0 - nat.naval_share - nat.air_share)
-	var split := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-	# средний расход — в первую очередь
+		t2[k] = buffer * fielded[k]
+	tiers = [t0, t1, t2]
+	var mult: float = p["mult"]
+	var total: float = p["mil"]
+	var naval: float = p["naval"]
+	var air: float = p["air"]
+	var land_cap := total * maxf(0.0, 1.0 - naval - air)
+	var split := PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 	var left := land_cap
-	var stock := [0.0, 0.0, 0.0, 0.0]
-	for k in EQ_LAND:
-		stock[k] = nat.stock[k]
-	var use := [0.0, 0.0, 0.0, 0.0]
+	var stock := PackedFloat64Array([stock_in[0], stock_in[1], stock_in[2], stock_in[3]])
+	var cost := PackedFloat64Array([1.0, 3.5, 12.0, 2.5])   # EQ_COST сухопутных (константы — не из потока)
+	var use := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
 	var use_sum := 0.0
 	for k in EQ_LAND:
-		use[k] = nat.eq_use[k] * EQ_COST[k] / mult
+		use[k] = use_in[k] * cost[k] / mult
 		use_sum += use[k]
 	var take := minf(1.0, left / maxf(use_sum, 0.001))
 	for k in EQ_LAND:
@@ -461,39 +508,64 @@ static func plan_production(world: World, nat: World.Nation, target_divs: int, p
 	for tier in tiers:
 		if left <= 0.0:
 			break
-		var want := [0.0, 0.0, 0.0, 0.0]
+		var tr: PackedFloat64Array = tier
+		var want := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
 		var want_sum := 0.0
 		for k in EQ_LAND:
-			var gap := maxf(0.0, float(tier[k]) - stock[k])
-			stock[k] = maxf(0.0, stock[k] - float(tier[k]))
-			want[k] = gap / PROD_HORIZON * EQ_COST[k] / mult
+			var gap := maxf(0.0, tr[k] - stock[k])
+			stock[k] = maxf(0.0, stock[k] - tr[k])
+			want[k] = gap / PROD_HORIZON * cost[k] / mult
 			want_sum += want[k]
 		take = minf(1.0, left / maxf(want_sum, 0.001))
 		for k in EQ_LAND:
 			split[k] += want[k] * take
 		left -= want_sum * take
-	# излишек: большая часть — в запас по доктрине (сухопутным линиям не
-	# меньше PROD_LAND_MIN своей доли), остальное — в авиацию и флот
-	var doctrine := default_split(nat)
 	var dsum := 0.0
 	for k in EQ_LAND:
-		dsum += float(doctrine[k])
+		dsum += doctrine[k]
 	var land_now := land_cap - left
 	var keep := maxf(left * PROD_SURPLUS_LAND, land_cap * PROD_LAND_MIN - land_now)
 	keep = clampf(keep, 0.0, left)
 	for k in EQ_LAND:
-		split[k] += keep * (float(doctrine[k]) / dsum if dsum > 0.0 else 0.25)
+		split[k] += keep * (doctrine[k] / dsum if dsum > 0.0 else 0.25)
 	var to_air := left - keep
-	var ship_w := nat.naval_share
-	var air_w := maxf(nat.air_share, 0.05)
-	var aw := air_w / (air_w + ship_w)
-	split[EQ_SHIP] = total * nat.naval_share + to_air * (1.0 - aw)
-	split[EQ_FIG] = total * nat.air_share * 0.6 + to_air * aw * 0.6
-	split[EQ_BOMB] = total * nat.air_share * 0.4 + to_air * aw * 0.4
+	var air_w := maxf(air, 0.05)
+	var aw := air_w / (air_w + naval)
+	split[EQ_SHIP] = total * naval + to_air * (1.0 - aw)
+	split[EQ_FIG] = total * air * 0.6 + to_air * aw * 0.6
+	split[EQ_BOMB] = total * air * 0.4 + to_air * aw * 0.4
 	for k in EQ_COUNT:
 		split[k] = split[k] / total
-	nat.prod_split = split
-	_shift_lines(nat, split)
+	return split
+
+
+static func plan_apply(nat: World.Nation, split: PackedFloat64Array) -> void:
+	nat.prod_split = Array(split)
+	_shift_lines(nat, nat.prod_split)
+
+
+## Упреждение: пересмотры заводов у стран, чья очередь завтра, — в фоне, по
+## снимку на сегодня (дивизии — копиями плоских массивов). Завтра Simulation
+## применяет готовые доли (prod_job), а если их нет — считает сразу.
+static func spec(world: World, jobs: Array) -> void:
+	world.prod_job = {}
+	var p_list: Array = []
+	for nat in world.nations:
+		if nat.alive and (not nat.is_player or nat.prod_auto) and not nat.prod_split.is_empty() \
+				and (world.day + 1 + nat.id) % 30 == 0:
+			var p := plan_prep(world, nat, AIPlanner.target_divisions(nat), not nat.planned_wars.is_empty())
+			if not p.is_empty():
+				p_list.append(p)
+	if p_list.is_empty():
+		return
+	var snap := {"d_alive": world.d_alive.duplicate(), "d_owner": world.d_owner.duplicate(), "d_tpl": world.d_tpl.duplicate(),
+		"d_eq": world.d_eq.duplicate(), "tpl_eq": world.tpl_eq.duplicate(), "n": world.nation_count}
+	var out := {}
+	world.prod_job = {"day": world.day + 1, "splits": out}
+	jobs.append(func():
+		var totals := _land_totals(snap)
+		for p in p_list:
+			out[int(p["id"])] = plan_compute(p, totals))
 
 
 ## Сдвинуть линии к долям split: не больше PROD_MOVE заводов в месяц.

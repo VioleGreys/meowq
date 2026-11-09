@@ -1520,6 +1520,10 @@ func _build_nation_card(w: World, me: int, oid: int) -> void:
 	else:
 		_action("Улучшать отношения (+4 в месяц)", Relations.can_improve(w, me, oid), func():
 			n.improving[oid] = true)
+	# торговля нашей марионетки: только с нами или свободная
+	if o.overlord == me:
+		_action("Открыть торговлю марионетки" if o.trade_closed else "Торговля марионетки — только с нами", "", func():
+			o.trade_closed = not o.trade_closed)
 	# гарантия
 	if not n.guarantees.has(oid):
 		var gwhy := ""
@@ -2121,7 +2125,7 @@ func _build_trade(w: World, me: int) -> void:
 	# курс
 	var law: Dictionary = Economy.LAWS[n.trade_law]
 	popup_body.add_child(_section("Курс: %s" % law["name"]))
-	popup_body.add_child(_small("На экспорт идёт до %d%% добычи. Покупатели ранжируются раз в месяц: экономическое влияние, близость, соседство и выход к морю, отношения и строй, союз, марионетки. Курс можно менять раз в %d дней." % [roundi(float(law["export"]) * 100.0), Economy.LAW_COOLDOWN]))
+	popup_body.add_child(_small("На экспорт идёт до %d%% добычи, но не больше излишка сверх своей нужды (кроме поставок по договорам). Покупатели ранжируются раз в месяц: экономическое влияние, близость, соседство и выход к морю, отношения и строй, союз, марионетки. Курс можно менять раз в %d дней." % [roundi(float(law["export"]) * 100.0), Economy.LAW_COOLDOWN]))
 	var grid := VBoxContainer.new()
 	grid.add_theme_constant_override("separation", 4)
 	for i in Economy.LAWS.size():
@@ -2180,6 +2184,8 @@ func _build_trade(w: World, me: int) -> void:
 		var next := ""
 		if float(c[6]) >= 0.0:
 			next = " · с %s: %.1f" % [w.date_short(int(c[4])), float(c[6])] if float(c[6]) > 0.0 else " · отказ с %s" % w.date_short(int(c[4]))
+		if int(c[5]) > w.day:
+			next = " · по договору до %s" % w.date_short(int(c[5]))
 		var l := _label("%s: %s %.1f в день · оплачено до %s%s" % [w.nations[c[1]].name, Economy.RES_NAMES[c[2]].to_lower(), float(c[3]), w.date_short(int(c[4])), next], 15)
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2189,7 +2195,7 @@ func _build_trade(w: World, me: int) -> void:
 			Economy.cancel(w, ci)
 			toast("Поставка идёт до конца оплаченного месяца")
 			_rebuild_popup(), Vector2(130, 44))
-		cb.disabled = float(c[6]) == 0.0
+		cb.disabled = float(c[6]) == 0.0 or int(c[5]) > w.day
 		row.add_child(cb)
 		popup_body.add_child(row)
 	popup_body.add_child(_section("Экспорт"))
@@ -2197,7 +2203,8 @@ func _build_trade(w: World, me: int) -> void:
 		popup_body.add_child(_small("Нет."))
 	for i in sold:
 		var c: Array = w.contracts[i]
-		popup_body.add_child(_small("%s: %s %.1f в день до %s" % [w.nations[c[0]].name, Economy.RES_NAMES[c[2]].to_lower(), float(c[3]), w.date_short(int(c[4]))]))
+		popup_body.add_child(_small("%s: %s %.1f в день до %s%s" % [w.nations[c[0]].name, Economy.RES_NAMES[c[2]].to_lower(), float(c[3]), w.date_short(int(c[4])),
+			(" · по договору до %s" % w.date_short(int(c[5]))) if int(c[5]) > w.day else ""]))
 
 
 ## Выбор продавца ресурса r: кто может продать, сколько и как высоко мы у него
