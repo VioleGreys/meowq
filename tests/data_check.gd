@@ -61,6 +61,22 @@ func _init() -> void:
 	check(w.nations[s].division_count > w.nations[g].division_count, "армия СССР должна быть больше германской")
 	check(w.nations[g].mil > w.nations[pl].mil * 2, "промышленность Германии должна быть намного больше польской")
 	check(w.nations[f].division_count > w.nations[g].division_count, "армия Франции в 1936 г. больше германской")
+	# фокусы: длительность 35 или 70 дней, до 150 — в крайнем случае; ссылки на
+	# существующие фокусы; координаты не совпадают
+	for tag in w.focus_trees:
+		var ids := {}
+		var cells := {}
+		for fd in w.focus_trees[tag]:
+			ids[fd["id"]] = true
+		for fd in w.focus_trees[tag]:
+			var dd := int(fd.get("days", 70))
+			check(dd == 35 or dd == 70 or (dd > 70 and dd <= 150), "%s/%s: длительность %d дн." % [tag, fd["id"], dd])
+			for key in ["requires", "requires_any", "exclusive"]:
+				for r in fd.get(key, []):
+					check(ids.has(r), "%s/%s: нет фокуса %s" % [tag, fd["id"], r])
+			var cell := "%d,%d" % [int(fd["x"]), int(fd["y"])]
+			check(not cells.has(cell), "%s/%s: та же клетка, что у %s" % [tag, fd["id"], cells.get(cell, "")])
+			cells[cell] = fd["id"]
 	if errors == 0:
 		print("Данные 1936 г.: OK")
 	quit(1 if errors > 0 else 0)

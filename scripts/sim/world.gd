@@ -424,6 +424,7 @@ var event_defs := {}            # id -> Dictionary
 var areas := {}
 var capitulation_rules: Array = []
 var event_queue: Array = []     # [id события, номер страны-инициатора] — ждут условий
+var scheduled: Array = []       # [день, номер страны, эффекты] — отложенные эффекты («через N дней»)
 var events_fired := {}
 var pending_events: Array = []  # [id события] — ждут выбора игрока   # [проигравший, победитель] — ждут решения игрока
 

@@ -150,6 +150,14 @@ func _draw_lines() -> void:
 			var b := _pos(fd) + Vector2(NODE.x * 0.5, 0)
 			var done: bool = world.nations[nid].focus_done.has(r)
 			tree.draw_line(a, b, Color(0.75, 0.65, 0.4) if done else Color(0.45, 0.42, 0.36), 3.0)
+		# развилка — красный пунктир между взаимоисключающими фокусами
+		for x in fd.get("exclusive", []):
+			var xd := History.focus_def(world, nid, x)
+			if xd.is_empty() or String(x) < String(fd["id"]):
+				continue
+			var p1 := _pos(fd) + NODE * 0.5
+			var p2 := _pos(xd) + NODE * 0.5
+			tree.draw_dashed_line(p1, p2, Color(0.66, 0.13, 0.11), 3.0, 10.0)
 
 
 func _select(id: String) -> void:

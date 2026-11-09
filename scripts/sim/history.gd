@@ -53,6 +53,12 @@ static func check(world: World, n: int, cond: Dictionary, ahead: int = 0) -> Str
 		return "уже произошло"
 	if cond.has("tension") and world.tension < float(cond["tension"]):
 		return "нужна напряжённость %d%%" % cond["tension"]
+	if cond.has("at_war"):
+		var nat_w: World.Nation = world.nations[n]
+		if bool(cond["at_war"]) != (not nat_w.at_war.is_empty()):
+			return "нужна война" if bool(cond["at_war"]) else "только в мирное время"
+	if cond.has("ideology") and world.nations[n].ideology != String(cond["ideology"]):
+		return "нужен строй: %s" % world.ideology_names.get(cond["ideology"], cond["ideology"])
 	if cond.has("at_war_pair"):
 		var a := tag_id(world, cond["at_war_pair"][0])
 		var b := tag_id(world, cond["at_war_pair"][1])
@@ -78,6 +84,19 @@ static func focus_block(world: World, n: int, fd: Dictionary) -> String:
 	for r in fd.get("requires", []):
 		if not nat.focus_done.has(r):
 			return "сначала: «%s»" % focus_def(world, n, r).get("name", r)
+	# развилка: выбран другой путь
+	for x in fd.get("exclusive", []):
+		if nat.focus_done.has(x) or nat.focus_current == x:
+			return "выбран другой путь: «%s»" % focus_def(world, n, x).get("name", x)
+	# любой из (requires_any)
+	var any_req: Array = fd.get("requires_any", [])
+	if not any_req.is_empty():
+		var ok := false
+		for r in any_req:
+			if nat.focus_done.has(r):
+				ok = true
+		if not ok:
+			return "сначала один из: %s" % ", ".join(any_req.map(func(r): return "«%s»" % focus_def(world, n, r).get("name", r)))
 	return check(world, n, fd.get("available", {}), int(fd.get("days", 70)))
 
 
@@ -96,6 +115,18 @@ static func start_focus(world: World, n: int, id: String) -> bool:
 static func daily(world: World, rng: RandomNumberGenerator) -> void:
 	if world.focus_trees.is_empty() and world.event_defs.is_empty():
 		return
+	# отложенные эффекты, срок которых наступил
+	if not world.scheduled.is_empty():
+		var keep_s: Array = []
+		var due: Array = []
+		for sc in world.scheduled:
+			if world.day >= int(sc[0]):
+				due.append(sc)
+			else:
+				keep_s.append(sc)
+		world.scheduled = keep_s
+		for sc in due:
+			apply(world, int(sc[1]), sc[2], rng)
 	# фокусы
 	for nat in world.nations:
 		if not nat.alive:
@@ -165,7 +196,11 @@ static func planned_wars(world: World, n: int) -> Dictionary:
 			look.append(fd)
 			break
 	for fd in look:
+		var effs: Array = fd.get("effects", []).duplicate()
 		for e in fd.get("effects", []):
+			if e.get("t", "") == "later":
+				effs.append_array(e.get("effects", []))
+		for e in effs:
 			if e.get("t", "") == "war":
 				var t := tag_id(world, e["target"])
 				if t >= 0 and world.nations[t].alive:
@@ -180,8 +215,136 @@ static func _ai_pick_focus(world: World, n: int, rng: RandomNumberGenerator) -> 
 			avail.append(fd["id"])
 	if avail.is_empty():
 		return
-	var id: String = avail[0] if world.historical else avail[rng.randi() % avail.size()]
-	start_focus(world, n, id)
+	if world.historical:
+		_ai_pick_historical(world, n, avail)
+		return
+	start_focus(world, n, avail[rng.randi() % avail.size()])
+
+
+## Исторический ИИ: фокусы по сроку. Для каждого датированного фокуса считается
+## последний день, когда нужно начать всю цепочку его невыполненных требований,
+## чтобы закончить к дате. Сначала — шаги цепочки самого срочного, остальное —
+## по порядку списка, если успевает до срока; иначе ждать.
+static func _ai_pick_historical(world: World, n: int, avail: Array) -> void:
+	var nat: World.Nation = world.nations[n]
+	var memo := {}
+	var targets: Array = []   # [день срока, цепочка]
+	for fd in tree_of(world, n):
+		var cond: Dictionary = fd.get("available", {})
+		if not cond.has("date") or nat.focus_done.has(fd["id"]) or _excluded(world, n, fd) \
+				or not _is_key(fd) or _is_alternative(world, n, fd):
+			continue
+		var chain := {}
+		_chain_days(world, n, fd, memo, chain)
+		var alt := false
+		for cid in chain:
+			if _is_alternative(world, n, focus_def(world, n, cid)):
+				alt = true   # фокус небывшего пути — не срок для истории
+		if not alt:
+			targets.append([world.day_of(cond["date"]), chain])
+	targets.sort_custom(func(x, y): return x[0] < y[0])
+	# запас: к каждому сроку нужно успеть все цепочки сроков до него включительно
+	var min_slack := 1 << 30
+	var union := {}
+	var before: Array = []   # запас сроков, которые раньше данного
+	for tg in targets:
+		before.append(min_slack)
+		union.merge(tg[1])
+		var work := 0
+		for cid in union:
+			work += nat.focus_days if nat.focus_current == cid else int(focus_def(world, n, cid).get("days", 70))
+		min_slack = mini(min_slack, int(tg[0]) - world.day - work)
+	# альтернативы исторического пути (развилка, вторая в списке) не берём
+	avail = avail.filter(func(id): return not _is_alternative(world, n, focus_def(world, n, id)))
+	# 1) шаг цепочки к ближайшему сроку (сроки по порядку, фокусы — по списку)
+	for ti in targets.size():
+		var tg: Array = targets[ti]
+		for id in avail:
+			# шаг к дальнему сроку — если не срывает более ранние
+			if tg[1].has(id) and int(focus_def(world, n, id).get("days", 70)) <= int(before[ti]):
+				start_focus(world, n, id)
+				return
+	# 2) другой фокус — если хватает запаса до всех сроков
+	for id in avail:
+		if int(focus_def(world, n, id).get("days", 70)) <= min_slack:
+			start_focus(world, n, id)
+			return
+	# 3) иначе ждём (цепочки сроков ещё недоступны по дате)
+
+
+## Срок важен для истории: событие, война, договор, присоединение. Даты у
+## остальных фокусов значат только «не раньше».
+static func _is_key(fd: Dictionary) -> bool:
+	for e in fd.get("effects", []):
+		if e.get("t", "") in ["event", "war", "annex", "transfer", "release", "faction", "join_faction_of",
+				"pact", "break_pact", "guarantee", "peace", "civil_war", "later"]:
+			return true
+	return false
+
+
+## Небывший путь: в развилке с фокусом, который стоит в списке раньше.
+static func _is_alternative(world: World, n: int, fd: Dictionary) -> bool:
+	var ex: Array = fd.get("exclusive", [])
+	if ex.is_empty():
+		return false
+	for other in tree_of(world, n):
+		if other["id"] == fd["id"]:
+			return false
+		if ex.has(other["id"]):
+			return true
+	return false
+
+
+static func _excluded(world: World, n: int, fd: Dictionary) -> bool:
+	var nat: World.Nation = world.nations[n]
+	for x in fd.get("exclusive", []):
+		if nat.focus_done.has(x) or nat.focus_current == x:
+			return true
+	return false
+
+
+## Дней до конца цепочки: сам фокус + самая длинная цепочка невыполненных
+## требований (из requires_any — самая короткая). chain — все её фокусы.
+static func _chain_days(world: World, n: int, fd: Dictionary, memo: Dictionary, chain: Dictionary) -> int:
+	var nat: World.Nation = world.nations[n]
+	var id: String = fd["id"]
+	if nat.focus_done.has(id):
+		return 0
+	chain[id] = true
+	if memo.has(id):
+		for k in memo[id][1]:
+			chain[k] = true
+		return memo[id][0]
+	var left := int(fd.get("days", 70))
+	if nat.focus_current == id:
+		left = nat.focus_days
+	var longest := 0
+	var sub := {}
+	for r in fd.get("requires", []):
+		var c := {}
+		var dd := _chain_days(world, n, focus_def(world, n, r), memo, c)
+		if dd > longest:
+			longest = dd
+		sub.merge(c)
+	var any_req: Array = fd.get("requires_any", [])
+	if not any_req.is_empty():
+		var best := 1 << 30
+		var best_c := {}
+		for r in any_req:
+			var rd := focus_def(world, n, r)
+			if _excluded(world, n, rd) or (world.historical and _is_alternative(world, n, rd)):
+				continue
+			var c := {}
+			var dd := _chain_days(world, n, rd, memo, c)
+			if dd < best:
+				best = dd
+				best_c = c
+		if best < (1 << 30):
+			longest = maxi(longest, best)
+			sub.merge(best_c)
+	chain.merge(sub)
+	memo[id] = [left + longest, chain.duplicate()]
+	return left + longest
 
 
 static func _ai_option(world: World, ev: Dictionary, rng: RandomNumberGenerator) -> int:
@@ -231,6 +394,26 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 		match e["t"]:
 			"tension":
 				Diplomacy.add_tension(world, float(e["v"]))
+			"later":
+				# «через N дней»: эффекты выполнятся позже (для событий, разделённых
+				# неделей, — короче самого короткого фокуса)
+				world.scheduled.append([world.day + int(e.get("days", 1)), who, e.get("effects", [])])
+			"ships":
+				# корабли — в самый сильный флот страны (линкоры bb, крейсеры cr, эсминцы dd, подлодки ss)
+				var kinds := {"bb": Forces.SHIP_BB, "cr": Forces.SHIP_CR, "dd": Forces.SHIP_DD, "ss": Forces.SHIP_SS}
+				var best_f: World.Fleet = null
+				for f in world.fleets:
+					if f.alive and f.owner == who and (best_f == null or Forces.fleet_power(f) > Forces.fleet_power(best_f)):
+						best_f = f
+				if best_f != null:
+					best_f.ships[kinds.get(e.get("kind", "dd"), Forces.SHIP_DD)] += int(e.get("n", 1))
+			"ideology":
+				nat.ideology = String(e["v"])
+				world.palette_dirty = true
+			"leader":
+				nat.leader = String(e["name"])
+				if e.has("title"):
+					nat.leader_title = String(e["title"])
 			"factories":
 				for k in int(e.get("civ", 0)):
 					place_factory(world, who, "civ")
@@ -640,4 +823,14 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("гражданская война")
 			"peace":
 				parts.append("мир с %s" % tname)
+			"later":
+				var inner := effects_text(world, e.get("effects", [])).trim_prefix("Эффекты: ")
+				parts.append("через %d дн.: %s" % [int(e.get("days", 1)), inner])
+			"ships":
+				var ki := {"bb": 0, "cr": 1, "dd": 2, "ss": 3}
+				parts.append("+%d: %s" % [int(e.get("n", 1)), Forces.SHIP_NAMES[ki.get(e.get("kind", "dd"), 2)].to_lower()])
+			"ideology":
+				parts.append("строй: %s" % world.ideology_names.get(e["v"], e["v"]))
+			"leader":
+				parts.append("новый глава: %s" % e["name"])
 	return "Эффекты: " + ", ".join(parts) if not parts.is_empty() else ""
