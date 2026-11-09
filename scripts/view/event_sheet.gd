@@ -202,9 +202,10 @@ func show_event(g, w: World, id: String) -> void:
 	if opts.size() > 1:
 		_content.add_child(_tex_rect("ev_star18.png", Vector2(48, y + 8), Vector2(18, 22)))
 		_text(_content, Vector2(72, y + 8), "— так поступили в истории", mono, 16, INK_SOFT)
+	var extra := 0.0   # длинные описания эффектов в несколько строк сдвигают следующие варианты
 	for i in opts.size():
 		var o: Dictionary = opts[i]
-		var by := y + 44.0 + 88.0 * i
+		var by := y + 44.0 + 88.0 * i + extra
 		var b := TextureButton.new()
 		b.texture_normal = UiStyle.ui_tex("ev_card.png")
 		b.texture_hover = UiStyle.ui_tex("ev_card_hover.png")
@@ -224,7 +225,10 @@ func show_event(g, w: World, id: String) -> void:
 			if desc != "":
 				desc = desc[0].to_upper() + desc.substr(1)
 		if desc != "":
-			_text(_content, Vector2(92, by + 56), desc, mono, 15, INK_SOFT)
+			var dl := _wrap(Array(desc.split(" ", false)), mono, 15, TEXT_W - 44.0)
+			for j in dl.size():
+				_text(_content, Vector2(92, by + 56 + 20.0 * j), dl[j], mono, 15, INK_SOFT)
+			extra += 20.0 * (dl.size() - 1)
 	# штамп поверх листа
 	var st := _tex_rect("ev_stamp_secret.png", Vector2.ZERO, Vector2(220, 74))
 	_content.add_child(st)
