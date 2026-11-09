@@ -210,6 +210,15 @@
               "t": "spirit_add",
               "who": "NSP",
               "id": "nsp_army_of_africa"
+            },
+            {
+              "t": "spirit_add",
+              "id": "civil_war_attrition"
+            },
+            {
+              "t": "spirit_add",
+              "who": "NSP",
+              "id": "civil_war_attrition"
             }
           ],
           "desc": "Мятежники — отдельное государство с Африканской армией. Республике +12 дивизий и черта «Ополчения» (оборона +30 %, атака −20 %). Напряжённость +3"

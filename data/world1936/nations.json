@@ -1591,6 +1591,7 @@
    }
   },
   "MAN": {
+   "spirits": ["man_kwantung"],
    "full_name": "Маньчжоу-го",
    "ideology": "authoritarian",
    "leader": "Пу И",
@@ -1615,7 +1616,7 @@
    "techs": []
   },
   "CHI": {
-   "spirits": ["chi_weak_army", "chi_vastness"],
+   "spirits": ["chi_weak_army", "chi_vastness", "chi_defensive"],
    "full_name": "Китайская Республика",
    "ideology": "authoritarian",
    "leader": "Чан Кайши",

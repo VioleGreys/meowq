@@ -137,6 +137,16 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 		world.scheduled = keep_s
 		for sc in due:
 			apply(world, int(sc[1]), sc[2], rng)
+	# добровольцы (черты с ключом volunteers — дивизий в месяц), пока страна воюет
+	if world.month_of(world.day) != world.month_of(world.day - 1):
+		for nat in world.nations:
+			var vol: float = nat.b("volunteers")
+			if vol > 0.0 and nat.alive and not nat.at_war.is_empty() and nat.capital >= 0 \
+					and world.p_controller[nat.capital] == nat.id:
+				nat.volunteer_acc += vol
+				while nat.volunteer_acc >= 1.0:
+					nat.volunteer_acc -= 1.0
+					world.spawn_division(nat.id, nat.capital, Military.T_INF)
 	# фокусы
 	for nat in world.nations:
 		if not nat.alive:

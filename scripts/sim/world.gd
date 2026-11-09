@@ -100,6 +100,7 @@ class Nation:
 
 	var spirits := {}           # национальные черты: id -> множитель силы (1 — полная)
 	var spirit_bonus := {}      # сумма бонусов черт (World.recalc_spirits)
+	var volunteer_acc := 0.0    # накопленные дробные дивизии добровольцев (черты с volunteers)
 
 	func b(key: String) -> float:
 		return float(bonus.get(key, 0.0)) + float(spirit_bonus.get(key, 0.0))
