@@ -162,7 +162,8 @@ static func daily(world: World) -> void:
 
 # --- Угроза нацизма и коммунизма ----------------------------------------------------
 
-const THREATS := {"fascism": "угроза нацизма", "communism": "угроза коммунизма"}
+const THREATS := {"fascism": "угроза нацизма", "communism": "угроза коммунизма", "democracy": "влияние демократии"}
+const BLOC_SHARE := 0.5       # надбавка к шансу события: половина показателя альянса (до +50 %)
 const THREAT_PART := 20.0     # каждая из пяти составляющих — до 20 очков (всего до 100 %)
 const THREAT_FULL := 0.30     # доля мира, при которой армия/экономика/наука дают полные 20
 const THREAT_ALLY_FULL := 0.35  # доля мира у фракций этого строя (2+ страны) — полные 20 за союз
@@ -238,6 +239,22 @@ static func update_threat(world: World) -> void:
 
 static func threat_pct(world: World, ideo: String) -> float:
 	return float(world.threat.get(ideo, {}).get("pct", 0.0))
+
+
+## Показатель альянса страны: строй самой страны, а у авторитарной — строй
+## лидера её фракции (у вне блоков — нет). [строй или "", %]
+static func bloc_of(world: World, n: int) -> Array:
+	if n < 0:
+		return ["", 0.0]
+	var ideo: String = world.nations[n].ideology
+	if not THREATS.has(ideo):
+		var f: int = world.nations[Diplomacy.root(world, n)].faction
+		if f < 0:
+			return ["", 0.0]
+		ideo = world.nations[world.factions[f].leader].ideology
+		if not THREATS.has(ideo):
+			return ["", 0.0]
+	return [ideo, threat_pct(world, ideo)]
 
 
 ## «Угроза нацизма 34 % (армия 8, экономика 7, …)».
@@ -557,6 +574,13 @@ static func chance(world: World, spec: Dictionary, ctx: Dictionary) -> Dictionar
 				missing.append("убрать: " + txt)
 		elif v > 0.0:
 			missing.append(txt)
+	# вторая часть шанса (до +50 %): показатель альянса того, кто требует
+	if spec.get("bloc", false):
+		var bl := bloc_of(world, int(ctx.get("from", -1)))
+		if String(bl[0]) != "":
+			var bonus := float(bl[1]) * BLOC_SHARE
+			pct += bonus
+			lines.append("+%d %% — %s %d %% (половина)" % [roundi(bonus), THREATS[bl[0]], roundi(float(bl[1]))])
 	var res := maxf(pct, 0.0)
 	var sure: bool = res >= 100.0
 	if res > 100.0:

@@ -73,7 +73,9 @@
   `prep_divs` → `AIPlanner.plan_economy`, гарантии, пакты, `improving`
   (улучшение отношений, и у игрока), помощь (`Relations.give_aid`).
   Угрозы нацизма/коммунизма — `Relations.update_threat` (каждый день,
-  `world.threat`), агрессивность `Nation.aggression`; условие `threat`. `History._ai_pick_historical`
+  `world.threat`, ещё «влияние демократии»), агрессивность `Nation.aggression`;
+  условие `threat`; у шанса `"bloc": true` — надбавка, половина показателя
+  альянса требующего (`Relations.bloc_of`). `History._ai_pick_historical`
   планирует по срокам: срок — у датированных
   фокусов с историческими эффектами (событие, война, договор…), считается запас
   до всех сроков сразу. Запись focuses.json — `tools/focus_json.py`. Дерево
