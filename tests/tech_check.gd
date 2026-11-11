@@ -50,6 +50,36 @@ func _init() -> void:
 	var w := World.new()
 	MapLoader.load_world(w)
 	var sim := Simulation.new(w)
+	print("Стартовые технологии:")
+	var nd: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/world1936/nations.json"))["nations"]
+	var miss := ""
+	for tag in nd:
+		var lst: Array = nd[tag].get("techs", [])
+		for id in lst:
+			var tt := Tech.get_tech(id)
+			if tt.is_empty():
+				miss += " %s:%s нет в дереве" % [tag, id]
+			elif tt["req"] != "" and not lst.has(tt["req"]):
+				miss += " %s:%s без «%s»" % [tag, id, tt["req"]]
+	check(miss == "", "у стартовых технологий есть требования%s" % miss)
+	var start_line := ""
+	var sets := {}
+	for tag in ["GER", "SOV", "ENG", "FRA", "ITA", "JAP", "USA", "POL", "CZE", "BUL"]:
+		var n: World.Nation = w.nations[w.nation_tags.find(tag)]
+		var by := {}
+		for id in n.techs:
+			var c: String = Tech.get_tech(id).get("cat", "?")
+			by[c] = int(by.get(c, 0)) + 1
+		sets[tag] = n.techs.keys()
+		start_line += "\n    %s %d: %s" % [tag, n.techs.size(), by]
+	print("  изучено на старте:", start_line)
+	var same := 0
+	var majors := ["GER", "SOV", "ENG", "FRA", "ITA", "JAP", "USA"]
+	for a in majors:
+		for b in majors:
+			if a < b and sets[a].size() == sets[b].size() and sets[a].all(func(x): return sets[b].has(x)):
+				same += 1
+	check(same == 0, "у великих держав разный упор (одинаковых наборов: %d)" % same)
 	var ger: World.Nation = w.nations[w.nation_tags.find("GER")]
 	var bul: World.Nation = w.nations[w.nation_tags.find("BUL")]
 	check(ger.research.size() == 3 and bul.research.size() == 2, "слоты: Германия %d, Болгария %d" % [ger.research.size(), bul.research.size()])

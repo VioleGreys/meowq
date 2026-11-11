@@ -337,6 +337,7 @@ func _start() -> void:
 	var nat: World.Nation = world.nations[nid]
 	if Tech.start(nat, slot, selected):
 		game.hud.toast("Исследование: «%s»" % Tech.tech_name(selected))
+		game.hud.refresh_top()   # снять значок на корешке сразу, не дожидаясь дня
 		var fs := Tech.free_slot(nat)
 		if fs >= 0:
 			slot = fs

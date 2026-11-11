@@ -171,6 +171,10 @@ const BONUS_NAMES := {
 	"shipyard": "судостроение",
 }
 
+# Базовые стартовые технологии по промышленности (фабрик гражд. + воен.):
+# только мирные — военный упор у каждой страны свой (techs в nations.json).
+const START_BASE := [[20, ["ind1", "con1", "res1"]], [8, ["ind1", "con1"]]]
+
 # бонусы, которые читаются прямо из страны (без кэша в дивизиях и массивах)
 const ECON_KEYS := {"industry": true, "research": true, "construction": true, "resources": true,
 	"manpower": true, "reinforce": true, "sub_raid": true, "escort": true, "shipyard": true,
@@ -250,6 +254,15 @@ static func slots_for(nat) -> int:
 	if nat.major or nat.civ + nat.mil >= SLOTS_INDUSTRY:
 		return SLOTS_MAJOR
 	return SLOTS_MINOR
+
+
+## Базовые стартовые технологии по промышленности страны (при загрузке мира).
+static func grant_base(nat) -> void:
+	for tier in START_BASE:
+		if nat.civ + nat.mil >= int(tier[0]):
+			for id in tier[1]:
+				complete(nat, id)
+			return
 
 
 ## Привести список слотов к нужной длине (слоты только прибавляются).

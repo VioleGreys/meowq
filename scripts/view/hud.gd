@@ -271,6 +271,7 @@ const SPINE := Vector2(470, 84)
 const SPINE_Y0 := 96.0
 const SPINE_STEP := 92.0
 var spines: Array = []                  # [TextureButton, id, номер, тень, выдвиг 0..1]
+var _badges := {}                        # id корешка -> [Control, Label]: значок «нужно решение»
 var _side_active := ""
 
 
@@ -314,6 +315,8 @@ func _build_side() -> void:
 		tb.pivot_offset = SPINE * 0.5
 		tb.pressed.connect(func(): cb.call(), CONNECT_DEFERRED)
 		side.add_child(tb)
+		if id == "research" or id == "focus":
+			_badges[id] = _make_badge(tb)
 		var entry := [tb, id, i, shd, 0.0]
 		spines.append(entry)
 		tb.mouse_entered.connect(func(): _spine_slide(entry, 0.25))
@@ -340,6 +343,41 @@ func _spine_place(entry: Array, o: float) -> void:
 	shd.position = center - shd.size * 0.5 + Vector2(6, 8)
 	shd.rotation_degrees = -ang
 	shd.modulate.a = (0.5 + 0.2 * o) / 0.5
+
+
+## Значок на корешке: красный кружок с числом (свободные слоты науки, фокус не
+## выбран). Дочерний узел кнопки — поворачивается и выезжает вместе с папкой.
+func _make_badge(tb: TextureButton) -> Array:
+	var dot := Panel.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UiStyle.RED_INK
+	sb.border_color = UiStyle.CREAM
+	sb.set_border_width_all(3)
+	sb.set_corner_radius_all(22)
+	sb.anti_aliasing = true
+	dot.add_theme_stylebox_override("panel", sb)
+	dot.size = Vector2(44, 44)
+	dot.position = Vector2(SPINE.x - 40, -14)
+	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var l := Label.new()
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_font_override("font", UiStyle.title_font(700))
+	l.add_theme_font_size_override("font_size", 28)
+	l.add_theme_color_override("font_color", UiStyle.CREAM)
+	dot.add_child(l)
+	tb.add_child(dot)
+	dot.hide()
+	return [dot, l]
+
+
+func _show_badges(alerts: Dictionary) -> void:
+	for id in _badges:
+		var n: int = int(alerts.get(id, 0))
+		var b: Array = _badges[id]
+		b[0].visible = n > 0
+		b[1].text = str(n) if id == "research" else "!"
 
 
 ## Папка выезжает/возвращается (плавно, с замедлением).
@@ -1017,7 +1055,20 @@ static func top_snapshot(w: World, me: int, sim: Simulation) -> Dictionary:
 	if w == null or me < 0:
 		return {}
 	var n: World.Nation = w.nations[me]
-	return {"flag": n.flag, "name": n.name.to_upper(), "date": w.date_string(),
+	# значки на корешках: свободные слоты науки, фокус не выбран (а выбрать есть что)
+	var free := 0
+	for id in n.research:
+		if id == "":
+			free += 1
+	if n.research.size() < n.research_slots:
+		free += n.research_slots - n.research.size()
+	var focus_idle := 0
+	if n.focus_current == "":
+		for fd in History.tree_of(w, me):
+			if History.focus_block(w, me, fd) == "":
+				focus_idle = 1
+				break
+	return {"alerts": {"research": free, "focus": focus_idle}, "flag": n.flag, "name": n.name.to_upper(), "date": w.date_string(),
 		"res": "Винт. %d  Ору. %d  Танки %d  Груз. %d  Люди %dк  Див. %d" % [
 			n.stock[0], n.stock[1], n.stock[2], n.stock[3], n.manpower, n.division_count],
 		"phases": sim.phase_usec.duplicate() if sim != null else {}, "tick": sim.last_tick_usec if sim != null else 0}
@@ -1041,6 +1092,7 @@ func show_top() -> void:
 	if swatch.spec != d["flag"]:
 		swatch.spec = d["flag"]
 	nation_label.text = d["name"]
+	_show_badges(d.get("alerts", {}))
 	date_label.text = d["date"]
 	res_label.text = d["res"]
 	var key := nation_label.text + "|" + date_label.text + "|" + res_label.text

@@ -322,6 +322,7 @@ static func _spawn_armies(world: World, rng: RandomNumberGenerator, data: Dictio
 			continue
 		nat.civ = income[nat.id][0]
 		nat.mil = income[nat.id][1]
+		Tech.grant_base(nat)
 		Tech.fit_slots(nat)
 		Military.assign_free_factories(nat, Military.default_split(nat))
 		for line in nat.lines:

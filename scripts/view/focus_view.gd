@@ -184,4 +184,5 @@ func _update_detail() -> void:
 func _start() -> void:
 	if History.start_focus(world, nid, selected):
 		game.hud.toast("Начат фокус «%s»" % History.focus_def(world, nid, selected)["name"])
+		game.hud.refresh_top()   # снять значок на корешке сразу, не дожидаясь дня
 	refresh()
