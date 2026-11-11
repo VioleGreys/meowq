@@ -227,6 +227,16 @@ func _init() -> void:
 			factories_after += w.p_civ[p] + w.p_mil[p]
 	check(ger_after < ger_planes, "воздушные бои над Лондоном: потери Германии %d самолётов" % (ger_planes - ger_after))
 	check(factories_after < factories_before, "бомбардировки разрушили заводы: %d → %d" % [factories_before, factories_after])
+	var dmg_n := 0
+	var cap_lost := 0.0
+	for p in w.bombed:
+		dmg_n += 1
+		cap_lost += w.p_supply_base[p] - w.p_supply_cap[p]
+	check(dmg_n > 0 and cap_lost > 0.0, "бомбёжки повредили узлы и дороги: провинций %d, снабжение −%.1f" % [dmg_n, cap_lost])
+	var probe: int = w.bombed.keys()[0] if dmg_n > 0 else -1
+	var d0: float = w.p_bomb[probe] if probe >= 0 else 0.0
+	Forces.repair_bombing(w)
+	check(probe >= 0 and w.p_bomb[probe] < d0, "повреждения чинятся: %.2f → %.2f" % [d0, w.p_bomb[probe] if probe >= 0 else 0.0])
 	var sup: float = w.air_sup[london_r * w.nation_count + ENG]
 	print("  превосходство Британии над Лондоном: %d%%" % (sup * 100.0))
 	# господство в воздухе: войска страны без своей авиации в районе, где у

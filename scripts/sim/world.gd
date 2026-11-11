@@ -411,6 +411,9 @@ var tpl_men := PackedFloat64Array()
 var tpl_terrain := PackedFloat32Array()   # Military.TERRAIN_MULT построчно (шаблон*8 + местность)
 var p_coastal := PackedByteArray()
 var p_supply_cap := PackedFloat32Array()  # пропускная способность снабжения провинции (дивизий)
+var p_supply_base := PackedFloat32Array() # она же без повреждений от бомбёжек
+var p_bomb := PackedFloat32Array()        # повреждения от стратегических бомбёжек 0..1 (Forces)
+var bombed := {}                          # провинция -> true: есть повреждения (чинятся каждый день)
 var ally := PackedByteArray()             # nation_count^2: 1 — одна сторона (фракция/сюзерен)
 var supply_regions := true               # снабжение по узлам районов (Supply), иначе — по удалённости от узлов
 var reg_adj_start := PackedInt32Array()   # соседство районов по суше (Supply._static)
@@ -646,6 +649,11 @@ static func _month_days(m: int, y: int) -> int:
 	return 29 if m == 1 and _leap(y) else MONTH_DAYS[m]
 
 
+## Пропускная способность снабжения провинции с учётом повреждений от бомбёжек.
+func apply_bomb(p: int) -> void:
+	p_supply_cap[p] = maxf(0.5, p_supply_base[p] * (1.0 - Forces.BOMB_SUPPLY * p_bomb[p]))
+
+
 func log_event(text: String) -> void:
 	events.append(text)
 
@@ -704,6 +712,12 @@ func build_caches() -> void:
 			T_FOREST, T_HILLS:
 				cap -= 0.5
 		p_supply_cap[p] = maxf(1.0, cap)
+	p_supply_base = p_supply_cap.duplicate()
+	if p_bomb.size() != prov_count:
+		p_bomb.resize(prov_count)
+		p_bomb.fill(0.0)
+	for p in bombed:
+		apply_bomb(int(p))
 	Military.build_tables(self)
 	refresh_stats()
 

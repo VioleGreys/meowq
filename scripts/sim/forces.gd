@@ -16,6 +16,12 @@ const SHIP_COST := [3000.0, 900.0, 150.0, 120.0]   # очки судострое
 const WING_MAX := 300.0
 const AIR_SUP_PENALTY := 0.3   # сила войск при полном господстве противника в воздухе: −30 %
 const AIR_SUP_FULL := 300.0    # истребителей (с качеством) над районом для полного эффекта
+# стратегические бомбардировки: повреждения провинции (0..1) снижают её
+# пропускную способность снабжения до −BOMB_SUPPLY и чинятся по BOMB_REPAIR в день
+const BOMB_SUPPLY := 0.6
+const BOMB_REPAIR := 0.01
+const BOMB_HUB := 0.3          # удар по узлу снабжения района (главный город)
+const BOMB_RAIL := 0.2         # удар по железной дороге и инфраструктуре провинции
 const REGION_CELL := 160.0                       # размер воздушного района, пикс. карты
 const AIR_RANGE := 190.0                         # дальность от своей территории, пикс.
 
@@ -1203,6 +1209,7 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 		world.air_sup.resize(world.region_count * nc)
 	world.cas_mult.fill(1.0)
 	world.air_sup.fill(0.5)
+	repair_bombing(world)
 	var _pt := Time.get_ticks_usec()
 	# пополнение крыльев из резерва, новые крылья ИИ (крылья заранее по странам)
 	var by_owner := {}
@@ -1333,7 +1340,7 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 				axp[w.owner] += Doctrine.AIR_PER_WING * 0.5
 			var sup: float = air_sup[r * nc + w.owner]
 			if w.mission == "bomb":
-				_bomb_factories(world, w, r, sup, rng)
+				_strategic_raid(world, w, r, sup, rng)
 			elif w.mission == "naval":
 				var dmg: float = w.planes * 0.002 * sup * qa[w.owner * 4 + 3]
 				for zone in world.zone_fleets:
@@ -1352,29 +1359,69 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 			Doctrine.gain(world.nations[n], 2, minf(Doctrine.AIR_CAP, axp[n]))
 
 
-static func _bomb_factories(world: World, w: World.AirWing, r: int, sup: float, rng: RandomNumberGenerator) -> void:
+## Ремонт повреждений от бомбёжек (раз в день, главный поток).
+static func repair_bombing(world: World) -> void:
+	if world.bombed.is_empty():
+		return
+	var keys: Array = world.bombed.keys()
+	keys.sort()
+	for p in keys:
+		var pi: int = p
+		world.p_bomb[pi] = maxf(0.0, world.p_bomb[pi] - BOMB_REPAIR)
+		world.apply_bomb(pi)
+		if world.p_bomb[pi] <= 0.0:
+			world.bombed.erase(pi)
+
+
+static func _damage(world: World, p: int, v: float) -> void:
+	world.p_bomb[p] = minf(1.0, world.p_bomb[p] + v)
+	world.bombed[p] = true
+	world.apply_bomb(p)
+
+
+## Стратегический налёт крыла на район: завод, узел снабжения (главный город
+## района) или железная дорога и инфраструктура провинции противника.
+static func _strategic_raid(world: World, w: World.AirWing, r: int, sup: float, rng: RandomNumberGenerator) -> void:
 	if rng.randf() > w.planes / 1500.0 * sup * world.n_air[w.owner * 4 + 2]:
 		return
-	var cands: Array = []
+	var enemy: Array = []
+	var factories: Array = []
+	var hub := -1
 	for p in world.region_provs[r]:
-		if world.p_land[p] == 1 and world.is_at_war(w.owner, world.p_controller[p]) \
-				and world.p_civ[p] + world.p_mil[p] > 0:
-			cands.append(p)
-	if cands.is_empty():
+		if world.p_land[p] == 1 and world.is_at_war(w.owner, world.p_controller[p]):
+			enemy.append(p)
+			if world.p_civ[p] + world.p_mil[p] > 0:
+				factories.append(p)
+			if hub < 0 or world.p_vp[p] > world.p_vp[hub] or (world.p_vp[p] == world.p_vp[hub] and world.p_population[p] > world.p_population[hub]):
+				hub = p
+	if enemy.is_empty():
 		return
-	var p: int = cands[rng.randi() % cands.size()]
+	var roll := rng.randf()
+	var kind := 0 if roll < 0.4 else (1 if roll < 0.7 else 2)
+	if kind == 0 and factories.is_empty():
+		kind = 1
+	var p: int = factories[rng.randi() % factories.size()] if kind == 0 else (hub if kind == 1 else enemy[rng.randi() % enemy.size()])
 	# радары и зенитки защищающегося срывают часть налётов
 	var adef: float = world.n_air_def[world.p_controller[p]]
 	if adef > 0.0 and rng.randf() < adef:
 		return
-	if world.p_mil[p] > 0:
-		world.p_mil[p] -= 1
-	else:
-		world.p_civ[p] -= 1
-	var victim: int = world.p_owner[p]
+	var what := ""
+	match kind:
+		0:
+			if world.p_mil[p] > 0:
+				world.p_mil[p] -= 1
+			else:
+				world.p_civ[p] -= 1
+			what = "разрушен завод"
+		1:
+			_damage(world, p, BOMB_HUB)
+			what = "разбит узел снабжения"
+		_:
+			_damage(world, p, BOMB_RAIL)
+			what = "разрушены железная дорога и склады"
+	var victim: int = world.p_controller[p]
 	if world.nations[victim].is_player or world.nations[w.owner].is_player:
-		world.log_event("Бомбардировка: разрушен завод — %s" % world.p_name[p])
-
+		world.log_event("Бомбардировка: %s — %s" % [what, world.p_name[p]])
 
 ## ИИ авиации: истребители и штурмовики над главным участком фронта,
 ## бомбардировщики — по заводам врага, до которого не дойти по суше.
@@ -1430,9 +1477,23 @@ static func ai_air(world: World, n: int) -> void:
 	_pt = Time.get_ticks_usec()
 	var regions := front_count.keys()
 	regions.sort_custom(func(a, b): return front_count[a] > front_count[b])
+	# стратегические налёты при сухопутном фронте: доля бомбардировщиков — на
+	# самый ценный район противника в радиусе (заводы, крупные города, узлы)
+	var bombers := 0
+	for w in world.wings:
+		if w.alive and w.owner == n and w.kind == 1:
+			bombers += 1
+	var raid_n := 0
+	var raid_target := -1
+	if bomb_target < 0 and not front_count.is_empty() and bombers > 0:
+		var share := 0.5 if Doctrine.pref(nat, "air") == "bmb" else 0.25
+		raid_n = int(floor(bombers * share))
+		if raid_n > 0:
+			raid_target = _raid_region(world, n)
 	var reach := regions_in_range(world, n) if bomb_target >= 0 else {}
 	Prof.add("авиаИИ:радиус", _pt)
 	var k2 := 0
+	var raids := 0
 	for w in world.wings:
 		if not w.alive or w.owner != n:
 			continue
@@ -1443,9 +1504,38 @@ static func ai_air(world: World, n: int) -> void:
 		if bomb_target >= 0 and reach.has(bomb_target):
 			w.region = bomb_target
 			w.mission = "bomb" if w.kind == 1 else "sup"
+		elif w.kind == 1 and raid_target >= 0 and raids < raid_n:
+			raids += 1
+			w.region = raid_target
+			w.mission = "bomb"
 		else:
 			w.region = target
 			w.mission = "sup" if w.kind == 0 else "cas"
+
+
+## Цель стратегических налётов: район противника в радиусе с наибольшей
+## ценностью (заводы + очки победы городов); -1 — нет.
+static func _raid_region(world: World, n: int) -> int:
+	var reach := regions_in_range(world, n)
+	var value := {}
+	var war := world.war
+	var nc := world.nation_count
+	var ctrl := world.p_controller
+	for p in world.prov_count:
+		var c := ctrl[p]
+		if c < 0 or war[n * nc + c] == 0 or world.p_land[p] == 0:
+			continue
+		var r := world.p_region[p]
+		if not reach.has(r):
+			continue
+		value[r] = float(value.get(r, 0.0)) + world.p_civ[p] + world.p_mil[p] * 1.5 + world.p_vp[p] * 0.5
+	var best := -1
+	var best_v := 0.0
+	for r in value:
+		if float(value[r]) > best_v or (float(value[r]) == best_v and int(r) < best):
+			best_v = value[r]
+			best = r
+	return best
 
 
 ## ИИ: высадка на вражеское побережье, если до врага не дойти по суше.
