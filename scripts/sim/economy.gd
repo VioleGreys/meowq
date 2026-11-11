@@ -121,7 +121,8 @@ static func _refresh_prod(world: World) -> void:
 
 ## Сколько ресурса r у страны в распоряжении: добыча − продано + куплено.
 static func available(nat: World.Nation, r: int) -> float:
-	return nat.res_prod[r] - nat.res_out[r] + nat.res_in[r]
+	# морской импорт, не дошедший (нехватка конвоев, перехват на пути — Convoys)
+	return nat.res_prod[r] - nat.res_out[r] + nat.res_in[r] - nat.res_lost[r]
 
 
 ## Сколько ресурса r страна ещё может продать (её курс минус уже проданное).
@@ -196,15 +197,18 @@ const BLOCK_OPEN := 0.4    # перевес в округе, чтобы прор
 const BLOCK_RANGE := 5
 const BLOCK_FALL := 0.7
 
-static func refresh_blockade(world: World) -> void:
+## Возвращает открытые зоны воюющих стран (страна -> {зона: true}) — по ним
+## идут пути конвоев (Convoys.refresh_routes); страны без записи — всё открыто.
+static func refresh_blockade(world: World) -> Dictionary:
 	var nc := world.nation_count
 	world.trade_block = PackedByteArray()
 	world.trade_block.resize(nc * nc)
+	var open_by := {}
 	if world.fleets.is_empty() or world.trade_adj.size() != nc * nc:
-		return
+		return open_by
 	var zf := world.zone_fleets
 	if zf.is_empty():
-		return
+		return open_by
 	var land := world.p_land
 	var a_start := world.adj_start
 	var a_list := world.adj_list
@@ -354,6 +358,7 @@ static func refresh_blockade(world: World) -> void:
 				if _zone_open(world, b, q, zf, near, own_r, en_r):
 					open[q] = true
 					qz.append(q)
+		open_by[b] = open
 		for s in nc:
 			if s == b or by_land[s] == 1 or war[b * nc + s] == 1 or not world.nations[s].alive:
 				continue
@@ -376,6 +381,7 @@ static func refresh_blockade(world: World) -> void:
 			if not ok:
 				world.trade_block[b * nc + s] = 1
 	Prof.add("бл:страны", _pb)
+	return open_by
 
 
 static func _zone_open(world: World, b: int, z: int, zf: Dictionary, near: Dictionary,
@@ -755,6 +761,7 @@ static func daily(world: World) -> void:
 	var nc := world.nation_count
 	var first := world.trade_score.size() != nc * nc
 	var dirty := false
+	var open_by = null   # день обхода: открытые зоны для путей конвоев
 	# раз в SWEEP_DAYS дней: добыча и потребность, обход поставок (истёкшие
 	# продлеваются на месяц, отказ/урезка вступает в силу, поставки исчезнувших
 	# и рассорившихся стран снимаются; война рвёт поставки сразу — on_war)
@@ -763,7 +770,7 @@ static func daily(world: World) -> void:
 		refresh(world)
 		Prof.add("вэ:refresh", _pt)
 		_pt = Time.get_ticks_usec()
-		refresh_blockade(world)
+		open_by = refresh_blockade(world)
 		Prof.add("вэ:блокада", _pt)
 		dirty = true
 		var keep: Array = []
@@ -854,6 +861,11 @@ static func daily(world: World) -> void:
 				mine.append(k)   # новые договоры — только этого покупателя
 			_ai_cut(world, nat, mine)
 		Prof.add("вэ:закупки", _pr)
+	if open_by != null:
+		# пути конвоев — по договорам после закупок этого дня
+		var _pc := Time.get_ticks_usec()
+		Convoys.refresh_routes(world, open_by)
+		Prof.add("вэ:конвои", _pc)
 	if dirty:
 		var _pf := Time.get_ticks_usec()
 		_update_fill(world)

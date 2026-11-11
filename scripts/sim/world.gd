@@ -61,7 +61,23 @@ class Nation:
 	var daily_output := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0]) # выпуск за последний день
 	var naval_share := 0.0      # доля заводов на судостроение (forces.json)
 	var air_share := 0.1        # доля заводов на авиацию
-	var trade_penalty := 0.0    # потери выпуска от рейдов подлодок (0..0.3)
+	var trade_penalty := 0.0    # доля морского импорта, потерянная за день (нехватка конвоев, перехват; Convoys)
+	# конвои (Convoys): торговые суда для морского импорта и снабжения войск за морем
+	var convoys := 0.0          # сколько конвоев есть
+	var conv_auto := true       # строить по нужде (игрок может выключить)
+	var conv_order := 0         # игрок: заложено сверх нужды
+	var conv_trade_need := 0.0  # нужно на морской импорт
+	var conv_sup_need := 0.0    # нужно на снабжение войск за морем
+	var conv_trade := 1.0       # доля морского импорта, что доходит (0..1)
+	var conv_sup := 1.0         # обеспеченность снабжения за морем конвоями (0..1)
+	var conv_sunk := 0.0        # потоплено всего
+	var conv_sunk_month := 0.0  # потоплено за текущий месяц (сбрасывается 1-го)
+	var conv_sunk_last := 0.0   # за прошлый месяц
+	var conv_routes: Array = [] # пути: [вид 0 — торговля / 1 — порт, ключ (продавец / провинция), зоны PackedInt32Array, нужно конвоев]
+	var conv_zone_set := {}     # морская зона -> конвоев на путях через неё (для рейдеров и охраны)
+	var conv_basins := {}       # бассейны путей конвоев (Convoys.build_basins)
+	var conv_danger := {}       # бассейн -> перехват сегодня (0..1), только опасные
+	var res_lost := PackedFloat32Array([0, 0, 0, 0, 0, 0])   # морской импорт, что не дошёл (ед. в день)
 	var ship_queue: Array = []  # заложенные корабли: номера проектов (World.ship_designs)
 	var ship_role := PackedInt32Array([-1, -1, -1, -1, -1])  # основные проекты ролей (ShipDesigns.ROLES)
 	var ship_techs := -1        # сколько технологий было при последней сборке проектов кораблей
@@ -415,6 +431,17 @@ var trade_score := PackedFloat32Array()
 var trade_adj := PackedByteArray()       # соседство стран N×N (Economy.refresh_geo, раз в месяц)
 var p_mass := PackedInt32Array()          # номер материка (связной суши) провинции; −1 — море
 var trade_mass: Dictionary = {}           # узел «материк*N + страна» -> соседние узлы (Economy.refresh_geo)
+# бассейны конвоев (Convoys.build_basins): морские зоны одного моря/океана —
+# один район для путей и перехвата
+var z_basin := PackedInt32Array()        # зона -> бассейн (−1 — суша)
+var basin_name := PackedStringArray()
+var bas_adj_start := PackedInt32Array()  # соседство бассейнов (CSR)
+var bas_adj_list := PackedInt32Array()
+var bas_zone_start := PackedInt32Array() # зоны бассейна (CSR, по возрастанию)
+var bas_zone_list := PackedInt32Array()
+var conv_units: Array = []              # кэш Convoys._units_by_buyer
+var conv_units_sig := -1.0
+var p_conv := PackedFloat32Array()      # подача порта за морем от конвоев (0..1; 1 — дома или пусто) — Convoys
 var trade_block := PackedByteArray()     # морская блокада: [покупатель*N + продавец] = 1 — путь отрезан (Economy.refresh_blockade)
 var trade_coast := PackedByteArray()     # выход к морю
 var trade_geo_day := -100

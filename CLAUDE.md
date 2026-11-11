@@ -28,7 +28,7 @@
 дополнить его.
 - `history.md` — фокусы, события, шансы, репутация и шкала сил, исторический
   ИИ, дипломатия, данные стран (`history.gd`, `relations.gd`, `diplomacy.gd`).
-- `forces.md` — флот, авиация, порты, высадки (`forces.gd`).
+- `forces.md` — флот, авиация, порты, высадки, конвои (`forces.gd`, `convoys.gd`).
 - `military.md` — дивизии, шаблоны из батальонов, военные заводы (`military.gd`).
 - `balance_ai.md` — укрепления, зима, черты стран, военный ИИ (`ai.gd`,
   `ai.cpp`), планирование наступления, `balance_check`.
@@ -82,6 +82,7 @@
 - Перепарсить скрипты / обновить кэш классов: `godot --headless --editor --quit --path .`
 - История (вехи 1936–41): `godot --headless --path . --script res://tests/history_check.gd [-- --until=1941-07-01 --quiet]`
 - Флот и авиация: `godot --headless --path . --script res://tests/forces_check.gd`
+  (конвои по годам: `tests/convoy_diag.gd [-- --dates=...]`)
 - Снабжение, сравнение моделей: `godot --headless --path . --script res://tests/supply_compare.gd [-- --supply=regions]`
 - Сохранение и загрузка: `godot --headless --path . --script res://tests/save_check.gd [-- --dates=1941-08-01 --step=60 --nation=SWE]`
   (страна «игрока» в тесте никем не управляется — для дальних дат брать нейтральную)

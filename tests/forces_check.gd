@@ -135,25 +135,58 @@ func _init() -> void:
 	Forces.merge_here(w, many[12])
 	check(Forces.fleet_size(many[12]) == Forces.FLEET_MAX, "слияние — не больше %d кораблей (%d)" % [Forces.FLEET_MAX, Forces.fleet_size(many[12])])
 
-	print("Рейды подлодок:")
+	print("Конвои и рейды подлодок:")
 	r = fresh()
 	w = r[0]
 	sim = r[1]
 	w.nations[GER].is_player = true
 	w.nations[ENG].is_player = true
+	var eng: World.Nation = w.nations[ENG]
+	# мирное время: поставки и пути конвоев (обход — раз в 14 дней)
+	while eng.conv_trade_need <= 0.0 and w.day < 400:
+		sim.tick()
+		w.events.clear()
 	w.set_war(GER, ENG)
 	sim._refresh_sides()
+	sim.tick()
+	var rz := -1
+	var rz_units := 0.0
+	for rt in eng.conv_routes:
+		if int(rt[0]) == 0 and float(rt[3]) > rz_units:
+			rz_units = float(rt[3])
+			var b0: int = (rt[2] as PackedInt32Array)[0]
+			rz = w.bas_zone_list[w.bas_zone_start[b0]]   # зона бассейна на пути
+	check(rz >= 0 and eng.conv_trade_need > 0.0, "у Британии морской импорт идёт конвоями (нужно %.0f, есть %.0f)" % [eng.conv_trade_need, eng.convoys])
+	check(eng.conv_sup_need > 0.0, "войскам Британии за морем нужны конвои (%.0f)" % eng.conv_sup_need)
 	var subs := fleet_of(w, GER, "Подводные силы")
 	Forces.add_ships(w, subs, w.nations[GER].ship_role[3], 150)
-	var tz: Dictionary = Forces.trade_zones(w, ENG)
-	subs.zone = tz.keys()[0]
+	subs.zone = rz if rz >= 0 else Forces.trade_zones(w, ENG).keys()[0]
+	subs.path = PackedInt32Array()
 	subs.mission = "raid"
 	for f in w.fleets:
 		if f.owner == ENG:
 			f.zone = f.home
+			f.path = PackedInt32Array()
 			f.mission = "port"
+	var conv0 := eng.convoys
+	var mil_mult := 1.0 + eng.b("industry")
 	sim.tick()
-	check(w.nations[ENG].trade_penalty > 0.05, "рейды снижают выпуск Британии на %d%%" % (w.nations[ENG].trade_penalty * 100.0))
+	var lost := 0.0
+	for x in Economy.RES_COUNT:
+		lost += eng.res_lost[x]
+	var sb: int = w.z_basin[subs.zone]
+	check(eng.conv_danger.has(sb) and lost > 0.0, "рейды в бассейне «%s» топят груз: не дошло %.2f ед. (перехват %d%%)" % [w.basin_name[sb], lost, roundi(float(eng.conv_danger.get(sb, 0.0)) * 100.0)])
+	check(w.basin_name.size() < 150 and w.basin_name.has("Тихий океан (север)"), "бассейнов %d (из 214 зон), Тихий океан — север и юг" % w.basin_name.size())
+	check(eng.convoys < conv0, "рейды топят конвои (%.1f → %.1f)" % [conv0, eng.convoys])
+	check(is_equal_approx(mil_mult, 1.0 + eng.b("industry")), "выпуск заводов рейды не режут")
+	eng.convoys = 0.0
+	eng.conv_auto = false
+	sim.tick()
+	var cut := 0
+	for rt in eng.conv_routes:
+		if int(rt[0]) == 1 and w.p_conv[int(rt[1])] < 0.01:
+			cut += 1
+	check(cut > 0 and eng.conv_trade < 0.01, "без конвоев заморские порты не снабжают (%d), импорт морем не доходит" % cut)
 
 	print("Морская высадка:")
 	r = fresh()

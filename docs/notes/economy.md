@@ -37,3 +37,6 @@
   себе), `embargo`, `closed_trade` (марионетка — только с сюзереном,
   `CLOSED_PUPPETS`), `synthetic`. Окно — «Производство» → «Внешняя экономика»
   (`Hud._build_trade`, `--trade=1|oil`), режим карты «Ресурсы» (`MapMode.RESOURCES`).
+- Конвои (`Convoys`, см. `forces.md`): морской импорт идёт конвоями;
+  нехватка и перехват на пути — `Nation.res_lost`, вычитается в `available`.
+  `refresh_blockade` возвращает открытые зоны воюющих стран — по ним пути.

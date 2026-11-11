@@ -81,6 +81,11 @@ static func field_snapshot(world: World, side_of: PackedInt32Array, sources: Arr
 		fall.append(pow(FALLOFF, maxi(0, h - 1)))
 	# только копии: снимок читается в фоне, пока мир идёт дальше (правило
 	# многопоточности — часть записей в массивы мира идёт на месте)
+	# подача портов за морем — по доставке конвоями (Convoys; 1 — дома)
+	var smult := world.p_conv.duplicate()
+	if smult.size() != world.prov_count:
+		smult.resize(world.prov_count)
+		smult.fill(1.0)
 	var gauge := PackedByteArray()
 	gauge.resize(world.nation_count)
 	for nat in world.nations:
@@ -88,7 +93,7 @@ static func field_snapshot(world: World, side_of: PackedInt32Array, sources: Arr
 	return {"owner": world.p_owner.duplicate(), "gauge": gauge, "adj_start": world.adj_start.duplicate(), "adj_list": world.adj_list.duplicate(), "land": world.p_land.duplicate(),
 		"ctrl": world.p_controller.duplicate(), "preg": world.p_region.duplicate(), "vp": world.p_vp.duplicate(),
 		"pop": world.p_population.duplicate() if world.p_population.size() == world.prov_count else PackedInt32Array(),
-		"pcap": world.p_supply_cap.duplicate(), "side_of": side_of.duplicate(), "ns": sources.size(), "nr": world.region_count,
+		"pcap": world.p_supply_cap.duplicate(), "smult": smult, "side_of": side_of.duplicate(), "ns": sources.size(), "nr": world.region_count,
 		"reg_adj_start": world.reg_adj_start.duplicate(), "reg_adj_list": world.reg_adj_list.duplicate(),
 		"src": src_flat, "src_off": src_off, "capitals": capitals.duplicate(), "fall": fall,
 		"k": PackedFloat64Array([CAPITAL, PORT_BASE, PORT_VP, LEVEL_K, LOCAL, float(HUB_RANGE), RAIL_LOSS, RAIL_MIN, GAUGE_LOSS, POCKET_LOCAL])}
@@ -146,6 +151,7 @@ static func field_gd(t: Dictionary) -> Array:
 	var vp: PackedInt32Array = t["vp"]
 	var pop: PackedInt32Array = t["pop"]
 	var pcap: PackedFloat32Array = t["pcap"]
+	var smult: PackedFloat32Array = t["smult"]
 	var side_of: PackedInt32Array = t["side_of"]
 	var ns: int = t["ns"]
 	var nr: int = t["nr"]
@@ -274,7 +280,7 @@ static func field_gd(t: Dictionary) -> Array:
 				best_f[k] = k_level * minf(best[r], level[k]) * maxf(rail_min, 1.0 - rail_loss * float(rd[r]))
 		for j in range(src_off[s], src_off[s + 1]):
 			var h := src[j]
-			var f := k_cap if capitals.has(h) else k_port + k_pvp * minf(5.0, float(vp[h]))
+			var f := k_cap if capitals.has(h) else (k_port + k_pvp * minf(5.0, float(vp[h]))) * float(smult[h])
 			var k := s * nr + preg[h]
 			if f > best_f[k]:
 				best_f[k] = f

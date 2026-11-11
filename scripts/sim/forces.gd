@@ -89,6 +89,7 @@ static func setup(world: World, dir: String) -> void:
 				w.planes = take
 				w.mission = "sup" if kind == 0 else "cas"
 				planes -= take
+	Convoys.setup(world, data)
 	_refresh_cache(world)
 
 
@@ -511,6 +512,7 @@ static func supremacy(world: World, n: int, zone: int) -> float:
 
 static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 	var _pt := Time.get_ticks_usec()
+	Convoys.build(world)
 	_build_ships(world)
 	Prof.add("флот:верфи", _pt)
 	_pt = Time.get_ticks_usec()
@@ -605,7 +607,7 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 			Doctrine.gain(world.nations[n], 1, minf(Doctrine.NAVY_CAP, nxp[n]))
 	Prof.add("флот:сражения", _pt)
 	_pt = Time.get_ticks_usec()
-	_trade_war(world, rng)
+	Convoys.daily(world, rng)
 	_refresh_cache(world)
 	Prof.add("флот:торговля", _pt)
 
@@ -691,31 +693,6 @@ static func _retreat_if_beaten(world: World, side: Array, enemy_power: float) ->
 				if f.zone != f.home:
 					f.path = sea_path(world, f.zone, f.home)
 				f.mission = "port"
-
-
-## Рейды подлодок: вражеские подлодки у наших портов снижают выпуск; эсминцы
-## их выбивают.
-static func _trade_war(world: World, rng: RandomNumberGenerator) -> void:
-	for nat in world.nations:
-		nat.trade_penalty = 0.0
-	if world.fleets.is_empty():
-		return
-	for nat in world.nations:
-		if not nat.alive or nat.at_war.is_empty():
-			continue
-		var raid := 0.0
-		var escort := 0.0
-		var raiders: Array = []
-		for zone in trade_zones(world, nat.id):
-			for f in world.zone_fleets.get(zone, []):
-				if f.mission == "raid" and world.is_at_war(nat.id, f.owner):
-					raid += f.raid * (1.0 + world.nations[f.owner].b("sub_raid"))
-					raiders.append(f)
-				elif world.ally[nat.id * world.nation_count + f.owner] == 1 and f.mission != "port":
-					escort += (f.asw * NAVY_ESCORT + (f.ships[SHIP_CR] + f.ships[SHIP_CV]) * 2.0) * (1.0 + world.nations[f.owner].b("escort"))
-		nat.trade_penalty = clampf((raid - escort * 0.7) * 0.004, 0.0, 0.3)
-		if escort > 0.0 and not raiders.is_empty():
-			_take_losses(world, raiders, escort * 0.01 * rng.randf_range(0.5, 1.5), rng, 1)
 
 
 static func trade_zones(world: World, n: int) -> Dictionary:
@@ -1051,7 +1028,9 @@ static func ai_fleets(world: World, n: int) -> void:
 	var en_all := {}
 	var raiders := {}   # свои торговые зоны с рейдерами противника — охота соединениями с ПЛО
 	if not nat.at_war.is_empty():
-		var own_tz := trade_zones(world, n)
+		var own_tz := trade_zones(world, n).duplicate()
+		for z in nat.conv_zone_set:
+			own_tz[z] = true   # и на путях своих конвоев
 		for z in world.zone_fleets:
 			var a := 0.0
 			var b := 0.0
@@ -1107,8 +1086,9 @@ static func ai_fleets(world: World, n: int) -> void:
 		if f.mission == "port" and f.zone == f.home:
 			f.mission = "raid" if f.sub_power >= fleet_power(f) * 0.9 else "patrol"
 		if f.mission == "raid":
+			# рейдеры — на пути конвоев противника (нет путей — к его портам)
 			for e in nat.at_war:
-				for z in trade_zones(world, e):
+				for z in Convoys.target_zones(world, e):
 					var l: int = from_here[z] if from_here[z] >= 0 else 1 << 20
 					if l < best_len and l <= 12:
 						best_len = l

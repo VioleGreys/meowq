@@ -11,7 +11,7 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	const PackedInt32Array adj_start_a = t["adj_start"], adj_list_a = t["adj_list"];
 	const PackedByteArray land_a = t["land"];
 	const PackedInt32Array ctrl_a = t["ctrl"], preg_a = t["preg"], vp_a = t["vp"], pop_a = t["pop"];
-	const PackedFloat32Array pcap_a = t["pcap"];
+	const PackedFloat32Array pcap_a = t["pcap"], smult_a = t["smult"];
 	const PackedInt32Array side_a = t["side_of"], radj_s_a = t["reg_adj_start"], radj_l_a = t["reg_adj_list"];
 	const PackedInt32Array src_a = t["src"], src_off_a = t["src_off"], caps_a = t["capitals"];
 	const PackedFloat64Array fall_a = t["fall"], kk_a = t["k"];
@@ -21,6 +21,7 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	const int32_t *radj_s = radj_s_a.ptr(), *radj_l = radj_l_a.ptr(), *src = src_a.ptr(), *src_off = src_off_a.ptr();
 	const uint8_t *land = land_a.ptr();
 	const float *pcap = pcap_a.ptr();
+	const float *smult = smult_a.ptr();   // подача порта от конвоев (Convoys), 0..1
 	const double *fall = fall_a.ptr();
 	const double k_cap = kk_a[0], k_port = kk_a[1], k_pvp = kk_a[2], k_level = kk_a[3];
 	const int hub_range = int(kk_a[5]);
@@ -144,7 +145,7 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 					is_cap = true;
 					break;
 				}
-			const double f = is_cap ? k_cap : k_port + k_pvp * std::min(5.0, double(vp[h]));
+			const double f = is_cap ? k_cap : (k_port + k_pvp * std::min(5.0, double(vp[h]))) * double(smult[h]);
 			const int k = s * nr + preg[h];
 			if (f > best_f[k]) {
 				best_f[k] = f;

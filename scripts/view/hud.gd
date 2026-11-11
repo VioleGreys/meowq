@@ -2157,6 +2157,7 @@ func _build_navy(w: World, me: int) -> void:
 		popup_body.add_child(_button("Очистить очередь", func():
 			n.ship_queue.clear()
 			_rebuild_popup(), Vector2(0, 44)))
+	_build_convoys(w, me)
 	_build_ship_designs(w, me)
 	popup_body.add_child(_section("Авиация"))
 	for wg in w.wings:
@@ -2442,6 +2443,42 @@ var _sh_name := ""
 
 ## Проекты кораблей страны: основные (по ролям) сверху, затем свои; «Заложить» —
 ## в очередь верфей.
+## Конвои: сколько есть и нужно, что доходит, опасные моря, постройка.
+func _build_convoys(w: World, me: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_body.add_child(_section("Конвои"))
+	var need := n.conv_trade_need + n.conv_sup_need
+	var lines: Array = []
+	lines.append("Конвоев %d, нужно %d: морской импорт %d, снабжение войск за морем %d" % [
+		roundi(n.convoys), roundi(need), roundi(n.conv_trade_need), roundi(n.conv_sup_need)])
+	lines.append("Доходит морского импорта %d%% · снабжение за морем обеспечено на %d%%" % [roundi(n.conv_trade * 100.0), roundi(n.conv_sup * 100.0)])
+	lines.append("Потоплено: в этом месяце %d, в прошлом %d, всего %d" % [roundi(n.conv_sunk_month), roundi(n.conv_sunk_last), roundi(n.conv_sunk)])
+	popup_body.add_child(_label("\n".join(lines), 15))
+	if not n.conv_danger.is_empty():
+		var zs: Array = n.conv_danger.keys()
+		zs.sort_custom(func(a, b): return float(n.conv_danger[a]) > float(n.conv_danger[b]) or (float(n.conv_danger[a]) == float(n.conv_danger[b]) and int(a) < int(b)))
+		var parts: Array = []
+		for i in mini(6, zs.size()):
+			var z: int = zs[i]
+			var dz: float = n.conv_danger[z]
+			parts.append("%s — %d%%%s" % [w.basin_name[z], roundi(dz * 100.0), " (блокада)" if dz >= Convoys.BLOCKADE_LOSS else ""])
+		popup_body.add_child(_small("Перехват на путях: " + ", ".join(parts) + ". Охранение — соединения с ПЛО в этих морях."))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var ba := _button("Строить по нужде: %s" % ("да" if n.conv_auto else "нет"), func():
+		n.conv_auto = not n.conv_auto
+		_rebuild_popup(), Vector2(0, 44))
+	ba.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(ba)
+	var bo := _button("+10 конвоев%s" % ((" (заказано %d)" % n.conv_order) if n.conv_order > 0 else ""), func():
+		n.conv_order += 10
+		_rebuild_popup(), Vector2(0, 44))
+	bo.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(bo)
+	popup_body.add_child(row)
+	popup_body.add_child(_small("Конвой — %d очков судостроения, строится раньше кораблей. Сначала конвои идут на снабжение войск за морем, остаток — на торговлю. Рейдеры и флот противника, господствующий на пути, топят конвои: теряется только то, что идёт через это море." % roundi(Convoys.COST)))
+
+
 func _build_ship_designs(w: World, me: int) -> void:
 	var n: World.Nation = w.nations[me]
 	popup_body.add_child(_section("Проекты кораблей"))
@@ -2797,8 +2834,9 @@ func _build_trade(w: World, me: int) -> void:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
 		var fill: float = n.res_fill[r]
-		var l := _label("%s — обеспечено %d%%\nдобыча %.1f · нужно %.1f · куплено +%.1f · продано −%.1f" % [
-			Economy.RES_NAMES[r], roundi(fill * 100.0), n.res_prod[r], n.res_need[r], n.res_in[r], n.res_out[r]], 15)
+		var lost := (" · не дошло морем −%.1f" % n.res_lost[r]) if n.res_lost[r] >= 0.05 else ""
+		var l := _label("%s — обеспечено %d%%\nдобыча %.1f · нужно %.1f · куплено +%.1f%s · продано −%.1f" % [
+			Economy.RES_NAMES[r], roundi(fill * 100.0), n.res_prod[r], n.res_need[r], n.res_in[r], lost, n.res_out[r]], 15)
 		if fill < 0.999:
 			l.add_theme_color_override("font_color", UiStyle.ink(Color(1.0, 0.45, 0.4)))
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL

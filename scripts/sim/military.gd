@@ -362,8 +362,8 @@ static func trim_lines(nat: World.Nation) -> void:
 
 ## Дневной выпуск: очки -> единицы снаряжения; эффективность растёт до 100%.
 static func produce(nat: World.Nation) -> void:
-	# рейды подлодок по торговле снижают выпуск (Forces.trade_penalty)
-	var mult := (1.0 + nat.b("industry")) * (1.0 - nat.trade_penalty)
+	# рейды по торговле бьют не по выпуску, а по морскому импорту (Convoys → res_fill)
+	var mult := 1.0 + nat.b("industry")
 	for k in EQ_COUNT:
 		nat.daily_output[k] = 0.0
 	for line in nat.lines:
@@ -467,7 +467,7 @@ static func plan_prep(world: World, nat: World.Nation, target_divs: int, prepare
 		"use": nat.eq_use.duplicate(), "stock": PackedFloat64Array([nat.stock[0], nat.stock[1], nat.stock[2], nat.stock[3]]),
 		"target": target_divs, "training": nat.training.size(), "trained": nat.trained_count, "cycle": cycle,
 		"buffer": PROD_BUFFER_WAR if (not nat.at_war.is_empty() or prepare_war) else PROD_BUFFER,
-		"mult": maxf(0.1, (1.0 + nat.b("industry")) * (1.0 - nat.trade_penalty)),
+		"mult": maxf(0.1, 1.0 + nat.b("industry")),
 		"doctrine": PackedFloat64Array(default_split(nat)),
 		"tpl_eq": world.tpl_eq.duplicate(), "tpl_motor": world.tpl_motor.duplicate()}
 
