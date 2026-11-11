@@ -16,7 +16,10 @@ const SHIP_COST := [3000.0, 900.0, 150.0, 120.0]   # очки судострое
 const WING_MAX := 100.0       # самолётов в крыле (решение пользователя)
 const AIR_PACK := 100.0       # в бою неполные крылья стороны сливаются в пачки до 100
 const AIR_WIDTH := 10         # пачек одной стороны в бою над районом (потом — от ширины района)
-const AIR_KILL := 0.012       # сбитых за день: самолёты в бою × атака × AIR_KILL / защита цели
+const AIR_KILL := 0.015
+const AIR_LOSS_MAX := 0.02    # потери пачки за день — не больше 2 % (решение пользователя: 1–2 %)
+const AIR_DETECT := 0.6       # шанс пачки обнаружить противника днём (радары — бонус air_detect)
+const AIR_NIGHT := 0.5        # ночью обнаружение и координация — вдвое ниже       # сбитых за день: самолёты в бою × атака × AIR_KILL / защита цели
 const AIR_SUP_PENALTY := 0.3   # сила войск при полном господстве противника в воздухе: −30 %
 const AIR_SUP_FULL := 3000.0   # сила истребителей обеих сторон (самолёты × (атака + защита)) для полного эффекта
 # стратегические бомбардировки: повреждения провинции (0..1) снижают её
@@ -1269,7 +1272,16 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 	# характеристики проектов на сегодня (с бонусами страны-владельца)
 	var dcache := {}
 	for r in by_region:
+		var _pb := Time.get_ticks_usec()
 		var here: Array = by_region[r]
+		# в районе никто не воюет — ни боёв, ни поправок к бою (по умолчанию)
+		var hostile := false
+		for w in here:
+			if not world.nations[w.owner].at_war.is_empty():
+				hostile = true
+				break
+		if not hostile:
+			continue
 		var cnt := here.size()
 		# снимок крыльев района: владелец, вид, самолёты, сила в бою, удары
 		var ow := PackedInt32Array()
@@ -1291,7 +1303,7 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 			ow[j] = w.owner
 			kd[j] = w.kind
 			pl[j] = w.planes
-			var key := "%d/%d/%d" % [w.design, w.owner, w.kind]
+			var key: int = (w.design + 1) * 1048576 + w.owner * 2 + w.kind
 			if not dcache.has(key):
 				var d := Designs.of_wing(world, w)
 				var agi: float = float(d["agi"]) * Designs.MAN_MULT
@@ -1356,6 +1368,8 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 				pk[2] = float(pk[2]) / n_pl
 				pk[3] = float(pk[3]) / n_pl
 				pk[4] = float(pk[4]) / n_pl
+		Prof.add("авиа:пачки", _pb)
+		_pb = Time.get_ticks_usec()
 		# превосходство: сила истребителей в бою (самолёты × (атака + защита))
 		var owners := {}
 		for j in cnt:
@@ -1383,44 +1397,58 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 					own_b += pl[j] * gr[j]
 			var sup := 0.5 if own_f + en_f <= 0.0 else own_f / (own_f + en_f)
 			air_sup[r * nc + n] = sup
-			var m := 1.0 + minf(0.4, own_b * sup / 600.0)
+			# бомбардировщики сильнее при своём превосходстве и слабее при чужом
+			var m := 1.0 + minf(0.4, own_b * (0.5 + sup) / 900.0)
 			# противник господствует в воздухе: до −AIR_SUP_PENALTY к силе войск,
 			# в меру того, сколько истребителей над районом (AIR_SUP_FULL — полная сила)
 			if sup < 0.5:
 				var presence := minf(1.0, (own_f + en_f) / AIR_SUP_FULL)
 				m -= AIR_SUP_PENALTY * (0.5 - sup) * 2.0 * presence
 			cas_mult[r * nc + n] = m
-		# воздушный бой: каждая пачка бьёт пачку противника; координация — доля
+		Prof.add("авиа:превосходство", _pb)
+		_pb = Time.get_ticks_usec()
+		# воздушный бой днём и ночью: пачка бьёт, только если обнаружила
+		# противника (ночью обнаружение и координация ниже); координация — доля
 		# самолётов пачки, что бьют согласованно, и шанс бить ту же цель, что и
 		# предыдущая пачка стороны (сосредоточение огня)
 		var loss := PackedFloat64Array()
 		loss.resize(packs.size())
-		var prev_target := {}
-		for a in packs.size():
-			var pa: Array = packs[a]
-			var foes := PackedInt32Array()
-			for b in packs.size():
-				var pb: Array = packs[b]
-				if war[int(pa[0]) * nc + int(pb[0])] == 1:
-					foes.append(b)
-			if foes.is_empty():
-				continue
-			var coord: float = pa[4]
-			var t: int = foes[rng.randi() % foes.size()]
-			var pt: int = int(prev_target.get(pa[0], -1))
-			if pt >= 0 and foes.has(pt) and rng.randf() < coord:
-				t = pt
-			prev_target[pa[0]] = t
-			var engaged: float = float(pa[1]) * (0.5 + 0.5 * coord)
-			loss[t] += engaged * float(pa[2]) * AIR_KILL * rng.randf_range(0.7, 1.3) / maxf(0.5, float(packs[t][3]))
-			for c in pa[6]:
-				var wj: int = c[0]
-				axp[ow[wj]] += Doctrine.AIR_PER_WING * float(c[1]) / AIR_PACK
+		var det_side := {}
+		for pk in packs:
+			if not det_side.has(pk[0]):
+				det_side[pk[0]] = clampf(AIR_DETECT + world.nations[int(pk[0])].b("air_detect"), 0.05, 0.95)
+		for phase in 2:
+			var night: float = 1.0 if phase == 0 else AIR_NIGHT
+			var prev_target := {}
+			for a in packs.size():
+				var pa: Array = packs[a]
+				var foes := PackedInt32Array()
+				for b in packs.size():
+					var pb: Array = packs[b]
+					if war[int(pa[0]) * nc + int(pb[0])] == 1:
+						foes.append(b)
+				if foes.is_empty():
+					continue
+				if phase == 0:
+					for c in pa[6]:
+						var wj: int = c[0]
+						axp[ow[wj]] += Doctrine.AIR_PER_WING * float(c[1]) / AIR_PACK
+				var detect: float = float(det_side[pa[0]]) * night
+				if rng.randf() >= detect:
+					continue
+				var coord: float = float(pa[4]) * night
+				var t: int = foes[rng.randi() % foes.size()]
+				var pt: int = int(prev_target.get(pa[0], -1))
+				if pt >= 0 and foes.has(pt) and rng.randf() < coord:
+					t = pt
+				prev_target[pa[0]] = t
+				var engaged: float = float(pa[1]) * (0.5 + 0.5 * coord)
+				loss[t] += 0.5 * engaged * float(pa[2]) * AIR_KILL * rng.randf_range(0.7, 1.3) / maxf(0.5, float(packs[t][3]))
 		for b in packs.size():
 			if loss[b] <= 0.0:
 				continue
 			var pb: Array = packs[b]
-			var frac := minf(1.0, loss[b] / maxf(1.0, float(pb[1])))
+			var frac := minf(AIR_LOSS_MAX, loss[b] / maxf(1.0, float(pb[1])))
 			for c in pb[6]:
 				var w: World.AirWing = here[int(c[0])]
 				w.planes = maxf(0.0, w.planes - float(c[1]) * frac)
@@ -1429,6 +1457,7 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 				w.alive = false
 				if world.nations[w.owner].is_player:
 					world.log_event("Уничтожено: %s" % w.name)
+		Prof.add("авиа:бой", _pb)
 		# стратегические бомбардировки и удары по флоту
 		for w in here:
 			if w.kind != 1 or not w.alive:
@@ -1439,10 +1468,10 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 			var sup: float = air_sup[r * nc + w.owner]
 			var d2 := Designs.of_wing(world, w)
 			if w.mission == "bomb":
-				_strategic_raid(world, w, r, sup * maxf(float(d2["bomb"]), float(d2["ground"]) * 0.5) / 8.0, rng)
+				_strategic_raid(world, w, r, (0.5 + sup) * 0.5 * maxf(float(d2["bomb"]), float(d2["ground"]) * 0.5) / 8.0, rng)
 			elif w.mission == "naval":
 				var strike: float = maxf(float(d2["naval"]), maxf(float(d2["ground"]), float(d2["bomb"])) * 0.5) / 8.0
-				var dmg: float = w.planes * 0.002 * sup * qa[w.owner * 4 + 3] * strike
+				var dmg: float = w.planes * 0.002 * (0.5 + sup) * 0.5 * qa[w.owner * 4 + 3] * strike
 				for zone in world.zone_fleets:
 					if world.p_region[zone] != r:
 						continue
@@ -1452,6 +1481,7 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 							targets.append(f)
 					if not targets.is_empty():
 						_take_losses(world, targets, dmg, rng)
+	Prof.add("авиа:районы", _pt)
 	world.air_sup = air_sup
 	world.cas_mult = cas_mult
 	for n in nc:

@@ -117,6 +117,7 @@ class Nation:
 	var doctrine_pref := {}     # род сил -> историческая школа (nations.json)
 	var air_design := PackedInt32Array([-1, -1])     # проект в производстве: истребители, бомбардировщики (Designs)
 	var plane_cost := PackedFloat64Array([1.0, 1.0]) # цена выпуска самолёта по проекту (множитель)
+	var design_techs := -1      # сколько технологий было при последней сборке проектов ИИ
 	var no_attack := {}         # страна -> true: воюем, но ИИ не наступает (эффект no_attack — «Странная война»)
 	var build_mode := "mil"     # "civ" или "mil"
 	var build_progress := 0.0

@@ -221,6 +221,10 @@ static func _role_name(role: String) -> String:
 ## ИИ (и стартовые проекты игрока): собрать лучшие проекты по нынешним
 ## технологиям и поставить в производство, если они лучше текущих.
 static func ai_update(world, nat) -> void:
+	# пересобирать, только если с прошлого раза изучены новые технологии
+	if nat.design_techs == nat.techs.size() and nat.air_design[0] >= 0:
+		return
+	nat.design_techs = nat.techs.size()
 	for role in ["fighter", role_for_bombers(nat)]:
 		var hm := auto(nat, role)
 		if String(hm[0]) == "":
