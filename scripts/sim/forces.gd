@@ -1214,13 +1214,21 @@ static func _regions_in_range(world: World, n: int) -> Dictionary:
 	return res
 
 
+static var _air_job := {}
+static var _air_res: Array = []
+static var _air_gid := -1
+
+
+## Воздушная фаза за день целиком (тесты и разовые вызовы).
 static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
-	var nc := world.nation_count
-	if world.cas_mult.size() != world.region_count * nc:
-		world.cas_mult.resize(world.region_count * nc)
-		world.air_sup.resize(world.region_count * nc)
-	world.cas_mult.fill(1.0)
-	world.air_sup.fill(0.5)
+	air_begin(world)
+	air_finish(world, rng)
+
+
+## Начало воздушной фазы (главный поток, после фазы флота): ремонт после
+## бомбёжек, пополнение крыльев, снимок крыльев районов, где воюют, в плоские
+## массивы и запуск расчёта районов в фоне (ядро C++ или GDScript-двойник).
+static func air_begin(world: World) -> void:
 	repair_bombing(world)
 	var _pt := Time.get_ticks_usec()
 	# пополнение крыльев из резерва, новые крылья ИИ (крылья заранее по странам)
@@ -1256,24 +1264,28 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 				nw.mission = "sup" if kind == 0 else "cas"
 	Prof.add("авиа:пополнение", _pt)
 	_pt = Time.get_ticks_usec()
-	# районы с авиацией
+	var nc := world.nation_count
 	var by_region := {}
 	for w in world.wings:
 		if w.alive and w.planes >= 1.0 and w.region >= 0:
 			if not by_region.has(w.region):
 				by_region[w.region] = []
 			by_region[w.region].append(w)
-	var ally := world.ally
-	var war := world.war
-	var air_sup := world.air_sup
-	var cas_mult := world.cas_mult
 	var qa := world.n_air   # качество авиации по технологиям: страна×4
-	var axp := PackedFloat64Array()   # боевой опыт авиации за день (Doctrine)
-	axp.resize(nc)
-	# характеристики проектов на сегодня (с бонусами страны-владельца)
+	var regions := PackedInt32Array()
+	var rstart := PackedInt32Array([0])
+	var seeds := PackedInt64Array()
+	var wl: Array = []
+	var ow := PackedInt32Array()
+	var kd := PackedInt32Array()
+	var wid := PackedInt32Array()
+	var pl := PackedFloat64Array()
+	var ae := PackedFloat64Array()   # атака × манёвренность × 1,5 × качество
+	var de := PackedFloat64Array()   # защита × манёвренность × 1,5
+	var co := PackedFloat64Array()   # координация
+	var gr := PackedFloat64Array()   # удар по войскам (только на задании «поддержка»)
 	var dcache := {}
 	for r in by_region:
-		var _pb := Time.get_ticks_usec()
 		var here: Array = by_region[r]
 		# в районе никто не воюет — ни боёв, ни поправок к бою (по умолчанию)
 		var hostile := false
@@ -1283,190 +1295,96 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 				break
 		if not hostile:
 			continue
-		var cnt := here.size()
-		# снимок крыльев района: владелец, вид, самолёты, сила в бою, удары
-		var ow := PackedInt32Array()
-		var kd := PackedInt32Array()
-		var pl := PackedFloat64Array()
-		var ae := PackedFloat64Array()   # атака × манёвренность × 1,5 × качество
-		var de := PackedFloat64Array()   # защита × манёвренность × 1,5
-		var co := PackedFloat64Array()   # координация
-		var gr := PackedFloat64Array()   # удар по войскам (поддержка)
-		ow.resize(cnt)
-		kd.resize(cnt)
-		pl.resize(cnt)
-		ae.resize(cnt)
-		de.resize(cnt)
-		co.resize(cnt)
-		gr.resize(cnt)
-		for j in cnt:
-			var w: World.AirWing = here[j]
-			ow[j] = w.owner
-			kd[j] = w.kind
-			pl[j] = w.planes
+		regions.append(r)
+		seeds.append(hash([world.seed_value, world.day, 7000 + int(r)]))
+		for w in here:
 			var key: int = (w.design + 1) * 1048576 + w.owner * 2 + w.kind
 			if not dcache.has(key):
 				var d := Designs.of_wing(world, w)
 				var agi: float = float(d["agi"]) * Designs.MAN_MULT
 				var nat_w: World.Nation = world.nations[w.owner]
-				dcache[key] = [float(d["atk"]) * agi * qa[w.owner * 4], float(d["def"]) * agi,
+				dcache[key] = [float(d["atk"]) * agi * qa[w.owner * 4], maxf(0.5, float(d["def"]) * agi),
 					clampf(float(d["coord"]) + nat_w.b("air_coord"), 0.0, 1.0),
 					float(d["ground"]) / 6.0 * qa[w.owner * 4 + 1]]
 			var c: Array = dcache[key]
-			ae[j] = c[0]
-			de[j] = maxf(0.5, c[1])
-			co[j] = c[2]
-			gr[j] = c[3] if w.mission == "cas" else 0.0
-		# стороны: союзники — одна сторона (номер — меньший из союзных владельцев)
-		var side := PackedInt32Array()
-		side.resize(cnt)
+			wl.append(w)
+			ow.append(w.owner)
+			kd.append(w.kind)
+			wid.append(w.id)
+			pl.append(w.planes)
+			ae.append(c[0])
+			de.append(c[1])
+			co.append(c[2])
+			gr.append(c[3] if w.mission == "cas" else 0.0)
+		rstart.append(wl.size())
+	var det := PackedFloat64Array()
+	det.resize(nc)
+	for n in world.nations:
+		det[n.id] = clampf(AIR_DETECT + n.b("air_detect"), 0.05, 0.95)
+	var t := {"nc": nc, "ally": world.ally.duplicate(), "war": world.war.duplicate(), "det": det,
+		"kk": PackedFloat64Array([AIR_PACK, AIR_WIDTH, AIR_KILL, AIR_LOSS_MAX, AIR_NIGHT, AIR_SUP_PENALTY, AIR_SUP_FULL, CAS_MAX]),
+		"rstart": rstart, "seeds": seeds, "ow": ow, "kd": kd, "wid": wid, "pl": pl, "ae": ae, "de": de, "co": co, "gr": gr}
+	_air_job = {"t": t, "regions": regions, "wl": wl}
+	_air_res = []
+	_air_res.resize(regions.size())
+	var res := _air_res
+	var native: Object = Native.core
+	_air_gid = Parallel.start(regions.size(), func(i: int):
+		res[i] = native.call("air_region", t, i) if native != null else air_region_gd(t, i), "авиация", 4)
+	Prof.add("авиа:снимок", _pt)
+
+
+## Конец воздушной фазы (главный поток, до сухопутных боёв): дождаться расчёта
+## районов, записать потери крыльев, превосходство и поправки к бою; налёты
+## на постройки и удары по флоту; боевой опыт.
+static func air_finish(world: World, rng: RandomNumberGenerator) -> void:
+	var _pt := Time.get_ticks_usec()
+	Parallel.finish(_air_gid)
+	_air_gid = -1
+	Prof.add("авиа:ожидание", _pt)
+	_pt = Time.get_ticks_usec()
+	var nc := world.nation_count
+	if world.cas_mult.size() != world.region_count * nc:
+		world.cas_mult.resize(world.region_count * nc)
+		world.air_sup.resize(world.region_count * nc)
+	world.cas_mult.fill(1.0)
+	world.air_sup.fill(0.5)
+	if _air_job.is_empty():
+		return
+	var regions: PackedInt32Array = _air_job["regions"]
+	var wl: Array = _air_job["wl"]
+	var rstart: PackedInt32Array = _air_job["t"]["rstart"]
+	var qa := world.n_air
+	var axp := PackedFloat64Array()   # боевой опыт авиации за день (Doctrine)
+	axp.resize(nc)
+	for i in regions.size():
+		var r: int = regions[i]
+		var out: PackedFloat64Array = _air_res[i]
+		var s0 := rstart[i]
+		var cnt := rstart[i + 1] - s0
 		for j in cnt:
-			side[j] = ow[j]
-			for k in cnt:
-				if ow[k] < side[j] and ally[ow[j] * nc + ow[k]] == 1:
-					side[j] = ow[k]
-		# пачки по AIR_PACK самолётов: неполные крылья стороны сливаются в одну
-		# пачку, остаток — в следующую; у стороны не больше AIR_WIDTH пачек
-		var order: Array = []
+			var w: World.AirWing = wl[s0 + j]
+			w.planes = out[j]
+			axp[w.owner] += Doctrine.AIR_PER_WING * out[cnt + j]
+		for k in range(2 * cnt, out.size(), 3):
+			var n := int(out[k])
+			world.air_sup[r * nc + n] = out[k + 1]
+			world.cas_mult[r * nc + n] = out[k + 2]
 		for j in cnt:
-			order.append(j)
-		order.sort_custom(func(a, b):
-			if side[a] != side[b]:
-				return side[a] < side[b]
-			if kd[a] != kd[b]:
-				return kd[a] < kd[b]   # истребители первыми
-			if pl[a] != pl[b]:
-				return pl[a] > pl[b]
-			return here[a].id < here[b].id)
-		var packs: Array = []   # [сторона, самолёты, атака, защита, координация, истребители, [[крыло, самолёты]...]]
-		var eng := PackedFloat64Array()   # самолётов крыла в бою
-		eng.resize(cnt)
-		var cur: Array = []
-		var count_side := {}
-		for j in order:
-			var left: float = pl[j]
-			while left > 0.001:
-				if cur.is_empty() or int(cur[0]) != side[j] or float(cur[1]) >= AIR_PACK - 0.001:
-					if int(count_side.get(side[j], 0)) >= AIR_WIDTH:
-						left = 0.0
-						break
-					cur = [side[j], 0.0, 0.0, 0.0, 0.0, 0.0, []]
-					packs.append(cur)
-					count_side[side[j]] = int(count_side.get(side[j], 0)) + 1
-				var take: float = minf(left, AIR_PACK - float(cur[1]))
-				cur[1] = float(cur[1]) + take
-				cur[2] = float(cur[2]) + take * ae[j]
-				cur[3] = float(cur[3]) + take * de[j]
-				cur[4] = float(cur[4]) + take * co[j]
-				if kd[j] == 0:
-					cur[5] = float(cur[5]) + take
-				cur[6].append([j, take])
-				eng[j] += take
-				left -= take
-		for pk in packs:
-			var n_pl: float = pk[1]
-			if n_pl > 0.0:
-				pk[2] = float(pk[2]) / n_pl
-				pk[3] = float(pk[3]) / n_pl
-				pk[4] = float(pk[4]) / n_pl
-		Prof.add("авиа:пачки", _pb)
-		_pb = Time.get_ticks_usec()
-		# превосходство: сила истребителей в бою (самолёты × (атака + защита))
-		var owners := {}
-		for j in cnt:
-			owners[ow[j]] = true
-		var sides := owners.duplicate()
-		for o in owners:
-			for n2 in nc:
-				if war[int(o) * nc + n2] == 1:
-					sides[n2] = true
-		var side_list: Array = sides.keys()
-		side_list.sort()   # порядок однозначный
-		for n in side_list:
-			var own_f := 0.0
-			var en_f := 0.0
-			var own_b := 0.0
-			for j in cnt:
-				var o := ow[j]
-				if kd[j] == 0:
-					var pw: float = eng[j] * (ae[j] + de[j])
-					if ally[n * nc + o] == 1:
-						own_f += pw
-					elif n != o and war[n * nc + o] == 1:
-						en_f += pw
-				elif ally[n * nc + o] == 1:
-					own_b += pl[j] * gr[j]
-			var sup := 0.5 if own_f + en_f <= 0.0 else own_f / (own_f + en_f)
-			air_sup[r * nc + n] = sup
-			# бомбардировщики сильнее при своём превосходстве и слабее при чужом
-			var m := 1.0 + minf(CAS_MAX, own_b * (0.5 + sup) / 900.0)
-			# противник господствует в воздухе: до −AIR_SUP_PENALTY к силе войск,
-			# в меру того, сколько истребителей над районом (AIR_SUP_FULL — полная сила)
-			if sup < 0.5:
-				var presence := minf(1.0, (own_f + en_f) / AIR_SUP_FULL)
-				m -= AIR_SUP_PENALTY * (0.5 - sup) * 2.0 * presence
-			cas_mult[r * nc + n] = m
-		Prof.add("авиа:превосходство", _pb)
-		_pb = Time.get_ticks_usec()
-		# воздушный бой днём и ночью: пачка бьёт, только если обнаружила
-		# противника (ночью обнаружение и координация ниже); координация — доля
-		# самолётов пачки, что бьют согласованно, и шанс бить ту же цель, что и
-		# предыдущая пачка стороны (сосредоточение огня)
-		var loss := PackedFloat64Array()
-		loss.resize(packs.size())
-		var det_side := {}
-		for pk in packs:
-			if not det_side.has(pk[0]):
-				det_side[pk[0]] = clampf(AIR_DETECT + world.nations[int(pk[0])].b("air_detect"), 0.05, 0.95)
-		for phase in 2:
-			var night: float = 1.0 if phase == 0 else AIR_NIGHT
-			var prev_target := {}
-			for a in packs.size():
-				var pa: Array = packs[a]
-				var foes := PackedInt32Array()
-				for b in packs.size():
-					var pb: Array = packs[b]
-					if war[int(pa[0]) * nc + int(pb[0])] == 1:
-						foes.append(b)
-				if foes.is_empty():
-					continue
-				if phase == 0:
-					for c in pa[6]:
-						var wj: int = c[0]
-						axp[ow[wj]] += Doctrine.AIR_PER_WING * float(c[1]) / AIR_PACK
-				var detect: float = float(det_side[pa[0]]) * night
-				if rng.randf() >= detect:
-					continue
-				var coord: float = float(pa[4]) * night
-				var t: int = foes[rng.randi() % foes.size()]
-				var pt: int = int(prev_target.get(pa[0], -1))
-				if pt >= 0 and foes.has(pt) and rng.randf() < coord:
-					t = pt
-				prev_target[pa[0]] = t
-				var engaged: float = float(pa[1]) * (0.5 + 0.5 * coord)
-				loss[t] += 0.5 * engaged * float(pa[2]) * AIR_KILL * rng.randf_range(0.7, 1.3) / maxf(0.5, float(packs[t][3]))
-		for b in packs.size():
-			if loss[b] <= 0.0:
-				continue
-			var pb: Array = packs[b]
-			var frac := minf(AIR_LOSS_MAX, loss[b] / maxf(1.0, float(pb[1])))
-			for c in pb[6]:
-				var w: World.AirWing = here[int(c[0])]
-				w.planes = maxf(0.0, w.planes - float(c[1]) * frac)
-		for w in here:
+			var w: World.AirWing = wl[s0 + j]
 			if w.alive and w.planes < 1.0:
 				w.alive = false
 				if world.nations[w.owner].is_player:
 					world.log_event("Уничтожено: %s" % w.name)
-		Prof.add("авиа:бой", _pb)
 		# стратегические бомбардировки и удары по флоту
-		for w in here:
+		for j in cnt:
+			var w: World.AirWing = wl[s0 + j]
 			if w.kind != 1 or not w.alive:
 				continue
 			# задание бомбардировщиков на войне — тоже боевой опыт (без воздушного боя)
 			if (w.mission == "bomb" or w.mission == "naval") and not world.nations[w.owner].at_war.is_empty():
 				axp[w.owner] += Doctrine.AIR_PER_WING * 0.5
-			var sup: float = air_sup[r * nc + w.owner]
+			var sup: float = world.air_sup[r * nc + w.owner]
 			var d2 := Designs.of_wing(world, w)
 			if w.mission == "bomb":
 				_strategic_raid(world, w, r, (0.5 + sup) * 0.5 * maxf(float(d2["bomb"]), float(d2["ground"]) * 0.5) / 8.0, rng)
@@ -1482,12 +1400,201 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 							targets.append(f)
 					if not targets.is_empty():
 						_take_losses(world, targets, dmg, rng)
-	Prof.add("авиа:районы", _pt)
-	world.air_sup = air_sup
-	world.cas_mult = cas_mult
+	_air_job = {}
+	_air_res = []
 	for n in nc:
 		if axp[n] > 0.0:
 			Doctrine.gain(world.nations[n], 2, minf(Doctrine.AIR_CAP, axp[n]))
+	Prof.add("авиа:применение", _pt)
+
+
+## Воздушный бой района i снимка t (чистая функция — идёт в фоне; двойник —
+## MeowqCore.air_region в native/src/air.cpp, результаты совпадают до бита).
+## Крылья стороны (союзники) сливаются в пачки по AIR_PACK, у стороны не
+## больше AIR_WIDTH пачек; превосходство — сила истребителей в бою; бой днём и
+## ночью: пачка бьёт, только если обнаружила противника; координация — доля
+## самолётов, что бьют согласованно, и шанс бить цель предыдущей пачки.
+## Результат: самолёты крыльев после боя (cnt), опыт крыльев (cnt), затем
+## тройки (страна, превосходство, множитель боя).
+static func air_region_gd(t: Dictionary, i: int) -> PackedFloat64Array:
+	var nc: int = t["nc"]
+	var ally: PackedByteArray = t["ally"]
+	var war: PackedByteArray = t["war"]
+	var det: PackedFloat64Array = t["det"]
+	var kk: PackedFloat64Array = t["kk"]
+	var rstart: PackedInt32Array = t["rstart"]
+	var seeds: PackedInt64Array = t["seeds"]
+	var ow0: PackedInt32Array = t["ow"]
+	var kd0: PackedInt32Array = t["kd"]
+	var wid0: PackedInt32Array = t["wid"]
+	var pl0: PackedFloat64Array = t["pl"]
+	var ae0: PackedFloat64Array = t["ae"]
+	var de0: PackedFloat64Array = t["de"]
+	var co0: PackedFloat64Array = t["co"]
+	var gr0: PackedFloat64Array = t["gr"]
+	var pack_n: float = kk[0]
+	var width := int(kk[1])
+	var kill: float = kk[2]
+	var loss_max: float = kk[3]
+	var night_k: float = kk[4]
+	var pen: float = kk[5]
+	var full: float = kk[6]
+	var cas_max: float = kk[7]
+	var s0 := rstart[i]
+	var cnt := rstart[i + 1] - s0
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seeds[i]
+	var ow := ow0.slice(s0, s0 + cnt)
+	var kd := kd0.slice(s0, s0 + cnt)
+	var wid := wid0.slice(s0, s0 + cnt)
+	var pl := pl0.slice(s0, s0 + cnt)
+	var ae := ae0.slice(s0, s0 + cnt)
+	var de := de0.slice(s0, s0 + cnt)
+	var co := co0.slice(s0, s0 + cnt)
+	var gr := gr0.slice(s0, s0 + cnt)
+	# стороны: союзники — одна сторона (номер — меньший из союзных владельцев)
+	var side := PackedInt32Array()
+	side.resize(cnt)
+	for j in cnt:
+		side[j] = ow[j]
+		for k in cnt:
+			if ow[k] < side[j] and ally[ow[j] * nc + ow[k]] == 1:
+				side[j] = ow[k]
+	var order: Array = []
+	for j in cnt:
+		order.append(j)
+	order.sort_custom(func(a, b):
+		if side[a] != side[b]:
+			return side[a] < side[b]
+		if kd[a] != kd[b]:
+			return kd[a] < kd[b]   # истребители первыми
+		if pl[a] != pl[b]:
+			return pl[a] > pl[b]
+		return wid[a] < wid[b])
+	# пачки
+	var pk_side := PackedInt32Array()
+	var pk_pl := PackedFloat64Array()
+	var pk_at := PackedFloat64Array()
+	var pk_de := PackedFloat64Array()
+	var pk_co := PackedFloat64Array()
+	var c_pk := PackedInt32Array()
+	var c_w := PackedInt32Array()
+	var c_take := PackedFloat64Array()
+	var eng := PackedFloat64Array()
+	eng.resize(cnt)
+	var count_side := {}
+	for j in order:
+		var left: float = pl[j]
+		while left > 0.001:
+			var np := pk_side.size()
+			if np == 0 or pk_side[np - 1] != side[j] or pk_pl[np - 1] >= pack_n - 0.001:
+				if int(count_side.get(side[j], 0)) >= width:
+					break
+				pk_side.append(side[j])
+				pk_pl.append(0.0)
+				pk_at.append(0.0)
+				pk_de.append(0.0)
+				pk_co.append(0.0)
+				count_side[side[j]] = int(count_side.get(side[j], 0)) + 1
+				np += 1
+			var take: float = minf(left, pack_n - pk_pl[np - 1])
+			pk_pl[np - 1] += take
+			pk_at[np - 1] += take * ae[j]
+			pk_de[np - 1] += take * de[j]
+			pk_co[np - 1] += take * co[j]
+			c_pk.append(np - 1)
+			c_w.append(j)
+			c_take.append(take)
+			eng[j] += take
+			left -= take
+	var npk := pk_side.size()
+	for b in npk:
+		if pk_pl[b] > 0.0:
+			pk_at[b] = pk_at[b] / pk_pl[b]
+			pk_de[b] = pk_de[b] / pk_pl[b]
+			pk_co[b] = pk_co[b] / pk_pl[b]
+	var out := PackedFloat64Array()
+	out.resize(2 * cnt)
+	# превосходство и поправки к сухопутному бою
+	var mark := PackedByteArray()
+	mark.resize(nc)
+	for j in cnt:
+		mark[ow[j]] = 1
+	for j in cnt:
+		for n2 in nc:
+			if war[ow[j] * nc + n2] == 1:
+				mark[n2] = 1
+	for n in nc:
+		if mark[n] == 0:
+			continue
+		var own_f := 0.0
+		var en_f := 0.0
+		var own_b := 0.0
+		for j in cnt:
+			var o := ow[j]
+			if kd[j] == 0:
+				var pw: float = eng[j] * (ae[j] + de[j])
+				if ally[n * nc + o] == 1:
+					own_f += pw
+				elif n != o and war[n * nc + o] == 1:
+					en_f += pw
+			elif ally[n * nc + o] == 1:
+				own_b += pl[j] * gr[j]
+		var sup := 0.5 if own_f + en_f <= 0.0 else own_f / (own_f + en_f)
+		# бомбардировщики сильнее при своём превосходстве и слабее при чужом
+		var m := 1.0 + minf(cas_max, own_b * (0.5 + sup) / 900.0)
+		# противник господствует в воздухе: до −pen к силе войск
+		if sup < 0.5:
+			var presence := minf(1.0, (own_f + en_f) / full)
+			m -= pen * (0.5 - sup) * 2.0 * presence
+		out.append(float(n))
+		out.append(sup)
+		out.append(m)
+	# бой днём и ночью
+	var loss := PackedFloat64Array()
+	loss.resize(npk)
+	var xpw := PackedFloat64Array()
+	xpw.resize(cnt)
+	var foes := PackedInt32Array()
+	for phase in 2:
+		var night: float = 1.0 if phase == 0 else night_k
+		var prev_target := {}
+		var ci := 0   # вклады пачек идут подряд по номеру пачки
+		for a in npk:
+			var c0 := ci
+			while ci < c_pk.size() and c_pk[ci] == a:
+				ci += 1
+			foes.resize(0)
+			for b in npk:
+				if war[pk_side[a] * nc + pk_side[b]] == 1:
+					foes.append(b)
+			if foes.is_empty():
+				continue
+			if phase == 0:
+				for c in range(c0, ci):
+					xpw[c_w[c]] += c_take[c] / pack_n
+			if rng.randf() >= det[pk_side[a]] * night:
+				continue
+			var coord: float = pk_co[a] * night
+			var tg: int = foes[rng.randi() % foes.size()]
+			var pt: int = int(prev_target.get(pk_side[a], -1))
+			if pt >= 0 and foes.has(pt) and rng.randf() < coord:
+				tg = pt
+			prev_target[pk_side[a]] = tg
+			var engaged: float = pk_pl[a] * (0.5 + 0.5 * coord)
+			loss[tg] += 0.5 * engaged * pk_at[a] * kill * rng.randf_range(0.7, 1.3) / maxf(0.5, pk_de[tg])
+	# потери пачек — по крыльям пачки
+	for j in cnt:
+		out[j] = pl[j]
+		out[cnt + j] = xpw[j]
+	for c in c_pk.size():
+		var b := c_pk[c]
+		if loss[b] <= 0.0:
+			continue
+		var frac := minf(loss_max, loss[b] / maxf(1.0, pk_pl[b]))
+		var wj := c_w[c]
+		out[wj] = maxf(0.0, out[wj] - c_take[c] * frac)
+	return out
 
 
 ## Ремонт повреждений от бомбёжек (раз в день, главный поток).

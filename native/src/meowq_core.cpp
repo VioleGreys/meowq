@@ -32,6 +32,7 @@ void MeowqCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("front_regions", "ctrl", "adj_start", "adj_list", "war", "nc", "region", "n"), &MeowqCore::front_regions);
 	ClassDB::bind_method(D_METHOD("ports_open", "ports", "adj_start", "adj_list", "land", "zone_has_fleet"), &MeowqCore::ports_open);
 	ClassDB::bind_method(D_METHOD("air_reach", "land", "ctrl", "ally", "nc", "n", "region", "centers", "range"), &MeowqCore::air_reach);
+	ClassDB::bind_method(D_METHOD("air_region", "t", "i"), &MeowqCore::air_region);
 	ClassDB::bind_method(D_METHOD("version"), &MeowqCore::version);
 }
 

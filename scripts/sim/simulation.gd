@@ -91,11 +91,14 @@ func tick() -> void:
 		_refresh_sides())
 	_timed("экономика", _phase_economy)
 	_timed("флот", _phase_navy)
+	# авиация конвейером: снимок и расчёт районов в фоне сейчас, применение —
+	# перед сухопутными боями (им нужны превосходство и поправки этого дня)
+	_timed("авиация:старт", Forces.air_begin.bind(world))
 	_timed("снабжение", _phase_supply)
 	_timed("ИИ", _phase_ai)
 	# в фоне, вместе с планами ИИ, — упреждающие расчёты на завтра (Spec)
 	_timed("упреждение", Spec.start.bind(world))
-	_timed("авиация", Forces.daily_air.bind(world, Parallel.rng(world.seed_value, world.day, 6001)))
+	_timed("авиация", Forces.air_finish.bind(world, Parallel.rng(world.seed_value, world.day, 6001)))
 	var battles := {}
 	_timed("сбор боёв", func(): battles.merge(_collect_battles()))
 	_timed("движение", _phase_movement.bind(battles))
