@@ -25,6 +25,10 @@ const BOMB_SUPPLY := 0.6
 const BOMB_REPAIR := 0.01
 const BOMB_HUB := 0.3          # удар по узлу снабжения района (главный город)
 const BOMB_RAIL := 0.2         # удар по железной дороге и инфраструктуре провинции
+# бомбардировщики бьют только по постройкам; войска не трогают (решение
+# пользователя), максимум — людской ресурс: потери от налёта на завод или
+# город = население провинции (тыс.) × BOMB_MANPOWER
+const BOMB_MANPOWER := 0.001
 const REGION_CELL := 160.0                       # размер воздушного района, пикс. карты
 const AIR_RANGE := 190.0                         # дальность от своей территории, пикс.
 
@@ -1516,6 +1520,12 @@ static func _strategic_raid(world: World, w: World.AirWing, r: int, sup: float, 
 			_damage(world, p, BOMB_RAIL)
 			what = "разрушены железная дорога и склады"
 	var victim: int = world.p_controller[p]
+	if kind <= 1 and world.p_population.size() == world.prov_count:
+		var vn: World.Nation = world.nations[victim]
+		var lost := minf(vn.manpower, world.p_population[p] * BOMB_MANPOWER * (1.0 if kind == 1 else 0.5))
+		vn.manpower -= lost
+		if lost >= 0.5:
+			what += ", погибло %d тыс." % roundi(lost)
 	if world.nations[victim].is_player or world.nations[w.owner].is_player:
 		world.log_event("Бомбардировка: %s — %s" % [what, world.p_name[p]])
 
