@@ -16,7 +16,7 @@ extends RefCounted
 ## и переименовывается: обрыв записи не портит прежнее сохранение.
 
 const MAGIC := 0x3153514d        # «MQS1»
-const VERSION := 1
+const VERSION := 2   # 2 — корабли по проектам (ShipDesigns), соединения до 30
 const DIR := "user://saves"
 const EXT := ".mqs"
 const AUTO := "auto"             # имя автосохранения
@@ -307,6 +307,8 @@ static func load_into(name: String, world: World, sim: Simulation) -> Dictionary
 	sg.decode(data, world, sim)
 	if not sg.errors.is_empty():
 		return {"err": str(sg.errors[0]), "meta": meta}
+	if int(meta.get("version", 0)) < 2:
+		Forces.migrate_v1(world)
 	return {"err": "", "meta": meta}
 
 

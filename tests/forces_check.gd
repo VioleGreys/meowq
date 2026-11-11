@@ -41,10 +41,27 @@ func _init() -> void:
 	var ENG := w.nation_tags.find("ENG")
 	var NOR := w.nation_tags.find("NOR")
 	print("Стартовые силы:")
-	var eng_main := fleet_of(w, ENG, "Основной флот")
+	var eng_main := fleet_of(w, ENG, "Флот метрополии")
 	var ger_main := fleet_of(w, GER, "Основной флот")
 	check(eng_main != null and ger_main != null, "у Британии и Германии есть флоты")
-	check(Forces.fleet_power(eng_main) > Forces.fleet_power(ger_main) * 3.5, "Флот метрополии многократно сильнее (%.0f против %.0f)" % [Forces.fleet_power(eng_main), Forces.fleet_power(ger_main)])
+	var eng_home := 0.0
+	for f in w.fleets:
+		if f.alive and f.owner == ENG and f.home == eng_main.home and f.mission != "raid":
+			eng_home += Forces.fleet_power(f)
+	check(eng_home > Forces.fleet_power(ger_main) * 3.5, "Флот метрополии многократно сильнее (%.0f против %.0f)" % [eng_home, Forces.fleet_power(ger_main)])
+	var biggest := 0
+	var eng_cv := 0
+	for f in w.fleets:
+		if f.alive:
+			biggest = maxi(biggest, Forces.fleet_size(f))
+			if f.owner == ENG:
+				eng_cv += f.ships[Forces.SHIP_CV]
+	check(biggest <= Forces.FLEET_MAX, "в соединении не больше %d кораблей (самое большое — %d)" % [Forces.FLEET_MAX, biggest])
+	check(eng_cv == 6, "у Британии 6 авианосцев (%d)" % eng_cv)
+	var kinds := {}
+	for d in w.ship_designs:
+		kinds[int(d["kind"])] = true
+	check(kinds.size() == 3, "проекты кораблей всех трёх категорий: подлодки, крейсеры, авианосцы")
 	var ger_wings := 0
 	for wg in w.wings:
 		if wg.owner == GER:
@@ -70,8 +87,11 @@ func _init() -> void:
 			break
 	var ger_base_zone := ger_main.zone
 	ger_main.zone = open_sea
-	eng_main.zone = open_sea
-	eng_main.path = PackedInt32Array()
+	# в бой идут все соединения Флота метрополии (у одной базы)
+	for f in w.fleets:
+		if f.alive and f.owner == ENG and f.home == eng_main.home and f.mission != "raid":
+			f.zone = open_sea
+			f.path = PackedInt32Array()
 	var before := Forces.fleet_power(ger_main)
 	sim.tick()
 	check(eng_main.readiness < 1.0, "в бою готовность британского флота падает (%.1f%%)" % (eng_main.readiness * 100.0))
@@ -95,11 +115,25 @@ func _init() -> void:
 	for i in 5:
 		sim.tick()
 	check(eng_main.readiness > 0.6, "на базе готовность восстанавливается (%d%%)" % (eng_main.readiness * 100.0))
-	var ger_port_fleet := Forces.create_fleet(w, GER, eng_main.home, PackedInt32Array([0, 0, 5, 0]), "тест")
+	var ger_port_fleet := Forces.create_fleet(w, GER, eng_main.home, "тест")
+	Forces.add_ships(w, ger_port_fleet, w.nations[GER].ship_role[0], 5)
 	ger_port_fleet.mission = "port"
 	w.set_war(GER, ENG)
 	sim.tick()
-	check(ger_port_fleet.alive and ger_port_fleet.ships[Forces.SHIP_DD] == 5, "флот в порту в морском бою не участвует")
+	check(ger_port_fleet.alive and ger_port_fleet.ships[Forces.SHIP_CR] == 5, "флот в порту в морском бою не участвует")
+
+	print("Ширина морского боя:")
+	var many: Array = []
+	for i in 14:
+		var tf := Forces.create_fleet(w, GER, open_sea, "ширина %d" % i)
+		Forces.add_ships(w, tf, w.nations[GER].ship_role[0], 1 + i)
+		many.append(tf)
+	var line := Forces._battle_line(many)
+	check(line.size() == Forces.NAVY_WIDTH and line[0] == many[13], "в бою у стороны %d соединений, сильнейшие первыми" % line.size())
+	var sp := Forces.split_fleet(w, many[13])
+	check(sp != null and Forces.fleet_size(many[13]) + Forces.fleet_size(sp) == 14, "соединение делится пополам (%d + %d)" % [Forces.fleet_size(many[13]), Forces.fleet_size(sp) if sp != null else 0])
+	Forces.merge_here(w, many[12])
+	check(Forces.fleet_size(many[12]) == Forces.FLEET_MAX, "слияние — не больше %d кораблей (%d)" % [Forces.FLEET_MAX, Forces.fleet_size(many[12])])
 
 	print("Рейды подлодок:")
 	r = fresh()
@@ -110,7 +144,7 @@ func _init() -> void:
 	w.set_war(GER, ENG)
 	sim._refresh_sides()
 	var subs := fleet_of(w, GER, "Подводные силы")
-	subs.ships[Forces.SHIP_SS] = 150
+	Forces.add_ships(w, subs, w.nations[GER].ship_role[3], 150)
 	var tz: Dictionary = Forces.trade_zones(w, ENG)
 	subs.zone = tz.keys()[0]
 	subs.mission = "raid"

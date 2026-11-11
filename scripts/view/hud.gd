@@ -2106,11 +2106,14 @@ func _build_army(w: World, me: int) -> void:
 	popup_body.add_child(_button("Новый шаблон дивизии", func(): _open_tpl_editor(w, -1, false), Vector2(0, 50)))
 
 
+const SHIP_SHORT := ["подл.", "крейс.", "авиан."]
+
+
 func _ships_text(f: World.Fleet) -> String:
 	var parts: Array = []
-	for k in 4:
+	for k in [Forces.SHIP_CR, Forces.SHIP_CV, Forces.SHIP_SS]:
 		if f.ships[k] > 0:
-			parts.append("%s %d" % [Forces.SHIP_NAMES[k].substr(0, 4).to_lower(), f.ships[k]])
+			parts.append("%s %d" % [SHIP_SHORT[k], f.ships[k]])
 	return ", ".join(parts)
 
 
@@ -2122,6 +2125,9 @@ func _build_navy(w: World, me: int) -> void:
 	if _pl_open:
 		_build_plane_editor(w, me)
 		return
+	if _sh_open:
+		_build_ship_editor(w, me)
+		return
 	popup_title.text = "Флот и авиация"
 	var n: World.Nation = w.nations[me]
 	popup_body.add_child(_section("Флоты"))
@@ -2130,33 +2136,28 @@ func _build_navy(w: World, me: int) -> void:
 		if f.alive and f.owner == me:
 			any = true
 			var fid: int = f.id
-			var b := _button("%s · %s · %d%% · %s · %s" % [f.name, _ships_text(f), f.readiness * 100.0, w.p_name[f.zone], MISSION_NAMES.get(f.mission, f.mission)], func():
+			var b := _button("%s\n%s · %d%% · %s · %s" % [f.name, _ships_text(f), f.readiness * 100.0, w.p_name[f.zone], MISSION_NAMES.get(f.mission, f.mission)], func():
 				close_popup()
-				game.select_fleet(fid), Vector2(0, 46))
+				game.select_fleet(fid), Vector2(0, 56))
 			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-			b.add_theme_font_size_override("font_size", 15)
+			b.clip_text = true
+			b.add_theme_font_size_override("font_size", 14)
 			popup_body.add_child(b)
 	if not any:
 		popup_body.add_child(_small("Флота нет."))
 	popup_body.add_child(_section("Верфи"))
 	var q: Array = []
-	for t in n.ship_queue:
-		q.append(Forces.SHIP_ONE[t])
-	popup_body.add_child(_small("Очки судостроения: %d (+%.1f/день, заводы — во вкладке «Производство»). Очередь: %s" % [
-		n.stock[Military.EQ_SHIP], n.daily_output[Military.EQ_SHIP], ", ".join(q) if not q.is_empty() else "пусто"]))
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 4)
-	for t in 4:
-		var tt := t
-		var b := _button("+%s\n%d" % [Forces.SHIP_ONE[t], Forces.SHIP_COST[t]], func():
-			n.ship_queue.append(tt)
-			_rebuild_popup(), Vector2(0, 56))
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.add_theme_font_size_override("font_size", 14)
-		b.clip_text = true
-		row.add_child(b)
-	popup_body.add_child(row)
+	for did in n.ship_queue:
+		if did >= 0 and did < w.ship_designs.size():
+			q.append(w.ship_designs[did]["name"])
+	popup_body.add_child(_small("Очки судостроения: %d (+%.1f/день, заводы — во вкладке «Производство»). В соединении до %d кораблей, в бою у стороны — до %d соединений.\nОчередь: %s" % [
+		n.stock[Military.EQ_SHIP], n.daily_output[Military.EQ_SHIP], Forces.FLEET_MAX, Forces.NAVY_WIDTH, ", ".join(q) if not q.is_empty() else "пусто"]))
+	if not n.ship_queue.is_empty():
+		popup_body.add_child(_button("Очистить очередь", func():
+			n.ship_queue.clear()
+			_rebuild_popup(), Vector2(0, 44)))
+	_build_ship_designs(w, me)
 	popup_body.add_child(_section("Авиация"))
 	for wg in w.wings:
 		if wg.alive and wg.owner == me:
@@ -2430,11 +2431,254 @@ func _build_plane_editor(w: World, me: int) -> void:
 		_rebuild_popup(), Vector2(0, 48)))
 
 
+# --- Конструктор кораблей (ShipDesigns) -----------------------------------------
+# окно-редактор во вкладке «Флот и авиация»: категория, корпус, модули в слотах
+var _sh_open := false
+var _sh_kind := 1
+var _sh_hull := ""
+var _sh_mods: Array = []
+var _sh_name := ""
+
+
+## Проекты кораблей страны: основные (по ролям) сверху, затем свои; «Заложить» —
+## в очередь верфей.
+func _build_ship_designs(w: World, me: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_body.add_child(_section("Проекты кораблей"))
+	var order: Array = []
+	for r in ShipDesigns.ROLES.size():
+		var rd: int = n.ship_role[r]
+		if rd >= 0 and rd < w.ship_designs.size() and not order.has(rd):
+			order.append(rd)
+	for i in w.ship_designs.size():
+		if int(w.ship_designs[i]["owner"]) == me and not order.has(i):
+			order.append(i)
+	for i in order:
+		var d: Dictionary = w.ship_designs[i]
+		var did: int = i
+		var hr := ShipDesigns.hull(d["hull"])
+		var role := n.ship_role.find(did)
+		popup_body.add_child(_label("%s%s" % [d["name"], (" — основной: %s" % ShipDesigns.ROLE_PLURAL[role]) if role >= 0 else ""], 16))
+		popup_body.add_child(_small("   %s, %s: %s" % [ShipDesigns.KIND_ONE[int(d["kind"])], hr[1] if not hr.is_empty() else d["hull"], ShipDesigns.stats_text(d)]))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var bq := _button("Заложить", func():
+			n.ship_queue.append(did)
+			toast("Заложен: %s" % d["name"])
+			_rebuild_popup(), Vector2(0, 44))
+		bq.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(bq)
+		var bc := _button("Копия и правка", func(): _open_ship_editor(w, did), Vector2(0, 44))
+		bc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(bc)
+		popup_body.add_child(row)
+	popup_body.add_child(_button("Новый проект корабля", func(): _open_ship_editor(w, -1), Vector2(0, 50)))
+	popup_body.add_child(_small("Три категории: подлодки (рейды на торговлю), крейсеры (все надводные боевые корабли — от эсминца до линкора) и авианосцы (удар авиагрупп). Готовый корабль уходит в соединение своей категории, где есть место."))
+
+
+## Открыть редактор: копия проекта did или новый (-1 — крейсер на первом корпусе).
+func _open_ship_editor(w: World, did: int) -> void:
+	if did >= 0:
+		var d: Dictionary = w.ship_designs[did]
+		_sh_hull = d["hull"]
+		_sh_kind = int(d["kind"])
+		_sh_mods = (d["mods"] as Array).duplicate()
+		_sh_name = String(d["name"]) + " (нов.)"
+	else:
+		_sh_kind = ShipDesigns.KIND_CR
+		_sh_hull = "dd"
+		_sh_mods = []
+		_sh_name = "Новый корабль"
+	_sh_open = true
+	_rebuild_popup()
+
+
+func _sh_eff_text(eff: Dictionary) -> String:
+	var parts: Array = []
+	for key in eff:
+		var v: float = eff[key]
+		var t := ("%d%%" % roundi(absf(v) * 100.0)) if key == "stealth" else ShipDesigns._num(absf(v))
+		parts.append("%s %s%s" % [ShipDesigns.STAT_NAMES[key], "+" if v > 0 else "−", t])
+	return ", ".join(parts)
+
+
+## Корпуса и модули, что подходят новому корпусу, остаются; лишние — снимаются.
+func _sh_set_hull(n: World.Nation, hid: String) -> void:
+	_sh_hull = hid
+	var allowed := ShipDesigns.mods_for(n, hid)
+	var keep: Array = []
+	for m in _sh_mods:
+		if allowed.has(m) and keep.size() < int(ShipDesigns.hull(hid)[4]):
+			keep.append(m)
+	_sh_mods = keep
+
+
+func _build_ship_editor(w: World, me: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_title.text = "Проект корабля"
+	var h := ShipDesigns.hull(_sh_hull)
+	var name_edit := LineEdit.new()
+	name_edit.text = _sh_name
+	name_edit.max_length = 32
+	name_edit.custom_minimum_size = Vector2(0, 48)
+	name_edit.text_changed.connect(func(tx: String): _sh_name = tx)
+	popup_body.add_child(name_edit)
+	# категория
+	var krow := HBoxContainer.new()
+	krow.add_theme_constant_override("separation", 6)
+	for k in [ShipDesigns.KIND_SS, ShipDesigns.KIND_CR, ShipDesigns.KIND_CV]:
+		var kk: int = k
+		var bk := _button(ShipDesigns.KIND_NAMES[k], func():
+			_sh_kind = kk
+			for hr in ShipDesigns.HULLS:
+				if int(hr[2]) == kk and ShipDesigns.has_tech(n, hr[3]):
+					_sh_set_hull(n, hr[0])
+					break
+			_rebuild_popup(), Vector2(0, 46))
+		bk.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		bk.add_theme_font_size_override("font_size", 11)
+		bk.clip_text = true
+		bk.disabled = _sh_kind == k
+		if _sh_kind == k:
+			bk.add_theme_color_override("font_disabled_color", UiStyle.ink(Color(0.95, 0.85, 0.5)))
+		krow.add_child(bk)
+	popup_body.add_child(krow)
+	# характеристики и сравнение с основным проектом той же роли
+	var s := ShipDesigns.stats(_sh_hull, _sh_mods)
+	var role := ShipDesigns.role_of(s)
+	var bd: int = n.ship_role[role]
+	var has_b := bd >= 0 and bd < w.ship_designs.size()
+	var b: Dictionary = w.ship_designs[bd] if has_b else s
+	var lines: Array = []
+	lines.append("%s%s" % [ShipDesigns.KIND_ONE[int(s["kind"])].capitalize(), (" · сравнение с «%s»" % b["name"]) if has_b else ""])
+	var st: Array = []
+	for key in ["atk", "air", "def", "asw", "aa", "raid"]:
+		if float(s[key]) > 0.0 or float(b[key]) > 0.0:
+			st.append("%s %s" % [ShipDesigns.STAT_NAMES[key], _pl_cmp(float(s[key]), float(b[key]), "%.1f", has_b)])
+	lines.append(" · ".join(st))
+	if float(s["stealth"]) > 0.0 or float(b["stealth"]) > 0.0:
+		lines.append("скрытность %s" % _pl_cmp(float(s["stealth"]) * 100.0, float(b["stealth"]) * 100.0, "%.0f%%", has_b))
+	lines.append("сила %s · цена %s очков судостроения" % [_pl_cmp(float(s["power"]), float(b["power"]), "%.1f", has_b),
+		_pl_cmp(float(s["cost"]), float(b["cost"]), "%.0f", has_b)])
+	popup_body.add_child(_label("\n".join(lines), 15))
+
+	popup_body.add_child(_section("Корпус"))
+	for hr in ShipDesigns.HULLS:
+		if int(hr[2]) != _sh_kind:
+			continue
+		var hid: String = hr[0]
+		var ok := ShipDesigns.has_tech(n, hr[3])
+		var base: Dictionary = hr[7]
+		var bt: Array = []
+		for key in ["atk", "air", "def"]:
+			if base.has(key):
+				bt.append("%s %s" % [{"atk": "ог.", "air": "авиа", "def": "жив."}[key], ShipDesigns._num(float(base[key]))])
+		var txt := "%s%s (%s)\n%d сл. · %s · %d" % ["▶ " if hid == _sh_hull else "", hr[1], ShipDesigns.SIZE_NAMES[int(hr[5])], hr[4], " · ".join(bt), roundi(float(hr[8]))]
+		if not ok:
+			txt = "%s\nнужна «%s»" % [hr[1], Tech.get_tech(hr[3]).get("name", hr[3])]
+		var bh := _button(txt, func():
+			_sh_set_hull(n, hid)
+			_rebuild_popup(), Vector2(0, 54))
+		bh.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		bh.add_theme_font_size_override("font_size", 13)
+		bh.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		bh.clip_text = true
+		bh.disabled = not ok or hid == _sh_hull
+		if hid == _sh_hull:
+			bh.add_theme_color_override("font_disabled_color", UiStyle.ink(Color(0.95, 0.85, 0.5)))
+		popup_body.add_child(bh)
+
+	var slots: int = int(h[4]) if not h.is_empty() else 0
+	popup_body.add_child(_section("Слоты: %d из %d" % [_sh_mods.size(), slots]))
+	if _sh_mods.is_empty():
+		popup_body.add_child(_small("Пусто — добавьте модули из списка ниже."))
+	for i in _sh_mods.size():
+		var ii := i
+		var m := ShipDesigns.module(String(_sh_mods[i]))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var l := _label("%d. %s — %s" % [i + 1, m[1], _sh_eff_text(m[4])], 15)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		row.add_child(_button("✕", func():
+			_sh_mods.remove_at(ii)
+			_rebuild_popup(), Vector2(44, 44)))
+		popup_body.add_child(row)
+
+	popup_body.add_child(_section("Модули"))
+	for mr in ShipDesigns.MODS:
+		if not (mr[2] as Array).has(_sh_kind):
+			continue
+		var mid: String = mr[0]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 0)
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var cnt := _sh_mods.count(mid)
+		col.add_child(_label("%s%s" % [mr[1], (" × %d" % cnt) if cnt > 0 else ""], 16))
+		var why := ""
+		if not ShipDesigns.has_tech(n, mr[3]):
+			why = "нужна технология «%s»" % Tech.get_tech(mr[3]).get("name", mr[3])
+		elif not ShipDesigns.fits(mr, h):
+			var lo: int = mr[6]
+			var hi: int = mr[7]
+			why = "только для корпусов: %s" % ", ".join(ShipDesigns.SIZE_NAMES.slice(lo, hi + 1))
+		col.add_child(_small(why if why != "" else "%s · цена %d" % [_sh_eff_text(mr[4]), roundi(float(mr[5]))]))
+		row.add_child(col)
+		var plus := _button("+", func():
+			_sh_mods.append(mid)
+			_rebuild_popup(), Vector2(44, 44))
+		plus.disabled = why != "" or _sh_mods.size() >= slots or cnt >= ShipDesigns.MAX_SAME
+		row.add_child(plus)
+		popup_body.add_child(row)
+	popup_body.add_child(_small("Один модуль — не больше двух раз. Огонь бьёт по надводным кораблям, удар авиагрупп слабеет от ПВО цели, подлодки уязвимы только для ПЛО (скрытность снижает и его). Живучесть — сколько урона выдерживает корабль; сила — для господства на море."))
+
+	var ok_save := not _sh_mods.is_empty() and ShipDesigns.valid(n, _sh_hull, _sh_mods)
+	var row2 := HBoxContainer.new()
+	row2.add_theme_constant_override("separation", 8)
+	for q in [true, false]:
+		var qq: bool = q
+		var bs := _button("Заложить" if q else "Сохранить", func():
+			if not ShipDesigns.valid(n, _sh_hull, _sh_mods) or _sh_mods.is_empty():
+				toast("Проект собран неверно")
+				return
+			var nm := _sh_name.strip_edges()
+			if nm == "":
+				nm = "Корабль"
+			var before := w.ship_designs.size()
+			var id := ShipDesigns.add(w, me, nm, _sh_hull, _sh_mods)
+			if id < before:
+				nm = w.ship_designs[id]["name"]
+				toast("Такой проект уже есть: «%s»" % nm)
+			elif not qq:
+				toast("Проект «%s» сохранён" % nm)
+			if qq:
+				n.ship_queue.append(id)
+				toast("Заложен: %s" % nm)
+			_sh_open = false
+			_rebuild_popup(), Vector2(0, 52))
+		bs.disabled = not ok_save
+		bs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row2.add_child(bs)
+	popup_body.add_child(row2)
+	popup_body.add_child(_button("Отмена", func():
+		_sh_open = false
+		_rebuild_popup(), Vector2(0, 48)))
+
+
 func show_fleet(f: World.Fleet) -> void:
 	var w: World = game.world
 	_info_prov = -1
-	_info_text("%s\n%s · сила %d · готовность %d%%\n%s · %s%s\nКоснитесь моря (или берега), чтобы отправить флот. Готовность восстанавливается на базе." % [
-		f.name, _ships_text(f), Forces.fleet_power(f), f.readiness * 100.0, w.p_name[f.zone], MISSION_NAMES.get(f.mission, f.mission),
+	var comp: Array = []
+	for i in f.designs.size():
+		if comp.size() >= 3:
+			comp.append("…")
+			break
+		comp.append("%s ×%d" % [w.ship_designs[f.designs[i]]["name"], f.counts[i]])
+	_info_text("%s\n%s (%d из %d) · сила %d · готовность %d%%\n%s\n%s · %s%s\nКоснитесь моря (или берега), чтобы отправить соединение." % [
+		f.name, _ships_text(f), Forces.fleet_size(f), Forces.FLEET_MAX, Forces.fleet_power(f), f.readiness * 100.0, ", ".join(comp),
+		w.p_name[f.zone], MISSION_NAMES.get(f.mission, f.mission),
 		(" · в пути %d дн." % f.path.size()) if not f.path.is_empty() else ""])
 	_clear(info_actions)
 	for m in ["patrol", "raid", "port"]:
@@ -2446,6 +2690,24 @@ func show_fleet(f: World.Fleet) -> void:
 			show_fleet(f))
 		b.disabled = f.mission == m
 		info_actions.add_child(b)
+	var bs := _button("Разделить", func():
+		var nf := Forces.split_fleet(w, f)
+		if nf != null:
+			Forces._refresh_cache(w)
+			toast("Новое соединение: %s" % nf.name)
+		show_fleet(f))
+	bs.disabled = Forces.fleet_size(f) < 2
+	info_actions.add_child(bs)
+	var others := false
+	for o in w.fleets:
+		if o != f and o.alive and o.owner == f.owner and o.zone == f.zone:
+			others = true
+	var bm := _button("Слить", func():
+		var moved := Forces.merge_here(w, f)
+		toast("Перешло кораблей: %d" % moved if moved > 0 else "Места нет: в соединении до %d кораблей" % Forces.FLEET_MAX)
+		show_fleet(f))
+	bm.disabled = not others or Forces.fleet_size(f) >= Forces.FLEET_MAX
+	info_actions.add_child(bm)
 	info_actions.add_child(_button("✕", func(): game.clear_selection(), Vector2(56, 56)))
 	info_panel.show()
 	_layout_info.call_deferred()

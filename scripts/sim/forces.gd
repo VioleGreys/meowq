@@ -5,14 +5,21 @@ extends RefCounted
 ## авиакрылья над воздушными районами: превосходство, поддержка войск,
 ## стратегические бомбардировки, удары по флоту.
 
-const SHIP_BB := 0
+# категории кораблей (решение пользователя): подлодки, крейсеры (все надводные
+# боевые корабли), авианосцы; проекты — ShipDesigns
+const SHIP_SS := 0
 const SHIP_CR := 1
-const SHIP_DD := 2
-const SHIP_SS := 3
-const SHIP_NAMES := ["Линкоры", "Крейсеры", "Эсминцы", "Подлодки"]
-const SHIP_ONE := ["линкор", "крейсер", "эсминец", "подлодка"]
-const SHIP_POWER := [10.0, 4.0, 1.0, 1.2]
-const SHIP_COST := [3000.0, 900.0, 150.0, 120.0]   # очки судостроения
+const SHIP_CV := 2
+const SHIP_NAMES := ["Подлодки", "Крейсеры", "Авианосцы"]
+const SHIP_ONE := ["подлодка", "крейсер", "авианосец"]
+const FLEET_MAX := 30         # кораблей в одном соединении (решение пользователя)
+const NAVY_WIDTH := 10        # соединений одной стороны в морском бою (по умолчанию; решение пользователя)
+const NAVY_DMG := 0.035       # урон за день: огонь стороны × NAVY_DMG
+const NAVY_AA := 20.0         # ПВО цели ослабляет удар авиагрупп: × NAVY_AA / (NAVY_AA + ПВО)
+const NAVY_ASW := 1.5         # ПЛО против подлодок (огонь надводных по ним — ×NAVY_SUB_GUN)
+const NAVY_SUB_GUN := 0.3
+const NAVY_SUB_ATK := 0.5     # торпеды подлодок против боевых кораблей (не конвоев) — вполсилы
+const NAVY_ESCORT := 2.0      # охранение торговли: ПЛО × 2 + надводных кораблей × 2 (эсминец ≈ 3–3,6)
 const WING_MAX := 100.0       # самолётов в крыле (решение пользователя)
 const AIR_PACK := 100.0       # в бою неполные крылья стороны сливаются в пачки до 100
 const AIR_WIDTH := 10         # пачек одной стороны в бою над районом (потом — от ширины района)
@@ -70,41 +77,8 @@ static func setup(world: World, dir: String) -> void:
 		nat.air_share = float(fd.get("air_share", 0.05))
 		var navy: Dictionary = fd.get("navy", {})
 		if not navy.is_empty():
-			var home := home_zone(world, nat.id)
-			if home >= 0:
-				var surface := PackedInt32Array([int(navy.get("bb", 0)), int(navy.get("cr", 0)), int(navy.get("dd", 0)), 0])
-				var squads: Array = fd.get("squadrons", [])
-				if surface[0] + surface[1] + surface[2] > 0 and squads.is_empty():
-					create_fleet(world, nat.id, home, surface, "Основной флот")
-				elif surface[0] + surface[1] + surface[2] > 0:
-					# деление по базам: доля кораблей каждого типа, остаток — первому
-					var left := surface.duplicate()
-					var made: Array = []
-					for i in squads.size():
-						var sq: Array = squads[i]
-						var zone := home
-						var bl2: Array = base_provs.get(nat.tag, [])
-						var bi := int(sq[1])
-						if bi >= 0 and bi < bl2.size() and int(bl2[bi]) >= 0:
-							for q in world.p_adj[int(bl2[bi])]:
-								if world.p_land[q] == 0:
-									zone = q
-									break
-						var part := PackedInt32Array([0, 0, 0, 0])
-						if i > 0:
-							for t in 3:
-								part[t] = mini(left[t], int(round(surface[t] * float(sq[2]))))
-								left[t] -= part[t]
-						made.append([zone, part, String(sq[0]), float(sq[2])])
-					made[0][1] = PackedInt32Array([left[0], left[1], left[2], 0])
-					for m in made:
-						var pp: PackedInt32Array = m[1]
-						if pp[0] + pp[1] + pp[2] > 0:
-							var nf := create_fleet(world, nat.id, int(m[0]), pp, String(m[2]))
-							nf.share = float(m[3])
-				if int(navy.get("ss", 0)) > 0:
-					var subs := create_fleet(world, nat.id, home, PackedInt32Array([0, 0, 0, int(navy.get("ss", 0))]), "Подводные силы")
-					subs.mission = "raid"
+			ShipDesigns.ai_update(world, nat)   # стартовые проекты: корпуса без технологий
+			_setup_navy(world, nat, navy, fd.get("squadrons", []), base_provs.get(nat.tag, []))
 		var air: Dictionary = fd.get("air", {})
 		var cap_region: int = world.p_region[nat.capital]
 		for kind in 2:
@@ -115,6 +89,99 @@ static func setup(world: World, dir: String) -> void:
 				w.planes = take
 				w.mission = "sup" if kind == 0 else "cas"
 				planes -= take
+	_refresh_cache(world)
+
+
+## Стартовый флот страны: надводные корабли (bb/cr/dd/cv) — по базам
+## (squadrons: доли), подлодки (ss) — у главной базы; каждое соединение — не
+## больше FLEET_MAX кораблей (лишние — в следующие соединения той же базы).
+static func _setup_navy(world: World, nat: World.Nation, navy: Dictionary, squads: Array, bl2: Array) -> void:
+	var home := home_zone(world, nat.id)
+	if home < 0:
+		return
+	var keys := ["bb", "cr", "cv", "dd"]
+	var surface := PackedInt32Array()
+	for key in keys:
+		surface.append(int(navy.get(key, 0)))
+	var total := 0
+	for v in surface:
+		total += v
+	if total > 0:
+		if squads.is_empty():
+			squads = [["Основной флот", -1, 1.0]]
+		# деление по базам: доля кораблей каждого типа, остаток — первой базе
+		var left := surface.duplicate()
+		var made: Array = []
+		for i in squads.size():
+			var sq: Array = squads[i]
+			var zone := home
+			var bi := int(sq[1])
+			if bi >= 0 and bi < bl2.size() and int(bl2[bi]) >= 0:
+				for q in world.p_adj[int(bl2[bi])]:
+					if world.p_land[q] == 0:
+						zone = q
+						break
+			var part := PackedInt32Array()
+			part.resize(keys.size())
+			if i > 0:
+				for t in keys.size():
+					part[t] = mini(left[t], int(round(surface[t] * float(sq[2]))))
+					left[t] -= part[t]
+			made.append([zone, part, String(sq[0]), float(sq[2])])
+		made[0][1] = left
+		for m in made:
+			var pairs: Array = []
+			var pp: PackedInt32Array = m[1]
+			for t in keys.size():
+				var did: int = nat.ship_role[ShipDesigns.ROLE_OF_KEY[keys[t]]]
+				if pp[t] > 0 and did >= 0:
+					pairs.append([did, pp[t]])
+			_make_formations(world, nat.id, int(m[0]), pairs, String(m[2]), float(m[3]), "patrol")
+	var ss := int(navy.get("ss", 0))
+	if ss > 0 and nat.ship_role[3] >= 0:
+		_make_formations(world, nat.id, home, [[nat.ship_role[3], ss]], "Подводные силы", 1.0, "raid")
+
+
+## Корабли [[проект, число], …] — в соединения по FLEET_MAX: корабли раздаются
+## по кругу (у каждого соединения — свой набор всех типов); доля базы делится.
+static func _make_formations(world: World, n: int, zone: int, pairs: Array, name: String, share: float, mission: String) -> void:
+	var total := 0
+	for pr in pairs:
+		total += int(pr[1])
+	if total <= 0:
+		return
+	var k := (total + FLEET_MAX - 1) / FLEET_MAX
+	var fl: Array = []
+	for i in k:
+		var f := create_fleet(world, n, zone, name if i == 0 else "%s, %d-е соединение" % [name, i + 1])
+		f.share = share / k
+		f.mission = mission
+		fl.append(f)
+	var idx := 0
+	for pr in pairs:
+		for j in int(pr[1]):
+			add_ships(world, fl[idx % k], int(pr[0]), 1)
+			idx += 1
+
+
+## Сохранение версии 1 (корабли — 4 типа без проектов): флотам — основные
+## проекты ролей, очереди верфей — пустые.
+static func migrate_v1(world: World) -> void:
+	for nat in world.nations:
+		if nat.alive and nat.ship_role[0] < 0:
+			ShipDesigns.ai_update(world, nat)
+		nat.ship_queue = []
+	var roles := [2, 1, 0, 3]   # линкоры, крейсеры, эсминцы, подлодки
+	for f in world.fleets:
+		if f.designs.is_empty() and f.ships.size() == 4:
+			var old: PackedInt32Array = f.ships
+			f.ships = PackedInt32Array([0, 0, 0])
+			for k in 4:
+				var did: int = world.nations[f.owner].ship_role[roles[k]]
+				if old[k] > 0 and did >= 0:
+					f.designs.append(did)
+					f.counts.append(old[k])
+			recount(world, f)
 	_refresh_cache(world)
 
 
@@ -285,16 +352,79 @@ static func at_base(world: World, f: World.Fleet) -> bool:
 	return false
 
 
-static func create_fleet(world: World, n: int, zone: int, ships: PackedInt32Array, name: String) -> World.Fleet:
+static func create_fleet(world: World, n: int, zone: int, name: String) -> World.Fleet:
 	var f := World.Fleet.new()
 	f.id = world.fleets.size()
 	f.owner = n
 	f.zone = zone
 	f.home = zone
-	f.ships = ships
 	f.name = name
 	world.fleets.append(f)
 	return f
+
+
+## Добавить cnt кораблей проекта did в соединение (без проверки FLEET_MAX).
+static func add_ships(world: World, f: World.Fleet, did: int, cnt: int) -> void:
+	var i := f.designs.find(did)
+	if i < 0:
+		f.designs.append(did)
+		f.counts.append(cnt)
+	else:
+		f.counts[i] += cnt
+	recount(world, f)
+
+
+## Пересчитать сводку соединения по составу; пустые проекты убираются.
+static func recount(world: World, f: World.Fleet) -> void:
+	var nd := PackedInt32Array()
+	var nc := PackedInt32Array()
+	var ships := PackedInt32Array([0, 0, 0])
+	var pw := 0.0
+	var spw := 0.0
+	var atk := 0.0
+	var air := 0.0
+	var asw := 0.0
+	var aa := 0.0
+	var raid := 0.0
+	var st := 0.0
+	var satk := 0.0
+	var fam := PackedFloat64Array()
+	fam.resize(ShipDesigns.FAMS)
+	for i in f.designs.size():
+		var c: int = f.counts[i]
+		if c <= 0:
+			continue
+		nd.append(f.designs[i])
+		nc.append(c)
+		var d: Dictionary = world.ship_designs[f.designs[i]]
+		var k: int = d["kind"]
+		ships[k] += c
+		pw += float(d["power"]) * c
+		fam[int(d["fam"])] += float(d["power"]) * c
+		atk += float(d["atk"]) * c
+		air += float(d["air"]) * c
+		asw += float(d["asw"]) * c
+		aa += float(d["aa"]) * c
+		raid += float(d["raid"]) * c
+		if k == SHIP_SS:
+			spw += float(d["power"]) * c
+			satk += float(d["atk"]) * c
+			st += float(d["stealth"]) * c
+	f.designs = nd
+	f.counts = nc
+	f.ships = ships
+	f.power = pw
+	f.fam_power = fam
+	f.sub_power = spw
+	f.atk = atk
+	f.sub_atk = satk
+	f.air = air
+	f.asw = asw
+	f.aa = aa
+	f.raid = raid
+	f.stealth = st / ships[SHIP_SS] if ships[SHIP_SS] > 0 else 0.0
+	if ships[0] + ships[1] + ships[2] == 0 and f.alive:
+		f.alive = false
 
 
 static func create_wing(world: World, n: int, kind: int, region: int) -> World.AirWing:
@@ -314,10 +444,7 @@ static func create_wing(world: World, n: int, kind: int, region: int) -> World.A
 
 
 static func fleet_power(f: World.Fleet) -> float:
-	var s := 0.0
-	for k in 4:
-		s += f.ships[k] * SHIP_POWER[k]
-	return s
+	return f.power
 
 
 ## Боевая сила с учётом готовности (после боёв — ниже, пока флот не на базе).
@@ -328,22 +455,27 @@ static func combat_power(f: World.Fleet) -> float:
 ## Качество флотов по технологиям страны: среднее по силе кораблей каждого рода.
 static func refresh_quality(world: World) -> void:
 	var ns := world.n_ship
-	if ns.size() != world.nation_count * 4:
+	var nf := ShipDesigns.FAMS
+	if ns.size() != world.nation_count * nf:
 		return
 	for f in world.fleets:
 		if not f.alive:
 			continue
+		var fp: PackedFloat64Array = f.fam_power
+		if fp.size() != nf:
+			recount(world, f)
+			fp = f.fam_power
 		var base := 0.0
 		var q := 0.0
-		for k in 4:
-			var pw: float = f.ships[k] * SHIP_POWER[k]
-			base += pw
-			q += pw * ns[f.owner * 4 + k]
+		var o: int = f.owner * nf
+		for k in nf:
+			base += fp[k]
+			q += fp[k] * ns[o + k]
 		f.quality = q / base if base > 0.0 else 1.0
 
 
 static func fleet_size(f: World.Fleet) -> int:
-	return f.ships[0] + f.ships[1] + f.ships[2] + f.ships[3]
+	return f.ships[0] + f.ships[1] + f.ships[2]
 
 
 static func _refresh_cache(world: World) -> void:
@@ -389,13 +521,12 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 		if not f.path.is_empty():
 			f.zone = f.path[0]
 			f.path.remove_at(0)
-		if f.path.is_empty() and at_base(world, f):
-			f.readiness = minf(1.0, f.readiness + (0.05 if f.mission == "port" else 0.02))
-		else:
-			f.readiness = minf(1.0, f.readiness + 0.002)
+		if f.readiness < 1.0:
+			if f.path.is_empty() and at_base(world, f):
+				f.readiness = minf(1.0, f.readiness + (0.05 if f.mission == "port" else 0.02))
+			else:
+				f.readiness = minf(1.0, f.readiness + 0.002)
 		# база потеряна — приписываем флот к ближайшей своей
-		Prof.add("флот:движение-база", _pt)
-		_pt = Time.get_ticks_usec()
 		if world.day % 7 == f.id % 7 and f.home >= 0:
 			var home_ok := false
 			for q in world.p_adj[f.home]:
@@ -407,8 +538,6 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 				var b := base_zone(world, f.owner, f.zone)
 				if b >= 0:
 					f.home = b
-		Prof.add("флот:движение-дом", _pt)
-		_pt = Time.get_ticks_usec()
 	Prof.add("флот:движение", _pt)
 	_pt = Time.get_ticks_usec()
 	_refresh_cache(world)
@@ -432,20 +561,29 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 				side_b.append(f)
 		if side_b.is_empty():
 			continue
-		var pa := 0.0
-		var pb := 0.0
-		for f in side_a:
-			pa += combat_power(f)
-			f.in_battle = true
-		for f in side_b:
-			pb += combat_power(f)
-			f.in_battle = true
+		# в бою у стороны — не больше NAVY_WIDTH соединений (самые сильные)
+		side_a = _battle_line(side_a)
+		side_b = _battle_line(side_b)
+		var sa := _side_fire(side_a)
+		var sb := _side_fire(side_b)
+		var pa: float = sa[0]
+		var pb: float = sb[0]
 		var r := world.p_region[zone]
 		var nc := world.nation_count
-		var da := pb * 0.035 * rng.randf_range(0.7, 1.3) * world.cas_mult[r * nc + side_b[0].owner]
-		var db := pa * 0.035 * rng.randf_range(0.7, 1.3) * world.cas_mult[r * nc + a.owner]
-		_take_losses(world, side_a, da, rng)
-		_take_losses(world, side_b, db, rng)
+		var ra := rng.randf_range(0.7, 1.3) * world.cas_mult[r * nc + side_b[0].owner]
+		var rb := rng.randf_range(0.7, 1.3) * world.cas_mult[r * nc + a.owner]
+		# урон по надводным: огонь + удар авиагрупп (ослаблен ПВО цели);
+		# по подлодкам: ПЛО и немного огня, минус скрытность
+		var da_s: float = (float(sb[1]) + float(sb[2]) * NAVY_AA / (NAVY_AA + float(sa[4]))) * NAVY_DMG * ra
+		var db_s: float = (float(sa[1]) + float(sa[2]) * NAVY_AA / (NAVY_AA + float(sb[4]))) * NAVY_DMG * rb
+		var da_u: float = (float(sb[3]) * NAVY_ASW + float(sb[1]) * NAVY_SUB_GUN) * NAVY_DMG * ra * (1.0 - float(sa[5]))
+		var db_u: float = (float(sa[3]) * NAVY_ASW + float(sa[1]) * NAVY_SUB_GUN) * NAVY_DMG * rb * (1.0 - float(sb[5]))
+		_take_losses(world, side_a, da_s, rng, 0)
+		_take_losses(world, side_a, da_u, rng, 1)
+		_take_losses(world, side_b, db_s, rng, 0)
+		_take_losses(world, side_b, db_u, rng, 1)
+		var da := da_s + da_u
+		var db := db_s + db_u
 		for f in side_a:
 			f.readiness = maxf(0.0, f.readiness - da / maxf(1.0, pa) * 0.6)
 		for f in side_b:
@@ -472,21 +610,68 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 	Prof.add("флот:торговля", _pt)
 
 
-static func _take_losses(world: World, side: Array, dmg: float, rng: RandomNumberGenerator) -> void:
-	# сначала гибнут эскорты (эсминцы), потом подлодки, крейсеры, линкоры
-	var order := [SHIP_DD, SHIP_SS, SHIP_CR, SHIP_BB]
+## Соединения стороны в бою: не больше NAVY_WIDTH, самые сильные (при
+## равенстве — меньший номер); остальные в зоне этот день не дерутся.
+static func _battle_line(side: Array) -> Array:
+	if side.size() <= NAVY_WIDTH:
+		return side
+	var s := side.duplicate()
+	s.sort_custom(func(x, y):
+		var px := combat_power(x)
+		var py := combat_power(y)
+		return px > py or (px == py and x.id < y.id))
+	return s.slice(0, NAVY_WIDTH)
+
+
+## Сводка стороны: [сила, огонь, авиагруппы, ПЛО, ПВО, скрытность подлодок]
+## (с качеством и готовностью); соединения отмечаются участниками боя.
+static func _side_fire(side: Array) -> Array:
+	var pw := 0.0
+	var gun := 0.0
+	var air := 0.0
+	var asw := 0.0
+	var aa := 0.0
+	var st := 0.0
+	var subs := 0
+	for f in side:
+		f.in_battle = true
+		var rf: float = f.quality * (0.3 + 0.7 * f.readiness)
+		pw += f.power * rf
+		gun += (f.atk - f.sub_atk * (1.0 - NAVY_SUB_ATK)) * rf
+		air += f.air * rf
+		asw += f.asw * rf
+		aa += f.aa * rf
+		st += f.stealth * f.ships[SHIP_SS]
+		subs += f.ships[SHIP_SS]
+	return [pw, gun, air, asw, aa, st / subs if subs > 0 else 0.0]
+
+
+## Потери стороны: урон dmg «съедает» корабли по живучести — сначала эскорты
+## и подлодки, потом крейсеры, линкоры и авианосцы (очередь корпуса).
+## target: 0 — надводные, 1 — подлодки, -1 — все.
+static func _take_losses(world: World, side: Array, dmg: float, rng: RandomNumberGenerator, target := -1) -> void:
 	while dmg > 0.0:
 		var hit := false
-		for k in order:
+		for level in 4:
 			for f in side:
-				if f.alive and f.ships[k] > 0 and dmg > 0.0:
-					var cost: float = SHIP_POWER[k]
+				if not f.alive:
+					continue
+				var changed := false
+				for i in f.designs.size():
+					if dmg <= 0.0 or f.counts[i] <= 0:
+						continue
+					var d: Dictionary = world.ship_designs[f.designs[i]]
+					if int(d["prio"]) != level or (target == 0 and int(d["kind"]) == SHIP_SS) or (target == 1 and int(d["kind"]) != SHIP_SS):
+						continue
+					var cost: float = d["def"]
 					if dmg >= cost or rng.randf() < dmg / cost:
-						f.ships[k] -= 1
+						f.counts[i] -= 1
 						hit = true
+						changed = true
 					dmg -= cost
-					if fleet_size(f) == 0:
-						f.alive = false
+				if changed:
+					recount(world, f)
+					if not f.alive:
 						world.log_event("%s: %s уничтожен" % [world.nations[f.owner].name, f.name])
 		if not hit:
 			break
@@ -524,13 +709,13 @@ static func _trade_war(world: World, rng: RandomNumberGenerator) -> void:
 		for zone in trade_zones(world, nat.id):
 			for f in world.zone_fleets.get(zone, []):
 				if f.mission == "raid" and world.is_at_war(nat.id, f.owner):
-					raid += f.ships[SHIP_SS] * SHIP_POWER[SHIP_SS] * (1.0 + world.nations[f.owner].b("sub_raid"))
+					raid += f.raid * (1.0 + world.nations[f.owner].b("sub_raid"))
 					raiders.append(f)
 				elif world.ally[nat.id * world.nation_count + f.owner] == 1 and f.mission != "port":
-					escort += (f.ships[SHIP_DD] + f.ships[SHIP_CR] * 2.0) * (1.0 + world.nations[f.owner].b("escort"))
+					escort += (f.asw * NAVY_ESCORT + (f.ships[SHIP_CR] + f.ships[SHIP_CV]) * 2.0) * (1.0 + world.nations[f.owner].b("escort"))
 		nat.trade_penalty = clampf((raid - escort * 0.7) * 0.004, 0.0, 0.3)
 		if escort > 0.0 and not raiders.is_empty():
-			_take_losses(world, raiders, escort * 0.01 * rng.randf_range(0.5, 1.5), rng)
+			_take_losses(world, raiders, escort * 0.01 * rng.randf_range(0.5, 1.5), rng, 1)
 
 
 static func trade_zones(world: World, n: int) -> Dictionary:
@@ -552,36 +737,140 @@ static func _build_ships(world: World) -> void:
 		if not nat.alive:
 			continue
 		if nat.ship_queue.is_empty() and not nat.is_player and nat.naval_share > 0.0:
-			var cycle := [SHIP_DD, SHIP_SS, SHIP_DD, SHIP_CR] + ([SHIP_BB] if nat.major else [])
-			nat.ship_queue.append(cycle[(world.day / 7 + nat.id) % cycle.size()])
+			# ИИ: эсминцы, подлодки, крейсеры; великие державы — ещё линкоры и
+			# авианосцы (если они уже есть или изучена технология авианосцев)
+			var cycle := [0, 3, 0, 1]
+			if nat.major:
+				cycle.append(2)
+				if nat.techs.has("cv1") or _has_kind(world, nat.id, SHIP_CV):
+					cycle.append(0)
+					cycle.append(4)
+			var did: int = nat.ship_role[cycle[(world.day / 7 + nat.id) % cycle.size()]]
+			if did >= 0:
+				nat.ship_queue.append(did)
 		if nat.ship_queue.is_empty():
 			continue
-		var t: int = nat.ship_queue[0]
-		var cost: float = SHIP_COST[t] / (1.0 + maxf(0.0, nat.b("shipyard")))   # технологии верфей
+		var did0: int = nat.ship_queue[0]
+		if did0 < 0 or did0 >= world.ship_designs.size():
+			nat.ship_queue.pop_front()
+			continue
+		var d: Dictionary = world.ship_designs[did0]
+		var cost: float = float(d["cost"]) / (1.0 + maxf(0.0, nat.b("shipyard")))   # технологии верфей
 		if nat.stock[Military.EQ_SHIP] < cost:
 			continue
 		nat.stock[Military.EQ_SHIP] -= cost
 		nat.ship_queue.pop_front()
-		# новый корабль — во флот своего рода, у которого меньше всего сил
-		# относительно его доли (подлодки — к рейдерам)
-		var target: World.Fleet = null
-		var tp := INF
-		for f in world.fleets:
-			if f.alive and f.owner == nat.id and ((t == SHIP_SS) == (f.mission == "raid")):
-				var fp := fleet_power(f) / maxf(0.05, f.share)
+		var target := place_ship(world, nat.id, did0)
+		if nat.is_player and target != null:
+			world.log_event("Спущен на воду: %s «%s» (%s)" % [SHIP_ONE[int(d["kind"])], d["name"], target.name])
+
+
+static func _has_kind(world: World, n: int, kind: int) -> bool:
+	for f in world.fleets:
+		if f.alive and f.owner == n and f.ships[kind] > 0:
+			return true
+	return false
+
+
+## Новый корабль — в соединение своего рода (подлодки — к рейдерам), где ещё
+## есть место (FLEET_MAX) и меньше всего сил относительно доли базы; все полны —
+## новое соединение у базы самого слабого из них.
+static func place_ship(world: World, n: int, did: int) -> World.Fleet:
+	var sub: bool = int(world.ship_designs[did]["kind"]) == SHIP_SS
+	var target: World.Fleet = null
+	var full: World.Fleet = null
+	var tp := INF
+	var fpf := INF
+	for f in world.fleets:
+		if f.alive and f.owner == n and (sub == (f.mission == "raid")):
+			var fp := fleet_power(f) / maxf(0.05, f.share)
+			if fleet_size(f) < FLEET_MAX:
 				if fp < tp:
 					tp = fp
 					target = f
-		if target == null:
-			var home := home_zone(world, nat.id)
-			if home < 0:
+			elif fp < fpf:
+				fpf = fp
+				full = f
+	if target == null:
+		var home := home_zone(world, n) if full == null else full.home
+		if home < 0:
+			return null
+		var base := ("Подводные силы" if sub else "Основной флот") if full == null else full.name.get_slice(",", 0)
+		var cnt := 1
+		for f in world.fleets:
+			if f.alive and f.owner == n and f.name.get_slice(",", 0) == base:
+				cnt += 1
+		target = create_fleet(world, n, home, base if cnt == 1 else "%s, %d-е соединение" % [base, cnt])
+		if full != null:
+			target.share = full.share
+			target.zone = full.home
+		if sub:
+			target.mission = "raid"
+	add_ships(world, target, did, 1)
+	return target
+
+
+## Разделить соединение: половина кораблей каждого проекта — в новое
+## соединение в той же зоне. Пусто — null.
+static func split_fleet(world: World, f: World.Fleet) -> World.Fleet:
+	if fleet_size(f) < 2:
+		return null
+	var base := f.name.get_slice(",", 0)
+	var cnt := 1
+	for o in world.fleets:
+		if o.alive and o.owner == f.owner and o.name.get_slice(",", 0) == base:
+			cnt += 1
+	var nf := create_fleet(world, f.owner, f.zone, "%s, %d-е соединение" % [base, cnt])
+	nf.home = f.home
+	nf.mission = f.mission
+	nf.readiness = f.readiness
+	nf.quality = f.quality
+	nf.share = f.share * 0.5
+	f.share *= 0.5
+	var moved := 0
+	var half := fleet_size(f) / 2
+	for i in f.designs.size():
+		var take := f.counts[i] / 2
+		if moved + take > half:
+			take = half - moved
+		if take > 0:
+			f.counts[i] -= take
+			nf.designs.append(f.designs[i])
+			nf.counts.append(take)
+			moved += take
+	# все корабли одного проекта по одному — отдаём первый
+	if moved == 0:
+		f.counts[0] -= 1
+		nf.designs.append(f.designs[0])
+		nf.counts.append(1)
+	recount(world, f)
+	recount(world, nf)
+	return nf
+
+
+## Влить в f соединения владельца из той же зоны — пока в f есть место
+## (FLEET_MAX). Возвращает, сколько кораблей перешло.
+static func merge_here(world: World, f: World.Fleet) -> int:
+	var moved := 0
+	for o in world.fleets:
+		if o == f or not o.alive or o.owner != f.owner or o.zone != f.zone:
+			continue
+		for i in o.designs.size():
+			var room := FLEET_MAX - fleet_size(f)
+			if room <= 0:
+				break
+			var take := mini(room, o.counts[i])
+			if take <= 0:
 				continue
-			target = create_fleet(world, nat.id, home, PackedInt32Array([0, 0, 0, 0]), "Подводные силы" if t == SHIP_SS else "Основной флот")
-			if t == SHIP_SS:
-				target.mission = "raid"
-		target.ships[t] += 1
-		if nat.is_player:
-			world.log_event("Спущен на воду: %s (%s)" % [SHIP_ONE[t], target.name])
+			o.counts[i] -= take
+			add_ships(world, f, o.designs[i], take)
+			moved += take
+		recount(world, o)
+		if not o.alive:
+			f.share += o.share
+	f.readiness = minf(f.readiness, 1.0)
+	_refresh_cache(world)
+	return moved
 
 
 ## Путь по морским зонам (без from, с to).
@@ -750,37 +1039,73 @@ static func _reach_gd(t: Dictionary, n: int, start: int) -> PackedInt32Array:
 ## ИИ: главный флот ищет более слабого противника рядом, подлодки — торговлю врага.
 static func ai_fleets(world: World, n: int) -> void:
 	var nat: World.Nation = world.nations[n]
+	# соединения одной базы действуют вместе: сила группы — сумма их сил
+	var group := {}
+	for f in world.fleets:
+		if f.alive and f.owner == n and f.mission != "raid":
+			group[f.home] = float(group.get(f.home, 0.0)) + fleet_power(f)
+	var dists := {}   # зона -> sea_dist (у соединений одной базы зоны общие)
+	# силы противника по зонам: без рейдеров и все (флоты противника в этом
+	# проходе не меняются — считаем один раз); «рядом с базой» — по базам
+	var en_nr := {}
+	var en_all := {}
+	var raiders := {}   # свои торговые зоны с рейдерами противника — охота соединениями с ПЛО
+	if not nat.at_war.is_empty():
+		var own_tz := trade_zones(world, n)
+		for z in world.zone_fleets:
+			var a := 0.0
+			var b := 0.0
+			var rd := false
+			for o in world.zone_fleets[z]:
+				if world.is_at_war(n, o.owner):
+					b += fleet_power(o)
+					if o.mission != "raid":
+						a += fleet_power(o)
+					else:
+						rd = true
+			if b > 0.0:
+				en_all[z] = b
+				if a > 0.0:
+					en_nr[z] = a
+				if rd and own_tz.has(z):
+					raiders[z] = true
+	var near := {}
+	var paths := {}   # (откуда, куда) -> путь: соединения одной зоны идут вместе
 	for f in world.fleets:
 		if not f.alive or f.owner != n or not f.path.is_empty() or f.task_until >= world.day:
 			continue
 		if nat.at_war.is_empty():
 			if f.zone != f.home:
-				f.path = sea_path(world, f.zone, f.home)
-			f.mission = "raid" if f.ships[SHIP_SS] > 0 and fleet_power(f) == f.ships[SHIP_SS] * SHIP_POWER[SHIP_SS] else "patrol"
+				f.path = _cached_path(world, paths, f.zone, f.home)
+			f.mission = "raid" if f.ships[SHIP_SS] > 0 and f.ships[SHIP_SS] == fleet_size(f) else "patrol"
 			continue
 		if f.mission == "port" and f.zone == f.home:
-			f.mission = "raid" if f.ships[SHIP_SS] * SHIP_POWER[SHIP_SS] >= fleet_power(f) * 0.9 else "patrol"
+			f.mission = "raid" if f.sub_power >= fleet_power(f) * 0.9 else "patrol"
 		var best := -1
 		var best_len := 1 << 20
-		var from_here := sea_dist(world, f.zone)
+		if not dists.has(f.zone):
+			dists[f.zone] = sea_dist(world, f.zone)
+		var from_here: PackedInt32Array = dists[f.zone]
 		# слабый флот отстаивается в порту, пока рядом сильный враг («флот как угроза»)
 		if f.mission != "raid":
-			var from_home := sea_dist(world, f.home)
-			var near_enemy := 0.0
-			for z in world.zone_fleets:
-				var fh: int = from_home[z]
-				if fh < 0 or fh > 8:
-					continue
-				for o in world.zone_fleets[z]:
-					if world.is_at_war(n, o.owner) and o.mission != "raid":
-						near_enemy += fleet_power(o)
-			if near_enemy > fleet_power(f):
+			if not dists.has(f.home):
+				dists[f.home] = sea_dist(world, f.home)
+			var from_home: PackedInt32Array = dists[f.home]
+			if not near.has(f.home):
+				var ne := 0.0
+				for z in en_nr:
+					var fh: int = from_home[z]
+					if fh >= 0 and fh <= 8:
+						ne += float(en_nr[z])
+				near[f.home] = ne
+			var near_enemy: float = near[f.home]
+			if near_enemy > float(group.get(f.home, fleet_power(f))):
 				if f.zone != f.home:
-					f.path = sea_path(world, f.zone, f.home)
+					f.path = _cached_path(world, paths, f.zone, f.home)
 				f.mission = "port"
 				continue
 		if f.mission == "port" and f.zone == f.home:
-			f.mission = "raid" if f.ships[SHIP_SS] * SHIP_POWER[SHIP_SS] >= fleet_power(f) * 0.9 else "patrol"
+			f.mission = "raid" if f.sub_power >= fleet_power(f) * 0.9 else "patrol"
 		if f.mission == "raid":
 			for e in nat.at_war:
 				for z in trade_zones(world, e):
@@ -791,21 +1116,28 @@ static func ai_fleets(world: World, n: int) -> void:
 		else:
 			# охота — в своём районе (до 8 зон от базы), без цели — блокада
 			# ближайших к базе вражеских портов (держит дальнюю блокаду торговли)
-			var mine := fleet_power(f)
-			var from_base := sea_dist(world, f.home)
+			var mine := float(group.get(f.home, fleet_power(f)))
+			if not dists.has(f.home):
+				dists[f.home] = sea_dist(world, f.home)
+			var from_base: PackedInt32Array = dists[f.home]
 			# флот, поделённый по базам (доля < 1), держит свой район — 5 зон
 			var reach_n := 8 if f.share >= 0.99 else 5
-			for z in world.zone_fleets:
+			for z in en_nr:
 				var l: int = from_here[z] if from_here[z] >= 0 else 1 << 20
 				if l >= best_len or from_base[z] < 0 or from_base[z] > reach_n:
 					continue
-				var enemy := 0.0
-				for o in world.zone_fleets[z]:
-					if world.is_at_war(n, o.owner) and o.mission != "raid":
-						enemy += fleet_power(o)
-				if enemy > 0.0 and mine > enemy * 1.2:
+				var enemy: float = en_nr[z]
+				if mine > enemy * 1.2:
 					best_len = l
 					best = z
+			# рейдеры у своих портов: идут соединения с ПЛО (если надводный
+			# противник там не сильнее)
+			if best < 0 and f.asw > 0.0:
+				for z in raiders:
+					var l: int = from_here[z] if from_here[z] >= 0 else 1 << 20
+					if l < best_len and l <= 12 and float(en_nr.get(z, 0.0)) * 1.2 < mine:
+						best_len = l
+						best = z
 			if best < 0:
 				var bl3 := reach_n + 1
 				for e in nat.at_war:
@@ -813,17 +1145,21 @@ static func ai_fleets(world: World, n: int) -> void:
 						var dz: int = from_base[z]
 						if dz >= 0 and dz < bl3:
 							# не лезть под более сильный флот противника
-							var enemy2 := 0.0
-							for o in world.zone_fleets.get(z, []):
-								if world.is_at_war(n, o.owner):
-									enemy2 += fleet_power(o)
+							var enemy2: float = en_all.get(z, 0.0)
 							if enemy2 * 1.2 < mine:
 								bl3 = dz
 								best = z
 			if best < 0 and f.zone != f.home:
 				best = f.home
 		if best >= 0 and best != f.zone:
-			f.path = sea_path(world, f.zone, best)
+			f.path = _cached_path(world, paths, f.zone, best)
+
+
+static func _cached_path(world: World, cache: Dictionary, from: int, to: int) -> PackedInt32Array:
+	var key := from * 1048576 + to
+	if not cache.has(key):
+		cache[key] = sea_path(world, from, to)
+	return cache[key]
 
 
 ## Блокада: порт не снабжает, если во всех соседних морских зонах господство у врага.
@@ -1395,11 +1731,14 @@ static func air_finish(world: World, rng: RandomNumberGenerator) -> void:
 					if world.p_region[zone] != r:
 						continue
 					var targets: Array = []
+					var aa := 0.0
 					for f in world.zone_fleets[zone]:
 						if world.is_at_war(w.owner, f.owner):
 							targets.append(f)
+							aa += f.aa
 					if not targets.is_empty():
-						_take_losses(world, targets, dmg, rng)
+						# ПВО кораблей зоны ослабляет удар
+						_take_losses(world, targets, dmg * NAVY_AA / (NAVY_AA + aa), rng)
 	_air_job = {}
 	_air_res = []
 	for n in nc:
@@ -1815,8 +2154,16 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 	for plan in world.invasions:
 		if plan.alive and plan.owner == n:
 			if plan.days_left <= 8:
+				# прикрытие — соединения базы первого надводного (до NAVY_WIDTH)
+				var sent := 0
+				var base := -1
 				for f in world.fleets:
-					if f.alive and f.owner == n and f.mission != "raid" and f.ships[SHIP_SS] < fleet_size(f):
+					if sent >= NAVY_WIDTH:
+						break
+					if f.alive and f.owner == n and f.mission != "raid" and f.ships[SHIP_SS] < fleet_size(f) \
+							and (base < 0 or f.home == base):
+						base = f.home
+						sent += 1
 						f.mission = "patrol"
 						f.task_until = world.day + 25
 						for q in world.p_adj[plan.target]:
@@ -1824,7 +2171,6 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 								if f.zone != q and f.path.is_empty():
 									f.path = sea_path(world, f.zone, q)
 								break
-						break
 			return
 	# цель и порт посадки выбираются один раз на операцию
 	var best := nat.inv_target

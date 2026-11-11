@@ -326,6 +326,7 @@ static func _spawn_armies(world: World, rng: RandomNumberGenerator, data: Dictio
 		Tech.grant_base(nat)
 		Tech.fit_slots(nat)
 		Designs.ai_update(world, nat)   # стартовые проекты самолётов по технологиям
+		ShipDesigns.ai_update(world, nat)   # и кораблей (для постройки; стартовый флот — старых проектов)
 		Military.assign_free_factories(nat, Military.default_split(nat))
 		for line in nat.lines:
 			line[2] = 0.8

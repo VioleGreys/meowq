@@ -346,6 +346,12 @@ func _auto_screenshot_locked() -> void:
 			var pa := _arg("plane")
 			var pd: int = -1 if pa == "new" else (world.nations[me].air_design[0 if pa == "fig" else 1] if pa in ["fig", "bmb"] else int(pa))
 			hud._open_plane_editor(world, pd)
+		elif _arg("ship") != "":
+			# конструктор корабля: --ship=N (копия проекта N), --ship=new или --ship=ss|cr|cv|bb|dd (основной проект роли)
+			hud.open_tab("navy")
+			var sa := _arg("ship")
+			var sd: int = -1 if sa == "new" else (world.nations[me].ship_role[ShipDesigns.ROLE_OF_KEY[sa]] if ShipDesigns.ROLE_OF_KEY.has(sa) else int(sa))
+			hud._open_ship_editor(world, sd)
 		elif _arg("tab") != "":
 			if _arg("trade") != "":
 				hud._prod_page = "trade"   # --trade=1: «Внешняя экономика»; --trade=oil и т. п. — выбор продавца

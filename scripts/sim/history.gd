@@ -778,14 +778,14 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				# неделей, — короче самого короткого фокуса)
 				world.scheduled.append([world.day + int(e.get("days", 1)), who, e.get("effects", [])])
 			"ships":
-				# корабли — в самый сильный флот страны (линкоры bb, крейсеры cr, эсминцы dd, подлодки ss)
-				var kinds := {"bb": Forces.SHIP_BB, "cr": Forces.SHIP_CR, "dd": Forces.SHIP_DD, "ss": Forces.SHIP_SS}
-				var best_f: World.Fleet = null
-				for f in world.fleets:
-					if f.alive and f.owner == who and (best_f == null or Forces.fleet_power(f) > Forces.fleet_power(best_f)):
-						best_f = f
-				if best_f != null:
-					best_f.ships[kinds.get(e.get("kind", "dd"), Forces.SHIP_DD)] += int(e.get("n", 1))
+				# корабли основного проекта роли (линкоры bb, крейсеры cr, эсминцы dd,
+				# подлодки ss, авианосцы cv) — в соединения страны (Forces.place_ship)
+				var role: int = ShipDesigns.ROLE_OF_KEY.get(e.get("kind", "dd"), 0)
+				ShipDesigns.ai_update(world, nat)
+				var did: int = nat.ship_role[role]
+				if did >= 0:
+					for k in int(e.get("n", 1)):
+						Forces.place_ship(world, who, did)
 			"ideology":
 				nat.ideology = String(e["v"])
 				world.palette_dirty = true
@@ -1321,8 +1321,7 @@ static func effects_text(world: World, effects: Array) -> String:
 				var inner := effects_text(world, e.get("effects", [])).trim_prefix("Эффекты: ")
 				parts.append("через %d дн.: %s" % [int(e.get("days", 1)), inner])
 			"ships":
-				var ki := {"bb": 0, "cr": 1, "dd": 2, "ss": 3}
-				parts.append("+%d: %s" % [int(e.get("n", 1)), Forces.SHIP_NAMES[ki.get(e.get("kind", "dd"), 2)].to_lower()])
+				parts.append("+%d: %s" % [int(e.get("n", 1)), ShipDesigns.ROLE_PLURAL[ShipDesigns.ROLE_OF_KEY.get(e.get("kind", "dd"), 0)]])
 			"ideology":
 				parts.append("строй: %s" % world.ideology_names.get(e["v"], e["v"]))
 			"leader":

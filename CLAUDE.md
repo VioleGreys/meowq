@@ -102,7 +102,7 @@
 - Сборка APK и C++ — `docs/notes/build.md`.
 - Скриншот без человека: `godot --path . -- --screenshot=out.png --nation=GER --days=120`
   (доп. флаги: `--zoom=1.6 --select --tab=army --pick=1 --mapmode=4 --card=AUS --peace=AUS`;
-  наука: `--tech=inf:mot2`, доктрины: `--tech=doc:l_mob1`; армия и война: `--group --war=POL --warday=30`; фокусы и события: `--focus`, `--event=munich`; флот: `--tab=navy --sel=fleet|wing --center=NOR`; конструктор самолёта: `--plane=fig|bmb|new|N`; прокрутка окна: `--scroll=N`).
+  наука: `--tech=inf:mot2`, доктрины: `--tech=doc:l_mob1`; армия и война: `--group --war=POL --warday=30`; фокусы и события: `--focus`, `--event=munich`; флот: `--tab=navy --sel=fleet|wing --center=NOR`; конструктор самолёта: `--plane=fig|bmb|new|N`; корабля: `--ship=new|N|ss|cr|cv|bb|dd`; прокрутка окна: `--scroll=N`).
   В облачном контейнере: `xvfb-run -a godot --rendering-driver opengl3 ...`.
 После изменений: парсинг без ошибок, sim_bench проходит, скриншот посмотреть.
 

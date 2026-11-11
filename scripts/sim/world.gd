@@ -62,7 +62,9 @@ class Nation:
 	var naval_share := 0.0      # доля заводов на судостроение (forces.json)
 	var air_share := 0.1        # доля заводов на авиацию
 	var trade_penalty := 0.0    # потери выпуска от рейдов подлодок (0..0.3)
-	var ship_queue: Array = []  # заложенные корабли: типы Forces.SHIP_*
+	var ship_queue: Array = []  # заложенные корабли: номера проектов (World.ship_designs)
+	var ship_role := PackedInt32Array([-1, -1, -1, -1, -1])  # основные проекты ролей (ShipDesigns.ROLES)
+	var ship_techs := -1        # сколько технологий было при последней сборке проектов кораблей
 	var planned_wars := {}      # ИИ: с кем война запланирована фокусами (готовиться заранее)
 	var pw_key := ""             # кэш planned_wars: фокус|выполнено (History)
 	var pw_day := -100
@@ -275,13 +277,28 @@ class Division:
 			w.ds_land(slot, 1 if v else 0)
 
 
-## Флот: корабли по типам (Forces.SHIP_*), стоит в морской зоне (провинция-море).
+## Флот (соединение до Forces.FLEET_MAX кораблей): корабли по проектам
+## (World.ship_designs), стоит в морской зоне (провинция-море).
 class Fleet:
 	extends RefCounted
 	var id := 0
 	var owner := 0
 	var name := ""
-	var ships := PackedInt32Array([0, 0, 0, 0])   # линкоры, крейсеры, эсминцы, подлодки
+	var designs := PackedInt32Array()   # проекты кораблей (World.ship_designs)
+	var counts := PackedInt32Array()    # сколько кораблей каждого проекта
+	# сводка по составу (Forces.recount): кораблей по категориям (подлодки,
+	# крейсеры, авианосцы), сила, огонь, авиагруппы, ПЛО, ПВО, рейды, скрытность подлодок
+	var ships := PackedInt32Array([0, 0, 0])
+	var power := 0.0
+	var fam_power := PackedFloat64Array()   # сила по родам (ShipDesigns.FAM_*) — для качества
+	var sub_power := 0.0
+	var atk := 0.0
+	var sub_atk := 0.0                      # огонь подлодок (входит в atk)
+	var air := 0.0
+	var asw := 0.0
+	var aa := 0.0
+	var raid := 0.0
+	var stealth := 0.0
 	var zone := -1
 	var home := -1                  # морская зона у главного порта
 	var path := PackedInt32Array()
@@ -384,7 +401,8 @@ var n_attack := PackedFloat32Array()
 var n_defense := PackedFloat32Array()
 var n_org := PackedFloat32Array()
 var n_speed := PackedFloat32Array()
-# качество флота и авиации по странам (технологии): корабли — страна×4 рода,
+# качество флота и авиации по странам (технологии): корабли — страна×5 родов
+# (ShipDesigns.FAM_*: линкоры, крейсеры, эсминцы, подлодки, авианосцы),
 # авиация — страна×4 (истребители, поддержка войск, бомбардировки, удары по флоту)
 var n_ship := PackedFloat64Array()
 var n_air := PackedFloat64Array()
@@ -432,6 +450,7 @@ var groups: Array = []                    # Array[ArmyGroup]
 var fleets: Array = []                    # Array[Fleet]
 var wings: Array = []                     # Array[AirWing]
 var plane_designs: Array = []             # проекты самолётов (Designs.add): словари характеристик
+var ship_designs: Array = []              # проекты кораблей (ShipDesigns.add): словари характеристик
 var region_count := 0
 var p_region := PackedInt32Array()        # воздушный район провинции
 var p_air_src := PackedInt32Array()       # район из map.json (стратегический регион); пусто — сетка
@@ -551,6 +570,16 @@ func event_front() -> Array:
 
 ## Номер дня по дате «ГГГГ-ММ-ДД» (день 0 — 1 января 1936 г.).
 var _day_of_cache := {}
+
+
+## Год дня игры (по умолчанию — сегодняшнего).
+func year_of(at: int = -1) -> int:
+	var d := day if at < 0 else at
+	var year := START_YEAR
+	while d >= _year_days(year):
+		d -= _year_days(year)
+		year += 1
+	return year
 
 
 ## Месяц (0–11) дня игры.
@@ -739,20 +768,22 @@ func refresh_stats() -> void:
 		n_org[n.id] = 40.0 * (1.0 + n.b("org"))
 		n_speed[n.id] = 0.28 * (1.0 + n.b("speed"))
 	# качество флота и авиации меняется только с бонусами (stats_dirty)
-	var changed := n_ship.size() != nation_count * 4
+	var changed := n_ship.size() != nation_count * ShipDesigns.FAMS
 	for n in nations:
 		changed = changed or n.stats_dirty
 	if not changed:
 		return
-	n_ship.resize(nation_count * 4)
+	n_ship.resize(nation_count * ShipDesigns.FAMS)
 	n_air.resize(nation_count * 4)
 	n_air_def.resize(nation_count)
 	for n in nations:
 		var nav: float = 1.0 + n.b("naval")
-		n_ship[n.id * 4] = nav + n.b("ship_bb")
-		n_ship[n.id * 4 + 1] = nav + n.b("ship_cr")
-		n_ship[n.id * 4 + 2] = nav + n.b("ship_dd")
-		n_ship[n.id * 4 + 3] = nav + n.b("ship_ss")
+		var o: int = n.id * ShipDesigns.FAMS
+		n_ship[o] = nav + n.b("ship_bb")
+		n_ship[o + 1] = nav + n.b("ship_cr")
+		n_ship[o + 2] = nav + n.b("ship_dd")
+		n_ship[o + 3] = nav + n.b("ship_ss")
+		n_ship[o + 4] = nav + n.b("ship_cv")
 		var air: float = 1.0 + n.b("air")
 		n_air[n.id * 4] = air + n.b("air_fighter")
 		n_air[n.id * 4 + 1] = air + n.b("air_cas")
