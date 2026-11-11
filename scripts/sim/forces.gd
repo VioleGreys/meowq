@@ -302,7 +302,24 @@ static func fleet_power(f: World.Fleet) -> float:
 
 ## Боевая сила с учётом готовности (после боёв — ниже, пока флот не на базе).
 static func combat_power(f: World.Fleet) -> float:
-	return fleet_power(f) * (0.3 + 0.7 * f.readiness)
+	return fleet_power(f) * f.quality * (0.3 + 0.7 * f.readiness)
+
+
+## Качество флотов по технологиям страны: среднее по силе кораблей каждого рода.
+static func refresh_quality(world: World) -> void:
+	var ns := world.n_ship
+	if ns.size() != world.nation_count * 4:
+		return
+	for f in world.fleets:
+		if not f.alive:
+			continue
+		var base := 0.0
+		var q := 0.0
+		for k in 4:
+			var pw: float = f.ships[k] * SHIP_POWER[k]
+			base += pw
+			q += pw * ns[f.owner * 4 + k]
+		f.quality = q / base if base > 0.0 else 1.0
 
 
 static func fleet_size(f: World.Fleet) -> int:
@@ -375,6 +392,7 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 	Prof.add("флот:движение", _pt)
 	_pt = Time.get_ticks_usec()
 	_refresh_cache(world)
+	refresh_quality(world)
 	# морские бои
 	for f in world.fleets:
 		f.in_battle = false
@@ -473,10 +491,10 @@ static func _trade_war(world: World, rng: RandomNumberGenerator) -> void:
 		for zone in trade_zones(world, nat.id):
 			for f in world.zone_fleets.get(zone, []):
 				if f.mission == "raid" and world.is_at_war(nat.id, f.owner):
-					raid += f.ships[SHIP_SS] * SHIP_POWER[SHIP_SS]
+					raid += f.ships[SHIP_SS] * SHIP_POWER[SHIP_SS] * (1.0 + world.nations[f.owner].b("sub_raid"))
 					raiders.append(f)
 				elif world.ally[nat.id * world.nation_count + f.owner] == 1 and f.mission != "port":
-					escort += f.ships[SHIP_DD] + f.ships[SHIP_CR] * 2.0
+					escort += (f.ships[SHIP_DD] + f.ships[SHIP_CR] * 2.0) * (1.0 + world.nations[f.owner].b("escort"))
 		nat.trade_penalty = clampf((raid - escort * 0.7) * 0.004, 0.0, 0.3)
 		if escort > 0.0 and not raiders.is_empty():
 			_take_losses(world, raiders, escort * 0.01 * rng.randf_range(0.5, 1.5), rng)
@@ -506,9 +524,10 @@ static func _build_ships(world: World) -> void:
 		if nat.ship_queue.is_empty():
 			continue
 		var t: int = nat.ship_queue[0]
-		if nat.stock[Military.EQ_SHIP] < SHIP_COST[t]:
+		var cost: float = SHIP_COST[t] / (1.0 + maxf(0.0, nat.b("shipyard")))   # технологии верфей
+		if nat.stock[Military.EQ_SHIP] < cost:
 			continue
-		nat.stock[Military.EQ_SHIP] -= SHIP_COST[t]
+		nat.stock[Military.EQ_SHIP] -= cost
 		nat.ship_queue.pop_front()
 		# новый корабль — во флот своего рода, у которого меньше всего сил
 		# относительно его доли (подлодки — к рейдерам)
@@ -1211,6 +1230,7 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 	var war := world.war
 	var air_sup := world.air_sup
 	var cas_mult := world.cas_mult
+	var qa := world.n_air   # качество авиации по технологиям: страна×4
 	for r in by_region:
 		var here: Array = by_region[r]
 		# снимок полей крыльев района в локальные массивы
@@ -1241,11 +1261,11 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 				var o := ow[j]
 				if kd[j] == 0:
 					if ally[n * nc + o] == 1:
-						own_f += pl[j]
+						own_f += pl[j] * qa[o * 4]
 					elif n != o and war[n * nc + o] == 1:
-						en_f += pl[j]
+						en_f += pl[j] * qa[o * 4]
 				elif cas_m[j] == 1 and ally[n * nc + o] == 1:
-					own_b += pl[j]
+					own_b += pl[j] * qa[o * 4 + 1]
 			var sup := 0.5 if own_f + en_f <= 0.0 else own_f / (own_f + en_f)
 			air_sup[r * nc + n] = sup
 			var m := 1.0 + minf(0.4, own_b * sup / 600.0)
@@ -1261,7 +1281,7 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 			for k in cnt:
 				if kd[k] == 0:
 					var o := ow[k]
-					var p_k: float = here[k].planes   # уже с потерями этого дня, как раньше
+					var p_k: float = here[k].planes * qa[o * 4]   # уже с потерями этого дня, как раньше
 					if wo != o and war[wo * nc + o] == 1:
 						en_f += p_k
 					elif ally[wo * nc + o] == 1:
@@ -1282,7 +1302,7 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 			if w.mission == "bomb":
 				_bomb_factories(world, w, r, sup, rng)
 			elif w.mission == "naval":
-				var dmg: float = w.planes * 0.002 * sup
+				var dmg: float = w.planes * 0.002 * sup * qa[w.owner * 4 + 3]
 				for zone in world.zone_fleets:
 					if world.p_region[zone] != r:
 						continue
@@ -1297,7 +1317,7 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 
 
 static func _bomb_factories(world: World, w: World.AirWing, r: int, sup: float, rng: RandomNumberGenerator) -> void:
-	if rng.randf() > w.planes / 1500.0 * sup:
+	if rng.randf() > w.planes / 1500.0 * sup * world.n_air[w.owner * 4 + 2]:
 		return
 	var cands: Array = []
 	for p in world.region_provs[r]:
@@ -1307,6 +1327,10 @@ static func _bomb_factories(world: World, w: World.AirWing, r: int, sup: float, 
 	if cands.is_empty():
 		return
 	var p: int = cands[rng.randi() % cands.size()]
+	# радары и зенитки защищающегося срывают часть налётов
+	var adef: float = world.n_air_def[world.p_controller[p]]
+	if adef > 0.0 and rng.randf() < adef:
+		return
 	if world.p_mil[p] > 0:
 		world.p_mil[p] -= 1
 	else:

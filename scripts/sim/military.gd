@@ -69,6 +69,10 @@ const DEFAULT_TEMPLATES := [
 	["Моторизованная", "мот.", [0, 0, 0, 0, 10, 0]],
 	["Танковая", "танк.", [0, 0, 0, 0, 0, 8]],
 ]
+# Прежнее дерево науки за первые два года давало всем +65 % атаки при +35 %
+# обороны, и ход войн подобран под этот перевес наступления. Теперь технологии
+# растут понемногу, а перевес заложен в основу.
+const BASE_ATK := 1.25
 const BASE_SPEED := 0.28   # доля провинции в день для скорости 1.0 на равнине
 
 
@@ -182,8 +186,21 @@ static func refresh_division(world: World, d: World.Division) -> void:
 		build_tables(world)
 	var nat: World.Nation = world.nations[d.owner]
 	var t: Dictionary = world.templates[d.tpl]
-	d.atk = t["atk"] * (1.0 + nat.b("attack"))
-	d.def = t["def"] * (1.0 + nat.b("defense"))
+	# общий бонус страны + бонусы родов войск (технологии) по батальонам состава
+	var atk: float = t["atk"] * (BASE_ATK + nat.b("attack"))
+	var def: float = t["def"] * (1.0 + nat.b("defense"))
+	var ba := PackedFloat64Array([nat.b("inf_attack"), nat.b("art_attack"), nat.b("tank_attack")])
+	var bd := PackedFloat64Array([nat.b("inf_defense"), nat.b("art_defense"), nat.b("tank_defense")])
+	var bat: Array = t["bat"]
+	for b in BAT_COUNT:
+		var c: int = int(bat[b])
+		if c <= 0:
+			continue
+		var kind := 2 if b == B_TANK else (1 if b == B_ART else 0)
+		atk += c * float(BATTALIONS[b]["atk"]) * ba[kind]
+		def += c * float(BATTALIONS[b]["def"]) * bd[kind]
+	d.atk = atk
+	d.def = def
 	d.max_org = t["org"] * (1.0 + nat.b("org"))
 	var spd_bonus := nat.b("speed") if t["motor"] else nat.b("speed") * 0.3
 	d.spd = BASE_SPEED * t["spd"] * (1.0 + spd_bonus)

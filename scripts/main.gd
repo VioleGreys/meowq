@@ -317,6 +317,19 @@ func _auto_screenshot_locked() -> void:
 			hud.focus_view.open(self, world, me)
 			if _arg("fsel") != "":
 				hud.focus_view._select(_arg("fsel"))   # карточка фокуса с прогнозом шансов
+		if _arg("tech") != "":
+			# дерево науки: --tech=категория[:технология]; свободные слоты заполняются для показа
+			var tn: World.Nation = world.nations[me]
+			Tech.fit_slots(tn)
+			while Tech.free_slot(tn) >= 0:
+				var tp := Tech.ai_pick(world, tn)
+				if tp == "" or not Tech.start(tn, Tech.free_slot(tn), tp):
+					break
+			var ta := _arg("tech").split(":")
+			hud.open_tab("research")
+			hud.tech_view.set_cat(ta[0])
+			if ta.size() > 1:
+				hud.tech_view._select(ta[1])
 		if _arg("peace") != "":
 			world.pending_peace.append([nation_by_tag(_arg("peace")), me])
 		if _arg("tpl") != "":
@@ -538,7 +551,7 @@ func pick(nid: int) -> void:
 func start_as(nid: int) -> void:
 	for n in world.nations:
 		n.is_player = n.id == nid
-	world.nations[nid].current_research = ""
+	# исследования, начатые ИИ, остаются в слотах — игрок может их сменить
 	unit_layer.player = nid
 	map_view.set_highlight_nation(-1)
 	map_view.set_selected(-1)
@@ -1133,6 +1146,10 @@ func _notification(what: int) -> void:
 			return
 		if hud.focus_view.visible:
 			hud.focus_view.hide()
+			return
+		if hud.tech_view.visible:
+			hud.tech_view.hide()
+			hud._set_side_active("")
 			return
 		if hud.close_popup():
 			return

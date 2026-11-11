@@ -107,8 +107,9 @@ class Nation:
 	var focus_days := 0
 	var focus_done := {}        # id -> true     # технологии изменились — пересчитать кэш дивизий      # сколько дивизий ИИ уже заказал (для чередования шаблонов)
 	var manpower := 0.0         # тысячи человек
-	var research_points := 0.0  # накопленные за текущую технологию
-	var current_research := ""
+	var research_slots := 2     # слотов исследований (Tech.slots_for)
+	var research: Array = []    # что в работе по слотам: id технологии или ""
+	var research_progress := {} # tech_id -> накоплено дней работы (сохраняется при смене)
 	var techs := {}             # tech_id -> true
 	var bonus := {}             # bonus_key -> float
 	var build_mode := "mil"     # "civ" или "mil"
@@ -119,7 +120,6 @@ class Nation:
 	var mil := 0
 	var province_count := 0
 	var division_count := 0
-	var daily_research := 0.0
 	var daily_manpower := 0.0
 
 	var spirits := {}           # национальные черты: id -> множитель силы (1 — полная)
@@ -284,6 +284,7 @@ class Fleet:
 	var task_until := 0             # прикрывает высадку до этого дня (ИИ не уводит в порт)
 	var readiness := 1.0            # готовность 0..1: падает в боях, восстанавливается на военно-морской базе
 	var share := 1.0                # доля новых кораблей своего рода (флоты по базам, squadrons)
+	var quality := 1.0              # множитель боевой силы от технологий (Forces.refresh_quality)
 
 
 ## План морской высадки: подготовка 30–60 дней, войска ждут в порту посадки.
@@ -375,6 +376,11 @@ var n_attack := PackedFloat32Array()
 var n_defense := PackedFloat32Array()
 var n_org := PackedFloat32Array()
 var n_speed := PackedFloat32Array()
+# качество флота и авиации по странам (технологии): корабли — страна×4 рода,
+# авиация — страна×4 (истребители, поддержка войск, бомбардировки, удары по флоту)
+var n_ship := PackedFloat64Array()
+var n_air := PackedFloat64Array()
+var n_air_def := PackedFloat64Array()
 var res_prov := PackedInt32Array()       # провинции с ресурсами (Economy)
 var res_ctrl := PackedInt32Array()        # кэш: хозяин провинции с ресурсами при последнем пересчёте добычи
 var res_val := PackedFloat32Array()       # их добыча: i*6 + ресурс
@@ -708,6 +714,27 @@ func refresh_stats() -> void:
 		n_defense[n.id] = 12.0 * (1.0 + n.b("defense"))
 		n_org[n.id] = 40.0 * (1.0 + n.b("org"))
 		n_speed[n.id] = 0.28 * (1.0 + n.b("speed"))
+	# качество флота и авиации меняется только с бонусами (stats_dirty)
+	var changed := n_ship.size() != nation_count * 4
+	for n in nations:
+		changed = changed or n.stats_dirty
+	if not changed:
+		return
+	n_ship.resize(nation_count * 4)
+	n_air.resize(nation_count * 4)
+	n_air_def.resize(nation_count)
+	for n in nations:
+		var nav: float = 1.0 + n.b("naval")
+		n_ship[n.id * 4] = nav + n.b("ship_bb")
+		n_ship[n.id * 4 + 1] = nav + n.b("ship_cr")
+		n_ship[n.id * 4 + 2] = nav + n.b("ship_dd")
+		n_ship[n.id * 4 + 3] = nav + n.b("ship_ss")
+		var air: float = 1.0 + n.b("air")
+		n_air[n.id * 4] = air + n.b("air_fighter")
+		n_air[n.id * 4 + 1] = air + n.b("air_cas")
+		n_air[n.id * 4 + 2] = air + n.b("air_bomb")
+		n_air[n.id * 4 + 3] = air + n.b("air_naval")
+		n_air_def[n.id] = clampf(n.b("air_def"), 0.0, 0.6)
 
 
 ## Доход страны за день: [гражд., воен., призывники, провинций]. Метод самого

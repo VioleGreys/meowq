@@ -126,6 +126,7 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 			nat.bonus[k] = float(nat.bonus.get(k, 0.0)) + float(bon[k])
 		for sid in d.get("spirits", []):
 			nat.spirits[String(sid)] = 1.0
+		nat.research_slots = int(d.get("research_slots", 0))
 
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 1936
@@ -321,6 +322,7 @@ static func _spawn_armies(world: World, rng: RandomNumberGenerator, data: Dictio
 			continue
 		nat.civ = income[nat.id][0]
 		nat.mil = income[nat.id][1]
+		Tech.fit_slots(nat)
 		Military.assign_free_factories(nat, Military.default_split(nat))
 		for line in nat.lines:
 			line[2] = 0.8

@@ -29,6 +29,8 @@
   `ai.cpp`), планирование наступления, `balance_check`.
 - `economy.md` — ресурсы, торговля, договоры, блокада (`economy.gd`).
 - `supply.md` — снабжение по узлам районов (`supply.gd`); Испания.
+- `science.md` — наука: слоты исследований, дерево технологий, бонусы родов
+  войск, флота и авиации, ИИ науки, окно дерева (`tech.gd`, `tech_view.gd`).
 - `save.md` — главное меню, сохранение, загрузка, автосохранение (`save.gd`).
 - `engine.md` — фоновый поток симуляции, конвейеры ввода и экрана, дивизии в
   плоских массивах, ядра GDScript/C++, упреждение (`spec.gd`), скорости, замеры.
@@ -42,7 +44,7 @@
   история) приняты; исторические моменты доводим после основного функционала.
 - Сделаны и ждут «ок» пользователя: 6 (флот и авиация), 7 и 7б
   (производительность, нативное ядро), 9 (весь мир), из этапа 8 — главное меню
-  и сохранения. Этап 10 (оформление) — в работе. От этапа 8 остались обучение
+  и сохранения; наука по слотам и дерево технологий (`science.md`). Этап 10 (оформление) — в работе. От этапа 8 остались обучение
   и английский язык.
 - Открытое: Испания — Республика часто сжата до 7 % уже к лету 1937 г.
   (`supply.md`); `_ai_option` берёт исторический вариант, пока нет условий
@@ -80,6 +82,7 @@
 - Пути многим дивизиям сразу: `godot --headless --path . --script res://tests/paths_check.gd`
 - Военная система: `godot --headless --path . --script res://tests/military_check.gd`
 - Дипломатия (правила + прогон лет): `godot --headless --path . --script res://tests/diplomacy_check.gd -- --years=3`
+- Наука (дерево и темп): `godot --headless --path . --script res://tests/tech_check.gd [-- --until=1946-01-01 --tags=GER,POL]`
 - Проверка стартовых данных: `godot --headless --path . --script res://tests/data_check.gd`
 - Закупки ресурсов страны: `godot --headless --path . --script res://tests/trade_diag.gd [-- --nation=GER]`
 - Профиль участков кода: `godot --headless --path . --script res://tests/prof_check.gd`
@@ -92,7 +95,7 @@
 - Сборка APK и C++ — `docs/notes/build.md`.
 - Скриншот без человека: `godot --path . -- --screenshot=out.png --nation=GER --days=120`
   (доп. флаги: `--zoom=1.6 --select --tab=army --pick=1 --mapmode=4 --card=AUS --peace=AUS`;
-  армия и война: `--group --war=POL --warday=30`; фокусы и события: `--focus`, `--event=munich`; флот: `--tab=navy --sel=fleet|wing --center=NOR`).
+  наука: `--tech=inf:mot2`; армия и война: `--group --war=POL --warday=30`; фокусы и события: `--focus`, `--event=munich`; флот: `--tab=navy --sel=fleet|wing --center=NOR`).
   В облачном контейнере: `xvfb-run -a godot --rendering-driver opengl3 ...`.
 После изменений: парсинг без ошибок, sim_bench проходит, скриншот посмотреть.
 

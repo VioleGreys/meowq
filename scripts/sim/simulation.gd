@@ -55,7 +55,6 @@ func refresh_income() -> void:
 		nat.mil = r[1]
 		nat.province_count = r[3]
 		nat.daily_manpower = r[2] * 0.0014 * (1.0 + nat.b("manpower"))
-		nat.daily_research = (1.0 + nat.civ * 0.05) * (1.0 + nat.b("research"))
 
 
 func tick() -> void:
@@ -76,9 +75,17 @@ func tick() -> void:
 		for nat in world.nations:
 			dirty = dirty or nat.stats_dirty
 		if dirty:
-			for d in world.divisions:
-				if world.nations[d.owner].stats_dirty:
-					Military.refresh_division(world, d)
+			# с наукой по слотам «грязные» страны есть почти каждый день —
+			# владельца смотрим по плоскому массиву, без обёрток дивизии
+			var dn := PackedByteArray()
+			dn.resize(world.nation_count)
+			for nat in world.nations:
+				dn[nat.id] = 1 if nat.stats_dirty else 0
+			var own := world.d_owner
+			var divs := world.divisions
+			for i in divs.size():
+				if dn[own[i]] == 1:
+					Military.refresh_division(world, divs[i])
 		for nat in world.nations:
 			nat.stats_dirty = false
 		_refresh_sides())
@@ -128,7 +135,6 @@ func _phase_economy() -> void:
 		nat.mil = r[1]
 		nat.province_count = r[3]
 		nat.daily_manpower = r[2] * 0.0014 * (1.0 + nat.b("manpower"))
-		nat.daily_research = (1.0 + nat.civ * 0.05) * (1.0 + nat.b("research"))
 		nat.manpower += nat.daily_manpower
 		# производство снаряжения: свободные заводы ИИ сам раскладывает по линиям
 		_pt = Time.get_ticks_usec()
@@ -155,15 +161,11 @@ func _phase_economy() -> void:
 		_pt = Time.get_ticks_usec()
 
 		# наука
-		if nat.current_research != "":
-			nat.research_points += nat.daily_research
-			var tech := Tech.get_tech(nat.current_research)
-			if not tech.is_empty() and nat.research_points >= tech["cost"]:
-				Tech.complete(nat, nat.current_research)
-				if nat.is_player:
-					world.log_event("Исследовано: %s" % tech["name"])
-				nat.current_research = ""
-				nat.research_points = 0.0
+		if (world.day + nat.id) % 30 == 0 or nat.research.size() < nat.research_slots:
+			Tech.fit_slots(nat)
+		for tid in Tech.daily(world, nat):
+			if nat.is_player:
+				world.log_event("Исследовано: %s — слот науки свободен" % Tech.tech_name(tid))
 
 		# строительство фабрик
 		# закупки ресурсов оплачиваются гражданскими заводами, продажи их приносят
@@ -498,12 +500,13 @@ func _phase_ai() -> void:
 			var eco: Dictionary = AIPlanner.plan_economy(world, nid, rng, mine.size())
 			_ai_train(nat, int(eco["train"]))
 			nat.build_mode = eco["build"]
-			if nat.current_research == "":
-				# выбор науки — в главном потоке: константы Tech.LIST общие для всех
-				var av := Tech.available(nat)
-				if not av.is_empty():
-					av.sort_custom(func(x, y): return x["cost"] < y["cost"])
-					nat.current_research = av[mini(av.size() - 1, (world.day + nid) % 2)]["id"]
+			# выбор науки — в главном потоке: таблицы Tech общие для всех
+			var fs := Tech.free_slot(nat)
+			while fs >= 0:
+				var pick := Tech.ai_pick(world, nat)
+				if pick == "" or not Tech.start(nat, fs, pick):
+					break
+				fs = Tech.free_slot(nat)
 			if eco["war"] >= 0:
 				Diplomacy.declare_war(world, nid, eco["war"])
 			if staged.has(nid):

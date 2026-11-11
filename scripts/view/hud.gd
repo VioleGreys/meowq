@@ -30,6 +30,7 @@ var _dynamic: Dictionary = {}   # ссылки на элементы окна, �
 var _info_prov := -1
 var _card_nation := -1
 var focus_view: FocusView
+var tech_view: TechView
 var event_sheet: EventSheet
 
 
@@ -85,6 +86,9 @@ func _ready() -> void:
 	focus_view = FocusView.new()
 	root.add_child(focus_view)
 	focus_view.hide()
+	tech_view = TechView.new()
+	root.add_child(tech_view)
+	tech_view.hide()
 	toast_label = Label.new()
 	# уведомления — справа под верхней полосой, не поверх окон и планшета
 	toast_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -279,6 +283,7 @@ func _build_side() -> void:
 	var items := [
 		["focus", func():
 			close_popup()
+			tech_view.hide()
 			focus_view.open(game, game.world, game.player())],
 		["army", func(): open_tab("army")],
 		["navy", func(): open_tab("navy")],
@@ -1098,6 +1103,8 @@ func on_tick() -> void:
 		_update_popup_dynamic()
 	if focus_view.visible:
 		focus_view.refresh()
+	if tech_view.visible:
+		tech_view.refresh()
 	if info_panel.visible:
 		if game.selected_fleet >= 0 and w.fleets[game.selected_fleet].alive:
 			show_fleet(w.fleets[game.selected_fleet])
@@ -1292,6 +1299,14 @@ func open_tab(tab: String) -> void:
 		log_box.hide()
 		return
 	event_sheet.hide()
+	tech_view.hide()
+	if tab == "research":
+		# наука — дерево на весь экран (TechView), без листа-папки
+		close_popup()
+		focus_view.hide()
+		tech_view.open(game, game.world, game.player())
+		_set_side_active("research")
+		return
 	var was_open := popup.visible
 	var same_mode := was_open and ((popup_tab == "event") == (tab == "event"))
 	if tab != popup_tab:
@@ -1380,32 +1395,6 @@ func _rebuild_popup() -> void:
 			_build_production(w, me)
 		"navy":
 			_build_navy(w, me)
-		"research":
-			popup_title.text = "Наука"
-			_dynamic["res_id"] = n.current_research
-			_dynamic["res"] = _label("", 18)
-			popup_body.add_child(_dynamic["res"])
-			var bar := ProgressBar.new()
-			bar.custom_minimum_size = Vector2(0, 22)
-			bar.show_percentage = false
-			_dynamic["bar"] = bar
-			popup_body.add_child(bar)
-			for t in Tech.available(n):
-				var id: String = t["id"]
-				var b := _button("%s\n%s · %d очков" % [t["name"], t["desc"], t["cost"]], func():
-					if n.current_research != id:
-						n.current_research = id
-						n.research_points = 0.0
-					_rebuild_popup())
-				b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-				if n.current_research == id:
-					b.disabled = true
-				popup_body.add_child(b)
-			if not n.techs.is_empty():
-				var done: Array = []
-				for k in n.techs:
-					done.append(Tech.get_tech(k)["name"])
-				popup_body.add_child(_label("Изучено: " + ", ".join(done), 16, Color(0.7, 0.8, 0.7)))
 		"build":
 			popup_title.text = "Стройка"
 			_dynamic["build"] = _label("", 18)
@@ -2440,18 +2429,6 @@ func _update_popup_dynamic() -> void:
 				return   # страница внешней экономики
 			var used := Military.assigned_factories(n)
 			_dynamic["prod"].text = "Военных заводов: %d · на линиях: %d · свободно: %d" % [n.mil, used, n.mil - used]
-		"research":
-			if n.current_research != _dynamic.get("res_id", ""):
-				_rebuild_popup()  # технология изучена — обновить список
-				return
-			if n.current_research == "":
-				_dynamic["res"].text = "Ничего не исследуется — выберите технологию. (+%.1f/день)" % n.daily_research
-				_dynamic["bar"].value = 0
-			else:
-				var t := Tech.get_tech(n.current_research)
-				_dynamic["res"].text = "Сейчас: %s — %d / %d (+%.1f/день)" % [t["name"], n.research_points, t["cost"], n.daily_research]
-				_dynamic["bar"].max_value = t["cost"]
-				_dynamic["bar"].value = n.research_points
 		"build":
 			var rate := n.civ * Simulation.BUILD_RATE * (1.0 + n.b("construction"))
 			_dynamic["build"].text = "Фабрики: %d гражданских, %d военных\nСледующая: %s, %d%% (+%.1f/день)" % [

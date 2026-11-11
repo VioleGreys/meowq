@@ -1193,9 +1193,8 @@ static func _vichy(world: World, loser: int, winner: int, tag: String) -> void:
 ## Человекочитаемое описание эффектов (для дерева фокусов и событий).
 static func effects_text(world: World, effects: Array) -> String:
 	var parts: Array = []
-	var bonus_names := {"industry": "выпуск снаряжения", "research": "наука", "construction": "стройка",
-		"attack": "атака", "defense": "оборона", "org": "организация", "speed": "скорость",
-		"manpower": "призыв", "reinforce": "пополнение"}
+	var bonus_names := Tech.BONUS_NAMES.duplicate()
+	bonus_names.merge({"research": "наука", "attack": "атака", "defense": "оборона", "speed": "скорость"}, true)
 	for e in effects:
 		var tname := ""
 		if e.has("target"):
