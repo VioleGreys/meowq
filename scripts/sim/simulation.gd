@@ -171,12 +171,16 @@ func _phase_economy() -> void:
 			# ИИ пересобирает проекты самолётов под новые технологии
 			if not nat.is_player and (world.day + nat.id) % 30 == 0:
 				Designs.ai_update(world, nat)
+		Prof.add("эк:наука-слоты", _pt)
+		_pt = Time.get_ticks_usec()
 		for tid in Tech.daily(world, nat):
 			if nat.is_player:
 				world.log_event("Исследовано: %s — слот науки свободен" % Tech.tech_name(tid))
 
 		# строительство фабрик
 		# закупки ресурсов оплачиваются гражданскими заводами, продажи их приносят
+		Prof.add("эк:наука-день", _pt)
+		_pt = Time.get_ticks_usec()
 		var civ_free := maxf(0.0, float(nat.civ) - nat.trade_civ + nat.trade_civ_in)
 		nat.build_progress += civ_free * BUILD_RATE * (1.0 + nat.b("construction"))
 		if nat.build_progress >= FACTORY_COST:
@@ -966,30 +970,82 @@ func _phase_recovery() -> void:
 
 # --- Капитуляция -------------------------------------------------------------
 
+# кэш проверки капитуляций: итоги по очкам пересчитываются, только когда
+# сменились владельцы, контроль, очки провинций или стороны (сюзерены, фракции)
+var _cap_owner := PackedInt32Array()
+var _cap_ctrl := PackedInt32Array()
+var _cap_vp := PackedInt32Array()
+var _cap_side := PackedInt32Array()
+var _cap_total := PackedInt32Array()
+var _cap_held := PackedInt32Array()
+var _cap_self := PackedInt32Array()   # провинций, что страна и владеет, и держит
+
+
 func _check_capitulation() -> void:
-	var total := PackedInt32Array()
-	var held := PackedInt32Array()
-	total.resize(world.nations.size())
-	held.resize(world.nations.size())
+	var nc := world.nations.size()
+	var side := PackedInt32Array()
+	side.resize(nc * 2)
+	for n in nc:
+		var r := Diplomacy.root(world, n)
+		side[n * 2] = r
+		side[n * 2 + 1] = world.nations[r].faction
 	var owner := world.p_owner
 	var ctrl := world.p_controller
 	var vp := world.p_vp
+	if _cap_total.size() != nc or side != _cap_side or owner != _cap_owner or ctrl != _cap_ctrl or vp != _cap_vp:
+		_cap_side = side
+		_cap_owner = owner.duplicate()
+		_cap_ctrl = ctrl.duplicate()
+		_cap_vp = vp.duplicate()
+		if Native.core != null:
+			var tot: PackedInt32Array = Native.core.call("cap_totals", owner, ctrl, vp, side, nc)
+			_cap_total = tot.slice(0, nc)
+			_cap_held = tot.slice(nc, nc * 2)
+			_cap_self = tot.slice(nc * 2, nc * 3)
+		else:
+			_cap_totals_gd(owner, ctrl, vp, side, nc)
+	_cap_countries()
+
+
+## Двойник MeowqCore::cap_totals.
+func _cap_totals_gd(owner: PackedInt32Array, ctrl: PackedInt32Array, vp: PackedInt32Array, side: PackedInt32Array, nc: int) -> void:
+	var total := PackedInt32Array()
+	var held := PackedInt32Array()
+	var selfc := PackedInt32Array()
+	total.resize(nc)
+	held.resize(nc)
+	selfc.resize(nc)
 	for p in world.prov_count:
 		var o := owner[p]
-		if o < 0 or vp[p] == 0:
+		if o < 0:
+			continue
+		var c := ctrl[p]
+		if c == o:
+			selfc[o] += 1
+		if vp[p] == 0:
 			continue
 		total[o] += vp[p]
 		# провинции у союзника по стороне (сюзерен, фракция) — не потеряны
-		if ctrl[p] == o or (ctrl[p] >= 0 and Diplomacy.same_side(world, ctrl[p], o)):
+		if c == o or (c >= 0 and (side[c * 2] == side[o * 2] or (side[c * 2 + 1] >= 0 and side[c * 2 + 1] == side[o * 2 + 1]))):
 			held[o] += vp[p]
+	_cap_total = total
+	_cap_held = held
+	_cap_self = selfc
+
+
+func _cap_countries() -> void:
+	# капитуляция в этом же проходе меняет карту — тогда счётчик своих провинций устарел
+	var moved := false
 	for nat in world.nations:
-		if not nat.alive or nat.at_war.is_empty() or total[nat.id] == 0 or _peace_pending(nat.id):
+		if not nat.alive or nat.at_war.is_empty() or _cap_total[nat.id] == 0 or _peace_pending(nat.id):
 			continue
-		var ratio := float(held[nat.id]) / float(total[nat.id])
+		var ratio := float(_cap_held[nat.id]) / float(_cap_total[nat.id])
 		# порог капитуляции: базовый + черты (пораженчество, бескрайние просторы)
 		if ratio < nat.capitulate_at + nat.b("surrender"):
 			_capitulate(nat.id)
-		elif world.p_controller[nat.capital] != nat.id:
+			moved = true
+		elif world.p_controller[nat.capital] != nat.id and (moved or _cap_self[nat.id] > 0):
+			# без своих неоккупированных провинций переносить столицу некуда
 			_move_capital(nat)
 
 	var alive := 0
@@ -1088,17 +1144,22 @@ func _fix_capitals() -> void:
 
 
 ## Столица захвачена — правительство переезжает в крупнейший свободный город.
-func _move_capital(nat: World.Nation) -> void:
+func _move_capital(nat: World.Nation) -> bool:
 	var best := -1
+	var owner := world.p_owner
+	var ctrl := world.p_controller
+	var vp := world.p_vp
+	var nid := nat.id
 	for p in world.prov_count:
-		if world.p_owner[p] == nat.id and world.p_controller[p] == nat.id:
-			if best < 0 or world.p_vp[p] > world.p_vp[best]:
+		if owner[p] == nid and ctrl[p] == nid:
+			if best < 0 or vp[p] > vp[best]:
 				best = p
 	if best < 0:
-		return
+		return false
 	var old := nat.capital
 	nat.capital = best
 	world.log_event("%s: столица захвачена (%s), правительство переезжает в %s" % [nat.name, world.p_name[old], world.p_name[best]])
+	return true
 
 
 func _peace_pending(nid: int) -> bool:

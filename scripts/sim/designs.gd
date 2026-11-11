@@ -144,7 +144,10 @@ static func score(s: Dictionary, role: String) -> float:
 
 ## Лучший проект для роли по технологиям страны: перебор корпусов, слоты —
 ## жадно лучшим модулем (повторы разрешены). Возвращает [корпус, модули].
+## Считается на сырых суммах (массив чисел вместо словаря): сложения идут в том
+## же порядке, что в stats(), поэтому оценки совпадают с ней до бита.
 static func auto(nat, role: String) -> Array:
+	_ensure()
 	var best_h := ""
 	var best_m: Array = []
 	var best_s := -1e18
@@ -152,27 +155,72 @@ static func auto(nat, role: String) -> Array:
 		var h := hull(hid)
 		var mods: Array = []
 		var ok := mods_for(nat, hid)
+		var effs: Array = []
+		for mid in ok:
+			effs.append(_eff_vec(mid))
+		var raw := _raw_hull(h)
 		for slot in int(h[3]):
-			var pick := ""
-			var ps := score(stats(hid, mods), role) if not mods.is_empty() else -1e18
-			for mid in ok:
-				if mods.count(mid) >= MAX_SAME:
+			var pick := -1
+			var ps := _score_raw(raw, role) if not mods.is_empty() else -1e18
+			for j in ok.size():
+				if mods.count(ok[j]) >= MAX_SAME:
 					continue
-				var trial := mods.duplicate()
-				trial.append(mid)
-				var sc := score(stats(hid, trial), role)
+				var sc := _score_raw(_raw_add(raw, effs[j]), role)
 				if sc > ps + 1e-9:
 					ps = sc
-					pick = mid
-			if pick == "":
+					pick = j
+			if pick < 0:
 				break
-			mods.append(pick)
-		var sc2 := score(stats(hid, mods), role)
+			mods.append(ok[pick])
+			raw = _raw_add(raw, effs[pick])
+		var sc2 := _score_raw(raw, role)
 		if sc2 > best_s:
 			best_s = sc2
 			best_h = hid
 			best_m = mods
 	return [best_h, best_m]
+
+
+# порядок полей сырых сумм; эффекты модуля — [индекс, значение] в порядке словаря
+const _KEYS := ["atk", "def", "agi", "coord", "ground", "bomb", "naval", "cost"]
+
+
+static func _raw_hull(h: Array) -> PackedFloat64Array:
+	return PackedFloat64Array([0.0, float(h[4]), float(h[5]), BASE_COORD, 0.0, 0.0, 0.0, float(h[6])])
+
+
+static func _eff_vec(mid: String) -> Array:
+	var res: Array = []
+	var eff: Dictionary = module(mid)[3]
+	for k in eff:
+		res.append([_KEYS.find(k), float(eff[k])])
+	return res
+
+
+static func _raw_add(raw: PackedFloat64Array, eff: Array) -> PackedFloat64Array:
+	var r := raw.duplicate()
+	for e in eff:
+		var i: int = e[0]
+		r[i] = r[i] + float(e[1])
+	return r
+
+
+## score(stats(...)) по сырым суммам: те же зажимы и формулы.
+static func _score_raw(r: PackedFloat64Array, role: String) -> float:
+	var agi := maxf(0.3, r[2]) * MAN_MULT
+	var coord := clampf(r[3], 0.0, 1.0)
+	match role:
+		"fighter":
+			if r[4] + r[5] + r[6] > 0.0:
+				return -1e9
+			return (r[0] + r[1] * 0.7) * agi + coord * 10.0 - r[7] * 2.0
+		"cas":
+			return r[4] * 2.0 + r[1] * agi * 0.4 + coord * 4.0 - r[7] * 2.0
+		"strat":
+			return r[5] * 2.0 + r[1] * agi * 0.5 + coord * 4.0 - r[7] * 1.5
+		"naval":
+			return r[6] * 2.0 + r[1] * agi * 0.4 + coord * 4.0 - r[7] * 2.0
+	return 0.0
 
 
 ## Записать проект в мир; возвращает его номер (такой же у страны уже есть — его номер).

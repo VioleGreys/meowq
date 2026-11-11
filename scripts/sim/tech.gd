@@ -347,6 +347,9 @@ static func free_slot(nat) -> int:
 ## День науки страны. Возвращает изученные сегодня технологии.
 static func daily(world, nat) -> Array:
 	var done: Array = []
+	# speed() без повторов: база и год — один раз на страну (тот же расчёт)
+	var base := -1.0
+	var yr := 0.0
 	for i in nat.research.size():
 		var id: String = nat.research[i]
 		if id == "":
@@ -355,11 +358,16 @@ static func daily(world, nat) -> Array:
 		if t.is_empty() or nat.techs.has(id):
 			nat.research[i] = ""
 			continue
-		var p: float = float(nat.research_progress.get(id, 0.0)) + speed(world, nat, t)
+		if base < 0.0:
+			base = maxf(MIN_SPEED, 1.0 + nat.b("research"))
+			yr = year_now(world)
+		var spd := base / (1.0 + AHEAD_PENALTY * maxf(0.0, float(t["year"]) - yr))
+		var p: float = float(nat.research_progress.get(id, 0.0)) + spd
 		if p >= float(t["days"]):
 			nat.research[i] = ""
 			nat.research_progress.erase(id)
 			complete(nat, id)
+			base = -1.0   # технология могла дать бонус к науке
 			done.append(id)
 		else:
 			nat.research_progress[id] = p

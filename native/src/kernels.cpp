@@ -728,3 +728,26 @@ PackedFloat64Array MeowqCore::label_regions(const PackedInt32Array &ctrl, const 
 	}
 	return out;
 }
+
+// Итоги проверки капитуляций — двойник цикла в Simulation._check_capitulation.
+PackedInt32Array MeowqCore::cap_totals(const PackedInt32Array &owner, const PackedInt32Array &ctrl,
+		const PackedInt32Array &vp, const PackedInt32Array &side, int nc) const {
+	PackedInt32Array res;
+	res.resize(int64_t(nc) * 3);
+	int32_t *out = res.ptrw();
+	for (int64_t k = 0; k < int64_t(nc) * 3; k++) out[k] = 0;
+	const int64_t pc = owner.size();
+	const int32_t *ow = owner.ptr(), *ct = ctrl.ptr(), *v = vp.ptr(), *sd = side.ptr();
+	for (int64_t p = 0; p < pc; p++) {
+		const int32_t o = ow[p];
+		if (o < 0) continue;
+		const int32_t c = ct[p];
+		if (c == o) out[2 * nc + o] += 1;
+		if (v[p] == 0) continue;
+		out[o] += v[p];
+		if (c == o || (c >= 0 && (sd[c * 2] == sd[o * 2] || (sd[c * 2 + 1] >= 0 && sd[c * 2 + 1] == sd[o * 2 + 1])))) {
+			out[nc + o] += v[p];
+		}
+	}
+	return res;
+}

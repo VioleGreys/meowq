@@ -209,6 +209,7 @@ static func refresh_blockade(world: World) -> void:
 	var a_start := world.adj_start
 	var a_list := world.adj_list
 	var ctrl := world.p_controller
+	var _pb := Time.get_ticks_usec()
 	# морские зоны у портов каждой страны
 	var zones: Array = []
 	zones.resize(nc)
@@ -246,6 +247,8 @@ static func refresh_blockade(world: World) -> void:
 		var ks: Array = tl[x].keys()
 		ks.sort()
 		transit[x] = PackedInt32Array(ks)
+	Prof.add("бл:порты", _pb)
+	_pb = Time.get_ticks_usec()
 	# у каждого флота — округа: зоны в пределах BLOCK_RANGE и вес силы в них
 	var reach: Array = []
 	for f in world.fleets:
@@ -271,6 +274,8 @@ static func refresh_blockade(world: World) -> void:
 					zs.append(q)
 					ws.append(pw * pow(BLOCK_FALL, dz + 1))
 		reach.append([f.owner, zs, ws])
+	Prof.add("бл:округа", _pb)
+	_pb = Time.get_ticks_usec()
 	for b in nc:
 		var bn: World.Nation = world.nations[b]
 		if not bn.alive or bn.at_war.is_empty():
@@ -279,28 +284,23 @@ static func refresh_blockade(world: World) -> void:
 		var own_r := PackedFloat32Array()
 		var en_r := PackedFloat32Array()
 		var any_enemy := false
+		# пишем прямо в en_r / own_r: присваивание упакованного массива другой
+		# переменной и запись в неё копирует его целиком (копирование при записи)
 		for fr in reach:
 			var o: int = fr[0]
-			var dst: PackedFloat32Array
+			var zs: PackedInt32Array = fr[1]
+			var ws: PackedFloat32Array = fr[2]
 			if war[b * nc + o] == 1:
 				if en_r.is_empty():
 					en_r.resize(world.prov_count)
-				dst = en_r
 				any_enemy = true
+				for i in zs.size():
+					en_r[zs[i]] += ws[i]
 			elif world.ally[b * nc + o] == 1 or o == b:
 				if own_r.is_empty():
 					own_r.resize(world.prov_count)
-				dst = own_r
-			else:
-				continue
-			var zs: PackedInt32Array = fr[1]
-			var ws: PackedFloat32Array = fr[2]
-			for i in zs.size():
-				dst[zs[i]] += ws[i]
-			if dst == en_r:
-				en_r = dst
-			else:
-				own_r = dst
+				for i in zs.size():
+					own_r[zs[i]] += ws[i]
 		if not any_enemy:
 			continue
 		if own_r.is_empty():
@@ -375,6 +375,7 @@ static func refresh_blockade(world: World) -> void:
 						break
 			if not ok:
 				world.trade_block[b * nc + s] = 1
+	Prof.add("бл:страны", _pb)
 
 
 static func _zone_open(world: World, b: int, z: int, zf: Dictionary, near: Dictionary,
@@ -758,8 +759,12 @@ static func daily(world: World) -> void:
 	# продлеваются на месяц, отказ/урезка вступает в силу, поставки исчезнувших
 	# и рассорившихся стран снимаются; война рвёт поставки сразу — on_war)
 	if first or world.day % SWEEP_DAYS == 0:
+		var _pt := Time.get_ticks_usec()
 		refresh(world)
+		Prof.add("вэ:refresh", _pt)
+		_pt = Time.get_ticks_usec()
 		refresh_blockade(world)
+		Prof.add("вэ:блокада", _pt)
 		dirty = true
 		var keep: Array = []
 		var cut := {}
@@ -784,8 +789,10 @@ static func daily(world: World) -> void:
 			world.log_event("Морская блокада: %s теряет заморские поставки (%d)" % [world.nations[b].name, cut[b]])
 		_recount(world)
 	if world.trade_adj.size() != nc * nc or world.day - world.trade_geo_day >= CONTRACT_DAYS:
+		var _pg := Time.get_ticks_usec()
 		refresh_geo(world)
 		world.trade_tab = trade_tables(world)
+		Prof.add("вэ:гео", _pg)
 	# раз в SWEEP_DAYS дней, пакетом: рейтинг покупателей и раздача экспорта
 	# (продавцы), докупка недостающего и отказ от лишнего (покупатели)
 	var due := _due(world, world.day, first)
@@ -795,6 +802,7 @@ static func daily(world: World) -> void:
 			world.trade_score.resize(nc * nc)
 		# рейтинг и план раздачи: готовые со вчера (в фоне, по вчерашнему снимку —
 		# start_rank) или, если их нет, сейчас — параллельно по продавцам
+		var _pr := Time.get_ticks_usec()
 		var rows: Array = []
 		var plans: Array = []
 		var job: Dictionary = world.trade_job
@@ -811,6 +819,8 @@ static func daily(world: World) -> void:
 				rows[i] = row
 				plans[i] = plan_sales(t, i, due[i], row), "торговля:рейтинг", 2)
 		world.trade_job = {}
+		Prof.add("вэ:рейтинг", _pr)
+		_pr = Time.get_ticks_usec()
 		var index := {}
 		for c in world.contracts:
 			index[int(c[1]) * 100000 + int(c[0]) * 8 + int(c[2])] = c
@@ -822,16 +832,32 @@ static func daily(world: World) -> void:
 			if world.nations[s].alive:
 				apply_sales(world, s, plans[i], index)
 		_recount(world)
+		Prof.add("вэ:продажи", _pr)
+		_pr = Time.get_ticks_usec()
 		# покупатели этого дня: докупают из свободных остатков, отказываются от лишнего
 		var free: Array = []   # продавцы со свободным остатком — собираются, когда понадобятся
+		# договоры по покупателю (номера по возрастанию) — для отказа от лишнего
+		var by_buyer := {}
+		for k in world.contracts.size():
+			var bk: int = world.contracts[k][0]
+			if not by_buyer.has(bk):
+				by_buyer[bk] = []
+			by_buyer[bk].append(k)
 		for x in due:
 			var nat: World.Nation = world.nations[x]
 			if not nat.alive or (nat.is_player and not nat.trade_auto):
 				continue
+			var n0 := world.contracts.size()
 			_ai_buy(world, nat, free)
-			_ai_cut(world, nat)
+			var mine: Array = by_buyer.get(x, [])
+			for k in range(n0, world.contracts.size()):
+				mine.append(k)   # новые договоры — только этого покупателя
+			_ai_cut(world, nat, mine)
+		Prof.add("вэ:закупки", _pr)
 	if dirty:
+		var _pf := Time.get_ticks_usec()
 		_update_fill(world)
+		Prof.add("вэ:fill", _pf)
 
 
 ## Поставка по договору (эффект supply): seller отдаёт buyer units ресурса r в
@@ -1027,16 +1053,25 @@ static func _ai_buy(world: World, nat: World.Nation, free: Array) -> void:
 		if lack < 0.3 or budget <= 0.05:
 			continue
 		lack = minf(lack, budget * UNITS_PER_CIV)
-		# сначала у тех продавцов, у кого мы выше в рейтинге
+		# сначала у тех продавцов, у кого мы выше в рейтинге; кто уже не может
+		# продать (экспорт за время закупок только убывает) — дальше не смотрим
+		var lst: PackedInt32Array = free[r]
+		var dead := PackedByteArray()
+		dead.resize(lst.size())
 		while lack >= 0.3:
 			var best := -1
 			var best_score := 0.0
-			var lst: PackedInt32Array = free[r]
-			for s in lst:
+			for j in lst.size():
+				if dead[j] == 1:
+					continue
+				var s := lst[j]
 				var sc: float = world.trade_score[s * nc + nat.id]
 				if sc <= best_score:
+					if sc <= 0.0:
+						dead[j] = 1
 					continue
 				if exportable(world, world.nations[s], r, nat.id) < 0.3:
+					dead[j] = 1
 					continue
 				best_score = sc
 				best = s
@@ -1050,13 +1085,14 @@ static func _ai_buy(world: World, nat: World.Nation, free: Array) -> void:
 
 
 ## Раз в месяц: отказаться от лишних поставок (они идут до конца месяца).
-static func _ai_cut(world: World, nat: World.Nation) -> void:
+## mine — номера договоров этого покупателя по возрастанию (обход — с конца).
+static func _ai_cut(world: World, nat: World.Nation, mine: Array) -> void:
 	for r in RES_COUNT:
 		var extra: float = available(nat, r) - nat.res_need[r] * 1.15
 		if extra <= 0.5:
 			continue
-		for i in range(world.contracts.size() - 1, -1, -1):
-			var c: Array = world.contracts[i]
+		for j in range(mine.size() - 1, -1, -1):
+			var c: Array = world.contracts[int(mine[j])]
 			if c[0] == nat.id and c[2] == r and float(c[6]) < 0.0 and float(c[3]) <= extra and int(c[5]) <= world.day:
 				c[6] = 0.0
 				extra -= float(c[3])
