@@ -1159,7 +1159,8 @@ static func _cached_path(world: World, cache: Dictionary, from: int, to: int) ->
 	var key := from * 1048576 + to
 	if not cache.has(key):
 		cache[key] = sea_path(world, from, to)
-	return cache[key]
+	# копия: упакованные массивы передаются по ссылке, а путь флота укорачивается на месте
+	return (cache[key] as PackedInt32Array).duplicate()
 
 
 ## Блокада: порт не снабжает, если во всех соседних морских зонах господство у врага.

@@ -20,6 +20,7 @@
  },
  "nations": {
   "GER": {
+   "spirits": ["ger_school"],
    "doctrine": {"land": "mob", "navy": "raid", "air": "cas"},
    "major": true,
    "full_name": "Германский рейх",
@@ -70,7 +71,7 @@
   },
   "SOV": {
    "doctrine": {"land": "mass", "navy": "raid", "air": "cas"},
-   "spirits": ["sov_purge", "sov_vastness"],
+   "spirits": ["sov_mass_army", "sov_purge", "sov_vastness"],
    "major": true,
    "full_name": "Союз Советских Социалистических Республик",
    "ideology": "communism",
@@ -113,7 +114,7 @@
   },
   "ENG": {
    "doctrine": {"land": "fire", "navy": "bb", "air": "fig"},
-   "spirits": ["eng_peacetime"],
+   "spirits": ["eng_sea_power", "eng_peacetime"],
    "major": true,
    "full_name": "Соединённое Королевство",
    "ideology": "democracy",
@@ -214,7 +215,7 @@
   },
   "FRA": {
    "doctrine": {"land": "meth", "navy": "bb", "air": "cas"},
-   "spirits": ["fra_defeatism"],
+   "spirits": ["fra_fortress", "fra_defeatism"],
    "major": true,
    "full_name": "Французская республика",
    "ideology": "democracy",
@@ -297,7 +298,7 @@
   },
   "ITA": {
    "doctrine": {"land": "mob", "navy": "bb", "air": "bmb"},
-   "spirits": ["ita_colonial"],
+   "spirits": ["ita_mare_nostrum", "ita_colonial"],
    "major": true,
    "full_name": "Королевство Италия",
    "ideology": "fascism",
@@ -1189,7 +1190,7 @@
   },
   "USA": {
    "doctrine": {"land": "fire", "navy": "car", "air": "bmb"},
-   "spirits": ["usa_isolation"],
+   "spirits": ["usa_arsenal", "usa_isolation"],
    "full_name": "Соединённые Штаты Америки",
    "ideology": "democracy",
    "leader": "Франклин Рузвельт",
@@ -1715,7 +1716,7 @@
   },
   "JAP": {
    "doctrine": {"land": "mass", "navy": "car", "air": "fig"},
-   "spirits": ["jap_bushido"],
+   "spirits": ["jap_naval_power", "jap_bushido"],
    "full_name": "Японская империя",
    "ideology": "fascism",
    "leader": "Кэйсукэ Окада",
