@@ -138,6 +138,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var pd_start: PackedInt32Array = tb["pd_start"]
 	var pd_list: PackedInt32Array = tb["pd_list"]
 	var supcap: PackedFloat32Array = tb.get("supcap", PackedFloat32Array())
+	var nohit: PackedByteArray = tb.get("nohit", PackedByteArray())
 	var prov_count := land.size()
 	var has_cap := supcap.size() == prov_count
 
@@ -167,7 +168,8 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			if at_war:
 				if hostile and matches:
 					fronts[p] = true
-					targets[q] = true
+					if nohit.is_empty() or nohit[nid * nc + c] == 0:
+						targets[q] = true
 					fpairs.append(p)
 					fpairs.append(q)
 			elif matches and (enemy >= 0 or mode == "auto") and (ally.size() == 0 or ally[nid * nc + c] == 0):
@@ -443,7 +445,23 @@ static func ai_tables(world: World) -> Dictionary:
 		"war": world.war, "ally": world.ally, "nc": world.nation_count, "def": world.p_def_mult, "vp": world.p_vp,
 		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
-		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list, "supcap": world.p_supcap}
+		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list, "supcap": world.p_supcap,
+		"nohit": no_attack_table(world)}
+
+
+## Пары «воюем, но ИИ не наступает» (Nation.no_attack, только у ИИ): nc×nc;
+## пусто — запретов нет.
+static func no_attack_table(world: World) -> PackedByteArray:
+	var t := PackedByteArray()
+	var nc := world.nation_count
+	for nat in world.nations:
+		if nat.no_attack.is_empty() or nat.is_player:
+			continue
+		if t.is_empty():
+			t.resize(nc * nc)
+		for o in nat.no_attack:
+			t[nat.id * nc + int(o)] = 1
+	return t
 
 
 ## Путь к ближайшей провинции из goal по таблицам (как Pathfinder.nearest_goal).

@@ -127,6 +127,7 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		for sid in d.get("spirits", []):
 			nat.spirits[String(sid)] = 1.0
 		nat.research_slots = int(d.get("research_slots", 0))
+		nat.doctrine_pref = d.get("doctrine", {}).duplicate()
 
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 1936

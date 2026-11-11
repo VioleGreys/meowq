@@ -105,6 +105,8 @@ func tick() -> void:
 	_timed("дипломатия", _phase_diplomacy)
 	_timed("капитуляции", _check_capitulation)
 	_timed("ИИ:ожидание", _finish_ai)
+	# доктрины ИИ — когда фоновых задач уже нет (меняют бонусы стран)
+	Doctrine.ai_daily(world)
 	last_tick_usec = Time.get_ticks_usec() - t0
 
 
@@ -859,6 +861,18 @@ func _phase_combat(battles: Dictionary) -> void:
 		att_start.append(att_list.size())
 		seeds.append(hash([world.seed_value, world.day, p]))   # как Parallel.rng
 	world.k_combat(pv, att_start, att_list, seeds, PLAN_MAX)
+	# боевой опыт армии: дивизии-участники сражений за день (Doctrine)
+	var engaged := PackedInt32Array()
+	engaged.resize(world.nations.size())
+	for p in provs:
+		var ao: int = battles[p][0].owner
+		engaged[ao] += battles[p].size()
+		for e in world.divs_in(p):
+			if e.alive and world.is_at_war(ao, e.owner):
+				engaged[e.owner] += 1
+	for n in engaged.size():
+		if engaged[n] > 0:
+			Doctrine.gain(world.nations[n], 0, minf(Doctrine.LAND_CAP, Doctrine.LAND_PER_DIV * engaged[n]))
 	# последствия: разбитые атакующие останавливаются, защитники отступают
 	for i in provs.size():
 		var p: int = provs[i]

@@ -1,5 +1,5 @@
 {
- "_comment": "Государства мира на 1 января 1936 г. major — великая держава; neutral — традиционный нейтралитет (не вступает во фракции и не раздаёт гарантий). Население — млн человек (метрополия); colony_pop — млн по владениям (код страны Natural Earth). civ/mil — гражданские и военные фабрики (игровые единицы, собственная оценка по промышленному потенциалу 1936–37 гг.); divisions — дивизии в метрополии, colony_divisions — в колониях. Флаги упрощены и рисуются кодом (scripts/view/flag.gd). army — состав дивизий метрополии по шаблонам (inf пехотная, mnt горная, cav кавалерия, art пехота с артиллерией, mot моторизованная, arm танковая; остальное — пехота); techs — стартовые технологии: свой упор страны по истории и стартовые доктрины (dl_ — армия, dn_ — флот, da_ — авиация; первая ступень задаёт школу); базовые мирные по промышленности добавляются сами (Tech.START_BASE); research_slots — минимум слотов науки. dormant — государство появляется только по событию (гражданская война, распад, перемирие); name и color для них заданы здесь, capital_lonlat — где искать столицу.",
+ "_comment": "Государства мира на 1 января 1936 г. major — великая держава; neutral — традиционный нейтралитет (не вступает во фракции и не раздаёт гарантий). Население — млн человек (метрополия); colony_pop — млн по владениям (код страны Natural Earth). civ/mil — гражданские и военные фабрики (игровые единицы, собственная оценка по промышленному потенциалу 1936–37 гг.); divisions — дивизии в метрополии, colony_divisions — в колониях. Флаги упрощены и рисуются кодом (scripts/view/flag.gd). army — состав дивизий метрополии по шаблонам (inf пехотная, mnt горная, cav кавалерия, art пехота с артиллерией, mot моторизованная, arm танковая; остальное — пехота); techs — стартовые технологии: свой упор страны по истории (базовые мирные по промышленности добавляются сами, Tech.START_BASE); research_slots — минимум слотов науки; doctrine — историческая школа доктрин по родам сил (land: mob/fire/meth/mass, navy: bb/car/raid, air: fig/cas/bmb; её всегда берёт ИИ, без поля — Doctrine.default_pref). dormant — государство появляется только по событию (гражданская война, распад, перемирие); name и color для них заданы здесь, capital_lonlat — где искать столицу.",
  "ideologies": {
   "democracy": {
    "name": "Демократия",
@@ -20,6 +20,7 @@
  },
  "nations": {
   "GER": {
+   "doctrine": {"land": "mob", "navy": "raid", "air": "cas"},
    "major": true,
    "full_name": "Германский рейх",
    "ideology": "fascism",
@@ -64,13 +65,11 @@
     "art1",
     "eng1",
     "med1",
-    "rec1",
-    "dl_mob1",
-    "dn_raid1",
-    "da_cas1"
+    "rec1"
    ]
   },
   "SOV": {
+   "doctrine": {"land": "mass", "navy": "raid", "air": "cas"},
    "spirits": ["sov_purge", "sov_vastness"],
    "major": true,
    "full_name": "Союз Советских Социалистических Республик",
@@ -109,13 +108,11 @@
     "art1",
     "rec1",
     "ext1",
-    "ind1",
-    "dl_mass1",
-    "dl_mass2",
-    "da_cas1"
+    "ind1"
    ]
   },
   "ENG": {
+   "doctrine": {"land": "fire", "navy": "bb", "air": "fig"},
    "spirits": ["eng_peacetime"],
    "major": true,
    "full_name": "Соединённое Королевство",
@@ -212,13 +209,11 @@
     "art1",
     "eng1",
     "med1",
-    "res1",
-    "dl_fire1",
-    "dn_bb1",
-    "da_fig1"
+    "res1"
    ]
   },
   "FRA": {
+   "doctrine": {"land": "meth", "navy": "bb", "air": "cas"},
    "spirits": ["fra_defeatism"],
    "major": true,
    "full_name": "Французская республика",
@@ -297,13 +292,11 @@
     "bb1",
     "ss1",
     "med1",
-    "rec1",
-    "dl_meth1",
-    "dl_meth2",
-    "dn_bb1"
+    "rec1"
    ]
   },
   "ITA": {
+   "doctrine": {"land": "mob", "navy": "bb", "air": "bmb"},
    "spirits": ["ita_colonial"],
    "major": true,
    "full_name": "Королевство Италия",
@@ -345,13 +338,11 @@
     "bb1",
     "ss1",
     "eng1",
-    "rec1",
-    "dl_meth1",
-    "dn_bb1",
-    "da_bmb1"
+    "rec1"
    ]
   },
   "POL": {
+   "doctrine": {"land": "meth"},
    "full_name": "Польская республика",
    "ideology": "authoritarian",
    "leader": "Игнаций Мосцицкий",
@@ -380,11 +371,11 @@
     "cry2",
     "at1",
     "eng1",
-    "rec1",
-    "dl_meth1"
+    "rec1"
    ]
   },
   "SPR": {
+   "doctrine": {"land": "mass"},
    "full_name": "Испанская республика",
    "ideology": "democracy",
    "leader": "Нисето Алькала-Самора",
@@ -447,6 +438,7 @@
    "colony_divisions": 2
   },
   "HOL": {
+   "doctrine": {"land": "fire", "navy": "raid"},
    "neutral": true,
    "full_name": "Королевство Нидерландов",
    "ideology": "democracy",
@@ -481,6 +473,7 @@
    ]
   },
   "BEL": {
+   "doctrine": {"land": "meth"},
    "neutral": true,
    "full_name": "Королевство Бельгия",
    "ideology": "democracy",
@@ -589,6 +582,7 @@
    ]
   },
   "CZE": {
+   "doctrine": {"land": "meth"},
    "full_name": "Чехословацкая республика",
    "ideology": "democracy",
    "leader": "Эдвард Бенеш",
@@ -620,11 +614,11 @@
     "art1",
     "at1",
     "eng1",
-    "rec1",
-    "dl_meth1"
+    "rec1"
    ]
   },
   "HUN": {
+   "doctrine": {"land": "mob"},
    "full_name": "Королевство Венгрия",
    "ideology": "authoritarian",
    "leader": "Миклош Хорти",
@@ -648,6 +642,7 @@
    "techs": []
   },
   "ROM": {
+   "doctrine": {"land": "meth"},
    "full_name": "Королевство Румыния",
    "ideology": "authoritarian",
    "leader": "Кароль II",
@@ -676,6 +671,7 @@
    ]
   },
   "YUG": {
+   "doctrine": {"land": "meth"},
    "full_name": "Королевство Югославия",
    "ideology": "authoritarian",
    "leader": "Павел Карагеоргиевич",
@@ -727,6 +723,7 @@
    ]
   },
   "GRE": {
+   "doctrine": {"land": "meth"},
    "full_name": "Королевство Греция",
    "ideology": "authoritarian",
    "leader": "Георг II",
@@ -769,6 +766,7 @@
    }
   },
   "TUR": {
+   "doctrine": {"land": "mass"},
    "neutral": true,
    "full_name": "Турецкая Республика",
    "ideology": "authoritarian",
@@ -842,6 +840,7 @@
    ]
   },
   "SWE": {
+   "doctrine": {"land": "fire", "air": "fig"},
    "neutral": true,
    "full_name": "Королевство Швеция",
    "ideology": "democracy",
@@ -869,6 +868,7 @@
    ]
   },
   "FIN": {
+   "doctrine": {"land": "meth", "air": "fig"},
    "spirits": ["fin_sisu", "fin_winter"],
    "full_name": "Финляндская республика",
    "ideology": "democracy",
@@ -1088,6 +1088,7 @@
    "techs": []
   },
   "NSP": {
+   "doctrine": {"land": "meth"},
    "dormant": true,
    "name": "Нац. Испания",
    "full_name": "Националистическая Испания",
@@ -1187,6 +1188,7 @@
    }
   },
   "USA": {
+   "doctrine": {"land": "fire", "navy": "car", "air": "bmb"},
    "spirits": ["usa_isolation"],
    "full_name": "Соединённые Штаты Америки",
    "ideology": "democracy",
@@ -1225,10 +1227,7 @@
     "bmb1",
     "bmb2",
     "aen1",
-    "med1",
-    "dl_fire1",
-    "dn_bb1",
-    "da_bmb1"
+    "med1"
    ],
    "major": true,
    "colony_divisions": 3,
@@ -1243,6 +1242,7 @@
    }
   },
   "CAN": {
+   "doctrine": {"land": "fire"},
    "full_name": "Доминион Канада",
    "ideology": "democracy",
    "leader": "Уильям Лайон Маккензи Кинг",
@@ -1714,6 +1714,7 @@
    "techs": []
   },
   "JAP": {
+   "doctrine": {"land": "mass", "navy": "car", "air": "fig"},
    "spirits": ["jap_bushido"],
    "full_name": "Японская империя",
    "ideology": "fascism",
@@ -1752,10 +1753,7 @@
     "bmb1",
     "bmb2",
     "eng1",
-    "rec1",
-    "dl_mass1",
-    "dn_car1",
-    "da_cas1"
+    "rec1"
    ],
    "major": true,
    "colony_divisions": 8,
@@ -1772,6 +1770,7 @@
    }
   },
   "MAN": {
+   "doctrine": {"land": "mass"},
    "spirits": ["man_kwantung"],
    "full_name": "Маньчжоу-го",
    "ideology": "authoritarian",
@@ -1797,6 +1796,7 @@
    "techs": []
   },
   "CHI": {
+   "doctrine": {"land": "mass"},
    "spirits": ["chi_weak_army", "chi_vastness", "chi_defensive"],
    "full_name": "Китайская Республика",
    "ideology": "authoritarian",
@@ -1821,8 +1821,7 @@
    },
    "techs": [
     "inf1",
-    "rec1",
-    "dl_mass1"
+    "rec1"
    ]
   },
   "PRC": {
@@ -2208,6 +2207,7 @@
    "techs": []
   },
   "AST": {
+   "doctrine": {"land": "fire"},
    "full_name": "Австралийский Союз",
    "ideology": "democracy",
    "leader": "Джозеф Лайонс",

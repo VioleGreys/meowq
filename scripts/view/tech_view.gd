@@ -79,6 +79,17 @@ func _ready() -> void:
 		b.pressed.connect(func(): set_cat(id))
 		cats.add_child(b)
 		_cat_btns[id] = b
+	# доктрины — боевой опыт, не слоты науки (Doctrine)
+	var db := Button.new()
+	db.text = "Доктрины"
+	db.icon = UiStyle.icon("army", 40)
+	db.custom_minimum_size = Vector2(0, 40)
+	db.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	db.add_theme_font_size_override("font_size", 13)
+	db.clip_text = true
+	db.pressed.connect(func(): set_cat("doc"))
+	cats.add_child(db)
+	_cat_btns["doc"] = db
 	scroll = ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(scroll)
@@ -98,7 +109,7 @@ func _ready() -> void:
 	start_btn.text = "Исследовать"
 	start_btn.custom_minimum_size = Vector2(170, 56)
 	start_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	start_btn.pressed.connect(func(): game.act(_start), CONNECT_DEFERRED)
+	start_btn.pressed.connect(func(): game.act(_buy if cat == "doc" else _start), CONNECT_DEFERRED)
 	bottom.add_child(start_btn)
 	# стили узлов: [фон, рамка]
 	var defs := {
@@ -138,8 +149,28 @@ func set_cat(c: String) -> void:
 
 
 func _pos(t: Dictionary) -> Vector2:
+	if t.has("school"):   # ступень доктрины: линия — школа, столбец — номер ступени
+		return Vector2(LABEL_W + int(t["n"]) * (NODE.x + GAP.x), HEAD_H + _school_row(t["school"]) * (NODE.y + GAP.y))
 	var col := clampi(int(t["year"]) - YEAR0, 0, YEAR1 - YEAR0)
 	return Vector2(LABEL_W + col * (NODE.x + GAP.x), HEAD_H + int(t["row"]) * (NODE.y + GAP.y))
+
+
+func _school_row(id: String) -> int:
+	for i in Doctrine.SCHOOLS.size():
+		if Doctrine.SCHOOLS[i]["id"] == id:
+			return i
+	return 0
+
+
+## Узлы текущей вкладки: технологии категории или ступени всех доктрин.
+func _items() -> Array:
+	if cat != "doc":
+		return Tech.of_cat(cat)
+	var res: Array = []
+	for s in Doctrine.SCHOOLS:
+		for r in s["steps"]:
+			res.append(Doctrine.get_step(r[0]))
+	return res
 
 
 func _rebuild() -> void:
@@ -147,32 +178,48 @@ func _rebuild() -> void:
 		tree.remove_child(c)
 		c.queue_free()
 	_buttons.clear()
+	if cat == "doc":
+		for t in _items():
+			_add_node(t)
+		tree.custom_minimum_size = Vector2(LABEL_W + 5 * (NODE.x + GAP.x), HEAD_H + Doctrine.SCHOOLS.size() * (NODE.y + GAP.y))
+		refresh()
+		return
 	var rows := 1
 	for c in Tech.CATS:
 		if c["id"] == cat:
 			rows = c["rows"].size()
 	for t in Tech.of_cat(cat):
-		var b := Button.new()
-		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		b.add_theme_font_size_override("font_size", 11)
-		b.add_theme_constant_override("line_spacing", -2)
-		b.position = _pos(t)
-		b.size = NODE
-		b.clip_text = true
-		var id: String = t["id"]
-		b.pressed.connect(func(): _select(id))
-		tree.add_child(b)
-		_buttons[id] = b
+		_add_node(t)
 	tree.custom_minimum_size = Vector2(LABEL_W + (YEAR1 - YEAR0 + 1) * (NODE.x + GAP.x), HEAD_H + rows * (NODE.y + GAP.y))
 	refresh()
 
 
+func _add_node(t: Dictionary) -> void:
+	var b := Button.new()
+	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	b.add_theme_font_size_override("font_size", 11)
+	b.add_theme_constant_override("line_spacing", -2)
+	b.position = _pos(t)
+	b.size = NODE
+	b.clip_text = true
+	var id: String = t["id"]
+	b.pressed.connect(func(): _select(id))
+	tree.add_child(b)
+	_buttons[id] = b
+
+
 func _state(nat: World.Nation, t: Dictionary) -> String:
+	if t.has("school"):
+		if nat.doctrines.has(t["id"]):
+			return "done"
+		if not Doctrine.can_take(nat, t["id"]):
+			return "lock"
+		return "open" if Doctrine.can_buy(nat, t["id"]) else "ahead"
 	if nat.techs.has(t["id"]):
 		return "done"
 	if nat.research.has(t["id"]):
 		return "work"
-	if not Tech.can_research(nat, t, _slot_tech(nat)):
+	if not Tech.can_research(nat, t):
 		return "lock"
 	return "ahead" if float(t["year"]) > Tech.year_now(world) + 0.02 else "open"
 
@@ -185,6 +232,8 @@ func refresh() -> void:
 	Tech.fit_slots(nat)
 	slot = clampi(slot, 0, nat.research.size() - 1)
 	head.text = "скорость науки %+d%% · изучено %d из %d" % [roundi(nat.b("research") * 100.0), _done_count(nat), Tech.all().size()]
+	if cat == "doc":
+		head.text = "боевой опыт: армия %d · флот %d · авиация %d" % [nat.xp[0], nat.xp[1], nat.xp[2]]
 	# слоты
 	if _slot_btns.size() != nat.research.size():
 		for b in _slot_btns:
@@ -214,19 +263,20 @@ func refresh() -> void:
 		b.add_theme_color_override("font_color", UiStyle.RED_INK if i == slot else UiStyle.INK)
 	for c in _cat_btns:
 		_cat_btns[c].disabled = c == cat
-	for t in Tech.of_cat(cat):
+	for t in _items():
 		var b: Button = _buttons.get(t["id"])
 		if b == null:
 			continue
 		var st := _state(nat, t)
 		var sub := ""
-		match st:
-			"done":
-				sub = "изучено"
-			"work":
-				sub = "%d%% · %d дн." % [100.0 * float(nat.research_progress.get(t["id"], 0.0)) / float(t["days"]), Tech.days_left(world, nat, t["id"])]
-			_:
-				sub = "%d г. · %d дн." % [t["year"], Tech.days_left(world, nat, t["id"])]
+		if t.has("school"):
+			sub = "принята" if st == "done" else "%d опыта" % roundi(Doctrine.cost(t["branch"], int(t["n"])))
+		elif st == "done":
+			sub = "изучено"
+		elif st == "work":
+			sub = "%d%% · %d дн." % [100.0 * float(nat.research_progress.get(t["id"], 0.0)) / float(t["days"]), Tech.days_left(world, nat, t["id"])]
+		else:
+			sub = "%d г. · %d дн." % [t["year"], Tech.days_left(world, nat, t["id"])]
 		b.text = "%s\n%s" % [t["name"], sub]
 		var sb: StyleBox = _styles[st + ("_sel" if t["id"] == selected else "")]
 		for state in ["normal", "hover", "pressed", "focus"]:
@@ -236,11 +286,6 @@ func refresh() -> void:
 			b.add_theme_color_override(cn, fc)
 	_update_detail()
 	tree.queue_redraw()
-
-
-## Технология выбранного слота (её заменит «Исследовать»).
-func _slot_tech(nat: World.Nation) -> String:
-	return nat.research[slot] if slot < nat.research.size() else ""
 
 
 func _done_count(nat: World.Nation) -> int:
@@ -257,6 +302,9 @@ func _draw_tree() -> void:
 	var nat: World.Nation = world.nations[nid]
 	var font := UiStyle.mono_bold()
 	var yr_now := Tech.year_now(world)
+	if cat == "doc":
+		_draw_doctrines(nat, font)
+		return
 	# шапка лет и полоса текущей даты
 	for y in range(YEAR0, YEAR1 + 1):
 		var x := LABEL_W + (y - YEAR0) * (NODE.x + GAP.x)
@@ -274,9 +322,7 @@ func _draw_tree() -> void:
 			var y0 := HEAD_H + r * (NODE.y + GAP.y)
 			tree.draw_multiline_string(UiStyle.mono_font(), Vector2(2, y0 + 20), rows[r], HORIZONTAL_ALIGNMENT_LEFT,
 				LABEL_W - 10, 12, 3, UiStyle.INK_SOFT)
-			var new_group: bool = cat == "doc" and r > 0 and Tech.DOC_GROUP[r] != Tech.DOC_GROUP[r - 1]
-			tree.draw_line(Vector2(0, y0 - GAP.y * 0.5), Vector2(tree.size.x, y0 - GAP.y * 0.5),
-				Color(UiStyle.INK_SOFT, 0.6 if new_group else 0.18), 2.0 if new_group else 1.0)
+			tree.draw_line(Vector2(0, y0 - GAP.y * 0.5), Vector2(tree.size.x, y0 - GAP.y * 0.5), Color(UiStyle.INK_SOFT, 0.18), 1.0)
 	# связи «требует»
 	for t in Tech.of_cat(cat):
 		var rd := Tech.get_tech(t["req"])
@@ -290,6 +336,29 @@ func _draw_tree() -> void:
 		else:
 			var mx := b.x - GAP.x * 0.5
 			tree.draw_polyline(PackedVector2Array([a, Vector2(mx, a.y), Vector2(mx, b.y), b]), col, 2.0)
+
+
+func _draw_doctrines(nat: World.Nation, font: Font) -> void:
+	for i in 5:
+		var x := LABEL_W + i * (NODE.x + GAP.x)
+		tree.draw_string(font, Vector2(x, 17), "Ступень %d" % (i + 1), HORIZONTAL_ALIGNMENT_CENTER, NODE.x, 14, UiStyle.INK)
+	for r in Doctrine.SCHOOLS.size():
+		var s: Dictionary = Doctrine.SCHOOLS[r]
+		var bi := Doctrine.branch_index(s["branch"])
+		var y0 := HEAD_H + r * (NODE.y + GAP.y)
+		var label := "%s: %s" % [Doctrine.BRANCH_NAMES[bi], String(s["name"]).to_lower()]
+		if Doctrine.pref(nat, s["branch"]) == s["id"]:
+			label += " ★"
+		tree.draw_multiline_string(UiStyle.mono_font(), Vector2(2, y0 + 20), label, HORIZONTAL_ALIGNMENT_LEFT,
+			LABEL_W - 10, 12, 3, UiStyle.INK_SOFT)
+		var new_group: bool = r > 0 and Doctrine.SCHOOLS[r - 1]["branch"] != s["branch"]
+		tree.draw_line(Vector2(0, y0 - GAP.y * 0.5), Vector2(tree.size.x, y0 - GAP.y * 0.5),
+			Color(UiStyle.INK_SOFT, 0.6 if new_group else 0.18), 2.0 if new_group else 1.0)
+		var steps: Array = s["steps"]
+		for n in range(1, steps.size()):
+			var a := _pos(Doctrine.get_step(steps[n - 1][0])) + Vector2(NODE.x, NODE.y * 0.5)
+			var col := Color(0.25, 0.36, 0.20) if nat.doctrines.has(steps[n - 1][0]) else Color(UiStyle.INK_SOFT, 0.6)
+			tree.draw_line(a, a + Vector2(GAP.x, 0), col, 2.0)
 
 
 func _select(id: String) -> void:
@@ -314,10 +383,11 @@ func _pick_slot(i: int) -> void:
 
 func _update_detail() -> void:
 	var nat: World.Nation = world.nations[nid]
+	if cat == "doc":
+		_update_doc_detail(nat)
+		return
 	if selected == "":
 		detail.text = "Коснитесь технологии, чтобы увидеть подробности. Исследование идёт в каждом слоте; технология раньше своего года изучается дольше (+%d%% срока за год опережения)." % roundi(Tech.AHEAD_PENALTY * 100.0)
-		if cat == "doc":
-			detail.text = "Доктрины — школы ведения войны. В армии, флоте и авиации страна выбирает по одной школе: первая ступень закрывает остальные. Изучаются в слотах науки, как технологии."
 		start_btn.disabled = true
 		start_btn.text = "Исследовать"
 		return
@@ -328,12 +398,7 @@ func _update_detail() -> void:
 		"done":
 			txt += "\n⟶ изучено"
 		"lock":
-			var g := Tech.doc_group(t)
-			var sc := Tech.school_of(nat, g, _slot_tech(nat)) if g != "" else -1
-			if sc >= 0 and sc != int(t["row"]):
-				txt += "\n⟶ школа %s уже выбрана: «%s» (одна на страну)" % [Tech.DOC_GROUP_NAME[g], Tech.row_name("doc", sc).get_slice(": ", 1)]
-			else:
-				txt += "\n⟶ требуется «%s»" % Tech.tech_name(t["req"])
+			txt += "\n⟶ требуется «%s»" % Tech.tech_name(t["req"])
 		_:
 			var m := Tech.ahead_mult(world, t)
 			txt += "\nСрок: %d дн." % Tech.days_left(world, nat, selected)
@@ -345,6 +410,40 @@ func _update_detail() -> void:
 	var busy: bool = slot < nat.research.size() and nat.research[slot] != ""
 	start_btn.text = "Заменить в слоте %d" % (slot + 1) if busy else "Исследовать"
 	start_btn.disabled = st == "done" or st == "lock" or st == "work"
+
+
+func _update_doc_detail(nat: World.Nation) -> void:
+	start_btn.text = "Принять"
+	if selected == "":
+		detail.text = "Доктрины — боевой опыт. Опыт армии, флота и авиации копится только в боях и тратится на ступени. В каждом роде сил одна школа: первая ступень закрывает остальные. ★ — историческая школа страны."
+		start_btn.disabled = true
+		return
+	var t := Doctrine.get_step(selected)
+	var st := _state(nat, t)
+	var bi := Doctrine.branch_index(t["branch"])
+	var c := Doctrine.cost(t["branch"], int(t["n"]))
+	var txt := "%s (%s, ступень %d) — %s\n%s" % [t["name"], Doctrine.get_school(t["school"])["name"], int(t["n"]) + 1, t["desc"], Doctrine.effect_text(t)]
+	match st:
+		"done":
+			txt += "\n⟶ принята"
+		"lock":
+			var sc := Doctrine.school_of(nat, t["branch"])
+			if sc != "" and sc != t["school"]:
+				txt += "\n⟶ школа %s уже выбрана: «%s»" % [Doctrine.BRANCH_GEN[bi], Doctrine.get_school(sc)["name"]]
+			else:
+				txt += "\n⟶ сначала предыдущая ступень"
+		_:
+			txt += "\nНужно %d опыта %s, есть %d" % [roundi(c), Doctrine.BRANCH_GEN[bi], nat.xp[bi]]
+	detail.text = txt
+	start_btn.text = "Принять (%d опыта)" % roundi(c)
+	start_btn.disabled = st != "open"
+
+
+func _buy() -> void:
+	var nat: World.Nation = world.nations[nid]
+	if Doctrine.buy(nat, selected):
+		game.hud.toast("Доктрина: «%s»" % Doctrine.get_step(selected)["name"])
+	refresh()
 
 
 func _start() -> void:

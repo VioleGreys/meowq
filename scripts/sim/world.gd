@@ -112,6 +112,10 @@ class Nation:
 	var research_progress := {} # tech_id -> накоплено дней работы (сохраняется при смене)
 	var techs := {}             # tech_id -> true
 	var bonus := {}             # bonus_key -> float
+	var xp := PackedFloat64Array([0.0, 0.0, 0.0])  # боевой опыт: армия, флот, авиация (Doctrine)
+	var doctrines := {}         # id ступени доктрины -> true
+	var doctrine_pref := {}     # род сил -> историческая школа (nations.json)
+	var no_attack := {}         # страна -> true: воюем, но ИИ не наступает (эффект no_attack — «Странная война»)
 	var build_mode := "mil"     # "civ" или "mil"
 	var build_progress := 0.0
 	var training: Array = []    # в подготовке: [оставшиеся дни, шаблон]

@@ -432,6 +432,19 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 			f.readiness = maxf(0.0, f.readiness - db / maxf(1.0, pb) * 0.6)
 		_retreat_if_beaten(world, side_a, pb)
 		_retreat_if_beaten(world, side_b, pa)
+	# боевой опыт флота: соединения в морском бою и в рейдах на торговых путях
+	var nxp := PackedFloat64Array()
+	nxp.resize(world.nations.size())
+	for f in world.fleets:
+		if not f.alive:
+			continue
+		if f.in_battle:
+			nxp[f.owner] += Doctrine.NAVY_PER_FLEET
+		elif f.mission == "raid" and not world.nations[f.owner].at_war.is_empty():
+			nxp[f.owner] += Doctrine.NAVY_PER_RAID
+	for n in nxp.size():
+		if nxp[n] > 0.0:
+			Doctrine.gain(world.nations[n], 1, minf(Doctrine.NAVY_CAP, nxp[n]))
 	Prof.add("флот:сражения", _pt)
 	_pt = Time.get_ticks_usec()
 	_trade_war(world, rng)
@@ -1231,6 +1244,8 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 	var air_sup := world.air_sup
 	var cas_mult := world.cas_mult
 	var qa := world.n_air   # качество авиации по технологиям: страна×4
+	var axp := PackedFloat64Array()   # боевой опыт авиации за день (Doctrine)
+	axp.resize(nc)
 	for r in by_region:
 		var here: Array = by_region[r]
 		# снимок полей крыльев района в локальные массивы
@@ -1288,6 +1303,7 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 						own_f += p_k
 			if en_f <= 0.0:
 				continue
+			axp[wo] += Doctrine.AIR_PER_WING
 			var rate := 0.004 if kd[j] == 0 else 0.008 * en_f / (en_f + own_f + 1.0)
 			w.planes = maxf(0.0, w.planes - en_f * rate * rng.randf_range(0.6, 1.4) * (WING_MAX / maxf(WING_MAX, en_f + own_f)) * 3.0)
 			if w.planes < 1.0:
@@ -1298,6 +1314,9 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 		for w in here:
 			if w.kind != 1:
 				continue
+			# задание бомбардировщиков на войне — тоже боевой опыт (без воздушного боя)
+			if (w.mission == "bomb" or w.mission == "naval") and not world.nations[w.owner].at_war.is_empty():
+				axp[w.owner] += Doctrine.AIR_PER_WING * 0.5
 			var sup: float = air_sup[r * nc + w.owner]
 			if w.mission == "bomb":
 				_bomb_factories(world, w, r, sup, rng)
@@ -1314,6 +1333,9 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 						_take_losses(world, targets, dmg, rng)
 	world.air_sup = air_sup
 	world.cas_mult = cas_mult
+	for n in nc:
+		if axp[n] > 0.0:
+			Doctrine.gain(world.nations[n], 2, minf(Doctrine.AIR_CAP, axp[n]))
 
 
 static func _bomb_factories(world: World, w: World.AirWing, r: int, sup: float, rng: RandomNumberGenerator) -> void:

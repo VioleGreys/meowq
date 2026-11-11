@@ -63,6 +63,10 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	// ёмкость снабжения провинций (Supply): не скапливать войска сверх неё
 	const PackedFloat32Array supcap_a = tables.has("supcap") ? PackedFloat32Array(tables["supcap"]) : PackedFloat32Array();
 	const bool has_cap = supcap_a.size() == pc;
+	// воюем, но не наступаем (Nation.no_attack): nc×nc, пусто — запретов нет
+	const PackedByteArray nohit_a = tables.has("nohit") ? PackedByteArray(tables["nohit"]) : PackedByteArray();
+	const bool has_nohit = nohit_a.size() > 0;
+	const uint8_t *nohit = nohit_a.ptr();
 	const float *supcap = supcap_a.ptr();
 	auto capd = [&](int32_t p) { return std::max(1, int(std::floor(double(supcap[p])))); };
 	const int64_t ndv = dv_owner_a.size();
@@ -96,7 +100,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			if (at_war) {
 				if (hostile && matches) {
 					fronts.add(p);
-					targets.add(q);
+					if (!has_nohit || nohit[int64_t(nid) * nc + c] == 0) targets.add(q);
 					fpairs.push_back(p);
 					fpairs.push_back(q);
 				}
