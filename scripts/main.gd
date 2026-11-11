@@ -231,6 +231,10 @@ func _auto_screenshot(path: String) -> void:
 		hud.visible = false   # для макетов оформления: только карта и фишки
 	for i in 10:
 		await get_tree().process_frame
+	if _arg("scroll") != "":
+		# --scroll=N: прокрутить лист окна на N пикселей (низ длинных окон)
+		(hud.popup_body.get_parent() as ScrollContainer).scroll_vertical = int(_arg("scroll"))
+		await get_tree().process_frame
 	world_lock()
 	hud.refresh_top()
 	unit_layer.rebuild(selected_fleet, selected_wing)
@@ -336,6 +340,12 @@ func _auto_screenshot_locked() -> void:
 			# конструктор шаблонов: --tpl=N (на основе шаблона N) или --tpl=new
 			hud.open_tab("army")
 			hud._open_tpl_editor(world, -1 if _arg("tpl") == "new" else int(_arg("tpl")), false)
+		elif _arg("plane") != "":
+			# конструктор самолёта: --plane=N (копия проекта N), --plane=new или --plane=fig|bmb (выпускаемый)
+			hud.open_tab("navy")
+			var pa := _arg("plane")
+			var pd: int = -1 if pa == "new" else (world.nations[me].air_design[0 if pa == "fig" else 1] if pa in ["fig", "bmb"] else int(pa))
+			hud._open_plane_editor(world, pd)
 		elif _arg("tab") != "":
 			if _arg("trade") != "":
 				hud._prod_page = "trade"   # --trade=1: «Внешняя экономика»; --trade=oil и т. п. — выбор продавца

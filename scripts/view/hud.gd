@@ -2119,6 +2119,9 @@ const MISSION_NAMES := {"patrol": "патруль", "raid": "рейды", "port"
 
 
 func _build_navy(w: World, me: int) -> void:
+	if _pl_open:
+		_build_plane_editor(w, me)
+		return
 	popup_title.text = "Флот и авиация"
 	var n: World.Nation = w.nations[me]
 	popup_body.add_child(_section("Флоты"))
@@ -2151,6 +2154,7 @@ func _build_navy(w: World, me: int) -> void:
 			_rebuild_popup(), Vector2(0, 56))
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.add_theme_font_size_override("font_size", 14)
+		b.clip_text = true
 		row.add_child(b)
 	popup_body.add_child(row)
 	popup_body.add_child(_section("Авиация"))
@@ -2166,8 +2170,6 @@ func _build_navy(w: World, me: int) -> void:
 			popup_body.add_child(b)
 	popup_body.add_child(_small("В резерве: истребителей %d, бомбардировщиков %d — пополняют крылья до %d самолётов." % [
 		n.stock[Military.EQ_FIG], n.stock[Military.EQ_BOMB], Forces.WING_MAX]))
-	var row2 := HBoxContainer.new()
-	row2.add_theme_constant_override("separation", 4)
 	for kind in 2:
 		var k := kind
 		var b := _button("Новое крыло: %s" % ("истребители" if kind == 0 else "бомбардировщики"), func():
@@ -2180,10 +2182,9 @@ func _build_navy(w: World, me: int) -> void:
 			n.stock[eq] -= nw.planes
 			nw.mission = "sup" if k == 0 else "cas"
 			_rebuild_popup(), Vector2(0, 48))
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.add_theme_font_size_override("font_size", 14)
-		row2.add_child(b)
-	popup_body.add_child(row2)
+		popup_body.add_child(b)
+	_build_plane_designs(w, me)
 	popup_body.add_child(_section("Морские высадки"))
 	var plans := 0
 	for plan in w.invasions:
@@ -2200,6 +2201,233 @@ func _build_navy(w: World, me: int) -> void:
 			popup_body.add_child(r)
 	if plans == 0:
 		popup_body.add_child(_small("Переправа: выделите дивизии в своём порту и коснитесь своего или союзного порта за морем — войска пойдут без подготовки. Высадка: выделите дивизии в порту и коснитесь вражеского побережья. Подготовка — 1–2 месяца, войска ждут в порту; высадка — когда подготовка готова и у цели господство на море. Плацдарм снабжает войска 60 дней — захватите порт: через него идут снабжение и подкрепления."))
+
+
+# --- Конструктор самолётов (Designs) ------------------------------------------
+# окно-редактор во вкладке «Флот и авиация»: корпус + модули в слотах
+var _pl_open := false
+var _pl_hull := ""
+var _pl_mods: Array = []
+var _pl_name := ""
+
+const PL_KIND := ["истребитель", "бомбардировщик"]
+
+
+## Проекты страны во вкладке: что в производстве, свои проекты, новый проект.
+func _build_plane_designs(w: World, me: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_body.add_child(_section("Проекты самолётов"))
+	# сначала выпускаемые (истребитель, бомбардировщик), затем остальные свои
+	var order: Array = []
+	for k in 2:
+		if n.air_design[k] >= 0 and n.air_design[k] < w.plane_designs.size():
+			order.append(n.air_design[k])
+	for i in w.plane_designs.size():
+		if int(w.plane_designs[i]["owner"]) == me and not order.has(i):
+			order.append(i)
+	for i in order:
+		var d: Dictionary = w.plane_designs[i]
+		var did: int = i
+		var k: int = d["kind"]
+		var cur: bool = n.air_design[k] == i
+		var hr := Designs.hull(d["hull"])
+		popup_body.add_child(_label("%s%s" % [d["name"], (" — выпускается (%s)" % ("истребители" if k == 0 else "бомбардировщики")) if cur else ""], 16))
+		popup_body.add_child(_small("   %s, %s: %s" % [PL_KIND[k], hr[1] if not hr.is_empty() else d["hull"], Designs.stats_text(d)]))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		if not cur:
+			var bp := _button("В производство", func():
+				Designs.set_production(w, n, did)
+				toast("В производстве: %s" % d["name"])
+				_rebuild_popup(), Vector2(0, 44))
+			bp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(bp)
+		var bc := _button("Копия и правка", func(): _open_plane_editor(w, did), Vector2(0, 44))
+		bc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(bc)
+		popup_body.add_child(row)
+	popup_body.add_child(_button("Новый проект самолёта", func(): _open_plane_editor(w, -1), Vector2(0, 50)))
+	popup_body.add_child(_small("Новые крылья и крылья, пополненные больше чем наполовину, получают самолёты проекта в производстве. Цена проекта делит выпуск: дорогой самолёт выходит реже."))
+
+
+## Открыть редактор: на основе проекта did или новый (-1 — с первого корпуса).
+func _open_plane_editor(w: World, did: int) -> void:
+	if did >= 0:
+		var d: Dictionary = w.plane_designs[did]
+		_pl_hull = d["hull"]
+		_pl_mods = (d["mods"] as Array).duplicate()
+		_pl_name = String(d["name"]) + " (нов.)"
+	else:
+		_pl_hull = Designs.HULLS[0][0]
+		_pl_mods = []
+		_pl_name = "Новый самолёт"
+	_pl_open = true
+	_rebuild_popup()
+
+
+## Строка «значение (±разница с выпускаемым)».
+func _pl_cmp(v: float, base: float, fmt: String, has_base: bool) -> String:
+	var t := fmt % v
+	if has_base and absf(v - base) > 1e-6:
+		t += (" (+" if v > base else " (−") + (fmt % absf(v - base)) + ")"
+	return t
+
+
+func _pl_eff_text(eff: Dictionary) -> String:
+	var parts: Array = []
+	for key in eff:
+		var v: float = eff[key]
+		var nm: String = Designs.STAT_NAMES[key]
+		if key == "coord":
+			parts.append("%s %s%d%%" % [nm, "+" if v > 0 else "−", roundi(absf(v) * 100.0)])
+		elif key == "agi" or key == "cost":
+			parts.append("%s %s%.2f" % [nm, "+" if v > 0 else "−", absf(v)])
+		else:
+			parts.append("%s %s%d" % [nm, "+" if v > 0 else "−", roundi(absf(v))])
+	return ", ".join(parts)
+
+
+func _build_plane_editor(w: World, me: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_title.text = "Проект самолёта"
+	var h := Designs.hull(_pl_hull)
+	var name_edit := LineEdit.new()
+	name_edit.text = _pl_name
+	name_edit.max_length = 32
+	name_edit.custom_minimum_size = Vector2(0, 48)
+	name_edit.text_changed.connect(func(tx: String): _pl_name = tx)
+	popup_body.add_child(name_edit)
+	# характеристики и сравнение с выпускаемым проектом того же вида
+	var s := Designs.stats(_pl_hull, _pl_mods)
+	var k: int = s["kind"]
+	var did: int = n.air_design[k]
+	var has_b := did >= 0 and did < w.plane_designs.size()
+	var b: Dictionary = w.plane_designs[did] if has_b else s
+	var pw := float(s["atk"]) * float(s["agi"]) * Designs.MAN_MULT
+	var pwb := float(b["atk"]) * float(b["agi"]) * Designs.MAN_MULT
+	var dw := float(s["def"]) * float(s["agi"]) * Designs.MAN_MULT
+	var dwb := float(b["def"]) * float(b["agi"]) * Designs.MAN_MULT
+	var lines: Array = []
+	lines.append("Вид: %s%s" % [PL_KIND[k], (" · сравнение с «%s»" % b["name"]) if has_b else ""])
+	lines.append("атака %s · защита %s · манёвренность %s · координация %s" % [
+		_pl_cmp(float(s["atk"]), float(b["atk"]), "%.0f", has_b), _pl_cmp(float(s["def"]), float(b["def"]), "%.0f", has_b),
+		_pl_cmp(float(s["agi"]), float(b["agi"]), "%.2f", has_b), _pl_cmp(float(s["coord"]) * 100.0, float(b["coord"]) * 100.0, "%.0f%%", has_b)])
+	lines.append("сила в бою: удар %s · стойкость %s (× манёвренность × %.1f)" % [
+		_pl_cmp(pw, pwb, "%.1f", has_b), _pl_cmp(dw, dwb, "%.1f", has_b), Designs.MAN_MULT])
+	var hits: Array = []
+	for key in ["ground", "bomb", "naval"]:
+		if float(s[key]) > 0.0 or float(b[key]) > 0.0:
+			hits.append("%s %s" % [Designs.STAT_NAMES[key], _pl_cmp(float(s[key]), float(b[key]), "%.0f", has_b)])
+	if not hits.is_empty():
+		lines.append(" · ".join(hits))
+	lines.append("цена %s (базовый: истребитель 1,0, бомбардировщик 2,0)" % _pl_cmp(float(s["cost"]), float(b["cost"]), "%.2f", has_b))
+	popup_body.add_child(_label("\n".join(lines), 15))
+
+	popup_body.add_child(_section("Корпус"))
+	var grid := GridContainer.new()
+	grid.columns = 1
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 4)
+	for hr in Designs.HULLS:
+		var hid: String = hr[0]
+		var ok := Designs.has_tech(n, hr[2])
+		var txt := "%s%s\n%d сл. · защ. %d · ман. %.2f · цена %.1f" % ["▶ " if hid == _pl_hull else "", hr[1], hr[3], hr[4], hr[5], hr[6]]
+		if not ok:
+			txt = "%s\nнужна «%s»" % [hr[1], Tech.get_tech(hr[2]).get("name", hr[2])]
+		var bh := _button(txt, func():
+			_pl_hull = hid
+			# лишние модули и модули только для тяжёлых корпусов — снимаются
+			var allowed := Designs.mods_for(n, hid)
+			var keep: Array = []
+			for m in _pl_mods:
+				if allowed.has(m) and keep.size() < int(Designs.hull(hid)[3]):
+					keep.append(m)
+			_pl_mods = keep
+			_rebuild_popup(), Vector2(0, 54))
+		bh.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		bh.add_theme_font_size_override("font_size", 13)
+		bh.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		bh.clip_text = true
+		bh.disabled = not ok or hid == _pl_hull
+		if hid == _pl_hull:
+			bh.add_theme_color_override("font_disabled_color", UiStyle.ink(Color(0.95, 0.85, 0.5)))
+		grid.add_child(bh)
+	popup_body.add_child(grid)
+
+	var slots: int = int(h[3]) if not h.is_empty() else 0
+	popup_body.add_child(_section("Слоты: %d из %d" % [_pl_mods.size(), slots]))
+	if _pl_mods.is_empty():
+		popup_body.add_child(_small("Пусто — добавьте модули из списка ниже."))
+	for i in _pl_mods.size():
+		var ii := i
+		var m := Designs.module(String(_pl_mods[i]))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var l := _label("%d. %s — %s" % [i + 1, m[1], _pl_eff_text(m[3])], 15)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		row.add_child(_button("✕", func():
+			_pl_mods.remove_at(ii)
+			_rebuild_popup(), Vector2(44, 44)))
+		popup_body.add_child(row)
+
+	popup_body.add_child(_section("Модули"))
+	var avail := Designs.mods_for(n, _pl_hull)
+	for mr in Designs.MODS:
+		var mid: String = mr[0]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 0)
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var cnt := _pl_mods.count(mid)
+		col.add_child(_label("%s%s" % [mr[1], (" × %d" % cnt) if cnt > 0 else ""], 16))
+		var why := ""
+		if not Designs.has_tech(n, mr[2]):
+			why = "нужна технология «%s»" % Tech.get_tech(mr[2]).get("name", mr[2])
+		elif not avail.has(mid):
+			why = "только для двух- и четырёхмоторных корпусов"
+		col.add_child(_small(why if why != "" else _pl_eff_text(mr[3])))
+		row.add_child(col)
+		var plus := _button("+", func():
+			_pl_mods.append(mid)
+			_rebuild_popup(), Vector2(44, 44))
+		plus.disabled = why != "" or _pl_mods.size() >= slots or cnt >= Designs.MAX_SAME
+		row.add_child(plus)
+		popup_body.add_child(row)
+	popup_body.add_child(_small("Один модуль — не больше двух раз. Бомбы, бомбоотсек или торпеда делают самолёт бомбардировщиком. Манёвренность умножает атаку и защиту (×%.1f); координация — доля крыла, что бьёт согласованно." % Designs.MAN_MULT))
+
+	var ok_save := not _pl_mods.is_empty() and Designs.valid(n, _pl_hull, _pl_mods)
+	var row2 := HBoxContainer.new()
+	row2.add_theme_constant_override("separation", 8)
+	for prod in [true, false]:
+		var pr: bool = prod
+		var bs := _button("В производство" if prod else "Сохранить", func():
+			if not Designs.valid(n, _pl_hull, _pl_mods) or _pl_mods.is_empty():
+				toast("Проект собран неверно")
+				return
+			var nm := _pl_name.strip_edges()
+			if nm == "":
+				nm = "Самолёт"
+			var before := w.plane_designs.size()
+			var id := Designs.add(w, me, nm, _pl_hull, _pl_mods)
+			if id < before:
+				nm = w.plane_designs[id]["name"]
+				toast("Такой проект уже есть: «%s»" % nm)
+			elif not pr:
+				toast("Проект «%s» сохранён" % nm)
+			if pr:
+				Designs.set_production(w, n, id)
+				toast("В производстве: %s" % nm)
+			_pl_open = false
+			_rebuild_popup(), Vector2(0, 52))
+		bs.disabled = not ok_save
+		bs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row2.add_child(bs)
+	popup_body.add_child(row2)
+	popup_body.add_child(_button("Отмена", func():
+		_pl_open = false
+		_rebuild_popup(), Vector2(0, 48)))
 
 
 func show_fleet(f: World.Fleet) -> void:
