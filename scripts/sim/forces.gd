@@ -14,6 +14,8 @@ const SHIP_ONE := ["линкор", "крейсер", "эсминец", "подл
 const SHIP_POWER := [10.0, 4.0, 1.0, 1.2]
 const SHIP_COST := [3000.0, 900.0, 150.0, 120.0]   # очки судостроения
 const WING_MAX := 300.0
+const AIR_SUP_PENALTY := 0.3   # сила войск при полном господстве противника в воздухе: −30 %
+const AIR_SUP_FULL := 300.0    # истребителей (с качеством) над районом для полного эффекта
 const REGION_CELL := 160.0                       # размер воздушного района, пикс. карты
 const AIR_RANGE := 190.0                         # дальность от своей территории, пикс.
 
@@ -1264,11 +1266,20 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 			kd[j] = w.kind
 			pl[j] = w.planes
 			cas_m[j] = 1 if w.mission == "cas" else 0
-		# для каждой страны: свои и вражеские истребители в районе
+		# для каждой страны: свои и вражеские истребители в районе. Считаем и для
+		# стран без своей авиации здесь, но воюющих с хозяевами крыльев: их войска
+		# тоже страдают от чужого господства в воздухе.
 		var owners := {}
 		for j in cnt:
 			owners[ow[j]] = true
-		for n in owners:
+		var sides := owners.duplicate()
+		for o in owners:
+			for n2 in nc:
+				if war[int(o) * nc + n2] == 1:
+					sides[n2] = true
+		var side_list: Array = sides.keys()
+		side_list.sort()   # порядок однозначный
+		for n in side_list:
 			var own_f := 0.0
 			var en_f := 0.0
 			var own_b := 0.0
@@ -1284,8 +1295,11 @@ static func daily_air(world: World, rng: RandomNumberGenerator) -> void:
 			var sup := 0.5 if own_f + en_f <= 0.0 else own_f / (own_f + en_f)
 			air_sup[r * nc + n] = sup
 			var m := 1.0 + minf(0.4, own_b * sup / 600.0)
-			if sup < 0.3:
-				m -= 0.15   # противник господствует в воздухе
+			# противник господствует в воздухе: до −AIR_SUP_PENALTY к силе войск,
+			# в меру того, сколько истребителей над районом (AIR_SUP_FULL — полная сила)
+			if sup < 0.5:
+				var presence := minf(1.0, (own_f + en_f) / AIR_SUP_FULL)
+				m -= AIR_SUP_PENALTY * (0.5 - sup) * 2.0 * presence
 			cas_mult[r * nc + n] = m
 		# воздушные бои: потери от вражеских истребителей
 		for j in cnt:

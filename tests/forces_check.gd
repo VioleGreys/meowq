@@ -229,6 +229,16 @@ func _init() -> void:
 	check(factories_after < factories_before, "бомбардировки разрушили заводы: %d → %d" % [factories_before, factories_after])
 	var sup: float = w.air_sup[london_r * w.nation_count + ENG]
 	print("  превосходство Британии над Лондоном: %d%%" % (sup * 100.0))
+	# господство в воздухе: войска страны без своей авиации в районе, где у
+	# противника истребители, слабеют (до −30 %)
+	for wg in w.wings:
+		if wg.owner == ENG:
+			wg.alive = false
+		elif wg.owner == GER and wg.alive:
+			wg.mission = "sup"
+	Forces.daily_air(w, RandomNumberGenerator.new())
+	var m_eng: float = w.cas_mult[london_r * w.nation_count + ENG]
+	check(m_eng < 1.0 and m_eng >= 1.0 - Forces.AIR_SUP_PENALTY - 0.001, "без своей авиации под чужим господством: сила войск ×%.2f" % m_eng)
 
 	print("Исторический ИИ: Норвегия 1940:")
 	r = fresh()
