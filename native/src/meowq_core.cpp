@@ -33,6 +33,8 @@ void MeowqCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("ports_open", "ports", "adj_start", "adj_list", "land", "zone_has_fleet"), &MeowqCore::ports_open);
 	ClassDB::bind_method(D_METHOD("air_reach", "land", "ctrl", "ally", "nc", "n", "region", "centers", "range"), &MeowqCore::air_reach);
 	ClassDB::bind_method(D_METHOD("air_region", "t", "i"), &MeowqCore::air_region);
+	ClassDB::bind_method(D_METHOD("ports_hub", "ports", "ctrl", "adj_start", "adj_list", "land", "zone_has_fleet",
+			"zidx", "zoff", "zown", "zpow", "ally", "war", "nc", "any_fleets"), &MeowqCore::ports_hub);
 	ClassDB::bind_method(D_METHOD("cap_totals", "owner", "ctrl", "vp", "side", "nc"), &MeowqCore::cap_totals);
 	ClassDB::bind_method(D_METHOD("version"), &MeowqCore::version);
 }

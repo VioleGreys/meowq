@@ -127,13 +127,22 @@ public:
 			const PackedInt32Array &owner, const PackedInt32Array &ctrl, const PackedInt32Array &adj_start,
 			const PackedInt32Array &adj_list, const PackedByteArray &land, const PackedByteArray &hostile, int nc,
 			const PackedFloat64Array &plan_in, double gain, double active, double rear) const;
-	String version() const { return "meowq-core 25"; }
+	String version() const { return "meowq-core 26"; }
 	// Воздушный бой района i снимка t (Forces.air_begin): пачки по 100, обнаружение,
 	// день и ночь, превосходство; двойник — Forces.air_region_gd.
 	PackedFloat64Array air_region(const Dictionary &t, int i) const;
 	// Итоги проверки капитуляций (Simulation._check_capitulation): по странам
 	// [очки всего ×nc, очки удержанные ×nc, своих неоккупированных провинций ×nc];
 	// side — [корень стороны, фракция корня] на страну.
+	// Узлы снабжения из портов (Simulation._phase_supply): 1 — порт работает
+	// (есть море без флотов или не блокирован: господство стороны ≥ 0,3 хоть в
+	// одной соседней зоне), 0 — блокирован. Флоты зон — zidx/zoff/zown/zpow
+	// (без стоящих в порту), двойник — Simulation._blockaded.
+	PackedByteArray ports_hub(const PackedInt32Array &ports, const PackedInt32Array &ctrl,
+			const PackedInt32Array &adj_start, const PackedInt32Array &adj_list, const PackedByteArray &land,
+			const PackedByteArray &zone_has_fleet, const PackedInt32Array &zidx, const PackedInt32Array &zoff,
+			const PackedInt32Array &zown, const PackedFloat64Array &zpow, const PackedByteArray &ally,
+			const PackedByteArray &war, int nc, bool any_fleets) const;
 	PackedInt32Array cap_totals(const PackedInt32Array &owner, const PackedInt32Array &ctrl,
 			const PackedInt32Array &vp, const PackedInt32Array &side, int nc) const;
 };

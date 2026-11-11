@@ -751,3 +751,59 @@ PackedInt32Array MeowqCore::cap_totals(const PackedInt32Array &owner, const Pack
 	}
 	return res;
 }
+
+// Узлы снабжения из портов — двойник Simulation._phase_supply/_blockaded/_zone_supremacy.
+PackedByteArray MeowqCore::ports_hub(const PackedInt32Array &ports, const PackedInt32Array &ctrl,
+		const PackedInt32Array &adj_start, const PackedInt32Array &adj_list, const PackedByteArray &land,
+		const PackedByteArray &zone_has_fleet, const PackedInt32Array &zidx, const PackedInt32Array &zoff,
+		const PackedInt32Array &zown, const PackedFloat64Array &zpow, const PackedByteArray &ally,
+		const PackedByteArray &war, int nc, bool any_fleets) const {
+	PackedByteArray out;
+	out.resize(ports.size());
+	uint8_t *o = out.ptrw();
+	const int32_t *as = adj_start.ptr(), *al = adj_list.ptr(), *ct = ctrl.ptr();
+	const int32_t *zi = zidx.ptr(), *zo = zoff.ptr(), *zw = zown.ptr();
+	const double *zp = zpow.ptr();
+	const uint8_t *ld = land.ptr(), *zf = zone_has_fleet.ptr(), *al2 = ally.ptr(), *wr = war.ptr();
+	for (int64_t i = 0; i < ports.size(); i++) {
+		const int32_t p = ports[i];
+		const int32_t c = ct[p];
+		o[i] = 0;
+		if (c < 0) continue;
+		bool open_sea = false;
+		for (int32_t k = as[p]; k < as[p + 1]; k++) {
+			const int32_t q = al[k];
+			if (ld[q] == 0 && zf[q] == 0) {
+				open_sea = true;
+				break;
+			}
+		}
+		if (open_sea || !any_fleets) {
+			o[i] = 1;
+			continue;
+		}
+		// _blockaded: блокирован, если есть соседнее море и ни в одной зоне господство < 0,3
+		bool any = false, free_zone = false;
+		for (int32_t k = as[p]; k < as[p + 1]; k++) {
+			const int32_t q = al[k];
+			if (ld[q] != 0) continue;
+			any = true;
+			double mine = 0.0, enemy = 0.0;
+			const int32_t z = zi[q];
+			if (z >= 0) {
+				for (int32_t j = zo[z]; j < zo[z + 1]; j++) {
+					const int32_t ow = zw[j];
+					if (al2[int64_t(c) * nc + ow] == 1) mine += zp[j];
+					else if (c != ow && ow >= 0 && wr[int64_t(c) * nc + ow] == 1) enemy += zp[j];
+				}
+			}
+			const double sup = mine + enemy <= 0.0 ? 0.5 : mine / (mine + enemy);
+			if (sup >= 0.3) {
+				free_zone = true;
+				break;
+			}
+		}
+		o[i] = (free_zone || !any) ? 1 : 0;
+	}
+	return out;
+}

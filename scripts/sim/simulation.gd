@@ -69,7 +69,10 @@ func tick() -> void:
 		var _pt := Time.get_ticks_usec()
 		world.rebuild_prov_divs()
 		Prof.add("подг:prov_divs", _pt)
+		_pt = Time.get_ticks_usec()
 		world.refresh_stats()
+		Prof.add("подг:refresh_stats", _pt)
+		_pt = Time.get_ticks_usec()
 		# характеристики дивизий меняются только с новыми технологиями
 		var dirty := false
 		for nat in world.nations:
@@ -88,7 +91,10 @@ func tick() -> void:
 					Military.refresh_division(world, divs[i])
 		for nat in world.nations:
 			nat.stats_dirty = false
-		_refresh_sides())
+		Prof.add("подг:дивизии", _pt)
+		_pt = Time.get_ticks_usec()
+		_refresh_sides()
+		Prof.add("подг:стороны", _pt))
 	_timed("экономика", _phase_economy)
 	_timed("флот", _phase_navy)
 	# авиация конвейером: снимок и расчёт районов в фоне сейчас, применение —
@@ -261,6 +267,9 @@ func train_division(nid: int, tpl: int = Military.T_INF) -> bool:
 
 ## Матрица «одна сторона» для параллельных фаз (фракции и сюзерены меняются редко,
 ## но пересчёт дешёвый: nation_count^2).
+var _sides_key := PackedInt32Array()
+
+
 func _refresh_sides() -> void:
 	var nc := world.nation_count
 	# ключ стороны: фракция сюзерена или сам сюзерен (см. Diplomacy.same_side)
@@ -270,6 +279,10 @@ func _refresh_sides() -> void:
 		var r := Diplomacy.root(world, a)
 		var f: int = world.nations[r].faction
 		key[a] = f if f >= 0 else 10000 + r
+	# матрица — только когда стороны сменились (союзы меняются редко)
+	if key == _sides_key and world.ally.size() == nc * nc:
+		return
+	_sides_key = key
 	var ally := PackedByteArray()
 	ally.resize(nc * nc)
 	for a in nc:
@@ -306,6 +319,7 @@ func _phase_supply() -> void:
 		hubs[i] = []   # Array: append без копирования; в Packed — после сбора
 		rep_index[reps[i]] = i
 	var ctl := world.p_controller
+	var _px := Time.get_ticks_usec()
 	if world.p_port.size() != world.prov_count or world.port_list.is_empty():
 		Forces.refresh_ports(world)
 	for nat in world.nations:
@@ -320,29 +334,48 @@ func _phase_supply() -> void:
 	var sup_memo := {}
 	var plist := world.port_list
 	# блокада возможна, только если во всех соседних морских зонах есть флоты
-	var open_flags := PackedByteArray()
+	_px = Time.get_ticks_usec()
 	if Native.core != null:
+		# всё в ядре: открытое море и блокада по господству (флоты зон — один раз)
 		var zhf := PackedByteArray()
 		zhf.resize(world.prov_count)
+		var zidx := PackedInt32Array()
+		zidx.resize(world.prov_count)
+		zidx.fill(-1)
+		var zoff := PackedInt32Array([0])
+		var zown := PackedInt32Array()
+		var zpow := PackedFloat64Array()
 		for z in zf:
 			zhf[z] = 1
-		open_flags = Native.core.call("ports_open", plist, adj_s, adj_l, is_land, zhf)
-	for pi in plist.size():
-		var p := plist[pi]
-		var c := ctl[p]
-		if c < 0 or not rep_index.has(rep[c]):
-			continue
-		var open_sea := false
-		if not open_flags.is_empty():
-			open_sea = open_flags[pi] == 1
-		else:
+			zidx[z] = zoff.size() - 1
+			for f in zf[z]:
+				if f.mission == "port":
+					continue
+				zown.append(f.owner)
+				zpow.append(Forces.combat_power(f))
+			zoff.append(zown.size())
+		var hub_ok: PackedByteArray = Native.core.call("ports_hub", plist, ctl, adj_s, adj_l, is_land, zhf,
+				zidx, zoff, zown, zpow, world.ally, world.war, nc, not world.fleets.is_empty())
+		for pi in plist.size():
+			var p := plist[pi]
+			var c := ctl[p]
+			if c >= 0 and rep_index.has(rep[c]) and hub_ok[pi] == 1:
+				hubs[rep_index[rep[c]]].append(p)
+	else:
+		for pi in plist.size():
+			var p := plist[pi]
+			var c := ctl[p]
+			if c < 0 or not rep_index.has(rep[c]):
+				continue
+			var open_sea := false
 			for k in range(adj_s[p], adj_s[p + 1]):
 				var q := adj_l[k]
 				if is_land[q] == 0 and not zf.has(q):
 					open_sea = true
 					break
-		if open_sea or not _blockaded(c, p, sup_memo):
-			hubs[rep_index[rep[c]]].append(p)
+			if open_sea or not _blockaded(c, p, sup_memo):
+				hubs[rep_index[rep[c]]].append(p)
+	Prof.add("уз:блокада", _px)
 	# плацдармы высадок временно работают как порты
 	for p in world.beachheads.keys():
 		if world.beachheads[p] < world.day:
@@ -433,17 +466,51 @@ func _blockaded(n: int, p: int, memo: Dictionary) -> bool:
 	if world.fleets.is_empty():
 		return false
 	var any := false
+	var land := world.p_land
+	var pc := world.prov_count
 	for q in world.p_adj[p]:
-		if world.p_land[q] == 0:
+		if land[q] == 0:
 			any = true
-			var key: int = n * world.prov_count + q
+			var key: int = n * pc + q
 			var sup = memo.get(key)
 			if sup == null:
-				sup = Forces.supremacy(world, n, q)
+				sup = _zone_supremacy(n, q, memo)
 				memo[key] = sup
 			if sup >= 0.3:
 				return false
 	return any
+
+
+## Forces.supremacy с силами флотов зоны, собранными один раз за проход
+## (тот же порядок флотов и сложений — результат до бита тот же).
+func _zone_supremacy(n: int, zone: int, memo: Dictionary) -> float:
+	var zk := -1 - zone   # ключи зон — отрицательные, ключи (страна, зона) — нет
+	var zd = memo.get(zk)
+	if zd == null:
+		var ow := PackedInt32Array()
+		var pw := PackedFloat64Array()
+		for f in world.zone_fleets.get(zone, []):
+			if f.mission == "port":
+				continue
+			ow.append(f.owner)
+			pw.append(Forces.combat_power(f))
+		zd = [ow, pw]
+		memo[zk] = zd
+	var owners: PackedInt32Array = zd[0]
+	var powers: PackedFloat64Array = zd[1]
+	var mine := 0.0
+	var enemy := 0.0
+	var nc := world.nation_count
+	var ally := world.ally
+	for i in owners.size():
+		var o := owners[i]
+		if ally[n * nc + o] == 1:
+			mine += powers[i]
+		elif world.is_at_war(n, o):
+			enemy += powers[i]
+	if mine + enemy <= 0.0:
+		return 0.5
+	return mine / (mine + enemy)
 
 
 # --- ИИ: план каждой страны — отдельная задача ------------------------------
@@ -455,6 +522,7 @@ func _phase_ai() -> void:
 	# остальные фазы дня, а приказы применяются в конце дня (_finish_ai).
 	if world.day % AI_PERIOD != 0:
 		return
+	var _pa := Time.get_ticks_usec()
 	var jobs: Array = []
 	for nat in world.nations:
 		if nat.alive and not nat.is_player:
@@ -467,7 +535,11 @@ func _phase_ai() -> void:
 	jobs.append_array(_group_jobs())
 	if jobs.is_empty():
 		return
+	Prof.add("ии:задачи", _pa)
+	_pa = Time.get_ticks_usec()
 	world.k_snapshot()
+	Prof.add("ии:k_snapshot", _pa)
+	_pa = Time.get_ticks_usec()
 	var day := world.day
 	var seed_value := world.seed_value
 	# дивизии по странам — один проход вместо прохода на каждую страну
@@ -485,6 +557,8 @@ func _phase_ai() -> void:
 	for job in jobs:
 		if job.has("stage_of"):
 			staged[int(job["stage_of"])] = true
+	Prof.add("ии:по странам", _pa)
+	_pa = Time.get_ticks_usec()
 	for job in jobs:
 		var rng: RandomNumberGenerator
 		if job.has("stage_of"):
@@ -498,27 +572,35 @@ func _phase_ai() -> void:
 			for slot in by_nation[sn]:
 				if _is_staged(slot):
 					part.append(slot)
+			var _ps := Time.get_ticks_usec()
 			job["args"] = AIPlanner.military_args(world, sn, part, {"mode": "hold", "enemy": int(job["enemy"])})
+			Prof.add("ии:развёртывание", _ps)
 		elif job.has("group"):
+			var _pg := Time.get_ticks_usec()
 			var idx := PackedInt32Array()
 			for i in world.divisions.size():
 				if world.divisions[i].group == job["group"]:
 					idx.append(i)
 			job["args"] = AIPlanner.military_args(world, job["owner"], idx, job["opts"])
+			Prof.add("ии:группы", _pg)
 		else:
 			var nid: int = job["nation"]
 			var nat: World.Nation = world.nations[nid]
 			var mine: PackedInt32Array = by_nation[nid]
+			var _pe := Time.get_ticks_usec()
 			var eco: Dictionary = AIPlanner.plan_economy(world, nid, rng, mine.size())
+			Prof.add("ии:экономика", _pe)
 			_ai_train(nat, int(eco["train"]))
 			nat.build_mode = eco["build"]
 			# выбор науки — в главном потоке: таблицы Tech общие для всех
+			_pe = Time.get_ticks_usec()
 			var fs := Tech.free_slot(nat)
 			while fs >= 0:
 				var pick := Tech.ai_pick(world, nat)
 				if pick == "" or not Tech.start(nat, fs, pick):
 					break
 				fs = Tech.free_slot(nat)
+			Prof.add("ии:наука", _pe)
 			if eco["war"] >= 0:
 				Diplomacy.declare_war(world, nid, eco["war"])
 			if staged.has(nid):
@@ -527,11 +609,16 @@ func _phase_ai() -> void:
 					if not _is_staged(slot):
 						rest.append(slot)
 				mine = rest
+			_pe = Time.get_ticks_usec()
 			job["args"] = AIPlanner.nation_args(world, nid, mine)
+			Prof.add("ии:nation_args", _pe)
+	Prof.add("ии:аргументы", _pa)
+	_pa = Time.get_ticks_usec()
 	# глубокая копия: часть записей в массивы мира идёт на месте, без
 	# копирования при записи, — потоки должны читать замороженное состояние
 	var tables := AIPlanner.ai_tables(world).duplicate(true)
 	_ai_tables = tables
+	Prof.add("ии:таблицы", _pa)
 	_ai_jobs = jobs
 	_ai_plans = []
 	_ai_plans.resize(jobs.size())
@@ -642,14 +729,24 @@ func _phase_navy() -> void:
 	phase_usec["флот:высадки"] = ti
 
 
+var _mountain := PackedByteArray()
+var _mountain_day := -1
+
+
 func _ai_train(nat: World.Nation, count: int) -> void:
 	if count <= 0:
 		return
-	var mountainous := false
-	for p in world.prov_count:
-		if world.p_owner[p] == nat.id and world.p_terrain[p] == World.T_MOUNTAIN:
-			mountainous = true
-			break
+	if _mountain_day != world.day:
+		# горы у стран — один проход на день ИИ вместо прохода на страну
+		_mountain_day = world.day
+		_mountain = PackedByteArray()
+		_mountain.resize(world.nation_count)
+		var own := world.p_owner
+		var ter := world.p_terrain
+		for p in world.prov_count:
+			if ter[p] == World.T_MOUNTAIN and own[p] >= 0:
+				_mountain[own[p]] = 1
+	var mountainous := _mountain[nat.id] == 1
 	for k in count:
 		var t := Military.ai_template(world, nat, nat.trained_count, mountainous)
 		if Military.start_training(world, nat, t) or (t != Military.T_INF and Military.start_training(world, nat, Military.T_INF)):
@@ -1117,8 +1214,10 @@ func _phase_diplomacy() -> void:
 		return
 	var _pt := Time.get_ticks_usec()
 	Diplomacy.daily(world)
+	Prof.add("дип:Diplomacy.daily", _pt)
+	_pt = Time.get_ticks_usec()
 	Relations.daily(world)
-	Prof.add("дип:daily", _pt)
+	Prof.add("дип:Relations.daily", _pt)
 	_pt = Time.get_ticks_usec()
 	History.daily(world, Parallel.rng(world.seed_value, world.day, 7777))
 	Prof.add("дип:история", _pt)

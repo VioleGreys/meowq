@@ -126,6 +126,9 @@ static func natural_matrix(t: Dictionary) -> PackedFloat32Array:
 ## Упреждение (Spec): шкала сил на завтра и, перед днём сдвига репутации,
 ## матрица естественных отношений — в фоне по снимку на сегодня.
 static func spec(world: World, jobs: Array) -> void:
+	# упреждение идёт раньше дипломатии того же дня: готовое на сегодня
+	# откладываем, иначе его затрёт задание на завтра (Relations.daily)
+	world.rel_ready = world.rel_job if int(world.rel_job.get("day", -1)) == world.day else {}
 	world.rel_job = {}
 	if world.rep_n != world.nations.size() or world.rep_n == 0:
 		return
@@ -209,12 +212,18 @@ static func daily(world: World) -> void:
 		init(world)
 		return
 	# шкала сил — готовая со вчера (упреждение, Spec) или сейчас
-	var job: Dictionary = world.rel_job
+	var _pr := Time.get_ticks_usec()
+	var ready := int(world.rel_ready.get("day", -1)) == world.day
+	var job: Dictionary = world.rel_ready if ready else world.rel_job
 	if int(job.get("day", -1)) == world.day and job.has("threat"):
-		Spec.finish(world)
+		if not ready:
+			Spec.finish(world)
 		world.threat = job["threat"]
+		Prof.add("отн:угроза готовая", _pr)
 	else:
 		update_threat(world)
+		Prof.add("отн:угроза сейчас", _pr)
+	_pr = Time.get_ticks_usec()
 	for nat in world.nations:
 		if nat.improving.is_empty() or not nat.alive:
 			continue
@@ -223,6 +232,7 @@ static func daily(world: World) -> void:
 				nat.improving.erase(t)
 			elif rep(world, t, nat.id) < IMPROVE_CAP:
 				add_rep(world, t, nat.id, IMPROVE_PER_DAY)
+	Prof.add("отн:улучшение", _pr)
 	if world.day % DRIFT_EVERY != 0:
 		return
 	for nat in world.nations:
@@ -232,23 +242,32 @@ static func daily(world: World) -> void:
 	# «естественные» отношения — матрица, посчитанная вчера в фоне, или сейчас
 	var nat_m: PackedFloat32Array
 	if int(job.get("day", -1)) == world.day and job.has("natural"):
-		Spec.finish(world)
+		if not ready:
+			Spec.finish(world)
 		nat_m = job["natural"]
 	else:
 		nat_m = natural_matrix(_rel_snapshot(world))
+	# локальная копия: обращение к world.rep на каждой ячейке дорого
+	var alive := PackedByteArray()
+	alive.resize(n)
 	for a in n:
-		if not world.nations[a].alive:
+		alive[a] = 1 if world.nations[a].alive else 0
+	var r := world.rep
+	world.rep = PackedFloat32Array()   # r — единственный владелец: запись без копии
+	for a in n:
+		if alive[a] == 0:
 			continue
 		for b in n:
-			if a == b or not world.nations[b].alive:
+			if a == b or alive[b] == 0:
 				continue
 			var i := a * n + b
 			var nat := nat_m[i]
-			var cur := world.rep[i]
+			var cur := r[i]
 			if cur < nat - 0.5:
-				world.rep[i] = minf(nat, cur + 1.0)
+				r[i] = minf(nat, cur + 1.0)
 			elif cur > nat + 0.5:
-				world.rep[i] = maxf(nat, cur - 1.0)
+				r[i] = maxf(nat, cur - 1.0)
+	world.rep = r
 
 
 # --- Угроза нацизма и коммунизма ----------------------------------------------------

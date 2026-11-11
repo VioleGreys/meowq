@@ -77,6 +77,40 @@ static func check(world: World, n: int, cond: Dictionary, ahead: int = 0) -> Str
 	return ""
 
 
+## То же, что check(...) == "", без строк причин (те же условия по порядку).
+static func check_ok(world: World, n: int, cond: Dictionary, ahead: int = 0) -> bool:
+	if cond.is_empty():
+		return true
+	if cond.has("date") and world.day + ahead < world.day_of(cond["date"]):
+		return false
+	if cond.has("alive"):
+		var t := tag_id(world, cond["alive"])
+		if t < 0 or not world.nations[t].alive:
+			return false
+	if cond.has("dead"):
+		var td := tag_id(world, cond["dead"])
+		if td >= 0 and world.nations[td].alive:
+			return false
+	if cond.has("flag") and not world.flags.has(cond["flag"]):
+		return false
+	if cond.has("not_flag") and world.flags.has(cond["not_flag"]):
+		return false
+	if cond.has("tension") and world.tension < float(cond["tension"]):
+		return false
+	if cond.has("at_war"):
+		var nat_w: World.Nation = world.nations[n]
+		if bool(cond["at_war"]) != (not nat_w.at_war.is_empty()):
+			return false
+	if cond.has("ideology") and world.nations[n].ideology != String(cond["ideology"]):
+		return false
+	if cond.has("at_war_pair"):
+		var a := tag_id(world, cond["at_war_pair"][0])
+		var b := tag_id(world, cond["at_war_pair"][1])
+		if a < 0 or b < 0 or not world.is_at_war(a, b):
+			return false
+	return true
+
+
 static func _date_text(world: World, date: String) -> String:
 	var saved := world.day
 	world.day = world.day_of(date)
@@ -110,10 +144,35 @@ static func focus_block(world: World, n: int, fd: Dictionary) -> String:
 	return check(world, n, fd.get("available", {}), int(fd.get("days", 70)))
 
 
+## То же, что focus_block(...) == "", но без строк причин (для ИИ): условия
+## проверяются в том же порядке.
+static func focus_open(world: World, n: int, fd: Dictionary) -> bool:
+	var nat: World.Nation = world.nations[n]
+	var id: String = fd["id"]
+	if nat.focus_done.has(id) or nat.focus_current == id:
+		return false
+	for r in fd.get("requires", []):
+		if not nat.focus_done.has(r):
+			return false
+	for x in fd.get("exclusive", []):
+		if nat.focus_done.has(x) or nat.focus_current == x:
+			return false
+	var any_req: Array = fd.get("requires_any", [])
+	if not any_req.is_empty():
+		var ok := false
+		for r in any_req:
+			if nat.focus_done.has(r):
+				ok = true
+				break
+		if not ok:
+			return false
+	return check_ok(world, n, fd.get("available", {}), int(fd.get("days", 70)))
+
+
 static func start_focus(world: World, n: int, id: String) -> bool:
 	var nat: World.Nation = world.nations[n]
 	var fd := focus_def(world, n, id)
-	if fd.is_empty() or nat.focus_current != "" or focus_block(world, n, fd) != "":
+	if fd.is_empty() or nat.focus_current != "" or not focus_open(world, n, fd):
 		return false
 	nat.focus_current = id
 	nat.focus_days = int(fd.get("days", 70))
@@ -309,16 +368,21 @@ static func _ai_pick_focus(world: World, n: int, rng: RandomNumberGenerator) -> 
 	# снова в день, когда по дате откроется ближайший, или когда мир изменился
 	if world.day < nat.focus_wait_until and nat.focus_wait_epoch == world.focus_epoch:
 		return
+	var _pf := Time.get_ticks_usec()
 	var avail: Array = []
 	for fd in tree_of(world, n):
-		if focus_block(world, n, fd) == "":
+		if focus_open(world, n, fd):
 			avail.append(fd["id"])
+	Prof.add("фок:доступные", _pf)
+	_pf = Time.get_ticks_usec()
 	if avail.is_empty():
 		_ai_wait(world, n)
+		Prof.add("фок:ожидание", _pf)
 		return
 	# ИИ идёт строго по исторической ветке в любом режиме: развилки — первый путь
 	# в списке, сроки — исторические. Варианты для ИИ добавим позже.
 	_ai_pick_historical(world, n, avail)
+	Prof.add("фок:исторический", _pf)
 
 
 ## Исторический ИИ: фокусы по сроку. Для каждого датированного фокуса считается

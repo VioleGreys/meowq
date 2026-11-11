@@ -403,6 +403,7 @@ var trade_geo_day := -100
 var embargoes := {}                       # продавец*100000 + покупатель → эмбарго (Economy.embargo)
 var spec_gid := -1                        # фоновая группа упреждающих расчётов (Spec)
 var rel_job := {}                          # шкала сил/естественные отношения на завтра (Relations.spec)
+var rel_ready := {}                        # то же, готовое на сегодня (отложено до дипломатии)
 var prod_job := {}                         # доли заводов на завтра (Military.spec)
 var reach_job := {}                       # сухопутные соседи на завтра (Forces.spec)
 var trade_job := {}                       # фоновые строки рейтинга на завтра (Economy.start_rank)
