@@ -23,9 +23,13 @@ var land_totals: Array = []   # Military.land_totals — для пересмот
 var land_totals_day := -100
 
 
-func _init(w: World) -> void:
+## fresh = false — мир восстановлен из сохранения (SaveGame): стартовые
+## пересчёты не нужны и изменили бы состояние.
+func _init(w: World, fresh := true) -> void:
 	Native.init()
 	world = w
+	if not fresh:
+		return
 	if "--supply=old" in OS.get_cmdline_user_args():
 		world.supply_regions = false   # прежняя модель (по удалённости от узлов) — для сравнения
 	refresh_income()

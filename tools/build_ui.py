@@ -49,7 +49,7 @@ CLIP_URL = "https://openclipart.org/image/800px/333299"
 MENU = [("focus", "focus", "Фокусы"), ("army", "army", "Армия"), ("navy", "fleet", "Флот и авиация"),
         ("production", "factory", "Производство"), ("research", "research", "Наука"),
         ("build", "civ", "Стройка"), ("diplomacy", "diplomacy", "Дипломатия"), ("all", "inf", "Все войска"),
-        ("mapmode", "map", "Режим карты"), ("settings", "settings", "Настройки")]
+        ("mapmode", "map", "Режим карты"), ("menu", "settings", "Меню")]
 FOLDER_COLORS = [((200, 165, 100), 0.30), ((110, 112, 62), 0.55), ((96, 108, 116), 0.55), ((128, 78, 50), 0.5),
                  ((176, 150, 104), 0.35)]
 SRC = "/tmp/ui_src"
@@ -282,9 +282,11 @@ def build_sheets():
     save(ph, "nophoto.png")
 
 
-def build_spines():
+def build_spines(only=None):
     w, h = 470, 84
     for i, (mid, ic, label) in enumerate(MENU):
+        if only and mid != only:
+            continue
         seed = 100 + i * 7
         col, amt = FOLDER_COLORS[i % len(FOLDER_COLORS)]
         f = cardboard((w, h), col, amt, 0.92, seed)
@@ -624,8 +626,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default=SRC)
     ap.add_argument("--godot", default="godot")
+    ap.add_argument("--spine", default="", help="пересобрать только один корешок (id из MENU); исходники уже скачаны")
     a = ap.parse_args()
     SRC = a.src
+    if a.spine:
+        build_spines(a.spine)
+        return
     download(a.godot)
     os.makedirs(OUT, exist_ok=True)
     build_clipboard()

@@ -98,3 +98,13 @@ static func show_perf() -> bool:
 static func set_show_perf(v: bool) -> void:
 	_load().set_value("debug", "show_perf", v)
 	_cfg.save(PATH)
+
+
+## Автосохранение: раз в 5 минут игры, при выходе в меню и сворачивании.
+static func autosave() -> bool:
+	return bool(_load().get_value("game", "autosave", true))
+
+
+static func set_autosave(v: bool) -> void:
+	_load().set_value("game", "autosave", v)
+	_cfg.save(PATH)

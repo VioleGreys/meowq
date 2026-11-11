@@ -17,7 +17,8 @@ var map_view: MapView
 var unit_layer: UnitLayer
 var hud: Hud
 
-var state := "loading"           # loading / select / play / over
+var state := "loading"           # loading / menu / select / play / over
+var world_fresh := false         # мир только что собран (1 января 1936 г.), партия не начата
 var speed := 0
 var _accum := 0.0
 var days_per_sec := 0.0          # фактическая скорость, для индикатора
@@ -68,6 +69,9 @@ func _ready() -> void:
 	hud.game = self
 	add_child(hud)
 	map_view.province_tapped.connect(_on_province_tapped)
+	autosave_on = Settings.autosave()
+	if _arg("autosave_sec") != "":
+		autosave_usec = int(float(_arg("autosave_sec")) * 1000000.0)
 	procedural = "--procedural" in OS.get_cmdline_user_args()
 	# -- --single: всё в одном потоке (для сравнения с многоядерным режимом)
 	single_thread = "--single" in OS.get_cmdline_user_args()
@@ -78,7 +82,9 @@ func _ready() -> void:
 	if not single_thread:
 		sim_thread = Thread.new()
 		sim_thread.start(_sim_loop)
-	await new_world(randi() % 100000 if _arg("seed") == "" else int(_arg("seed")))
+	# инструменты (скриншот, замер) идут сразу к выбору страны, игрок — в главное меню
+	var tool := _arg("screenshot") != "" or _arg("bench_rt") != ""
+	await new_world(randi() % 100000 if _arg("seed") == "" else int(_arg("seed")), "select" if tool else "menu")
 	if _arg("screenshot") != "":
 		_auto_screenshot(_arg("screenshot"))
 	elif _arg("bench_rt") != "":
@@ -182,6 +188,8 @@ func _bench_realtime(seconds: float) -> void:
 		unit_layer.draw_count, unit_layer.draw_total_usec / 1000.0 / maxi(1, unit_layer.draw_count)])
 	print("  действия игрока: ждать мир — главный поток стоит %s; очередь — стоит %s, выполнено через %s" % [
 		_stat(_act_old), _stat(_act_block), _stat(_act_new)])
+	if saves_done > 0:
+		print("  автосохранений: %d, последнее — %d мс" % [saves_done, last_save_msec])
 	var names := ["панели дня", "палитра", "список фишек", "верхняя строка"]
 	for i in 4:
 		print("  %s: всего %.0f мс за прогон, худшее %.1f мс" % [names[i], ui_prof_sum[i] / 1000.0, ui_prof_max[i] / 1000.0])
@@ -209,7 +217,16 @@ func _stat(a: Array) -> String:
 func _auto_screenshot(path: String) -> void:
 	world_lock()
 	_auto_screenshot_locked()
+	# --save=имя: записать партию; --load=имя: загрузить её (после выхода в меню)
+	if _arg("save") != "":
+		print("Сохранение: ", save_game(SaveGame.safe_name(_arg("save")), _arg("save")), " ", last_save_msec, " мс")
 	world_unlock()
+	if _arg("load") != "":
+		to_menu()
+		await load_game(_arg("load"))
+		print("Загружено: ", world.date_string(), ", страна ", world.nations[player()].tag, ", состояние ", state)
+		if _arg("tab") != "":
+			hud.open_tab(_arg("tab"))
 	if "--nohud" in OS.get_cmdline_user_args():
 		hud.visible = false   # для макетов оформления: только карта и фишки
 	for i in 10:
@@ -232,6 +249,13 @@ func _auto_screenshot_locked() -> void:
 	var me := 0
 	if _arg("nation") != "" and nation_by_tag(_arg("nation")) >= 0:
 		me = nation_by_tag(_arg("nation"))
+	if _arg("menu") != "":
+		# --menu=main — главное меню; --menu=load|settings — окно из него
+		state = "menu"
+		hud.show_menu()
+		if _arg("menu") != "main":
+			hud.open_tab(_arg("menu"))
+		return
 	if _arg("pick") == "":
 		start_as(me)
 		set_speed(0)
@@ -314,7 +338,7 @@ func _auto_screenshot_locked() -> void:
 
 
 
-func new_world(seed_value: int) -> void:
+func new_world(seed_value: int, then := "select") -> void:
 	world_lock()
 	state = "loading"
 	speed = 0
@@ -343,14 +367,161 @@ func new_world(seed_value: int) -> void:
 	unit_layer.selected = selected_divs
 	selected_prov = -1
 	pick_nation = -1
-	state = "select"
+	state = then
+	world_fresh = true
+	_play_usec = 0
 	unit_layer.rebuild()
 	world_unlock()
 	if procedural:
 		hud.gen_info = "Карта #%d: %d провинций, сгенерирована за %d мс на %d ядрах" % [seed_value, world.prov_count, load_ms, Parallel.thread_count()]
 	else:
-		hud.gen_info = "Европа, 1 января 1936 г.: %d провинций суши, %d морских зон · загрузка %d мс" % [world.land_count, world.prov_count - world.land_count, load_ms]
-	hud.show_select(-1)
+		hud.gen_info = "Мир, 1 января 1936 г.: %d провинций суши, %d морских зон · загрузка %d мс" % [world.land_count, world.prov_count - world.land_count, load_ms]
+	if then == "menu":
+		hud.show_menu()
+	else:
+		hud.show_select(-1)
+
+
+# --- Главное меню, сохранение и загрузка -------------------------------------
+
+## Новая партия: к выбору страны (мир пересобирается, если в нём уже играли).
+func new_game() -> void:
+	if world_fresh:
+		state = "select"
+		pick_nation = -1
+		map_view.set_highlight_nation(-1)
+		hud.show_select(-1)
+	else:
+		await new_world(randi() % 100000, "select")
+
+
+## Выйти в главное меню. Идущая партия сохраняется в автосохранение.
+func to_menu() -> void:
+	if state == "play":
+		autosave()
+	clear_selection()
+	hud.close_popup()
+	state = "menu"
+	speed = 0
+	hud.show_menu()
+
+
+## Записать партию (мир под замком: из game.act или после world_lock).
+## Возвращает текст ошибки или "".
+func save_game(name: String, title: String, auto := false) -> String:
+	if world == null or sim == null or player() < 0 or world.game_over != "":
+		return "нет идущей партии"
+	var n: World.Nation = world.nations[player()]
+	if OS.get_thread_caller_id() == OS.get_main_thread_id():
+		_note_camera()
+	var meta := {"title": title, "auto": auto, "tag": n.tag, "nation": n.name, "flag": n.flag,
+		"historical": world.historical, "cam": [_cam_x, _cam_y, _cam_zoom], "mapmode": _cam_mode}
+	var t0 := Time.get_ticks_msec()
+	var err := SaveGame.write(name, world, sim, meta)
+	last_save_msec = Time.get_ticks_msec() - t0
+	if err == "":
+		_play_usec = 0
+		saves_done += 1
+	else:
+		push_warning("Сохранение «%s»: %s" % [name, err])
+	return err
+
+
+var last_save_msec := 0
+var saves_done := 0
+var autosave_on := true          # копия Settings.autosave(): её читает и поток симуляции
+var _cam_x := 0.0                # вид камеры и режим карты для сохранения (их читает
+var _cam_y := 0.0
+var _cam_zoom := 1.0
+var _cam_mode := 0               # и поток симуляции — узлы сцены ему трогать нельзя)
+var _play_usec := 0              # сколько шла партия с последнего сохранения
+var autosave_usec := 300 * 1000000    # автосохранение — раз в 5 минут игры (не на паузе); -- --autosave_sec=N
+
+
+func _note_camera() -> void:
+	_cam_x = map_view.camera.position.x
+	_cam_y = map_view.camera.position.y
+	_cam_zoom = map_view.camera.zoom.x
+	_cam_mode = map_view.map_mode
+
+
+## Автосохранение (при выходе в меню, сворачивании, закрытии; мир — под замком).
+func autosave() -> void:
+	if state != "play" or not autosave_on:
+		return
+	world_lock()
+	save_game(SaveGame.AUTO, "Автосохранение", true)
+	sim_mutex.unlock()
+
+
+## Автосохранение по времени — из потока симуляции сразу после дня (мир уже
+## под его замком, экран не замирает).
+func _autosave_tick(day_usec: int) -> void:
+	_play_usec += day_usec
+	if _play_usec >= autosave_usec and autosave_on:
+		_play_usec = 0
+		save_game(SaveGame.AUTO, "Автосохранение", true)
+
+
+## Загрузить партию: мир собирается заново (если в нём уже играли), сверху
+## кладётся сохранённое состояние. При ошибке — главное меню с сообщением.
+func load_game(name: String) -> void:
+	world_lock()
+	state = "loading"
+	speed = 0
+	_accum = 0.0
+	world_unlock()
+	hud.close_popup()
+	hud.show_loading("Загрузка партии…")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	world_lock()
+	clear_selection()
+	if not world_fresh:
+		world.dispose()
+		world = World.new()
+		MapLoader.load_world(world)
+	sim = Simulation.new(world, false)
+	var res := SaveGame.load_into(name, world, sim)
+	world_fresh = false
+	if res["err"] != "":
+		world_unlock()
+		await new_world(randi() % 100000, "menu")
+		hud.toast("Не удалось загрузить: %s" % res["err"])
+		return
+	var meta: Dictionary = res["meta"]
+	map_view.setup(world)
+	unit_layer.map = map_view
+	unit_layer.world = world
+	unit_layer._labels_day = -1
+	unit_layer.selected = selected_divs
+	var me := world.player_nation()
+	unit_layer.player = me
+	pick_nation = -1
+	map_view.set_highlight_nation(-1)
+	map_view.set_selected(-1)
+	var cam: Array = meta.get("cam", [])
+	if cam.size() == 3:
+		map_view.camera.zoom = Vector2.ONE * float(cam[2])
+		map_view.camera.position = Vector2(float(cam[0]), float(cam[1]))
+		map_view._on_view_changed()
+	elif me >= 0:
+		map_view.center_on(world.nations[me].capital)
+	set_map_mode(int(meta.get("mapmode", 0)))
+	_event_seen = ""
+	_frame_mutex.lock()
+	_frame_list = []
+	_frame_taken = true
+	_frame_new = false
+	_frame_day = -1
+	_frame_mutex.unlock()
+	_play_usec = 0
+	state = "play"
+	speed = 0
+	hud.show_play()
+	unit_layer.rebuild()
+	world_unlock()
+	hud.toast("Загружено: %s" % world.date_string())
 
 
 func nation_by_tag(tag: String) -> int:
@@ -375,6 +546,8 @@ func start_as(nid: int) -> void:
 	map_view.center_on(world.nations[nid].capital)
 	state = "play"
 	speed = 0   # как в жанре: игра начинается на паузе
+	world_fresh = false
+	_play_usec = 0
 	world.log_event("Вы правите страной %s. Удачи!" % world.nations[nid].name)
 	hud.show_play()
 
@@ -486,6 +659,7 @@ func _sim_loop() -> void:
 					pass
 			ticks_done += 1
 			_publish()
+			_autosave_tick(int(1000000.0 / maxf(0.5, SPEEDS[mini(speed, 5)])))
 		sim_mutex.unlock()
 		_pending_mutex.lock()
 		_pending = maxi(0, _pending - 1)
@@ -532,6 +706,7 @@ func _request_days(n: int) -> void:
 				sim.tick()
 				ticks_done += 1
 				_publish()
+				_autosave_tick(int(1000000.0 / maxf(0.5, SPEEDS[mini(speed, 5)])))
 			if Time.get_ticks_usec() - t0 > SINGLE_BUDGET_USEC:
 				break
 		return
@@ -551,7 +726,12 @@ func _pending_days() -> int:
 
 func _process(dt: float) -> void:
 	if state != "play":
+		# меню и выбор страны: мир стоит, но действия из очереди выполнить надо
+		if pending_actions() > 0 and sim_mutex.try_lock():
+			_run_cmds()
+			sim_mutex.unlock()
 		return
+	_note_camera()
 	# заказ дней фоновому потоку по выбранной скорости
 	if speed > 0:
 		var unlimited: bool = SPEEDS[speed] == INF
@@ -949,7 +1129,19 @@ func _exit_tree() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
-		if hud != null and hud.close_popup():
+		if hud == null:
 			return
-		if not selected_divs.is_empty():
+		if hud.focus_view.visible:
+			hud.focus_view.hide()
+			return
+		if hud.close_popup():
+			return
+		if not selected_divs.is_empty() or selected_group >= 0 or selected_fleet >= 0 or selected_wing >= 0:
 			clear_selection()
+		elif state == "play":
+			hud.open_tab("menu")   # «назад» на пустом экране — меню партии
+		elif state == "select":
+			to_menu()
+	elif what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_CLOSE_REQUEST:
+		# свернули или закрывают: телефон может выгрузить игру без предупреждения
+		autosave()

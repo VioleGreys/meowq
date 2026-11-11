@@ -288,7 +288,7 @@ func _build_side() -> void:
 		["diplomacy", func(): open_tab("diplomacy")],
 		["all", func(): game.select_all()],
 		["mapmode", _cycle_map_mode],
-		["settings", func(): open_tab("settings")],
+		["menu", func(): open_tab("menu")],
 	]
 	for i in items.size():
 		var id: String = items[i][0]
@@ -534,9 +534,12 @@ var cover_stamp: TextureRect
 
 const TAB_NAMES := {"army": "Армия", "navy": "Флот и авиация", "production": "Производство",
 	"research": "Наука", "build": "Стройка", "diplomacy": "Дипломатия", "settings": "Настройки",
-	"nations": "Выбор страны", "nation": "Досье страны", "peace": "Мирный договор"}
+	"nations": "Выбор страны", "nation": "Досье страны", "peace": "Мирный договор",
+	"menu": "Меню", "save": "Сохранение", "load": "Загрузка"}
 const TAB_NUM := {"army": 2, "navy": 3, "production": 4, "research": 5, "build": 6, "diplomacy": 7,
-	"nation": 7, "settings": 10, "nations": 1, "peace": 7}
+	"nation": 7, "settings": 10, "nations": 1, "peace": 7, "menu": 10, "save": 10, "load": 10}
+# страницы папки «Меню» (корешок один — подсвечивается он)
+const MENU_TABS := {"menu": true, "save": true, "load": true, "settings": true}
 
 
 func _nine(tex: String, m: int) -> NinePatchRect:
@@ -716,7 +719,11 @@ func _fill_cover() -> void:
 	var nid: int = game.player() if w != null else -1
 	if popup_tab == "nation" and _card_nation >= 0:
 		nid = _card_nation
-	if w != null and nid >= 0 and nid < w.nations.size():
+	# без страны (окна из главного меню) — только номер дела и штамп
+	var known: bool = w != null and nid >= 0 and nid < w.nations.size()
+	cover_photo_holder.visible = known
+	cover_card.visible = known
+	if known:
 		var n: World.Nation = w.nations[nid]
 		sub = "%s · %s" % [sub, n.name]
 		var pt := UiStyle.portrait(n.tag)
@@ -817,14 +824,66 @@ func _label(text: String, size := 20, color := Color(0.93, 0.9, 0.82), raw := fa
 
 # --- Экраны ------------------------------------------------------------------
 
-func show_loading() -> void:
+func show_loading(text := "Загрузка мира…") -> void:
 	top_bar.hide()
 	side.hide()
 	info_panel.hide()
 	popup.hide()
+	popup_cover.hide()
+	log_box.hide()
 	_clear(overlay_box)
-	overlay_box.add_child(_label("Генерация мира…", 28))
-	overlay_box.add_child(_label("Рельеф и провинции считаются параллельно на %d ядрах" % Parallel.thread_count(), 18))
+	_overlay_center()
+	overlay_box.add_child(_label(text, 28))
+	overlay_box.add_child(_label("Карта, государства и армии 1936 года", 18))
+	overlay.show()
+
+
+func _overlay_center() -> void:
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	overlay.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	overlay.grow_vertical = Control.GROW_DIRECTION_BOTH
+	overlay.reset_size()
+
+
+## Главное меню: лист поверх карты мира.
+func show_menu() -> void:
+	top_bar.hide()
+	side.hide()
+	info_panel.hide()
+	popup.hide()
+	popup_cover.hide()
+	log_box.hide()
+	_set_side_active("")
+	_clear(overlay_box)
+	_overlay_center()
+	var head := _label("MEOWQ: ФРОНТЫ", 58, UiStyle.INK, true)
+	head.add_theme_font_override("font", UiStyle.title_font(600, 2))
+	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	head.autowrap_mode = TextServer.AUTOWRAP_OFF
+	overlay_box.add_child(head)
+	var sub := _label("Глобальная стратегия · 1936–1945", 20, UiStyle.INK_SOFT, true)
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	overlay_box.add_child(sub)
+	var rule := ColorRect.new()
+	rule.color = Color8(168, 32, 28)
+	rule.custom_minimum_size = Vector2(0, 3)
+	overlay_box.add_child(rule)
+	var saves := SaveGame.list()
+	if not saves.is_empty():
+		var last: Dictionary = saves[0]
+		var nm: String = last["name"]
+		var cont := _button("Продолжить\n%s · %s" % [last.get("nation", "?"), last.get("date", "")],
+			func(): game.load_game(nm), Vector2(0, 76))
+		overlay_box.add_child(cont)
+	overlay_box.add_child(_button("Новая игра", func(): game.new_game(), Vector2(0, 60)))
+	var ld := _button("Загрузить игру", func(): open_tab("load"), Vector2(0, 60))
+	ld.disabled = saves.is_empty()
+	overlay_box.add_child(ld)
+	overlay_box.add_child(_button("Настройки", func(): open_tab("settings"), Vector2(0, 60)))
+	overlay_box.add_child(_button("Выход", func():
+		game.get_tree().root.propagate_notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+		game.get_tree().quit(), Vector2(0, 60)))
+	overlay_box.add_child(_label(gen_info, 14, Color(0.7, 0.7, 0.7)))
 	overlay.show()
 
 
@@ -833,11 +892,14 @@ func show_select(nid: int) -> void:
 	side.hide()
 	info_panel.hide()
 	popup.hide()
+	popup_cover.hide()
 	_clear(overlay_box)
 	var w: World = game.world
-	overlay.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	overlay.offset_top = -10
-	overlay.offset_bottom = -10
+	overlay.reset_size()
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	overlay.offset_top -= 10
+	overlay.offset_bottom -= 10
+	overlay.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	overlay.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	if nid < 0:
 		overlay_box.add_child(_label("Выберите страну", 28))
@@ -907,14 +969,21 @@ func show_select(nid: int) -> void:
 		all_btn.add_theme_font_size_override("font_size", 17)
 		grid.add_child(all_btn)
 		overlay_box.add_child(grid)
+	var back := _button("‹ Главное меню", func(): game.to_menu(), Vector2(0, 44))
+	back.add_theme_font_size_override("font_size", 16)
+	overlay_box.add_child(back)
 	overlay_box.add_child(_label(gen_info, 14, Color(0.7, 0.7, 0.7)))
 	overlay.show()
 
 
 func show_play() -> void:
 	overlay.hide()
+	popup.hide()
+	popup_cover.hide()
+	_set_side_active("")
 	top_bar.show()
 	side.show()
+	log_box.show()
 	_clear(log_box)
 	refresh_top()
 	on_tick()
@@ -923,16 +992,15 @@ func show_play() -> void:
 func show_game_over(result: String) -> void:
 	popup.hide()
 	_clear(overlay_box)
-	overlay.set_anchors_preset(Control.PRESET_CENTER)
-	overlay.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_overlay_center()
 	if result == "victory":
 		overlay_box.add_child(_label("Победа!", 36, Color(0.95, 0.85, 0.4)))
 		overlay_box.add_child(_label("Все соперники капитулировали. %s" % game.world.date_string(), 20))
 	else:
 		overlay_box.add_child(_label("Капитуляция", 36, Color(0.9, 0.4, 0.35)))
 		overlay_box.add_child(_label("Ваша страна пала. %s" % game.world.date_string(), 20))
-	overlay_box.add_child(_button("Новая игра", func(): game.new_world(randi() % 100000), Vector2(0, 64)))
-
+	overlay_box.add_child(_button("Новая игра", func(): game.new_game(), Vector2(0, 64)))
+	overlay_box.add_child(_button("Главное меню", func(): game.to_menu(), Vector2(0, 56)))
 	overlay.show()
 
 
@@ -1226,6 +1294,8 @@ func open_tab(tab: String) -> void:
 	event_sheet.hide()
 	var was_open := popup.visible
 	var same_mode := was_open and ((popup_tab == "event") == (tab == "event"))
+	if tab != popup_tab:
+		_confirm = ""
 	popup_tab = tab
 	var clipboard := tab == "event"
 	_layout_popup(clipboard)
@@ -1234,11 +1304,11 @@ func open_tab(tab: String) -> void:
 	if not clipboard:
 		_fill_cover()
 		popup_cover.show()
-	_set_side_active(tab)
+	_set_side_active("menu" if MENU_TABS.has(tab) else tab)
 	if not same_mode:
 		_animate_open(clipboard)
 	log_box.hide()
-	if tab == "nations":
+	if game.state != "play":
 		overlay.hide()
 
 
@@ -1258,8 +1328,11 @@ func close_popup() -> bool:
 		popup.hide()
 		popup_cover.hide()
 		_set_side_active("")
-		log_box.show()
-		if game.state == "select":
+		if game.state == "play":
+			log_box.show()
+		elif game.state == "menu":
+			show_menu()   # список сохранений мог измениться
+		else:
 			overlay.show()
 		return true
 	return false
@@ -1284,6 +1357,20 @@ func _rebuild_popup() -> void:
 	if popup_tab == "nations":
 		_build_nation_list(w)
 		return
+	# страницы меню не зависят от страны игрока (открываются и из главного меню)
+	match popup_tab:
+		"menu":
+			_build_menu(w)
+			return
+		"save":
+			_build_save(w)
+			return
+		"load":
+			_build_load()
+			return
+		"settings":
+			_build_settings()
+			return
 	var me: int = game.player()
 	var n: World.Nation = w.nations[me]
 	match popup_tab:
@@ -1337,8 +1424,6 @@ func _rebuild_popup() -> void:
 			popup_body.add_child(_label("Гражданские фабрики ускоряют стройку и науку. Военные заводы выпускают снаряжение для дивизий. Оккупированные провинции дают половину.", 16, Color(0.75, 0.75, 0.7)))
 		"diplomacy":
 			_build_diplomacy(w, me)
-		"settings":
-			_build_settings()
 		"nation":
 			_build_nation_card(w, me, _card_nation)
 		"peace":
@@ -2376,8 +2461,168 @@ func _update_popup_dynamic() -> void:
 			_dynamic["bar"].value = n.build_progress
 
 
+# --- Меню партии: сохранение и загрузка ---------------------------------------
+
+var _confirm := ""        # действие, ждущее второго нажатия (перезапись, удаление, загрузка)
+var _save_title := ""
+
+
+## Кнопка «‹ Меню» на страницах папки (в партии).
+func _menu_back() -> void:
+	if game.state != "play":
+		return
+	var b := _button("‹ Меню", func(): open_tab("menu"), Vector2(0, 40))
+	b.add_theme_font_size_override("font_size", 15)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	popup_body.add_child(b)
+
+
+func _build_menu(w: World) -> void:
+	popup_title.text = "Меню"
+	var me: int = game.player()
+	if me >= 0:
+		popup_body.add_child(_label("%s · %s" % [w.nations[me].name, w.date_string()], 20))
+	popup_body.add_child(_button("Сохранить игру", func(): open_tab("save")))
+	popup_body.add_child(_button("Загрузить игру", func(): open_tab("load")))
+	popup_body.add_child(_button("Настройки", func(): open_tab("settings")))
+	popup_body.add_child(_button("Выйти в главное меню", func(): game.to_menu()))
+	if game.autosave_on:
+		popup_body.add_child(_small("При выходе партия записывается в автосохранение. Оно же обновляется каждые 5 минут игры и когда игру сворачивают."))
+	else:
+		popup_body.add_child(_small("Автосохранение выключено в настройках: перед выходом сохраните партию сами."))
+
+
+static func _save_when(m: Dictionary) -> String:
+	var t := int(m.get("time", 0)) + int(Time.get_time_zone_from_system().get("bias", 0)) * 60
+	var d := Time.get_datetime_dict_from_unix_time(t)
+	return "%02d.%02d.%d %02d:%02d" % [d["day"], d["month"], d["year"], d["hour"], d["minute"]]
+
+
+## Строка сохранения: название, страна и дата партии, когда записано.
+func _save_row(m: Dictionary) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 2)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 8)
+	var fl: Variant = m.get("flag", {})
+	if typeof(fl) == TYPE_DICTIONARY and not (fl as Dictionary).is_empty():
+		var flag := Flag.make(fl, Vector2(36, 24))
+		flag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		head.add_child(flag)
+	var title := _label(str(m.get("title", m["name"])), 20)
+	title.add_theme_font_override("font", UiStyle.mono_bold())
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	box.add_child(head)
+	box.add_child(_small("%s · %s%s" % [m.get("nation", "?"), m.get("date", ""),
+		"" if bool(m.get("historical", true)) else " · альтернативная история"]))
+	box.add_child(_small("записано %s · %d КБ" % [_save_when(m), int(m.get("size", 0)) / 1024]))
+	return box
+
+
+func _build_save(w: World) -> void:
+	popup_title.text = "Сохранить игру"
+	_menu_back()
+	var me: int = game.player()
+	if game.state != "play" or me < 0:
+		popup_body.add_child(_label("Сохранять можно только идущую партию.", 18))
+		return
+	if _save_title == "":
+		_save_title = "%s, %s" % [w.nations[me].name, w.date_short()]
+	popup_body.add_child(_label("Название", 20))
+	var edit := LineEdit.new()
+	edit.text = _save_title
+	edit.max_length = 40
+	edit.custom_minimum_size = Vector2(0, 48)
+	edit.text_changed.connect(func(t: String): _save_title = t)
+	popup_body.add_child(edit)
+	popup_body.add_child(_button("Сохранить", func(): _do_save(_save_title)))
+	var saves := SaveGame.list()
+	var shown := false
+	for m in saves:
+		if bool(m.get("auto", false)):
+			continue
+		if not shown:
+			popup_body.add_child(_section("Записать поверх"))
+			shown = true
+		popup_body.add_child(_save_row(m))
+		var title: String = str(m.get("title", m["name"]))
+		var key := "save:" + SaveGame.safe_name(title)
+		var b := _button("Точно перезаписать?" if _confirm == key else "Перезаписать", func(): _do_save(title), Vector2(0, 44))
+		b.add_theme_font_size_override("font_size", 16)
+		popup_body.add_child(b)
+
+
+func _do_save(title: String) -> void:
+	var name := SaveGame.safe_name(title)
+	if name == "" or name == SaveGame.AUTO:
+		toast("Введите название сохранения")
+		return
+	var key := "save:" + name
+	if FileAccess.file_exists(SaveGame.path_of(name)) and _confirm != key:
+		_confirm = key
+		toast("«%s» уже есть — нажмите ещё раз, чтобы перезаписать" % title)
+		_rebuild_popup()
+		return
+	_confirm = ""
+	var err: String = game.save_game(name, title.strip_edges())
+	if err == "":
+		toast("Игра сохранена: «%s»" % title.strip_edges())
+		_save_title = ""
+	else:
+		toast("Не удалось сохранить: " + err)
+	_rebuild_popup()
+
+
+func _build_load() -> void:
+	popup_title.text = "Загрузить игру"
+	_menu_back()
+	var saves := SaveGame.list()
+	if saves.is_empty():
+		popup_body.add_child(_label("Сохранений пока нет.", 18))
+		return
+	var playing: bool = game.state == "play"
+	for m in saves:
+		var nm: String = m["name"]
+		popup_body.add_child(_save_row(m))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		var lkey := "load:" + nm
+		var lb := _button("Загрузить? Несохранённое пропадёт" if _confirm == lkey else "Загрузить", func():
+			if playing and _confirm != lkey:
+				_confirm = lkey
+				_rebuild_popup()
+				return
+			_confirm = ""
+			game.load_game(nm), Vector2(0, 44))
+		lb.add_theme_font_size_override("font_size", 16)
+		lb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(lb)
+		var dkey := "del:" + nm
+		var db := _button("Точно удалить?" if _confirm == dkey else "Удалить", func():
+			if _confirm != dkey:
+				_confirm = dkey
+			else:
+				_confirm = ""
+				SaveGame.remove(nm)
+				toast("Сохранение удалено")
+			_rebuild_popup(), Vector2(0, 44))
+		db.add_theme_font_size_override("font_size", 16)
+		row.add_child(db)
+		popup_body.add_child(row)
+
+
 func _build_settings() -> void:
 	popup_title.text = "Настройки"
+	_menu_back()
+	var au := CheckButton.new()
+	au.text = "Автосохранение"
+	au.button_pressed = Settings.autosave()
+	au.toggled.connect(func(v: bool):
+		Settings.set_autosave(v)
+		game.autosave_on = v)
+	popup_body.add_child(au)
+	popup_body.add_child(_label("Каждые 5 минут игры, при выходе в меню и когда игру сворачивают — в одну запись «Автосохранение».", 15, Color(0.75, 0.75, 0.7)))
 	popup_body.add_child(_label("Качество карты", 20))
 	popup_body.add_child(_label("Высокое — самые плавные границы. Среднее — плавный берег и простые границы, легче для телефона. Низкое — без сглаживания, для слабых устройств. Число кадров — внизу экрана (FPS).", 15, Color(0.75, 0.75, 0.7)))
 	var row := HBoxContainer.new()
