@@ -172,7 +172,7 @@ func _state(nat: World.Nation, t: Dictionary) -> String:
 		return "done"
 	if nat.research.has(t["id"]):
 		return "work"
-	if not Tech.can_research(nat, t):
+	if not Tech.can_research(nat, t, _slot_tech(nat)):
 		return "lock"
 	return "ahead" if float(t["year"]) > Tech.year_now(world) + 0.02 else "open"
 
@@ -238,6 +238,11 @@ func refresh() -> void:
 	tree.queue_redraw()
 
 
+## Технология выбранного слота (её заменит «Исследовать»).
+func _slot_tech(nat: World.Nation) -> String:
+	return nat.research[slot] if slot < nat.research.size() else ""
+
+
 func _done_count(nat: World.Nation) -> int:
 	var c := 0
 	for t in Tech.all():
@@ -269,7 +274,9 @@ func _draw_tree() -> void:
 			var y0 := HEAD_H + r * (NODE.y + GAP.y)
 			tree.draw_multiline_string(UiStyle.mono_font(), Vector2(2, y0 + 20), rows[r], HORIZONTAL_ALIGNMENT_LEFT,
 				LABEL_W - 10, 12, 3, UiStyle.INK_SOFT)
-			tree.draw_line(Vector2(0, y0 - GAP.y * 0.5), Vector2(tree.size.x, y0 - GAP.y * 0.5), Color(UiStyle.INK_SOFT, 0.18), 1.0)
+			var new_group: bool = cat == "doc" and r > 0 and Tech.DOC_GROUP[r] != Tech.DOC_GROUP[r - 1]
+			tree.draw_line(Vector2(0, y0 - GAP.y * 0.5), Vector2(tree.size.x, y0 - GAP.y * 0.5),
+				Color(UiStyle.INK_SOFT, 0.6 if new_group else 0.18), 2.0 if new_group else 1.0)
 	# связи «требует»
 	for t in Tech.of_cat(cat):
 		var rd := Tech.get_tech(t["req"])
@@ -309,6 +316,8 @@ func _update_detail() -> void:
 	var nat: World.Nation = world.nations[nid]
 	if selected == "":
 		detail.text = "Коснитесь технологии, чтобы увидеть подробности. Исследование идёт в каждом слоте; технология раньше своего года изучается дольше (+%d%% срока за год опережения)." % roundi(Tech.AHEAD_PENALTY * 100.0)
+		if cat == "doc":
+			detail.text = "Доктрины — школы ведения войны. В армии, флоте и авиации страна выбирает по одной школе: первая ступень закрывает остальные. Изучаются в слотах науки, как технологии."
 		start_btn.disabled = true
 		start_btn.text = "Исследовать"
 		return
@@ -319,7 +328,12 @@ func _update_detail() -> void:
 		"done":
 			txt += "\n⟶ изучено"
 		"lock":
-			txt += "\n⟶ требуется «%s»" % Tech.tech_name(t["req"])
+			var g := Tech.doc_group(t)
+			var sc := Tech.school_of(nat, g, _slot_tech(nat)) if g != "" else -1
+			if sc >= 0 and sc != int(t["row"]):
+				txt += "\n⟶ школа %s уже выбрана: «%s» (одна на страну)" % [Tech.DOC_GROUP_NAME[g], Tech.row_name("doc", sc).get_slice(": ", 1)]
+			else:
+				txt += "\n⟶ требуется «%s»" % Tech.tech_name(t["req"])
 		_:
 			var m := Tech.ahead_mult(world, t)
 			txt += "\nСрок: %d дн." % Tech.days_left(world, nat, selected)

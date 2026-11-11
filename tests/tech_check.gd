@@ -62,6 +62,16 @@ func _init() -> void:
 			elif tt["req"] != "" and not lst.has(tt["req"]):
 				miss += " %s:%s без «%s»" % [tag, id, tt["req"]]
 	check(miss == "", "у стартовых технологий есть требования%s" % miss)
+	var two := ""
+	for tag in nd:
+		var schools := {}
+		for id in nd[tag].get("techs", []):
+			var g := Tech.doc_group(Tech.get_tech(id))
+			if g != "":
+				if schools.has(g) and schools[g] != int(Tech.get_tech(id)["row"]):
+					two += " %s:%s" % [tag, g]
+				schools[g] = int(Tech.get_tech(id)["row"])
+	check(two == "", "на старте не больше одной школы доктрин на род сил%s" % two)
 	var start_line := ""
 	var sets := {}
 	for tag in ["GER", "SOV", "ENG", "FRA", "ITA", "JAP", "USA", "POL", "CZE", "BUL"]:
@@ -89,6 +99,16 @@ func _init() -> void:
 	ger.bonus["research"] = float(ger.bonus.get("research", 0.0)) + 0.5
 	check(Tech.days_left(w, ger, "ind1") < d0, "бонус науки сокращает срок (%d → %d дн.)" % [d0, Tech.days_left(w, ger, "ind1")])
 	ger.bonus["research"] = float(ger.bonus["research"]) - 0.5
+	# доктрины: первая ступень закрывает другие школы рода сил
+	check(Tech.school_of(ger, "land") == 0 and not Tech.can_research(ger, Tech.get_tech("dl_meth1")) \
+		and Tech.can_research(ger, Tech.get_tech("dl_mob2")), "Германия — подвижная война, другие школы армии закрыты")
+	var lux: World.Nation = w.nations[w.nation_tags.find("BUL")]
+	Tech.fit_slots(lux)
+	var keep: Array = lux.research.duplicate()
+	lux.research[0] = ""
+	check(Tech.school_of(lux, "air") == -1 and Tech.start(lux, 0, "da_fig1") and not Tech.can_research(lux, Tech.get_tech("da_cas1")) \
+		and Tech.start(lux, 0, "da_cas1") and Tech.school_of(lux, "air") == 8, "школа в работе закрывает другие; замена в том же слоте её меняет")
+	lux.research = keep
 	print("Темп (изучено технологий на 1 января):")
 	var end_day := w.day_of(until)
 	var year := 1936
@@ -111,6 +131,11 @@ func _init() -> void:
 			var c: String = Tech.get_tech(id).get("cat", "?")
 			by[c] = int(by.get(c, 0)) + 1
 		var keys: Array = []
+		var sch := ""
+		for g in ["land", "navy", "air"]:
+			var sc := Tech.school_of(n, g)
+			sch += " %s: %s;" % [g, Tech.row_name("doc", sc).get_slice(": ", 1) if sc >= 0 else "—"]
+		print("  %s доктрины:%s" % [tag, sch])
 		for k in ["attack", "defense", "org", "speed", "inf_attack", "inf_defense", "tank_attack", "art_attack", "industry", "construction", "research"]:
 			keys.append("%s %+d%%" % [k, roundi(n.b(k) * 100.0)])
 		print("  %s: %s\n     %s" % [tag, by, ", ".join(keys)])
