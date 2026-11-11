@@ -165,6 +165,9 @@ func _phase_economy() -> void:
 		# наука
 		if (world.day + nat.id) % 30 == 0 or nat.research.size() < nat.research_slots:
 			Tech.fit_slots(nat)
+			# ИИ пересобирает проекты самолётов под новые технологии
+			if not nat.is_player and (world.day + nat.id) % 30 == 0:
+				Designs.ai_update(world, nat)
 		for tid in Tech.daily(world, nat):
 			if nat.is_player:
 				world.log_event("Исследовано: %s — слот науки свободен" % Tech.tech_name(tid))

@@ -115,6 +115,8 @@ class Nation:
 	var xp := PackedFloat64Array([0.0, 0.0, 0.0])  # боевой опыт: армия, флот, авиация (Doctrine)
 	var doctrines := {}         # id ступени доктрины -> true
 	var doctrine_pref := {}     # род сил -> историческая школа (nations.json)
+	var air_design := PackedInt32Array([-1, -1])     # проект в производстве: истребители, бомбардировщики (Designs)
+	var plane_cost := PackedFloat64Array([1.0, 1.0]) # цена выпуска самолёта по проекту (множитель)
 	var no_attack := {}         # страна -> true: воюем, но ИИ не наступает (эффект no_attack — «Странная война»)
 	var build_mode := "mil"     # "civ" или "mil"
 	var build_progress := 0.0
@@ -313,6 +315,7 @@ class AirWing:
 	var kind := 0                   # 0 — истребители, 1 — бомбардировщики
 	var planes := 0.0
 	var region := -1
+	var design := -1                # проект самолётов (World.plane_designs), -1 — нынешний у владельца
 	var mission := "sup"            # sup — превосходство, cas — поддержка войск, bomb — бомбёжка заводов, naval — удары по флоту
 	var alive := true
 
@@ -426,6 +429,7 @@ var groups: Array = []                    # Array[ArmyGroup]
 # Флот и авиация (этап 6)
 var fleets: Array = []                    # Array[Fleet]
 var wings: Array = []                     # Array[AirWing]
+var plane_designs: Array = []             # проекты самолётов (Designs.add): словари характеристик
 var region_count := 0
 var p_region := PackedInt32Array()        # воздушный район провинции
 var p_air_src := PackedInt32Array()       # район из map.json (стратегический регион); пусто — сетка
