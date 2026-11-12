@@ -35,21 +35,22 @@ const B_TANK := 5
 const BAT_COUNT := 6
 # men — тыс. человек; eq — [винт., ору., танки, груз.]; terr — множитель на
 # местности (равнины, лес, холмы, горы, город, море, пустыня, болота);
+# width — ширина фронта батальона (дивизия = сумма; в бою — не шире провинции);
 # motor — моторизован (скорость от бонуса «speed» полностью, снабжение ×1,5)
 const BATTALIONS := [
-	{"name": "Пехотный", "short": "пех.", "icon": "inf", "men": 1.0, "eq": [10.0, 1.2, 0.0, 0.0], "atk": 1.0, "def": 1.2, "org": 40.0, "spd": 1.0, "hard": 0.0, "days": 14, "req": "", "motor": false,
+	{"name": "Пехотный", "width": 2, "short": "пех.", "icon": "inf", "men": 1.0, "eq": [10.0, 1.2, 0.0, 0.0], "atk": 1.0, "def": 1.2, "org": 40.0, "spd": 1.0, "hard": 0.0, "days": 14, "req": "", "motor": false,
 		"terr": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]},
-	{"name": "Горнострелковый", "short": "горн.", "icon": "mnt", "men": 1.0, "eq": [11.0, 0.6, 0.0, 0.0], "atk": 0.9, "def": 1.2, "org": 45.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "mnt1", "motor": false,
+	{"name": "Горнострелковый", "width": 2, "short": "горн.", "icon": "mnt", "men": 1.0, "eq": [11.0, 0.6, 0.0, 0.0], "atk": 0.9, "def": 1.2, "org": 45.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "mnt1", "motor": false,
 		"terr": [1.0, 1.1, 1.35, 1.5, 1.0, 1.0, 0.9, 1.0]},
-	{"name": "Кавалерийский", "short": "кав.", "icon": "cav", "men": 1.0, "eq": [10.0, 0.0, 0.0, 0.0], "atk": 1.0, "def": 1.0, "org": 50.0, "spd": 1.5, "hard": 0.0, "days": 14, "req": "", "motor": false,
+	{"name": "Кавалерийский", "width": 2, "short": "кав.", "icon": "cav", "men": 1.0, "eq": [10.0, 0.0, 0.0, 0.0], "atk": 1.0, "def": 1.0, "org": 50.0, "spd": 1.5, "hard": 0.0, "days": 14, "req": "", "motor": false,
 		"terr": [1.1, 0.8, 0.9, 0.7, 0.8, 1.0, 1.1, 0.7]},
 	# артиллерия: 2 батальона к 10 пехотным дают прежнюю «пехоту с артиллерией»;
 	# на трудной местности она обуза (значения ниже 1 тянут среднее вниз)
-	{"name": "Артиллерийский", "short": "арт.", "icon": "art", "men": 0.5, "eq": [0.0, 12.0, 0.0, 0.0], "atk": 3.0, "def": 1.0, "org": 18.0, "spd": 0.9, "hard": 0.0, "days": 18, "req": "", "motor": false,
+	{"name": "Артиллерийский", "width": 3, "short": "арт.", "icon": "art", "men": 0.5, "eq": [0.0, 12.0, 0.0, 0.0], "atk": 3.0, "def": 1.0, "org": 18.0, "spd": 0.9, "hard": 0.0, "days": 18, "req": "", "motor": false,
 		"terr": [1.55, 0.45, 0.45, -0.65, 1.0, 1.0, 1.55, -0.1]},
-	{"name": "Моторизованный", "short": "мот.", "icon": "mot", "men": 1.0, "eq": [10.0, 1.2, 0.0, 6.0], "atk": 1.1, "def": 1.2, "org": 40.0, "spd": 2.0, "hard": 0.1, "days": 20, "req": "mot1", "motor": true,
+	{"name": "Моторизованный", "width": 2, "short": "мот.", "icon": "mot", "men": 1.0, "eq": [10.0, 1.2, 0.0, 6.0], "atk": 1.1, "def": 1.2, "org": 40.0, "spd": 2.0, "hard": 0.1, "days": 20, "req": "mot1", "motor": true,
 		"terr": [1.1, 0.85, 0.9, 0.75, 0.9, 1.0, 1.1, 0.7]},
-	{"name": "Танковый", "short": "танк.", "icon": "arm", "men": 1.0, "eq": [5.0, 0.0, 7.5, 5.0], "atk": 3.75, "def": 1.5, "org": 35.0, "spd": 1.8, "hard": 0.7, "days": 30, "req": "armor1", "motor": true,
+	{"name": "Танковый", "width": 2, "short": "танк.", "icon": "arm", "men": 1.0, "eq": [5.0, 0.0, 7.5, 5.0], "atk": 3.75, "def": 1.5, "org": 35.0, "spd": 1.8, "hard": 0.7, "days": 30, "req": "armor1", "motor": true,
 		"terr": [1.15, 0.75, 0.75, 0.55, 0.75, 1.0, 1.15, 0.55]},
 ]
 const MAX_BATTALIONS := 15
@@ -90,12 +91,14 @@ static func make_template(name: String, short: String, bat: Array, owner: int = 
 	var req: Array = []
 	var motor := true
 	var total := 0
+	var width := 0.0
 	for b in BAT_COUNT:
 		var c: int = int(bat[b])
 		if c <= 0:
 			continue
 		total += c
 		var bt: Dictionary = BATTALIONS[b]
+		width += c * float(bt["width"])
 		var m: float = c * float(bt["men"])
 		men += m
 		for k in 4:
@@ -116,7 +119,7 @@ static func make_template(name: String, short: String, bat: Array, owner: int = 
 		terr[k] = clampf(terr[k] / men, 0.3, 2.0)
 	return {"name": name, "short": short, "owner": owner, "bat": bat.duplicate(), "men": men, "eq": eq,
 		"atk": atk, "def": def, "org": org / men, "hard": hard / men, "spd": spd if total > 0 else 1.0,
-		"days": days, "req": req, "motor": motor and total > 0, "terr": terr, "cls": _template_class(bat),
+		"days": days, "req": req, "motor": motor and total > 0, "terr": terr, "cls": _template_class(bat), "width": width,
 		"hidden": false}
 
 
@@ -207,6 +210,16 @@ static func refresh_division(world: World, d: World.Division) -> void:
 	d.hard = t["hard"]
 
 
+## Ширина фронта шаблона (у шаблонов из старых сохранений поля нет — считаем по составу).
+static func template_width(t: Dictionary) -> float:
+	if t.has("width"):
+		return float(t["width"])
+	var w := 0.0
+	for b in BAT_COUNT:
+		w += int(t["bat"][b]) * float(BATTALIONS[b]["width"])
+	return w
+
+
 ## Таблицы шаблонов в Packed-массивы мира (для параллельных фаз и C++).
 ## Вызывать после каждого изменения world.templates.
 static func build_tables(world: World) -> void:
@@ -217,7 +230,9 @@ static func build_tables(world: World) -> void:
 	world.tpl_terrain = PackedFloat32Array()
 	world.tpl_cls = PackedInt32Array()
 	world.tpl_motor = PackedInt32Array()
+	world.tpl_width = PackedFloat32Array()
 	for t in world.templates:
+		world.tpl_width.append(template_width(t))
 		world.tpl_men.append(t["men"])
 		for k in EQ_COUNT:
 			world.tpl_eq.append(t["eq"][k])

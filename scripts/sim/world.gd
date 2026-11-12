@@ -14,6 +14,12 @@ const T_MARSH := 7
 
 const TERRAIN_NAMES := ["Равнины", "Лес", "Холмы", "Горы", "Город", "Море", "Пустыня", "Болота"]
 const TERRAIN_MOVE := [1.0, 0.7, 0.6, 0.4, 0.85, 1.0, 0.8, 0.45]
+# ширина фронта провинции по местности и прибавка за каждое следующее
+# направление атаки (до FRONT_DIRS направлений): в бою с каждой стороны
+# участвуют дивизии не шире этого, остальные — в резерве (сменяют уставших)
+const FRONT_WIDTH := [100.0, 80.0, 80.0, 60.0, 90.0, 100.0, 100.0, 60.0]
+const FRONT_FLANK := 50.0
+const FRONT_DIRS := 3
 const TERRAIN_DEFENSE := [0.0, 0.2, 0.3, 0.55, 0.35, 0.0, 0.0, 0.3]
 const TERRAIN_COLORS := [
 	Color(0.62, 0.68, 0.40), Color(0.30, 0.48, 0.28), Color(0.64, 0.56, 0.38),
@@ -457,6 +463,7 @@ var templates: Array = []               # шаблоны дивизий (Militar
 var tpl_eq := PackedFloat64Array()       # templates[t]["eq"][k] — шаблон*7 + k
 var tpl_cls := PackedInt32Array()        # класс шаблона (Military.T_*) — значок и роль
 var tpl_motor := PackedInt32Array()      # 1 — моторизован (снабжение ×1,5)
+var tpl_width := PackedFloat32Array()    # ширина фронта шаблона (Military.template_width)
 var tpl_men := PackedFloat64Array()
 var tpl_terrain := PackedFloat32Array()   # Military.TERRAIN_MULT построчно (шаблон*8 + местность)
 var p_coastal := PackedByteArray()
@@ -1608,10 +1615,14 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 		atk = d_atk.duplicate()
 		for i in att_list:
 			atk[i] = d_atk[i] * (1.0 + plan_max * d_plan[i])
+	# ширина фронта: 8 значений по местности, затем прибавка за направление и их предел
+	var fw := PackedFloat32Array(FRONT_WIDTH)
+	fw.append(FRONT_FLANK)
+	fw.append(FRONT_DIRS)
 	if Native.core != null:
 		var r: Array = Native.core.call("combat", provs, att_start, att_list, seeds, d_str, d_org, d_eq, d_def, atk,
 				d_ent, d_land, d_sup, d_tpl, d_hard, d_owner, d_battle, pl_head, d_nx, war, nation_count, p_def_mult,
-				p_terrain, p_region, cas_mult, tpl_terrain)
+				p_terrain, p_region, cas_mult, tpl_terrain, d_prov, tpl_width, fw)
 		d_org = r[0]
 		d_str = r[1]
 		d_eq = r[2]
@@ -1638,7 +1649,20 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 		rng.seed = seeds[b]
 		var terrain_def: float = p_def_mult[p]
 		var terr: int = p_terrain[p]
-		var sa := _side_power(att_list.slice(a0, a1), terr, false, atk)
+		var attackers := att_list.slice(a0, a1)
+		var limit := front_limit(attackers, terr, fw)
+		var dl := PackedFloat64Array()
+		for e in defenders:   # все стоящие в провинции и подошедшие — в бою, в том числе резерв
+			dl.append(e)
+			dl.append(0.0)
+			dl.append(0.0)
+		for e in attackers:
+			dl.append(e)
+			dl.append(0.0)
+			dl.append(0.0)
+		attackers = front_pick(attackers, limit)
+		defenders = front_pick(defenders, limit)
+		var sa := _side_power(attackers, terr, false, atk)
 		var sd := _side_power(defenders, terr, true, atk)
 		var reg := p_region[p]
 		var att_power: float = sa[0] * cas_mult[reg * nc + att_owner]
@@ -1650,14 +1674,13 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 		att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard)
 		def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard)
 		var to_def := att_power / defenders.size()
-		var to_att := def_power / (a1 - a0)
-		var dl := PackedFloat64Array()
+		var to_att := def_power / attackers.size()
 		for e in defenders:
 			dl.append(e)
 			dl.append(to_def * 0.55)
 			dl.append(to_def * 0.12)
-		for k in range(a0, a1):
-			dl.append(att_list[k])
+		for e in attackers:
+			dl.append(e)
 			dl.append(to_att * 0.5)
 			dl.append(to_att * 0.10)
 		all_deltas.append(dl)
@@ -1668,6 +1691,33 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 			d_org[i] = maxf(0.0, d_org[i] - dl[j + 1])
 			d_str[i] = maxf(0.0, d_str[i] - dl[j + 2])
 			d_eq[i] = maxf(0.0, d_eq[i] - dl[j + 2] / 100.0 * 0.9)   # потери техники
+
+
+## Ширина фронта боя: по местности провинции и числу направлений атаки
+## (разных провинций, откуда идут атакующие). fw — как в k_combat.
+func front_limit(attackers: PackedInt32Array, terr: int, fw: PackedFloat32Array) -> float:
+	var src := PackedInt32Array()
+	for i in attackers:
+		if not src.has(d_prov[i]):
+			src.append(d_prov[i])
+	var dirs := mini(src.size(), int(fw[9]))
+	return float(fw[terr]) + float(fw[8]) * float(dirs - 1)
+
+
+## Дивизии, что встают в ширину фронта: свежие (по организации) первыми, при
+## равенстве — по номеру; не влезающие пропускаются, первая — всегда. C++ — тот же порядок.
+func front_pick(slots: PackedInt32Array, limit: float) -> PackedInt32Array:
+	var order := Array(slots)
+	var org := d_org
+	order.sort_custom(func(a: int, b: int) -> bool: return org[a] > org[b] or (org[a] == org[b] and a < b))
+	var out := PackedInt32Array()
+	var used := 0.0
+	for i: int in order:
+		var w: float = tpl_width[d_tpl[i]]
+		if out.is_empty() or used + w <= limit:
+			out.append(i)
+			used += w
+	return out
 
 
 ## Сила стороны (как Military.side_power, по массивам): [сила, бронированность].

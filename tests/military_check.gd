@@ -59,6 +59,36 @@ func _init() -> void:
 	inf.eq = 1.0
 	check(low < Military.side_power([inf], World.T_PLAINS, tmul, true)[0] * 0.7, "нехватка снаряжения ослабляет дивизию")
 
+	print("Ширина фронта:")
+	r = fresh()
+	w = r[0]
+	var fp := -1
+	var fq := -1
+	for p in w.p_land.size():
+		if w.p_land[p] == 1 and w.p_terrain[p] == World.T_PLAINS and w.p_owner[p] == POL:
+			for q in w.p_adj[p]:
+				if w.p_land[q] == 1 and w.p_owner[q] == POL:
+					fp = p
+					fq = q
+					break
+		if fp >= 0:
+			break
+	w.set_war(GER, POL)
+	var defd := w.spawn_division(POL, fp, Military.T_INF)
+	var atts := PackedInt32Array()
+	for i in 12:
+		atts.append(w.spawn_division(GER, fq, Military.T_INF).slot)
+	var org0 := defd.org
+	w.k_combat(PackedInt32Array([fp]), PackedInt32Array([0, atts.size()]), atts, PackedInt64Array([1]), 0.0)
+	var hit := 0
+	for i in atts:
+		if w.d_org[i] < w.d_morg[i]:
+			hit += 1
+	var line := int(World.FRONT_WIDTH[World.T_PLAINS] / Military.template_width(w.templates[Military.T_INF]))
+	check(hit == line, "на равнине в линии %d пехотных дивизий из 12, остальные в резерве (%d)" % [line, hit])
+	check(defd.org < org0 and w.d_battle[atts[11]] == 1, "резерв тоже в бою, защитник получил урон")
+	check(Military.template_width(w.templates[Military.T_ART]) == 26.0, "пехотная с артиллерией — ширина 26")
+
 	print("Окружение:")
 	r = fresh()
 	w = r[0]

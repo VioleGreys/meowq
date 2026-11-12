@@ -417,7 +417,8 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		const PackedInt32Array &tpl, const PackedFloat64Array &hard, const PackedInt32Array &owner,
 		const PackedByteArray &battle_in, const PackedInt32Array &pl_head, const PackedInt32Array &d_nx,
 		const PackedByteArray &war, int nc, const PackedFloat32Array &def_mult, const PackedByteArray &terrain,
-		const PackedInt32Array &region, const PackedFloat32Array &cas, const PackedFloat32Array &tmul) const {
+		const PackedInt32Array &region, const PackedFloat32Array &cas, const PackedFloat32Array &tmul,
+		const PackedInt32Array &prov, const PackedFloat32Array &tpl_width, const PackedFloat32Array &fw) const {
 	PackedFloat64Array str = str_in, org = org_in, eq = eq_in;
 	PackedByteArray battle = battle_in;
 	const double *s0 = str_in.ptr(), *e0 = eq_in.ptr();
@@ -431,7 +432,24 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		double org, str;
 	};
 	std::vector<Delta> deltas;
-	std::vector<int32_t> defenders;
+	std::vector<int32_t> defenders, attackers, src;
+	const int32_t *pr = prov.ptr();
+	const float *tw = tpl_width.ptr(), *fwp = fw.ptr();
+	const double *og = org_in.ptr();
+	// ширина фронта (World.front_pick): свежие первыми, при равенстве — по номеру
+	auto pick = [&](std::vector<int32_t> &v, double limit) {
+		std::sort(v.begin(), v.end(), [&](int32_t a, int32_t b) { return og[a] > og[b] || (og[a] == og[b] && a < b); });
+		size_t n = 0;
+		double used = 0.0;
+		for (int32_t i : v) {
+			const double w = double(tw[tp[i]]);
+			if (n == 0 || used + w <= limit) {
+				v[n++] = i;
+				used += w;
+			}
+		}
+		v.resize(n);
+	};
 	Ref<RandomNumberGenerator> rng;
 	rng.instantiate();
 	for (int64_t b = 0; b < provs.size(); b++) {
@@ -447,7 +465,17 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		rng->set_seed(uint64_t(seeds[b]));
 		const double terrain_def = double(dm[p]);
 		const int terr = tr[p];
-		const SidePower sa = side_power(al + a0, a1 - a0, terr, false, s0, df, en, at, ld, e0, su, tp, hd, tm);
+		attackers.assign(al + a0, al + a1);
+		src.clear();
+		for (int32_t i : attackers)
+			if (std::find(src.begin(), src.end(), pr[i]) == src.end()) src.push_back(pr[i]);
+		const int dirs = std::min(int(src.size()), int(fwp[9]));
+		const double limit = double(fwp[terr]) + double(fwp[8]) * double(dirs - 1);
+		for (int32_t e : defenders) deltas.push_back({ e, 0.0, 0.0 });   // резерв — тоже в бою
+		for (int32_t e : attackers) deltas.push_back({ e, 0.0, 0.0 });
+		pick(attackers, limit);
+		pick(defenders, limit);
+		const SidePower sa = side_power(attackers.data(), int64_t(attackers.size()), terr, false, s0, df, en, at, ld, e0, su, tp, hd, tm);
 		const SidePower sd = side_power(defenders.data(), int64_t(defenders.size()), terr, true, s0, df, en, at, ld, e0, su, tp, hd, tm);
 		const int32_t reg = rg[p];
 		double att_power = sa.power * double(cm[int64_t(reg) * nc + att_owner]);
@@ -461,9 +489,9 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard);
 		def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard);
 		const double to_def = att_power / double(defenders.size());
-		const double to_att = def_power / double(a1 - a0);
+		const double to_att = def_power / double(attackers.size());
 		for (int32_t e : defenders) deltas.push_back({ e, to_def * 0.55, to_def * 0.12 });
-		for (int32_t k = a0; k < a1; k++) deltas.push_back({ al[k], to_att * 0.5, to_att * 0.10 });
+		for (int32_t e : attackers) deltas.push_back({ e, to_att * 0.5, to_att * 0.10 });
 	}
 	double *o = org.ptrw(), *s = str.ptrw(), *q = eq.ptrw();
 	uint8_t *bt = battle.ptrw();

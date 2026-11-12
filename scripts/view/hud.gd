@@ -1191,7 +1191,7 @@ func _province_text(p: int) -> String:
 		return "Море %s" % w.p_name[p]
 	var own: World.Nation = w.nations[w.p_owner[p]]
 	var ctrl: World.Nation = w.nations[w.p_controller[p]]
-	var s := "%s\n%s · %s" % [w.p_name[p], World.TERRAIN_NAMES[w.p_terrain[p]], own.name]
+	var s := "%s\n%s (ширина фронта %d) · %s" % [w.p_name[p], World.TERRAIN_NAMES[w.p_terrain[p]], World.FRONT_WIDTH[w.p_terrain[p]], own.name]
 	var fn := Diplomacy.faction_name(w, own.id)
 	if fn != "":
 		s += " («%s»)" % fn
@@ -1210,11 +1210,13 @@ func _province_text(p: int) -> String:
 				rs.append("%s %.1f" % [Economy.RES_NAMES[r].to_lower(), v])
 		s += "\nРесурсы: " + ", ".join(rs)
 	var counts := {}
+	var widths := {}
 	for d in w.divs_in(p):
 		if d.alive:
 			counts[d.owner] = int(counts.get(d.owner, 0)) + 1
+			widths[d.owner] = float(widths.get(d.owner, 0.0)) + Military.template_width(w.templates[d.tpl])
 	for k in counts:
-		s += "\nДивизии %s: %d" % [w.nations[k].name, counts[k]]
+		s += "\nДивизии %s: %d (ширина %d)" % [w.nations[k].name, counts[k], widths[k]]
 	return s
 
 
@@ -1956,8 +1958,8 @@ func _tpl_stats_text(tp: Dictionary) -> String:
 		if v < wv:
 			wv = v
 			worst = TERRAIN_SHORT[k]
-	return "атака %.1f · оборона %.1f · орг. %d · скорость ×%.1f · броня %d%% · %.1fк чел. · %d дн.\n%s\nместность: лучше всего — %s (×%.2f), хуже — %s (×%.2f)" % [
-		tp["atk"], tp["def"], tp["org"], tp["spd"], tp["hard"] * 100.0, tp["men"], tp["days"], _eq_text(tp["eq"]), best, bv, worst, wv]
+	return "атака %.1f · оборона %.1f · орг. %d · скорость ×%.1f · броня %d%% · ширина %d · %.1fк чел. · %d дн.\n%s\nместность: лучше всего — %s (×%.2f), хуже — %s (×%.2f)" % [
+		tp["atk"], tp["def"], tp["org"], tp["spd"], tp["hard"] * 100.0, Military.template_width(tp), tp["men"], tp["days"], _eq_text(tp["eq"]), best, bv, worst, wv]
 
 
 const TERRAIN_SHORT := ["равнины", "лес", "холмы", "горы", "город", "море", "пустыня", "болота"]
@@ -2058,7 +2060,7 @@ func _build_tpl_editor(w: World, me: int) -> void:
 
 
 func _bat_line(bt: Dictionary) -> String:
-	return "ат. %.2f · об. %.2f · орг. %d · ×%.1f" % [bt["atk"], bt["def"], bt["org"], bt["spd"]]
+	return "ат. %.2f · об. %.2f · орг. %d · ×%.1f · шир. %d" % [bt["atk"], bt["def"], bt["org"], bt["spd"], bt["width"]]
 
 
 func _build_army(w: World, me: int) -> void:
