@@ -843,6 +843,9 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 			"unguarantee":
 				if target >= 0:
 					nat.guarantees.erase(target)
+			"guar_refuse":
+				if target >= 0:
+					Politics.refuse_guarantee(world, who, target)
 			"freedom":
 				if e.get("puppets", false):
 					for pp in Diplomacy.puppets_of(world, who):
@@ -1414,6 +1417,8 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("война на стороне страны %s" % tname)
 			"unguarantee":
 				parts.append("гарантия стране %s снята" % tname)
+			"guar_refuse":
+				parts.append("отказ от гарантии стране %s" % tname)
 			"resist":
 				parts.append("%sсопротивление на землях %s: %+d%%" % [who, tname if tname != "" else "своих", int(e["v"])] if not e.get("allies", false) else "%sсопротивление на землях союзников: %+d%%" % [who, int(e["v"])])
 			"comply":

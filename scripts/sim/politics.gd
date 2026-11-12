@@ -205,18 +205,26 @@ static func guarantee_call(world: World, g: int, b: int, a: int) -> void:
 		var j := ai_judge(world, g, b, a)
 		join = j["join"]
 		world.log_event("%s взвешивает гарантию стране %s: %s" % [world.nations[g].name, nb.name, j["why"]])
+	var others: Array = []
+	for x in other_guarantors(world, b, a, g):
+		others.append(world.nations[x].name)
+	var text := "%s объявила войну стране %s, независимость которой мы гарантировали.\n\nПосол %s просит выполнить обещание. Если мы останемся в стороне, нашему слову больше никто не поверит — ни союзники, ни собственные граждане." % [na.name, nb.name, nb.name]
+	if not others.is_empty():
+		text += "\n\nНа стороне защиты по гарантиям (с цепочкой гарантов) также: %s." % ", ".join(others)
+	var shame: bool = world.nations[g].guar_refusals >= 1
+	var no_desc := "−10 % стабильности, −10 % поддержки войны, −50 ПВ, отношения с жертвой −30, гарантия снята, " + \
+		("второй отказ: «Позор нации» на 3 года, все гарантии сняты, новые — не раньше чем через 3 года" if shame else "«Нарушенное слово» на 365 дней (второй отказ — «Позор нации»)")
 	var ev := {
 		"title": "Нападение на страну %s" % nb.name,
 		"target": tg, "photo": ta,
-		"text": "%s объявила войну стране %s, независимость которой мы гарантировали.\n\nПосол %s просит выполнить обещание. Если мы останемся в стороне, нашему слову больше никто не поверит — ни союзники, ни собственные граждане." % [na.name, nb.name, nb.name],
+		"text": text,
 		"options": [
 			{"name": "Вступиться", "ai": 100 if join else 0, "desc": "Война против нападающих; +5 %% стабильности, +10 %% поддержки войны, %d дивизий, «Верность слову» на 180 дней" % troops,
 				"effects": [{"t": "defend", "target": tb}, {"t": "stability", "v": 0.05}, {"t": "war_support", "v": 0.10},
 					{"t": "divisions", "tpl": "inf", "n": troops}, {"t": "spirit_timed", "id": "guar_kept", "days": 180}]},
-			{"name": "Остаться в стороне", "ai": 0 if join else 100, "desc": "−10 % стабильности, −10 % поддержки войны, −50 ПВ, отношения с жертвой −30, гарантия снята, «Нарушенное слово» на 365 дней",
+			{"name": "Остаться в стороне", "ai": 0 if join else 100, "desc": no_desc,
 				"effects": [{"t": "stability", "v": -0.10}, {"t": "war_support", "v": -0.10}, {"t": "pol_power", "v": -50},
-					{"t": "rep", "by": tb, "of": tg, "v": -30}, {"t": "unguarantee", "target": tb},
-					{"t": "spirit_timed", "id": "guar_broken", "days": 365}]},
+					{"t": "rep", "by": tb, "of": tg, "v": -30}, {"t": "guar_refuse", "target": tb}]},
 		],
 	}
 	world.dyn_events[id] = ev
@@ -244,6 +252,11 @@ static func ai_judge(world: World, g: int, b: int, a: int) -> Dictionary:
 			dfn[x] = true
 	for p in Diplomacy.puppets_of(world, g):
 		dfn[p] = true
+	# другие гаранты жертвы — тоже на стороне защиты (решение пользователя)
+	for x in other_guarantors(world, b, a, g):
+		dfn[x] = true
+		for p in Diplomacy.puppets_of(world, x):
+			dfn[p] = true
 	var am := 0.0
 	var ai := 0.0
 	var dm := 0.0
@@ -261,6 +274,52 @@ static func ai_judge(world: World, g: int, b: int, a: int) -> Dictionary:
 		mini(int(days), 9999), int(ai), int(di), int(am), int(dm)]
 	var join := days <= JUDGE_DAYS and ai <= di * JUDGE_RATIO and am <= dm * JUDGE_RATIO
 	return {"join": join, "why": ("вступается — " if join else "отрекается — ") + why}
+
+
+## Цепочка гарантий (решение пользователя): кто ещё гарантирует b, кто
+## гарантирует этих гарантов (и g), и так далее — живые, не на стороне
+## нападающего a и не воюющие с жертвой. Без g, в порядке обхода.
+static func other_guarantors(world: World, b: int, a: int, g: int) -> Array:
+	var seen := {b: true, g: true}
+	var queue: Array = [b, g]
+	var r: Array = []
+	var i := 0
+	while i < queue.size():
+		var x: int = queue[i]
+		i += 1
+		for nat in world.nations:
+			if seen.has(nat.id) or not nat.alive or nat.id == a or not nat.guarantees.has(x):
+				continue
+			if Diplomacy.same_side(world, nat.id, a) or world.is_at_war(nat.id, b):
+				continue
+			seen[nat.id] = true
+			queue.append(nat.id)
+			r.append(nat.id)
+	return r
+
+
+## Отказ вступиться за гарантированную b: гарантия снята; первый отказ —
+## «Нарушенное слово» на год, второй — «Позор нации» на 3 года, все гарантии
+## сняты и новые запрещены на 3 года (решение пользователя).
+const SHAME_DAYS := 1095
+
+
+static func refuse_guarantee(world: World, n: int, b: int) -> void:
+	var nat: World.Nation = world.nations[n]
+	nat.guarantees.erase(b)
+	nat.guar_hist.erase(b)
+	nat.guar_refusals += 1
+	if nat.guar_refusals < 2:
+		add_timed_spirit(world, nat, "guar_broken", 365)
+		return
+	nat.guar_refusals = 0
+	nat.spirits.erase("guar_broken")
+	nat.spirit_until.erase("guar_broken")
+	add_timed_spirit(world, nat, "national_shame", SHAME_DAYS)
+	nat.guarantees.clear()
+	nat.guar_hist.clear()
+	nat.guar_ban_until = world.day + SHAME_DAYS
+	world.log_event("%s: «Позор нации» — второй отказ защитить гарантированную страну; все гарантии сняты, новые — не раньше чем через 3 года" % nat.name)
 
 
 ## Вступить в войну на стороне b против всех, с кем она воюет.

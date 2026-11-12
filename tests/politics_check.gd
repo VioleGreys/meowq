@@ -221,5 +221,56 @@ func _init() -> void:
 	w.nations[hol].capitulated = true
 	check(History.tree_key(w, hol) == "HOL", "сдавшаяся без изгнания страна ветки изгнания не имеет")
 
+
+	# --- 8. Несколько гарантов ------------------------------------------------
+	print("Несколько гарантов:")
+	fresh("GER")
+	ger = t("GER")
+	fra = t("FRA")
+	bel = t("BEL")
+	eng = t("ENG")
+	w.nations[fra].guarantees.clear()
+	w.nations[eng].guarantees.clear()
+	w.nations[fra].guarantees[bel] = true
+	var j1 := Politics.ai_judge(w, fra, bel, ger)
+	w.nations[eng].guarantees[bel] = true
+	var j2 := Politics.ai_judge(w, fra, bel, ger)
+	print("    один гарант: ", j1["why"])
+	print("    два гаранта: ", j2["why"])
+	check(String(j2["why"]).length() > 0 and String(j2["why"]) != String(j1["why"]), "вторая гарантия Британии входит в расчёт Франции")
+	check(Politics.other_guarantors(w, bel, ger, fra) == [eng], "другие гаранты: Британия")
+	usa = t("USA")
+	w.nations[usa].guarantees[eng] = true
+	var chain := Politics.other_guarantors(w, bel, ger, fra)
+	check(chain.has(eng) and chain.has(usa), "цепочка: США гарантируют Британию — тоже в расчёте")
+	var j3 := Politics.ai_judge(w, fra, bel, ger)
+	print("    с цепочкой: ", j3["why"])
+
+	# --- 9. Два отказа — «Позор нации» -----------------------------------------
+	print("Два отказа подряд:")
+	sim = fresh("ENG")
+	eng = t("ENG")
+	ger = t("GER")
+	w.nations[eng].guarantees.clear()
+	for tag in ["NOR", "DEN"]:
+		var v := t(tag)
+		w.nations[eng].pol_power = 100.0
+		Diplomacy.guarantee(w, eng, v)
+		check(w.nations[eng].guarantees.has(v), "гарантия стране %s дана" % tag)
+		attack(sim, ger, v)
+		var gid := ""
+		for id in w.pending_events:
+			if String(id).begins_with("gcall_"):
+				gid = id
+		if gid != "":
+			w.pending_events.erase(gid)
+			History.choose_option(w, gid, 1, rng)
+	check(w.nations[eng].spirits.has("national_shame"), "черта «Позор нации»")
+	check(w.nations[eng].guarantees.is_empty(), "все гарантии сняты")
+	w.nations[eng].pol_power = 100.0
+	var ban := Diplomacy.can_guarantee(w, eng, t("BEL"))
+	check(ban.begins_with("«Позор нации»"), "новые гарантии запрещены: %s" % ban)
+	check(w.nations[eng].guar_ban_until - w.day >= 1090, "запрет на 3 года")
+
 	print("Политика: %s" % ("OK" if errors == 0 else "ОШИБОК %d" % errors))
 	quit(1 if errors > 0 else 0)

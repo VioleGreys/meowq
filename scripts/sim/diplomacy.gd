@@ -348,6 +348,8 @@ static func can_guarantee(world: World, a: int, b: int) -> String:
 		return "невозможно"
 	if na.overlord >= 0:
 		return "марионетка не ведёт свою внешнюю политику"
+	if world.day < na.guar_ban_until:
+		return "«Позор нации»: гарантии запрещены ещё %d дн." % (na.guar_ban_until - world.day)
 	var pp := Politics.can_pay(world, na, Politics.COST_GUARANTEE)
 	if pp != "":
 		return pp
@@ -362,6 +364,8 @@ static func can_guarantee(world: World, a: int, b: int) -> String:
 
 ## historic — исторические гарантии (фокусы, события): без проверки перевеса.
 static func guarantee(world: World, a: int, b: int, historic: bool = false) -> void:
+	if world.day < world.nations[a].guar_ban_until:
+		return   # «Позор нации»: запрет и на исторические гарантии
 	if not historic:
 		if can_guarantee(world, a, b) != "":
 			return
