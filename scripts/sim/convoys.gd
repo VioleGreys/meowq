@@ -35,6 +35,7 @@ const RESERVE := 1.2         # ИИ держит запас сверх нужд�
 const RESERVE_MIN := 5.0
 const DEFAULT_PER_PORT := 3.0   # нет в forces.json — по 3 на порт метрополии…
 const DEFAULT_MAX := 40.0       # …но не больше 40
+const STOCK_DAYS := 150.0       # запасы отрезанного порта за морем (подача 1 → 0) — дней
 const CHARTER := 0.2            # страна без верфей фрахтует конвои: в день, до нужды (не больше DEFAULT_MAX)
 
 
@@ -55,12 +56,131 @@ static func setup(world: World, data: Dictionary) -> void:
 			nat.convoys = minf(DEFAULT_MAX, DEFAULT_PER_PORT * float(ports[nat.id]))
 
 
+## Проливы (forces.json "straits"): пара морских зон, держатели — провинции
+## на берегу, страж — страна, что охраняет пролив, пока её не выбили (Британия:
+## Суэц по договору с Египтом, Гибралтар). Связь link — между бассейнами, не
+## соседними на карте (канал, Босфор). Пути конвоев страны через пролив закрыты,
+## если с ней воюет кто-то из держателей (Convoys.strait_closed).
+static func setup_straits(world: World, data: Array) -> void:
+	world.straits = []
+	var by_name := {}
+	for p in world.prov_count:
+		if not by_name.has(world.p_name[p]):
+			by_name[world.p_name[p]] = p
+	for st in data:
+		var za: int = by_name.get(String(st.get("a", "")), -1)
+		var zb: int = by_name.get(String(st.get("b", "")), -1)
+		var hold := PackedInt32Array()
+		for nm in st.get("hold", []):
+			var hp: int = by_name.get(String(nm), -1)
+			if hp >= 0 and world.p_land[hp] == 1:
+				hold.append(hp)
+		if za < 0 or zb < 0 or world.p_land[za] != 0 or world.p_land[zb] != 0 or hold.is_empty():
+			push_warning("пролив %s: нет зон или берега" % st.get("name", "?"))
+			continue
+		var g := world.nation_tags.find(String(st.get("guard", "")))
+		world.straits.append([za, zb, 1 if st.get("link", false) else 0, hold, g, String(st.get("name", ""))])
+
+
+## Держатели пролива: хозяева провинций берега и страж, если он жив и не воюет
+## ни с одним из них (иначе берег у врага стража — пролив его).
+static func strait_holders(world: World, st: Array) -> PackedInt32Array:
+	var nc := world.nation_count
+	var res := PackedInt32Array()
+	var g: int = st[4]
+	var guard_ok: bool = g >= 0 and world.nations[g].alive
+	for hp in st[3]:
+		var c := world.p_controller[hp]
+		if c < 0:
+			continue
+		if not res.has(c):
+			res.append(c)
+		if guard_ok and c != g and world.war[g * nc + c] == 1:
+			guard_ok = false
+	if guard_ok and not res.has(g):
+		res.append(g)
+	return res
+
+
+## Пролив закрыт для страны n: с ней воюет кто-то из держателей (Италия до
+## июня 1940 г. ходила Суэцем, хотя Германия уже воевала с Британией; порты
+## невоюющих союзников — Виши — не снабжают сторону: Simulation._phase_supply).
+static func strait_closed(world: World, st: Array, n: int) -> bool:
+	var nc := world.nation_count
+	for h in strait_holders(world, st):
+		if world.war[h * nc + n] == 1:
+			return true
+	return false
+
+
+## Связи бассейнов через проливы для страны n: [доп. соседи {бассейн: [бассейны]},
+## закрытые пары {a * nb + b: true}].
+static func _strait_links(world: World, n: int) -> Array:
+	var nb := world.basin_name.size()
+	var extra := {}
+	var cut := {}
+	var zb := world.z_basin
+	for st in world.straits:
+		var a: int = zb[int(st[0])]
+		var b: int = zb[int(st[1])]
+		if a < 0 or b < 0 or a == b:
+			continue
+		if strait_closed(world, st, n):
+			cut[a * nb + b] = true
+			cut[b * nb + a] = true
+		elif int(st[2]) == 1:
+			if not extra.has(a):
+				extra[a] = []
+			if not extra.has(b):
+				extra[b] = []
+			extra[a].append(b)
+			extra[b].append(a)
+	return [extra, cut]
+
+
 ## Материк столицы страны (−1 — нет).
 static func home_mass(world: World, n: int) -> int:
 	var c: int = world.nations[n].capital
 	if c < 0 or world.p_mass.size() != world.prov_count:
 		return -1
 	return world.p_mass[c]
+
+
+## Земля метрополии страны n: провинции, связанные со столицей по суше через
+## свои и союзные (одна сторона) провинции (1). Порты и войска вне её — за
+## морем: им нужны конвои. Раньше брался весь материк столицы, и Эритрея с
+## Ливией для Италии (Африка связана с Евразией через Синай) снабжались без
+## конвоев — Суэц и Гибралтар ничего не значили.
+static func home_land(world: World, n: int) -> PackedByteArray:
+	var pc := world.prov_count
+	var nc := world.nation_count
+	var res := PackedByteArray()
+	res.resize(pc)
+	var c: int = world.nations[n].capital
+	if c < 0 or c >= pc:
+		return res
+	var ctrl := world.p_controller
+	var land := world.p_land
+	var ally := world.ally
+	var has_ally := ally.size() == nc * nc
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	res[c] = 1
+	var q := PackedInt32Array([c])
+	var h := 0
+	while h < q.size():
+		var p := q[h]
+		h += 1
+		for k in range(a_start[p], a_start[p + 1]):
+			var y := a_list[k]
+			if res[y] == 1 or land[y] == 0:
+				continue
+			var o := ctrl[y]
+			if o != n and (o < 0 or not has_ally or ally[n * nc + o] != 1):
+				continue
+			res[y] = 1
+			q.append(y)
+	return res
 
 
 ## Бассейны (раз на карту): зоны с одним названием моря без уточнения в
@@ -168,10 +288,8 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 	for x in nc:
 		zl[x] = {}
 		zh[x] = {}
-	var hm := PackedInt32Array()
-	hm.resize(nc)
-	for x in nc:
-		hm[x] = home_mass(world, x)
+	var hl: Array = []   # земля метрополии (home_land) — по мере надобности
+	hl.resize(nc)
 	var over: Array = []   # заморские порты стран (порядок провинций)
 	over.resize(nc)
 	for x in nc:
@@ -180,7 +298,9 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 		var c := ctrl[p]
 		if c < 0:
 			continue
-		var home := world.p_mass[p] == hm[c]
+		if hl[c] == null:
+			hl[c] = home_land(world, c)
+		var home: bool = hl[c][p] == 1
 		if not home:
 			over[c].append(p)
 		for k in range(a_start[p], a_start[p + 1]):
@@ -209,6 +329,10 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 	_t0 = Time.get_ticks_usec()
 	for b in nc:
 		var bn: World.Nation = world.nations[b]
+		var prev := {}   # заморские порты прошлого обхода: у них есть склады
+		for rt in bn.conv_routes:
+			if int(rt[0]) == 1:
+				prev[int(rt[1])] = true
 		bn.conv_routes = []
 		bn.conv_zone_set = {}
 		bn.conv_basins = {}
@@ -228,7 +352,8 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 			open = {}
 			for z in open_by[b]:
 				open[zb[z]] = true
-		var par := _bfs(world, src, open)
+		var links := _strait_links(world, b)
+		var par := _bfs(world, src, open, links)
 		var par_all: Array = []
 		var ks: Array = sl.keys()
 		ks.sort()
@@ -242,7 +367,7 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 			var route := _route(par, tz)
 			if route.is_empty() and open != null:
 				if par_all.is_empty():
-					par_all = _bfs(world, src, null)
+					par_all = _bfs(world, src, null, links)
 				route = _route(par_all, tz)
 			if route.is_empty():
 				continue
@@ -256,7 +381,11 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 					tz.append(zb[a_list[k]])
 			var route := _route(par, tz)
 			if route.is_empty() and open == null:
-				continue   # мир: до порта не дойти (нет общей воды) — порт сам по себе
+				if links[1].is_empty() or _route(_bfs(world, src, null, [links[0], {}]), tz).is_empty():
+					continue   # до порта не дойти (нет общей воды) — порт сам по себе
+				# иначе путь закрыт проливом — порт отрезан
+			if route.is_empty() and not prev.has(p) and world.p_conv.size() == world.prov_count:
+				world.p_conv[p] = 0.0   # взят уже отрезанным — своих запасов нет
 			bn.conv_routes.append([1, p, route, 0.0])   # пустой путь — порт отрезан блокадой
 		# зоны бассейнов путей — для рейдеров противника и своих охотников
 		for rt in bn.conv_routes:
@@ -299,7 +428,7 @@ static func _by_land(world: World, b: int) -> PackedByteArray:
 
 ## Обход бассейнов от src через открытые (open == null — все): предок
 ## (−1 — не достигнут, сам себе — исток) и длина пути в бассейнах (от 1).
-static func _bfs(world: World, src: Array, open) -> Array:
+static func _bfs(world: World, src: Array, open, links: Array = []) -> Array:
 	var nb := world.basin_name.size()
 	var par := PackedInt32Array()
 	par.resize(nb)
@@ -317,14 +446,22 @@ static func _bfs(world: World, src: Array, open) -> Array:
 			dist[z] = 1
 			q.append(z)
 	var h := 0
+	var extra: Dictionary = links[0] if not links.is_empty() else {}
+	var cut: Dictionary = links[1] if not links.is_empty() else {}
 	while h < q.size():
 		var z := q[h]
 		h += 1
+		var nbs: Array = []
 		for k in range(a_start[z], a_start[z + 1]):
-			var y := a_list[k]
+			nbs.append(a_list[k])
+		if extra.has(z):
+			nbs.append_array(extra[z])
+		for y in nbs:
 			if par[y] >= 0:
 				continue
 			if open != null and not open.has(y):
+				continue
+			if not cut.is_empty() and cut.has(z * nb + y):
 				continue
 			par[y] = z
 			dist[y] = dist[z] + 1
@@ -498,7 +635,8 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 			nat.conv_trade = 1.0
 			for rt in nat.conv_routes:
 				if int(rt[0]) == 1:
-					world.p_conv[int(rt[1])] = sup_fill if not (rt[2] as PackedInt32Array).is_empty() else 0.0
+					var pp := int(rt[1])
+					world.p_conv[pp] = sup_fill if not (rt[2] as PackedInt32Array).is_empty() else _stock(world.p_conv[pp])
 			continue
 		if by_b.is_empty():
 			by_b = _units_by_buyer(world)
@@ -530,7 +668,7 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 			else:
 				var p: int = rt[1]
 				if route.is_empty():
-					world.p_conv[p] = 0.0
+					world.p_conv[p] = _stock(world.p_conv[p])
 					continue
 				world.p_conv[p] = sup_fill * safe
 				var share := (1.0 + float(world.vp_ai()[p])) / maxf(1.0, wsum)
@@ -605,29 +743,34 @@ static func _units_by_buyer(world: World) -> Array:
 	return by_b
 
 
-## Дивизии за морем (не на материке столицы) → нужда в конвоях снабжения.
+## Порт отрезан (нет пути конвоев): подача тает на складских запасах за
+## STOCK_DAYS дней, а не обрывается сразу (Восточная Африка держалась
+## с июня 1940 г. до весны 1941 г.).
+static func _stock(v: float) -> float:
+	return maxf(0.0, v - 1.0 / STOCK_DAYS)
+
+
+## Дивизии за морем (вне земли метрополии) → нужда в конвоях снабжения.
 static func _count_overseas(world: World) -> void:
 	var nc := world.nation_count
 	var cnt := PackedInt32Array()
 	cnt.resize(nc)
-	var hm := PackedInt32Array()
-	hm.resize(nc)
-	for x in nc:
-		hm[x] = home_mass(world, x)
-	if world.p_mass.size() != world.prov_count:
-		return
+	var hl: Array = []   # земля метрополии (home_land) — по мере надобности
+	hl.resize(nc)
 	var alive := world.d_alive
 	var prov := world.d_prov
 	var owner := world.d_owner
-	var mass := world.p_mass
+	var land := world.p_land
 	for i in alive.size():
 		if alive[i] == 0:
 			continue
 		var o := owner[i]
 		var p := prov[i]
-		if o < 0 or p < 0 or hm[o] < 0:
+		if o < 0 or p < 0 or land[p] == 0 or world.nations[o].capital < 0:
 			continue
-		if mass[p] >= 0 and mass[p] != hm[o]:
+		if hl[o] == null:
+			hl[o] = home_land(world, o)
+		if hl[o][p] == 0:
 			cnt[o] += 1
 	for nat in world.nations:
 		nat.conv_sup_need = PER_DIV * float(cnt[nat.id])

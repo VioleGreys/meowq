@@ -468,6 +468,10 @@ var bas_adj_start := PackedInt32Array()  # соседство бассейнов
 var bas_adj_list := PackedInt32Array()
 var bas_zone_start := PackedInt32Array() # зоны бассейна (CSR, по возрастанию)
 var bas_zone_list := PackedInt32Array()
+# проливы (Convoys.setup_straits): [зона a, зона b, 1 — связь, которой нет на
+# карте (Суэц, Босфор), провинции-держатели PackedInt32Array, страна-страж (−1), название]
+var straits: Array = []
+var p_waste := PackedByteArray()        # безлюдная пустыня (Supply._static): связь со снабжением не проходит
 var conv_units: Array = []              # кэш Convoys._units_by_buyer
 var conv_units_sig := -1.0
 var p_conv := PackedFloat32Array()      # подача порта за морем от конвоев (0..1; 1 — дома или пусто) — Convoys

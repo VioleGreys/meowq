@@ -23,6 +23,8 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	const uint8_t *land = land_a.ptr();
 	const float *pcap = pcap_a.ptr();
 	const float *smult = smult_a.ptr();   // подача порта от конвоев (Convoys), 0..1
+	const PackedByteArray waste_a = t["waste"];
+	const uint8_t *waste = waste_a.ptr();   // безлюдная пустыня: связь дальше не идёт
 	const double *fall = fall_a.ptr();
 	const double k_cap = kk_a[0], k_port = kk_a[1], k_pvp = kk_a[2], k_level = kk_a[3];
 	const int hub_range = int(kk_a[5]);
@@ -94,24 +96,58 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	conn_a.resize(pc);
 	uint8_t *conn = conn_a.ptrw();
 	std::fill(conn, conn + pc, 0);
+	// cm — подача лучшего источника, с которым связана провинция (столица — 1,
+	// порт — smult: доля доставки конвоями, запас отрезанной колонии); узел
+	// работает не сильнее своего источника. Источники — по убыванию подачи,
+	// обход от каждого — только по ещё не связанным провинциям.
+	std::vector<double> cm(pc, 0.0);
 	{
-		std::vector<int32_t> cq;
+		const int ncap = caps_a.size();
+		std::vector<int32_t> order;
+		std::vector<double> om;
 		for (int s = 0; s < ns; s++)
 			for (int j = src_off[s]; j < src_off[s + 1]; j++) {
 				const int h = src[j];
-				if (ps[h] == s && conn[h] == 0) {
-					conn[h] = 1;
-					cq.push_back(h);
-				}
+				bool is_cap = false;
+				for (int c = 0; c < ncap; c++)
+					if (caps_a[c] == h) {
+						is_cap = true;
+						break;
+					}
+				order.push_back(j);
+				om.push_back(is_cap ? 1.0 : std::min(1.0, std::max(0.0, double(smult[h]))));
 			}
-		for (size_t ch = 0; ch < cq.size(); ch++) {
-			const int p = cq[ch];
-			const int s = ps[p];
-			for (int e = adj_start[p]; e < adj_start[p + 1]; e++) {
-				const int q = adj_list[e];
-				if (conn[q] == 0 && ps[q] == s) {
-					conn[q] = 1;
-					cq.push_back(q);
+		std::vector<int32_t> idx(order.size());
+		for (size_t i = 0; i < idx.size(); i++)
+			idx[i] = int32_t(i);
+		std::stable_sort(idx.begin(), idx.end(), [&](int32_t a, int32_t b) { return om[a] > om[b]; });
+		std::vector<int32_t> side_of_j(order.size());
+		for (int s = 0; s < ns; s++)
+			for (int j = src_off[s]; j < src_off[s + 1]; j++)
+				side_of_j[j] = s;
+		std::vector<int32_t> cq;
+		for (size_t ii = 0; ii < idx.size(); ii++) {
+			const int j = order[idx[ii]];
+			const int s = side_of_j[j];
+			const int h = src[j];
+			const double m = om[idx[ii]];
+			if (ps[h] != s || conn[h] != 0)
+				continue;
+			conn[h] = 1;
+			cm[h] = m;
+			cq.clear();
+			cq.push_back(h);
+			for (size_t ch = 0; ch < cq.size(); ch++) {
+				const int p = cq[ch];
+				if (ch > 0 && waste[p] == 1)
+					continue;
+				for (int e = adj_start[p]; e < adj_start[p + 1]; e++) {
+					const int q = adj_list[e];
+					if (conn[q] == 0 && ps[q] == s) {
+						conn[q] = 1;
+						cm[q] = m;
+						cq.push_back(q);
+					}
 				}
 			}
 		}
@@ -179,7 +215,7 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 			if (h >= 0 && hub_ok[k] == 1 && best[r] > 0.0 && conn[h] == 1) {
 				best_src[k] = h;
 				best_f[k] = k_level * std::min(best[r], level[k]) * std::max(rail_min, 1.0 - rail_loss * double(rd[r]))
-						* (1.0 + node_up * double(nlvl[h])) * tcap[ctrl[h]];
+						* (1.0 + node_up * double(nlvl[h])) * tcap[ctrl[h]] * cm[h];
 			}
 		}
 		for (int j = src_off[s]; j < src_off[s + 1]; j++) {

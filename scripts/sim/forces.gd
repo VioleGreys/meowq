@@ -90,6 +90,7 @@ static func setup(world: World, dir: String) -> void:
 				w.mission = "sup" if kind == 0 else "cas"
 				planes -= take
 	Convoys.setup(world, data)
+	Convoys.setup_straits(world, d.get("straits", []) if typeof(d) == TYPE_DICTIONARY else [])
 	_refresh_cache(world)
 
 

@@ -345,6 +345,29 @@ func _phase_supply() -> void:
 	var zf := world.zone_fleets
 	var sup_memo := {}
 	var plist := world.port_list
+	# порт за морем, отрезанный от метрополии (проливом или блокадой пути
+	# конвоев: World.p_conv = 0), — не источник: иначе узлы снабжения от него
+	# работали в полную силу (Италия в Восточной Африке 1940–41 гг.)
+	var pconv := world.p_conv
+	var cut_ok := pconv.size() == world.prov_count
+	# заморские порты союзника, что сам не воюет (Виши: Джибути, Мадагаскар),
+	# не снабжают воюющую сторону — их колонии в блокаде противника стороны
+	if cut_ok:
+		pconv = pconv.duplicate()
+		var al := world.ally
+		for nat in world.nations:
+			if not nat.alive or not nat.at_war.is_empty() or nat.conv_routes.is_empty() or al.size() != nc * nc:
+				continue
+			var side_war := false
+			for x in nc:
+				if x != nat.id and al[nat.id * nc + x] == 1 and not world.nations[x].at_war.is_empty():
+					side_war = true
+					break
+			if not side_war:
+				continue
+			for rt in nat.conv_routes:
+				if int(rt[0]) == 1:
+					pconv[int(rt[1])] = 0.0
 	# блокада возможна, только если во всех соседних морских зонах есть флоты
 	_px = Time.get_ticks_usec()
 	if Native.core != null:
@@ -371,13 +394,13 @@ func _phase_supply() -> void:
 		for pi in plist.size():
 			var p := plist[pi]
 			var c := ctl[p]
-			if c >= 0 and rep_index.has(rep[c]) and hub_ok[pi] == 1:
+			if c >= 0 and rep_index.has(rep[c]) and hub_ok[pi] == 1 and not (cut_ok and pconv[p] <= 0.0):
 				hubs[rep_index[rep[c]]].append(p)
 	else:
 		for pi in plist.size():
 			var p := plist[pi]
 			var c := ctl[p]
-			if c < 0 or not rep_index.has(rep[c]):
+			if c < 0 or not rep_index.has(rep[c]) or (cut_ok and pconv[p] <= 0.0):
 				continue
 			var open_sea := false
 			for k in range(adj_s[p], adj_s[p + 1]):

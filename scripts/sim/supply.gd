@@ -26,6 +26,7 @@ extends RefCounted
 ## функции от снимка: GDScript (подача — параллельно по районам) и C++
 ## (MeowqCore.supply_field / supply_divs), результаты совпадают до бита.
 
+const WASTE_CAP := 1.5   # пустыня ёмкостью меньше — безлюдна: связь со снабжением через неё не проходит (Сахара)
 const HUB_RANGE := 6
 const FALLOFF := 0.8          # доля, доходящая через каждый переход после первого
 const LOCAL := 0.5            # местное снабжение провинции: × ёмкость (2–6)
@@ -74,6 +75,14 @@ const BROAD_GAUGE := ["SOV", "FIN"]
 
 ## Неизменные таблицы: соседство районов по суше (CSR).
 static func _static(world: World) -> void:
+	if world.p_waste.size() != world.prov_count:
+		# безлюдная пустыня: связь с источником через неё не идёт (WASTE_CAP)
+		world.p_waste = PackedByteArray()
+		world.p_waste.resize(world.prov_count)
+		var base := world.p_supply_base if world.p_supply_base.size() == world.prov_count else world.p_supply_cap
+		for p in world.prov_count:
+			if world.p_land[p] == 1 and world.p_terrain[p] == World.T_DESERT and base[p] < WASTE_CAP:
+				world.p_waste[p] = 1
 	if world.reg_adj_start.size() == world.region_count + 1:
 		return
 	var nr := world.region_count
@@ -194,7 +203,7 @@ static func field_snapshot(world: World, side_of: PackedInt32Array, sources: Arr
 	return {"owner": world.p_owner.duplicate(), "gauge": gauge, "adj_start": world.adj_start.duplicate(), "adj_list": world.adj_list.duplicate(), "land": world.p_land.duplicate(),
 		"ctrl": world.p_controller.duplicate(), "preg": world.p_region.duplicate(), "vp": world.vp_ai().duplicate(),
 		"pop": world.p_population.duplicate() if world.p_population.size() == world.prov_count else PackedInt32Array(),
-		"pcap": world.p_supply_cap.duplicate(), "smult": smult, "side_of": side_of.duplicate(), "ns": sources.size(), "nr": world.region_count,
+		"pcap": world.p_supply_cap.duplicate(), "smult": smult, "waste": world.p_waste.duplicate(), "side_of": side_of.duplicate(), "ns": sources.size(), "nr": world.region_count,
 		"reg_adj_start": world.reg_adj_start.duplicate(), "reg_adj_list": world.reg_adj_list.duplicate(),
 		"src": src_flat, "src_off": src_off, "capitals": capitals.duplicate(), "fall": fall,
 		"nlvl": world.p_node_lvl.duplicate(), "join": world.p_join.duplicate(), "tcap": tcap, "trange": trange, "rhub": world.r_hub.duplicate(),
@@ -312,6 +321,7 @@ static func field_gd(t: Dictionary) -> Array:
 	var src: PackedInt32Array = t["src"]
 	var src_off: PackedInt32Array = t["src_off"]
 	var capitals: PackedInt32Array = t["capitals"]
+	var waste: PackedByteArray = t["waste"]
 	var fall: PackedFloat64Array = t["fall"]
 	var kk: PackedFloat64Array = t["k"]
 	var k_cap := kk[0]
@@ -380,25 +390,42 @@ static func field_gd(t: Dictionary) -> Array:
 		var lose := o >= 0 and gauge[o] != gauge[ctrl[p]] and not (hub[k] >= 0 and join[hub[k]] >= 0 and hub_ok[k] == 1)
 		capsum[k] += float(pcap[p]) * (gauge_loss if lose else 1.0)
 	# связь с источником по своей территории (котлы): узел вне связи не работает
+	# cm — подача лучшего источника, с которым связана провинция (столица — 1,
+	# порт — smult: доля доставки конвоями, запас отрезанной колонии); узел
+	# работает не сильнее своего источника. Источники — по убыванию подачи,
+	# обход от каждого — только по ещё не связанным провинциям.
 	var conn := PackedByteArray()
 	conn.resize(pc)
-	var cq := PackedInt32Array()
+	var cm := PackedFloat64Array()
+	cm.resize(pc)
+	var seeds: Array = []   # [подача, порядковый номер, сторона, провинция]
 	for s in ns:
 		for j in range(src_off[s], src_off[s + 1]):
 			var h := src[j]
-			if ps[h] == s and conn[h] == 0:
-				conn[h] = 1
-				cq.append(h)
-	var chead := 0
-	while chead < cq.size():
-		var p := cq[chead]
-		chead += 1
-		var s := ps[p]
-		for e in range(adj_start[p], adj_start[p + 1]):
-			var q := adj_list[e]
-			if conn[q] == 0 and ps[q] == s:
-				conn[q] = 1
-				cq.append(q)
+			var m := 1.0 if capitals.has(h) else clampf(float(smult[h]), 0.0, 1.0)
+			seeds.append([m, seeds.size(), s, h])
+	seeds.sort_custom(func(a, b): return a[0] > b[0] or (a[0] == b[0] and a[1] < b[1]))
+	for sd in seeds:
+		var s: int = sd[2]
+		var h: int = sd[3]
+		var m: float = sd[0]
+		if ps[h] != s or conn[h] != 0:
+			continue
+		conn[h] = 1
+		cm[h] = m
+		var cq := PackedInt32Array([h])
+		var chead := 0
+		while chead < cq.size():
+			var p := cq[chead]
+			chead += 1
+			if chead > 1 and waste[p] == 1:
+				continue   # через безлюдную пустыню связь не идёт дальше
+			for e in range(adj_start[p], adj_start[p + 1]):
+				var q := adj_list[e]
+				if conn[q] == 0 and ps[q] == s:
+					conn[q] = 1
+					cm[q] = m
+					cq.append(q)
 	var level := PackedFloat64Array()
 	level.resize(ns * nr)
 	for k in ns * nr:
@@ -457,7 +484,7 @@ static func field_gd(t: Dictionary) -> Array:
 			if h >= 0 and hub_ok[k] == 1 and best[r] > 0.0 and conn[h] == 1:
 				best_src[k] = h
 				best_f[k] = k_level * minf(best[r], level[k]) * maxf(rail_min, 1.0 - rail_loss * float(rd[r])) \
-						* (1.0 + node_up * float(nlvl[h])) * tcap[ctrl[h]]
+						* (1.0 + node_up * float(nlvl[h])) * tcap[ctrl[h]] * cm[h]
 		for j in range(src_off[s], src_off[s + 1]):
 			var h := src[j]
 			var f := k_cap if capitals.has(h) else (k_port + k_pvp * minf(5.0, float(vp[h]))) * float(smult[h])
