@@ -56,7 +56,7 @@ const AUX_PER := 3
 # узлы — самые крупные города (порт — как +2 очка победы), по одному на район,
 # не ближе HUB_GAP переходов друг к другу (решение пользователя); открытые порты
 # и столицы — источники и узлы сверх этого
-const HUB_GAP := 4
+const HUB_GAP := 3
 # улучшение узла (стройка): уровень 0..NODE_MAX — подача +NODE_UP за уровень,
 # радиус +1 за каждые 2 уровня, дорога района +RAIL_UP за уровень (узкие места)
 const NODE_MAX := 5
@@ -108,11 +108,12 @@ static func hubs_static(world: World) -> void:
 	var has_pop := world.p_population.size() == world.prov_count
 	if world.p_port.size() != world.prov_count:
 		Forces.refresh_ports(world)
+	# самые крупные города (очки победы, население); порт — как +2 очка победы
+	var score := func(p: int) -> int: return (world.p_vp[p] + (2 if world.p_port[p] == 1 else 0)) * 1000000 + (world.p_population[p] if has_pop else 0)
+	# кандидаты — города (очки победы > 0) и главный город каждого района
 	var best := PackedInt32Array()
 	best.resize(nr)
 	best.fill(-1)
-	# самые крупные города (очки победы, население); порт — как +2 очка победы
-	var score := func(p: int) -> int: return (world.p_vp[p] + (2 if world.p_port[p] == 1 else 0)) * 1000000 + (world.p_population[p] if has_pop else 0)
 	for p in world.prov_count:
 		if world.p_land[p] == 0:
 			continue
@@ -120,9 +121,9 @@ static func hubs_static(world: World) -> void:
 		if best[r] < 0 or int(score.call(p)) > int(score.call(best[r])):
 			best[r] = p
 	var cands: Array = []
-	for r in nr:
-		if best[r] >= 0:
-			cands.append(best[r])
+	for p in world.prov_count:
+		if world.p_land[p] == 1 and (world.p_vp[p] > 0 or best[world.p_region[p]] == p):
+			cands.append(p)
 	cands.sort_custom(func(a: int, b: int) -> bool:
 		var sa: int = score.call(a)
 		var sb: int = score.call(b)
@@ -133,8 +134,10 @@ static func hubs_static(world: World) -> void:
 	world.r_hub = PackedInt32Array()
 	world.r_hub.resize(nr)
 	world.r_hub.fill(-1)
+	# по одному на район: если крупнейший город района слишком близко к узлу —
+	# следующий по величине город этого района
 	for h: int in cands:
-		if dist[h] < HUB_GAP:
+		if dist[h] < HUB_GAP or world.r_hub[world.p_region[h]] >= 0:
 			continue
 		world.r_hub[world.p_region[h]] = h
 		# расстояния до ближайшего узла — на HUB_GAP переходов вокруг

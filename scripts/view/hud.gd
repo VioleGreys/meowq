@@ -2119,6 +2119,7 @@ func _build_army(w: World, me: int) -> void:
 		var b1 := _button("%s" % tp["name"], func(): _train(1, t), Vector2(0, 48))
 		b1.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b1.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b1.clip_text = true   # длинное название не раздвигает лист
 		b1.disabled = why != ""
 		row.add_child(b1)
 		var b5 := _button("×5", func(): _train(5, t), Vector2(60, 48))
@@ -2165,14 +2166,14 @@ func _build_supply(w: World, me: int) -> void:
 	row.add_theme_constant_override("separation", 6)
 	for m in 3:
 		var mm := m
-		var b := _button(("● " if n.truck_mode == m else "") + ["Конная", "½ грузовики", "Грузовики"][m], func():
+		var b := _button(("● " if n.truck_mode == m else "") + ["Конная", "½ груз.", "Груз."][m], func():
 			n.truck_mode = mm
 			_rebuild_popup(), Vector2(0, 44))
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(b)
 	popup_body.add_child(row)
 	popup_body.add_child(_small("Половина на грузовиках — радиус узлов +1, подача +20 %%; грузовики — +2 и +40 %%. Расход — %.2f грузовика в день на единицу подачи (при половине — вдвое меньше)." % Supply.TRUCK_USE))
-	popup_body.add_child(_button("Присоединять захваченные узлы сами: %s" % ("да" if n.sup_auto else "нет"), func():
+	popup_body.add_child(_button("Присоединять узлы: %s" % ("да" if n.sup_auto else "нет"), func():
 		n.sup_auto = not n.sup_auto
 		_rebuild_popup(), Vector2(0, 44)))
 	if not n.sup_jobs.is_empty():
@@ -2185,16 +2186,17 @@ func _build_supply(w: World, me: int) -> void:
 	for h in wait.slice(0, 4):
 		var hh: int = h
 		if not Supply.has_job(n, hh, Supply.JOB_JOIN):
-			popup_body.add_child(_button("Присоединить узел: %s" % w.p_name[hh], func():
+			popup_body.add_child(_button("Присоединить: %s" % w.p_name[hh], func():
 				Supply.order(w, n, hh, Supply.JOB_JOIN)
 				_rebuild_popup(), Vector2(0, 44)))
 	for e in nodes.slice(0, 6):
 		var p: int = e[1]
 		var lvl := w.p_node_lvl[p] if p < w.p_node_lvl.size() else 0
-		var b := _button("%s · ур. %d · взято %d из %d (%d%%)" % [w.p_name[p], lvl, roundi(e[2]), roundi(e[3]), roundi(e[0] * 100.0)], func():
+		var b := _button("%s · ур.%d · %d/%d" % [w.p_name[p], lvl, roundi(e[2]), roundi(e[3])], func():
 			Supply.order(w, n, p, Supply.JOB_UP)
 			_rebuild_popup(), Vector2(0, 44))
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.clip_text = true
 		b.disabled = lvl >= Supply.NODE_MAX or Supply.has_job(n, p, Supply.JOB_UP)
 		popup_body.add_child(b)
 	popup_body.add_child(_small("Узел района (главный город) кормит провинции вокруг себя. Войска берут снабжение у ближайшего узла — основного; не хватило — у вспомогательных, ближайших к нему по дороге: чем ближе, тем больше они берут на себя (−25 %% за район между узлами). Чем длиннее фронт на узле, тем больше вспомогательных (до 4); узкий фронт упирается в предел. Нажмите на узел — улучшить: подача +%d %%, дорога района шире, каждые 2 уровня — радиус +1. Захваченный узел работает, только когда присоединён к своей сети." % roundi(Supply.NODE_UP * 100.0)))
