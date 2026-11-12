@@ -69,6 +69,19 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	const uint8_t *nohit = nohit_a.ptr();
 	const float *supcap = supcap_a.ptr();
 	auto capd = [&](int32_t p) { return std::max(1, int(std::floor(double(supcap[p])))); };
+	// снабжение дивизий и климат (акклиматизация страны) — для выбора целей атаки
+	const PackedFloat64Array dv_sup_a = tables.has("dv_sup") ? PackedFloat64Array(tables["dv_sup"]) : PackedFloat64Array();
+	const bool has_sup = dv_sup_a.size() == dv_owner_a.size();
+	const double *dv_sup = dv_sup_a.ptr();
+	const PackedFloat32Array p_hot_a = tables.has("p_hot") ? PackedFloat32Array(tables["p_hot"]) : PackedFloat32Array();
+	const PackedFloat32Array p_cold_a = tables.has("p_cold") ? PackedFloat32Array(tables["p_cold"]) : PackedFloat32Array();
+	const PackedFloat64Array n_hot_a = tables.has("n_hot") ? PackedFloat64Array(tables["n_hot"]) : PackedFloat64Array();
+	const PackedFloat64Array n_cold_a = tables.has("n_cold") ? PackedFloat64Array(tables["n_cold"]) : PackedFloat64Array();
+	const bool has_clim = p_hot_a.size() == pc && p_cold_a.size() == pc && n_hot_a.size() > nid && n_cold_a.size() > nid;
+	const float *p_hot = p_hot_a.ptr(), *p_cold = p_cold_a.ptr();
+	const double *n_hot = n_hot_a.ptr(), *n_cold = n_cold_a.ptr();
+	const double SUP_BAD = 0.5, SUP_EXH = 0.25, CLIM_ATK = 0.25;
+	auto sup_mult = [&](double sv) { return sv >= SUP_BAD ? 1.0 : (sv >= SUP_EXH ? 0.75 : 0.5); };
 	const int64_t ndv = dv_owner_a.size();
 
 	Dictionary result;
@@ -187,20 +200,60 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		std::vector<Entry> target_list;
 		for (int32_t t : targets.order) {
 			double enemy_str = 0.0;
+			int pocketed = 0;
 			for (int32_t k = pd_start[t]; k < pd_start[t + 1]; k++) {
 				const int32_t e = pd_list[k];
 				const int32_t eo = dv_owner[e];
-				if (eo != nid && war[int64_t(nid) * nc + eo] == 1) enemy_str += double(dv_defw[e]);
+				if (eo != nid && war[int64_t(nid) * nc + eo] == 1) {
+					// снабжение врага: голодающие и окружённые слабее (как в бою)
+					double es = 1.0;
+					if (has_sup) {
+						es = sup_mult(dv_sup[e]);
+						if (dv_sup[e] < SUP_EXH) pocketed++;
+					}
+					enemy_str += double(dv_defw[e]) * es;
+				}
 			}
 			const double def_mult = 1.0 + double(def_tab[t]);
-			double score = enemy_str * def_mult - vp[t] * 6.0 + double(rng->randf()) * 20.0;
+			// климат: неакклиматизированные атакуют слабее — нужен больший перевес
+			double clim = 0.0;
+			if (has_clim)
+				clim = std::min(1.0, double(p_hot[t]) * (1.0 - std::min(1.0, n_hot[nid])) + double(p_cold[t]) * (1.0 - std::min(1.0, n_cold[nid])));
+			const double climf = 1.0 - CLIM_ATK * clim;
+			double score = enemy_str * def_mult - vp[t] * 6.0 + double(rng->randf()) * 20.0 + clim * 30.0 - double(pocketed) * 12.0;
 			if (objective >= 0) score += obj_dist[t] * 25.0;
 			// охват: цель, которую можно атаковать с нескольких наших участков, важнее
-			int dirs = 0;
-			for (int32_t k = a_start[t]; k < a_start[t + 1]; k++)
-				if (fronts.has[a_list[k]]) dirs++;
+			int dirs = 0, hostile_n = 0, closing = 0, sup_n = 0;
+			double sup_sum = 0.0;
+			for (int32_t k = a_start[t]; k < a_start[t + 1]; k++) {
+				const int32_t q = a_list[k];
+				if (fronts.has[q]) {
+					dirs++;
+					if (has_sup)
+						for (int32_t m = pd_start[q]; m < pd_start[q + 1]; m++)
+							if (dv_owner[pd_list[m]] == nid) { sup_sum += dv_sup[pd_list[m]]; sup_n++; }
+				} else if (land[q] == 1 && ctrl[q] >= 0 && war[int64_t(nid) * nc + ctrl[q]] == 1) {
+					hostile_n++;
+					// котёл: взяв t, замкнём кольцо вокруг вражеской провинции q
+					int open = 0;
+					for (int32_t m = a_start[q]; m < a_start[q + 1]; m++) {
+						const int32_t r = a_list[m];
+						if (r != t && land[r] == 1 && ctrl[r] >= 0 && war[int64_t(nid) * nc + ctrl[r]] == 1) open++;
+					}
+					if (open == 0) closing++;
+				}
+			}
 			if (dirs > 1) score -= double(dirs - 1) * 15.0;
-			target_list.push_back({ score, t, enemy_str * def_mult, dirs });
+			score -= double(closing) * 25.0;
+			// удар — со снабжённых участков
+			if (sup_n > 0) score += (1.0 - std::min(1.0, sup_sum / double(sup_n))) * 40.0;
+			// выступ: цель окружена врагом, а бьём с одной стороны — риск котла
+			double risk = 1.0;
+			if (dirs == 1 && hostile_n >= 3) {
+				score += double(hostile_n - 2) * 15.0;
+				risk = 1.3;
+			}
+			target_list.push_back({ score, t, enemy_str * def_mult * risk / climf, dirs });
 		}
 		std::sort(target_list.begin(), target_list.end(), [](const Entry &a, const Entry &b) {
 			return a.score < b.score || (a.score == b.score && a.t < b.t);
@@ -375,32 +428,31 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		o.push_back(path);
 		orders.push_back(o);
 	}
-	// перегруз: лишние дивизии из провинции фронта сверх снабжения — во вторую
-	// линию (ближайшая наша провинция у фронта с запасом снабжения)
+	// перегруз: лишние дивизии из провинции фронта сверх снабжения — в ближайшую
+	// нашу тыловую провинцию с запасом снабжения (вторая линия, заполнена — глубже)
 	if (has_cap) {
 		OrderedSet reserve(pc);
 		std::vector<int32_t> rcount(pc, 0);
-		for (int32_t f : fronts.order) {
-			for (int32_t k = a_start[f]; k < a_start[f + 1]; k++) {
-				const int32_t q = a_list[k];
-				if (land[q] == 1 && ctrl[q] == nid && !fronts.has[q] && !reserve.has[q]) {
-					reserve.add(q);
-					int cnt = 0;
-					for (int32_t m = pd_start[q]; m < pd_start[q + 1]; m++)
-						if (dv_owner[pd_list[m]] == nid) cnt++;
-					rcount[q] = cnt;
-				}
+		for (int32_t q = 0; q < pc; q++) {
+			if (land[q] == 1 && ctrl[q] == nid && !fronts.has[q]) {
+				reserve.add(q);
+				int cnt = 0;
+				for (int32_t m = pd_start[q]; m < pd_start[q + 1]; m++)
+					if (dv_owner[pd_list[m]] == nid) cnt++;
+				rcount[q] = cnt;
 			}
 		}
+		// цели — тыловые провинции с запасом; заполненная выбывает
+		std::vector<int32_t> goals;
+		int n_goals = 0;
+		for (int32_t q : reserve.order)
+			if (rcount[q] < capd(q)) { goals.push_back(q); n_goals++; }
+		for (int32_t g : goals) goal[g] = 1;
 		for (int32_t i : idle) {
 			if (used[i]) continue;
 			const int32_t pv = dv_prov[i];
 			if (!fronts.has[pv] || per_front[pv] <= capd(pv)) continue;
-			std::vector<int32_t> goals;
-			for (int32_t q : reserve.order)
-				if (rcount[q] < capd(q)) goals.push_back(q);
-			if (goals.empty()) break;
-			for (int32_t g : goals) goal[g] = 1;
+			if (n_goals == 0) break;
 			std::fill(parent.begin(), parent.end(), -1);
 			queue.clear();
 			parent[pv] = pv;
@@ -418,7 +470,6 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 					queue.push_back(q);
 				}
 			}
-			for (int32_t g : goals) goal[g] = 0;
 			if (found < 0) continue;
 			int len = 0;
 			for (int32_t cur = found; cur != pv; cur = parent[cur]) len++;
@@ -427,6 +478,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			int32_t *w = path.ptrw();
 			for (int32_t cur = found; cur != pv; cur = parent[cur]) w[--len] = cur;
 			rcount[found] += 1;
+			if (rcount[found] >= capd(found)) { goal[found] = 0; n_goals--; }
 			per_front[pv] -= 1;
 			used[i] = 1;
 			Array o;
@@ -434,6 +486,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			o.push_back(path);
 			orders.push_back(o);
 		}
+		for (int32_t g : goals) goal[g] = 0;
 	}
 	return result;
 }

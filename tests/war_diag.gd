@@ -53,5 +53,25 @@ func _init() -> void:
 			for k in by:
 				var c: int = by[k][0]
 				parts.append("%s:%d сн%d%% орг%d%% осн%d%%" % [k, c, roundi(100 * by[k][1] / c), roundi(100 * by[k][2] / c), roundi(100 * by[k][3] / c)])
-			print("%s %s гр%d вз%d ман%d | %s" % [w.date_short(), tg, nat.civ, nat.mil, roundi(nat.manpower), "  ".join(parts)])
+			if "--stack" in OS.get_cmdline_user_args():
+				# перегруз: дивизий в провинциях сверх ёмкости снабжения
+				var cnt := {}
+				for d in w.divisions:
+					if d.alive and d.owner == n:
+						cnt[d.prov] = int(cnt.get(d.prov, 0)) + 1
+				var over := 0
+				var cap := 0.0
+				var worst := ""
+				var wv := 0
+				for pp in cnt:
+					var c2: int = cnt[pp]
+					cap += w.p_supcap[pp]
+					if c2 > maxi(1, int(w.p_supcap[pp])):
+						over += c2 - maxi(1, int(w.p_supcap[pp]))
+					if c2 > wv:
+						wv = c2
+						worst = "%s %d/%.0f" % [w.p_name[pp], c2, w.p_supcap[pp]]
+				print("   %s перегруз: провинций с войсками %d, ёмкость %.0f, дивизий сверх ёмкости %d, худшая %s" % [tg, cnt.size(), cap, over, worst])
+			print("%s %s гр%d вз%d ман%d конв%d/%d(%d%%) | %s" % [w.date_short(), tg, nat.civ, nat.mil, roundi(nat.manpower),
+				roundi(nat.convoys), roundi(nat.conv_sup_need + nat.conv_trade_need), roundi(100 * nat.conv_sup), "  ".join(parts)])
 	quit(0)

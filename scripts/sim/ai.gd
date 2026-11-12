@@ -141,6 +141,14 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var nohit: PackedByteArray = tb.get("nohit", PackedByteArray())
 	var prov_count := land.size()
 	var has_cap := supcap.size() == prov_count
+	# снабжение дивизий и климат (акклиматизация страны) — для выбора целей атаки
+	var dv_sup: PackedFloat64Array = tb.get("dv_sup", PackedFloat64Array())
+	var has_sup := dv_sup.size() == dv_owner.size()
+	var p_hot: PackedFloat32Array = tb.get("p_hot", PackedFloat32Array())
+	var p_cold: PackedFloat32Array = tb.get("p_cold", PackedFloat32Array())
+	var n_hot: PackedFloat64Array = tb.get("n_hot", PackedFloat64Array())
+	var n_cold: PackedFloat64Array = tb.get("n_cold", PackedFloat64Array())
+	var has_clim := p_hot.size() == prov_count and p_cold.size() == prov_count and n_hot.size() > nid and n_cold.size() > nid
 
 	var at_war := false
 	for e in enemies:
@@ -243,23 +251,64 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		var target_list: Array = []
 		for t in targets:
 			var enemy_str := 0.0
+			var pocketed := 0
 			for k in range(pd_start[t], pd_start[t + 1]):
 				var e := pd_list[k]
 				var eo := dv_owner[e]
 				if eo != nid and war[nid * nc + eo] == 1:
-					enemy_str += dv_defw[e]
+					# снабжение врага: голодающие и окружённые слабее (как в бою)
+					var es := 1.0
+					if has_sup:
+						es = _sup_mult(dv_sup[e])
+						if dv_sup[e] < SUP_EXH:
+							pocketed += 1
+					enemy_str += dv_defw[e] * es
 			var def_mult: float = 1.0 + def_tab[t]
-			var score: float = enemy_str * def_mult - vp[t] * 6.0 + rng.randf() * 20.0
+			# климат: неакклиматизированные атакуют слабее — нужен больший перевес
+			var clim := 0.0
+			if has_clim:
+				clim = minf(1.0, p_hot[t] * (1.0 - minf(1.0, n_hot[nid])) + p_cold[t] * (1.0 - minf(1.0, n_cold[nid])))
+			var climf := 1.0 - CLIM_ATK * clim
+			var score: float = enemy_str * def_mult - vp[t] * 6.0 + rng.randf() * 20.0 + clim * 30.0 - float(pocketed) * 12.0
 			if objective >= 0:
 				score += obj_dist[t] * 25.0
 			# охват: цель, которую можно атаковать с нескольких наших участков, важнее
 			var dirs := 0
+			var hostile_n := 0
+			var closing := 0
+			var sup_sum := 0.0
+			var sup_n := 0
 			for k in range(a_start[t], a_start[t + 1]):
-				if fronts.has(a_list[k]):
+				var q := a_list[k]
+				if fronts.has(q):
 					dirs += 1
+					if has_sup:
+						for m in range(pd_start[q], pd_start[q + 1]):
+							if dv_owner[pd_list[m]] == nid:
+								sup_sum += dv_sup[pd_list[m]]
+								sup_n += 1
+				elif land[q] == 1 and ctrl[q] >= 0 and war[nid * nc + ctrl[q]] == 1:
+					hostile_n += 1
+					# котёл: взяв t, замкнём кольцо вокруг вражеской провинции q
+					var open := 0
+					for m in range(a_start[q], a_start[q + 1]):
+						var r := a_list[m]
+						if r != t and land[r] == 1 and ctrl[r] >= 0 and war[nid * nc + ctrl[r]] == 1:
+							open += 1
+					if open == 0:
+						closing += 1
 			if dirs > 1:
 				score -= float(dirs - 1) * 15.0
-			target_list.append([score, t, enemy_str * def_mult, dirs])
+			score -= float(closing) * 25.0
+			# удар — со снабжённых участков
+			if sup_n > 0:
+				score += (1.0 - minf(1.0, sup_sum / float(sup_n))) * 40.0
+			# выступ: цель окружена врагом, а бьём с одной стороны — риск котла
+			var risk := 1.0
+			if dirs == 1 and hostile_n >= 3:
+				score += float(hostile_n - 2) * 15.0
+				risk = 1.3
+			target_list.append([score, t, enemy_str * def_mult * risk / climf, dirs])
 		# порядок однозначный (при равенстве — номер провинции): так же сортирует C++
 		target_list.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
 		for j in mini(3, target_list.size()):
@@ -390,30 +439,31 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		used[i] = true
 		orders.append([i, path])
 	# Перегруз: лишние дивизии из провинции фронта, которую снабжение не тянет,
-	# отходят во вторую линию — ближайшую нашу провинцию у фронта с запасом снабжения.
+	# отходят в ближайшую нашу тыловую провинцию с запасом снабжения (сначала —
+	# вторая линия у фронта; заполнена — глубже: иначе сотни дивизий стоят в
+	# одной провинции без снабжения, как СССР осенью 1941 г.).
 	if has_cap:
 		var reserve := {}
 		var rcount := {}
-		for f in fronts:
-			for k in range(a_start[f], a_start[f + 1]):
-				var q := a_list[k]
-				if land[q] == 1 and ctrl[q] == nid and not fronts.has(q) and not reserve.has(q):
-					reserve[q] = true
-					var cnt := 0
-					for m in range(pd_start[q], pd_start[q + 1]):
-						if dv_owner[pd_list[m]] == nid:
-							cnt += 1
-					rcount[q] = cnt
+		for q in prov_count:
+			if land[q] == 1 and ctrl[q] == nid and not fronts.has(q):
+				reserve[q] = true
+				var cnt := 0
+				for m in range(pd_start[q], pd_start[q + 1]):
+					if dv_owner[pd_list[m]] == nid:
+						cnt += 1
+				rcount[q] = cnt
+		# цели — тыловые провинции с запасом; заполненная выбывает
+		var goal := {}
+		for q in reserve:
+			if int(rcount[q]) < maxi(1, int(floor(supcap[q]))):
+				goal[q] = true
 		for i in idle:
 			if used.has(i):
 				continue
 			var pv := dv_prov[i]
 			if not fronts.has(pv) or int(per_front.get(pv, 0)) <= maxi(1, int(floor(supcap[pv]))):
 				continue
-			var goal := {}
-			for q in reserve:
-				if int(rcount[q]) < maxi(1, int(floor(supcap[q]))):
-					goal[q] = true
 			if goal.is_empty():
 				break
 			var path := _nearest(tb, nid, pv, goal)
@@ -421,11 +471,22 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				continue
 			var dest := path[path.size() - 1]
 			rcount[dest] = int(rcount[dest]) + 1
+			if int(rcount[dest]) >= maxi(1, int(floor(supcap[dest]))):
+				goal.erase(dest)
 			per_front[pv] = int(per_front.get(pv, 0)) - 1
 			used[i] = true
 			orders.append([i, path])
 	result["orders"] = orders
 	return result
+
+
+const SUP_BAD := 0.5     # как World.SUP_BAD / SUP_EXH (константы скрипта мира из потоков не читаем)
+const SUP_EXH := 0.25
+const CLIM_ATK := 0.25   # как Climate: атака × (1 − 0,25 × неакклиматизированность)
+
+
+static func _sup_mult(sv: float) -> float:
+	return 1.0 if sv >= SUP_BAD else (0.75 if sv >= SUP_EXH else 0.5)
 
 
 static func _power(world: World, nid: int) -> float:
@@ -446,7 +507,8 @@ static func ai_tables(world: World) -> Dictionary:
 		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
 		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list, "supcap": world.p_supcap,
-		"nohit": no_attack_table(world)}
+		"nohit": no_attack_table(world), "dv_sup": world.d_sup, "p_hot": world.p_hot, "p_cold": world.p_cold,
+		"n_hot": world.n_hot, "n_cold": world.n_cold}
 
 
 ## Пары «воюем, но ИИ не наступает» (Nation.no_attack, только у ИИ): nc×nc;
