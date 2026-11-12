@@ -922,6 +922,11 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 						if d.alive and d.owner == who and from.has(world.p_adm0[d.prov]):
 							d.path = PackedInt32Array()
 							d.prov = dst
+			"air_trans":
+				# транспортные самолёты (Airlift): {"n": число} — помощь из-за рубежа
+				if nat.air_trans < 0.0:
+					nat.air_trans = Airlift.START_PER_CIV * float(nat.civ)
+				nat.air_trans += float(e.get("n", 10))
 			"move_factories":
 				# перенос заводов внутри страны: {"moves": [{"from_ll", "to_ll", "mil", "civ"}]} —
 				# из ближайшей к from_ll своей провинции с заводами в ближайшую к to_ll
@@ -1020,13 +1025,27 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 							vb += world.p_vp[p]
 					world.civil_pairs.append([nt, old, va, vb])
 					_civil_population(world, nt, old)
-					# неразбериха раскола: "chaos": [от, до] дней, "chaos_v" — штраф (Climate.chaos)
+					# неразбериха раскола: "chaos": {"v": штраф, "every": дней, "pick": {страна: [города по
+					# порядку]}} — сторона наводит порядок в районе города (Climate.chaos)
 					if e.has("chaos"):
+						var ch: Dictionary = e["chaos"]
 						var ps := PackedInt32Array()
 						for p in world.prov_count:
 							if world.p_land[p] == 1 and (world.p_controller[p] == nt or world.p_controller[p] == old):
 								ps.append(p)
-						Climate.set_chaos(world, ps, float(e.get("chaos_v", 0.95)), int(e["chaos"][0]), int(e["chaos"][1]))
+						var pick := {}
+						var spk: Dictionary = ch.get("pick", {})
+						for tg in spk:
+							var pn := tag_id(world, tg)
+							if pn < 0:
+								continue
+							var regs: Array = []
+							for city in spk[tg]:
+								var cp := Array(world.p_name).find(String(city))
+								if cp >= 0 and world.p_region[cp] >= 0:
+									regs.append(world.p_region[cp])
+							pick[pn] = regs
+						Climate.set_chaos(world, ps, float(ch.get("v", 0.95)), pick, int(ch.get("every", 90)))
 			"peace":
 				if target >= 0 and world.is_at_war(who, target):
 					make_white_peace(world, who, target)
@@ -1631,10 +1650,12 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sпретензии: %s" % [who, String(world.areas.get(e["area"], {}).get("name", e["area"])) if e.has("area") else tname])
 			"release":
 				parts.append("новое государство")
+			"air_trans":
+				parts.append("%s+%d транспортных самолётов" % [who, int(e.get("n", 10))])
 			"move_factories":
 				parts.append("%sперенос заводов" % who)
 			"civil_war":
-				parts.append("гражданская война" + ((", неразбериха раскола %d–%d дн. (атака, оборона, скорость −%d%%)" % [int(e["chaos"][0]), int(e["chaos"][1]), roundi(100.0 * float(e.get("chaos_v", 0.95)))]) if e.has("chaos") else ""))
+				parts.append("гражданская война" + ((", неразбериха раскола (атака, оборона, скорость −%d%%; порядок — по району раз в %d дн.)" % [roundi(100.0 * float(e["chaos"].get("v", 0.95))), int(e["chaos"].get("every", 90))]) if e.has("chaos") else ""))
 			"peace":
 				parts.append("мир с %s" % tname)
 			"later":

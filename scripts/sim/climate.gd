@@ -136,21 +136,46 @@ static func daily(world: World) -> void:
 	chaos(world)
 
 
-## Раскол страны (решение пользователя, ноябрь 2026, как в жанре): в первые
-## недели гражданской войны вся её земля — неразбериха, атака и оборона войск
-## там (атака, оборона, скорость) × множитель (World.reg_chaos, ставит эффект civil_war); штраф снимается по
-## районам — у каждого в свой день (через 1–2 месяца).
+## Раскол страны (решение пользователя, ноябрь 2026, как в жанре): в гражданской
+## войне вся земля страны — неразбериха: атака, оборона и скорость войск сторон
+## там × множитель (World.reg_chaos: район -> множитель; ставит эффект civil_war).
+## Каждая сторона сама снимает её в одном районе в день раскола и дальше раз в
+## every дней — по своему списку (шаблон в данных, от зерна не зависит;
+## World.chaos_plan); список кончился — снята везде. Снятые районы стороны —
+## World.chaos_lift (страна -> {район: true}).
 static func chaos(world: World) -> void:
 	if world.reg_chaos.is_empty():
 		return
-	var ks: Array = world.reg_chaos.keys()
-	for r in ks:
-		if int(world.reg_chaos[r][0]) <= world.day:
-			world.reg_chaos.erase(r)
-	if world.reg_chaos.is_empty():
+	# выбор районов по шаблону
+	for pl in world.chaos_plan:
+		var n: int = pl[0]
+		var lst: Array = pl[1]
+		if world.day < int(pl[2]) or not world.chaos_lift.has(n):
+			continue
+		var lifted: Dictionary = world.chaos_lift[n]
+		while not lst.is_empty() and lifted.has(int(lst[0])):
+			lst.pop_front()
+		if lst.is_empty():
+			for r in world.reg_chaos:
+				lifted[r] = true
+		else:
+			var r: int = lst.pop_front()
+			lifted[r] = true
+			world.log_event("%s: порядок наведён в районе %s" % [world.nations[n].name, world.air_region_names[r] if r < world.air_region_names.size() else str(r)])
+		pl[2] = int(pl[2]) + int(pl[3])
+	# все стороны навели порядок везде — неразбериха кончилась
+	var done := true
+	for n in world.chaos_lift:
+		if (world.chaos_lift[n] as Dictionary).size() < world.reg_chaos.size() and world.nations[int(n)].alive:
+			done = false
+	if done:
+		world.reg_chaos = {}
+		world.chaos_lift = {}
+		world.chaos_plan = []
 		return
 	var alive := world.d_alive
 	var prov := world.d_prov
+	var owner := world.d_owner
 	var reg := world.p_region
 	var ae := world.d_atk_eff
 	var de := world.d_def_eff
@@ -158,9 +183,15 @@ static func chaos(world: World) -> void:
 	for i in alive.size():
 		if alive[i] == 0 or prov[i] < 0:
 			continue
-		var c: Variant = world.reg_chaos.get(reg[prov[i]])
+		var lf: Variant = world.chaos_lift.get(owner[i])
+		if lf == null:
+			continue
+		var r := reg[prov[i]]
+		if (lf as Dictionary).has(r):
+			continue
+		var c: Variant = world.reg_chaos.get(r)
 		if c != null:
-			var m: float = c[1]
+			var m: float = c
 			ae[i] *= m
 			de[i] *= m
 			se[i] *= m
@@ -169,17 +200,19 @@ static func chaos(world: World) -> void:
 	world.d_spd_eff = se
 
 
-## Поставить неразбериху раскола на районы провинций ps: штраф v (0,95 —
-## характеристики × 0,05), снятие — через от d0 до d1 дней, у района своё.
-static func set_chaos(world: World, ps: PackedInt32Array, v: float, d0: int, d1: int) -> void:
-	var seen := {}
+## Поставить неразбериху раскола на районы провинций ps (штраф v: 0,95 —
+## характеристики × 0,05) для сторон из pick: страна -> районы по порядку
+## выбора (первый — сразу, дальше раз в every дней).
+static func set_chaos(world: World, ps: PackedInt32Array, v: float, pick: Dictionary, every: int) -> void:
 	for p in ps:
 		var r := world.p_region[p]
-		if r < 0 or seen.has(r):
-			continue
-		seen[r] = true
-		var rng := Parallel.rng(world.seed_value, world.day, 7100 + r)
-		world.reg_chaos[r] = [world.day + rng.randi_range(d0, d1), 1.0 - v]
+		if r >= 0:
+			world.reg_chaos[r] = 1.0 - v
+	var ns: Array = pick.keys()
+	ns.sort()
+	for n in ns:
+		world.chaos_lift[n] = {}
+		world.chaos_plan.append([n, (pick[n] as Array).duplicate(), world.day, every])
 
 
 ## GDScript-двойник MeowqCore.climate → [acl_hot, acl_cold, str, spd_eff, atk_eff, def_eff, cmul].

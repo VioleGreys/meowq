@@ -2750,6 +2750,7 @@ func _build_convoys(w: World, me: int) -> void:
 	popup_body.add_child(row)
 	popup_body.add_child(_small("Конвой — %d очков судостроения, строится раньше кораблей. Сначала конвои идут на снабжение войск за морем, затем везут снаряжение на склады, остаток — на торговлю. Рейдеры и флот противника, господствующий на пути, топят конвои: теряется только то, что идёт через это море." % roundi(Convoys.COST)))
 	_build_depots(w, me)
+	_build_airlift(w, me)
 
 
 ## Склады за морем: главный пункт снабжения каждого участка — запас, доля
@@ -2787,6 +2788,30 @@ func _build_depots(w: World, me: int) -> void:
 		row.add_child(lb)
 		popup_body.add_child(row)
 	popup_body.add_child(_small("Дивизии пополняются из запаса, доступного по суше: в метрополии — со складов страны, за морем — со склада своего участка. Конвои довозят снаряжение до указанной доли (вместе — не больше %d%% запаса страны). Нет пути конвоев — участок живёт запасом склада; кончится — войска без снабжения." % roundi(Depots.SHARE_SUM_MAX * 100.0)))
+
+
+func _build_airlift(w: World, me: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_body.add_child(_section("Транспортная авиация"))
+	popup_body.add_child(_label("Самолётов %d: занято %d из нужных %d; потеряно %d" % [maxi(0, roundi(n.air_trans)), roundi(n.air_trans_use), roundi(n.air_trans_need), roundi(n.air_trans_lost)], 15))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var auto := n.air_auto
+	var ba := _button("Пополнять по нужде: %s" % ("да" if auto else "нет"), func():
+		game.act(func(): n.air_auto = not auto)
+		_rebuild_popup(), Vector2(0, 44))
+	ba.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(ba)
+	var bo := _button("+10 самолётов", func():
+		game.act(func(): n.air_order += 10)
+		toast("Заказано 10 транспортных самолётов")
+		_rebuild_popup(), Vector2(0, 44))
+	bo.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(bo)
+	popup_body.add_child(row)
+	if n.air_order > 0:
+		popup_body.add_child(_small("В заказе: %d (переделка из резерва бомбардировщиков, до %d в день)" % [n.air_order, roundi(Airlift.BUILD_MAX)]))
+	popup_body.add_child(_small("Гражданские и транспортные самолёты возят снабжение по воздуху туда, куда нет пути по суше: в окружённые и отрезанные участки и за море — не дальше %d км от пункта снабжения метрополии. %d самолётов полностью снабжают одну дивизию; груз — из запаса страны. Под чужим господством в воздухе доставка падает вдвое, самолёты гибнут. Пополнение — переделка двухмоторных машин из резерва бомбардировщиков." % [roundi(Airlift.RANGE_KM), roundi(Airlift.PER_DIV)]))
 
 
 func _build_ship_designs(w: World, me: int) -> void:

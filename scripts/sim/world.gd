@@ -70,6 +70,12 @@ class Nation:
 	var trade_penalty := 0.0    # доля морского импорта, потерянная за день (нехватка конвоев, перехват; Convoys)
 	# конвои (Convoys): торговые суда для морского импорта и снабжения войск за морем
 	var convoys := 0.0          # сколько конвоев есть
+	var air_trans := -1.0       # транспортных самолётов (Airlift; −1 — ещё не задан: гражданская авиация по заводам)
+	var air_trans_need := 0.0   # нужно на снабжение по воздуху
+	var air_trans_use := 0.0    # занято сегодня
+	var air_trans_lost := 0.0   # потеряно всего
+	var air_auto := true        # пополнять по нужде из резерва бомбардировщиков (игрок может выключить)
+	var air_order := 0          # игрок: заказано сверх нужды
 	var conv_auto := true       # строить по нужде (игрок может выключить)
 	var conv_order := 0         # игрок: заложено сверх нужды
 	var conv_trade_need := 0.0  # нужно на морской импорт
@@ -581,7 +587,9 @@ var d_spd_eff := PackedFloat64Array()     # скорость с климатом
 var d_atk_eff := PackedFloat64Array()     # атака с климатом
 var d_def_eff := PackedFloat64Array()     # оборона с климатом
 var civil_pairs: Array = []               # [a, b] — стороны гражданской войны: взятое переходит во владение (History.civil_owner)
-var reg_chaos := {}                       # район -> [день снятия, множитель]: раскол страны (Climate.chaos)
+var reg_chaos := {}                       # район -> множитель: неразбериха раскола страны (Climate.chaos)
+var chaos_lift := {}                      # страна -> {район: true}: где сторона навела порядок
+var chaos_plan: Array = []                # [страна, районы по порядку выбора, день следующего выбора, раз в дней]
 var d_cmul := PackedFloat64Array()        # множитель боя от климата (окно)
 var p_vp_ai := PackedInt32Array()        # очки победы в прежней шкале — для военного ИИ (vp_ai)
 var p_hot := PackedFloat32Array()         # суровость жары провинции 0..1 (Climate, раз в месяц)

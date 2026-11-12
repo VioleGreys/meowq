@@ -452,6 +452,7 @@ func _phase_supply() -> void:
 				so[a] = rep[a]
 				caps.append(world.nations[a].capital)
 		Supply.regions(world, so, srcs, caps)
+		Airlift.daily(world)   # снабжение по воздуху — поверх раскладки по дивизиям
 		world.sup_args = [so, srcs, caps]   # для упреждения поля на завтра (Supply.spec)
 		Supply.ai_daily(world)
 		Prof.add("снаб:сети", _pt0)
@@ -579,6 +580,11 @@ func _phase_ai() -> void:
 			var x := _staging_enemy(nat)
 			if x >= 0:
 				jobs.append({"stage_of": nat.id, "enemy": x})
+			# окружённые части пытаются вырваться к основной зоне
+			# прорыв с двух сторон: из котла — к основной зоне, из основной зоны — навстречу
+			for bk in _breakouts(nat):
+				jobs.append({"pocket_of": nat.id, "comp": bk[0], "objective": bk[1]})
+				jobs.append({"relief_of": nat.id, "near": bk[1], "objective": bk[2]})
 	jobs.append_array(_group_jobs())
 	if jobs.is_empty():
 		return
@@ -604,12 +610,30 @@ func _phase_ai() -> void:
 	for job in jobs:
 		if job.has("stage_of"):
 			staged[int(job["stage_of"])] = true
+	var pocketed := {}   # страна -> {участок: true} — дивизии котлов планируются отдельно
+	var relief := {}     # страна -> {слот: true} — дивизии деблокирования
+	for job in jobs:
+		if job.has("pocket_of"):
+			var pn: int = job["pocket_of"]
+			if not pocketed.has(pn):
+				pocketed[pn] = {}
+			pocketed[pn][int(job["comp"])] = true
+	for job in jobs:
+		if job.has("relief_of"):
+			var rn: int = job["relief_of"]
+			if not relief.has(rn):
+				relief[rn] = {}
+			job["part"] = _relief_divs(rn, int(job["near"]), by_nation[rn], relief[rn])
 	Prof.add("ии:по странам", _pa)
 	_pa = Time.get_ticks_usec()
 	for job in jobs:
 		var rng: RandomNumberGenerator
 		if job.has("stage_of"):
 			rng = Parallel.rng(seed_value, day, 7000 + int(job["stage_of"]))
+		elif job.has("pocket_of"):
+			rng = Parallel.rng(seed_value, day, 7600 + int(job["pocket_of"]) * 64 + int(job["comp"]) % 64)
+		elif job.has("relief_of"):
+			rng = Parallel.rng(seed_value, day, 7700 + int(job["relief_of"]) * 64 + int(job["near"]) % 64)
 		else:
 			rng = Parallel.rng(seed_value, day, job["nation"] if job.has("nation") else 5000 + int(job["group"]))
 		job["rng"] = rng
@@ -622,6 +646,15 @@ func _phase_ai() -> void:
 			var _ps := Time.get_ticks_usec()
 			job["args"] = AIPlanner.military_args(world, sn, part, {"mode": "hold", "enemy": int(job["enemy"])})
 			Prof.add("ии:развёртывание", _ps)
+		elif job.has("pocket_of"):
+			var pn: int = job["pocket_of"]
+			var part := PackedInt32Array()
+			for slot in by_nation[pn]:
+				if world.d_prov[slot] >= 0 and world.p_comp[world.d_prov[slot]] == int(job["comp"]):
+					part.append(slot)
+			job["args"] = AIPlanner.military_args(world, pn, part, {"mode": "attack", "objective": int(job["objective"]), "ratio": BREAKOUT_RATIO})
+		elif job.has("relief_of"):
+			job["args"] = AIPlanner.military_args(world, int(job["relief_of"]), job["part"], {"mode": "attack", "objective": int(job["objective"]), "ratio": RELIEF_RATIO})
 		elif job.has("group"):
 			var _pg := Time.get_ticks_usec()
 			var idx := PackedInt32Array()
@@ -656,6 +689,14 @@ func _phase_ai() -> void:
 					if not _is_staged(slot):
 						rest.append(slot)
 				mine = rest
+			if pocketed.has(nid):
+				var rest2 := PackedInt32Array()
+				var pk: Dictionary = pocketed[nid]
+				var rl: Dictionary = relief.get(nid, {})
+				for slot in mine:
+					if (world.d_prov[slot] < 0 or not pk.has(world.p_comp[world.d_prov[slot]])) and not rl.has(slot):
+						rest2.append(slot)
+				mine = rest2
 			_pe = Time.get_ticks_usec()
 			job["args"] = AIPlanner.nation_args(world, nid, mine)
 			Prof.add("ии:nation_args", _pe)
@@ -683,6 +724,110 @@ var _ai_gid := -1
 
 
 ## Дождаться военных планов ИИ и применить приказы (конец дня).
+const BREAKOUT_STEPS := 15   # котёл: путь по суше до основной зоны не длиннее (иначе — гарнизон за морем)
+const BREAKOUT_RATIO := 0.8  # окружённые атакуют и без перевеса
+const BREAKOUT_SUP := 0.5    # окружение — среднее снабжение дивизий участка ниже
+
+
+## Котлы страны ИИ на войне: участки суши стороны (World.p_comp) не основной
+## зоны со своими дивизиями на снабжении ниже BREAKOUT_SUP, откуда до основной зоны есть путь по суше не
+## длиннее BREAKOUT_STEPS. → [[участок, цель (провинция основной зоны), провинция
+## котла, откуда путь]], крупные котлы первыми (не больше 3).
+func _breakouts(nat: World.Nation) -> Array:
+	var res: Array = []
+	var home: int = nat.dep_home
+	if nat.at_war.is_empty() or home < 0 or world.p_comp.size() != world.prov_count:
+		return res
+	var comp := world.p_comp
+	var cnt := {}
+	var ssum := {}
+	for i in world.d_alive.size():
+		if world.d_alive[i] == 1 and world.d_owner[i] == nat.id and world.d_prov[i] >= 0 and world.d_transit[i] <= 0:
+			var c := comp[world.d_prov[i]]
+			if c >= 0 and c != home:
+				cnt[c] = int(cnt.get(c, 0)) + 1
+				ssum[c] = float(ssum.get(c, 0.0)) + world.d_sup[i]
+	# окружение — участок без снабжения (отрезанный, но снабжаемый через свой
+	# пункт или конвои — держит фронт, как север Республики в 1936–37 гг.)
+	for c in cnt.keys():
+		if float(ssum[c]) / float(cnt[c]) >= BREAKOUT_SUP:
+			cnt.erase(c)
+	if cnt.is_empty():
+		return res
+	var cs: Array = cnt.keys()
+	cs.sort_custom(func(a, b): return cnt[a] > cnt[b] or (cnt[a] == cnt[b] and a < b))
+	var land := world.p_land
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	for c in cs.slice(0, 3):
+		# обход по суше от провинций котла до первой провинции основной зоны
+		var dist := {}
+		var origin := {}
+		var q := PackedInt32Array()
+		for p in world.prov_count:
+			if comp[p] == c and world.p_controller[p] == nat.id:
+				dist[p] = 0
+				origin[p] = p
+				q.append(p)
+		var h := 0
+		var found := -1
+		while h < q.size() and found < 0:
+			var p := q[h]
+			h += 1
+			if int(dist[p]) >= BREAKOUT_STEPS:
+				continue
+			for k in range(a_start[p], a_start[p + 1]):
+				var y := a_list[k]
+				if land[y] == 0 or dist.has(y):
+					continue
+				dist[y] = int(dist[p]) + 1
+				origin[y] = origin[p]
+				if comp[y] == home:
+					found = y
+					break
+				q.append(y)
+		if found >= 0:
+			res.append([c, found, int(origin[found])])
+	return res
+
+
+const RELIEF_STEPS := 4      # деблокирование: дивизии основной зоны не дальше стольких переходов от точки прорыва
+const RELIEF_MAX := 15       # и не больше стольких (ближние первыми)
+const RELIEF_RATIO := 1.0    # навстречу окружённым — без требования перевеса
+
+
+## Дивизии деблокирования: свои дивизии основной зоны не дальше RELIEF_STEPS
+## переходов по своей суше от провинции near (куда прорываются окружённые),
+## ближние первыми, не больше RELIEF_MAX; уже занятые другим котлом (taken) — нет.
+func _relief_divs(nid: int, near: int, mine: PackedInt32Array, taken: Dictionary) -> PackedInt32Array:
+	var home: int = world.nations[nid].dep_home
+	var comp := world.p_comp
+	var dist := {near: 0}
+	var q := PackedInt32Array([near])
+	var h := 0
+	while h < q.size():
+		var p := q[h]
+		h += 1
+		if int(dist[p]) >= RELIEF_STEPS:
+			continue
+		for k in range(world.adj_start[p], world.adj_start[p + 1]):
+			var y := world.adj_list[k]
+			if world.p_land[y] == 1 and not dist.has(y) and comp[y] == home:
+				dist[y] = int(dist[p]) + 1
+				q.append(y)
+	var cand: Array = []
+	for slot in mine:
+		var p := world.d_prov[slot]
+		if p >= 0 and dist.has(p) and not taken.has(slot) and world.d_transit[slot] <= 0:
+			cand.append([int(dist[p]), world.d_id[slot], slot])
+	cand.sort()
+	var res := PackedInt32Array()
+	for c in cand.slice(0, RELIEF_MAX):
+		res.append(int(c[2]))
+		taken[int(c[2])] = true
+	return res
+
+
 const STAGE_SHARE := 6   # из 10: доля армии на развёртывание к запланированной войне
 
 
