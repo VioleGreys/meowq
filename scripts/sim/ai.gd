@@ -462,7 +462,9 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			if used.has(i):
 				continue
 			var pv := dv_prov[i]
-			if not fronts.has(pv) or int(per_front.get(pv, 0)) <= maxi(1, int(floor(supcap[pv]))):
+			var cap_pv := maxi(1, int(floor(supcap[pv])))
+			# фронт — по счёту участка; тыл — по числу наших дивизий в провинции
+			if (fronts.has(pv) and int(per_front.get(pv, 0)) <= cap_pv) or (not fronts.has(pv) and (not reserve.has(pv) or int(rcount[pv]) <= cap_pv)):
 				continue
 			if goal.is_empty():
 				break
@@ -473,7 +475,12 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			rcount[dest] = int(rcount[dest]) + 1
 			if int(rcount[dest]) >= maxi(1, int(floor(supcap[dest]))):
 				goal.erase(dest)
-			per_front[pv] = int(per_front.get(pv, 0)) - 1
+			if fronts.has(pv):
+				per_front[pv] = int(per_front.get(pv, 0)) - 1
+			else:
+				rcount[pv] = int(rcount[pv]) - 1
+				if int(rcount[pv]) < cap_pv:
+					goal[pv] = true
 			used[i] = true
 			orders.append([i, path])
 	result["orders"] = orders

@@ -451,7 +451,9 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		for (int32_t i : idle) {
 			if (used[i]) continue;
 			const int32_t pv = dv_prov[i];
-			if (!fronts.has[pv] || per_front[pv] <= capd(pv)) continue;
+			const int cap_pv = capd(pv);
+			// фронт — по счёту участка; тыл — по числу наших дивизий в провинции
+			if ((fronts.has[pv] && per_front[pv] <= cap_pv) || (!fronts.has[pv] && (!reserve.has[pv] || rcount[pv] <= cap_pv))) continue;
 			if (n_goals == 0) break;
 			std::fill(parent.begin(), parent.end(), -1);
 			queue.clear();
@@ -479,7 +481,11 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			for (int32_t cur = found; cur != pv; cur = parent[cur]) w[--len] = cur;
 			rcount[found] += 1;
 			if (rcount[found] >= capd(found)) { goal[found] = 0; n_goals--; }
-			per_front[pv] -= 1;
+			if (fronts.has[pv]) per_front[pv] -= 1;
+			else {
+				rcount[pv] -= 1;
+				if (rcount[pv] < cap_pv && !goal[pv]) { goal[pv] = 1; n_goals++; goals.push_back(pv); }
+			}
 			used[i] = 1;
 			Array o;
 			o.push_back(i);
