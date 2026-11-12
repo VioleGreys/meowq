@@ -1141,8 +1141,11 @@ func _cap_countries() -> void:
 		if not nat.alive or nat.at_war.is_empty() or _cap_total[nat.id] == 0 or _peace_pending(nat.id):
 			continue
 		var ratio := float(_cap_held[nat.id]) / float(_cap_total[nat.id])
-		# порог капитуляции: базовый + черты (пораженчество, бескрайние просторы)
-		if ratio < nat.capitulate_at + nat.b("surrender"):
+		# порог капитуляции: базовый + черты (расколотое правительство, бескрайние
+		# просторы); черта capital_fall — капитуляция и при потере столицы противнику
+		var c_ctl := world.p_controller[nat.capital]
+		var cap_lost: bool = nat.b("capital_fall") > 0.0 and c_ctl != nat.id and c_ctl >= 0 and world.is_at_war(nat.id, c_ctl)
+		if cap_lost or ratio < nat.capitulate_at + nat.b("surrender"):
 			_capitulate(nat.id)
 			moved = true
 		elif world.p_controller[nat.capital] != nat.id and (moved or _cap_self[nat.id] > 0):

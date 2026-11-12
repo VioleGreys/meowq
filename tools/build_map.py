@@ -1162,11 +1162,13 @@ def main():
             total_pop = city_pop[i]
             if pop >= 400000:
                 terrain = 4
-            vp = 10 if pop >= 1_000_000 else 5 if pop >= 400_000 else 3 if pop >= 150_000 else 1
+            # очки победы (решение пользователя, ноябрь 2026): больше всего — столица и
+            # крупные города, средне — обычные города и порты, слабо — провинции без города
+            vp = 15 if pop >= 1_000_000 else 8 if pop >= 400_000 else 4 if pop >= 150_000 else 2 if pop >= 50_000 else 1
             tag = tags[p_owner[i]]
             is_cap = capitals[tag] == i
             if is_cap:
-                vp = 20
+                vp = 50
                 terrain = 4
             # колония: владение колониальной державы вне её метрополии (или далеко от столицы)
             colony = tag in COLONIAL_POWERS and (r["adm0"] in COLONY_ADM0 or r["adm0"] not in home_adm0[tag]
@@ -1197,6 +1199,11 @@ def main():
     for t in tags:
         nm, col, _ = NATIONS[t]
         nations.append({"tag": t, "name": nm, "color": list(col), "capital": capitals[t]})
+
+    # порты: прибрежная провинция без города — 2 очка победы, как малый город
+    for pr in provinces:
+        if pr["land"] == 1 and pr["vp"] == 1 and any(provinces[j]["land"] == 0 for j in pr["adj"]):
+            pr["vp"] = 2
 
     # --- 8. Запись --------------------------------------------------------------
     rgb = np.zeros((HEIGHT, WIDTH, 3), np.uint8)
