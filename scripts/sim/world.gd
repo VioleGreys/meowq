@@ -130,6 +130,7 @@ class Nation:
 	var war_score := 0.0        # вклад в победу в текущей войне (Peace.add_score)
 	var puppet_since := -1      # день, с которого марионетка (Puppets)
 	var freedom := 50.0         # свобода марионетки 0..100 (Puppets)
+	var build_puppet := -1      # сюзерен строит следующую фабрику у этой марионетки (Puppets)
 	var capital_lonlat := Vector2.ZERO
 	# Фокусы (этап 5)
 	var focus_current := ""
@@ -590,6 +591,17 @@ var tension := 0.0              # мировая напряжённость, 0..
 var factions: Array = []        # Array[Faction]
 var pending_peace: Array = []
 var conference := {}          # идущие мирные переговоры (Peace.start)
+var p_resist := PackedFloat32Array()     # сопротивление на чужой земле, % (−1 — своя; Occupation)
+var p_comply := PackedFloat32Array()     # принятие, %
+var p_from := PackedInt32Array()         # прежний владелец присоединённой по миру провинции (−1)
+var p_yield := PackedFloat32Array()      # отдача заводов и ресурсов (1 — своя земля)
+var p_yield_mp := PackedFloat32Array()   # отдача призыва
+var occ_law := {}             # территория (держит * 4096 + чья) -> закон (Occupation.LAWS)
+var occ_garrison := {}        # территория -> единиц гарнизона
+var occ_integrate := {}       # территория -> true: идёт интеграция
+var occ_need := {}            # территория -> нужно гарнизона
+var occ_stats := {}           # территория -> [провинций, Σсопр., Σприн., Σотдачи, присоединённых]
+var occ_provs := PackedInt32Array()   # провинции территорий (на день пересчёта)
 var col_done := {}            # сдавшиеся колонии: владелец * 4096 + территория -> true (до конца войны)
 # История (этап 5)
 var historical := true          # исторический ИИ: фокусы и события по истории, без случайной агрессии

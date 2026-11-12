@@ -126,5 +126,106 @@ func _init() -> void:
 			w.p_controller[p] = ger
 	check(not Diplomacy.try_exile(w, den, ger), "Дания в Гренландию не уходит")
 
+	# --- 4. Оккупация: сопротивление, гарнизон, законы, интеграция -----------
+	print("Оккупация Польши Германией:")
+	sim = fresh()
+	ger = t("GER")
+	pol = t("POL")
+	war(ger, pol)
+	var pp2 := provs_of(pol)
+	for p in pp2:
+		w.p_controller[p] = ger
+	sim._refresh_sides()
+	Peace.capitulate(w, pol, ger)
+	var k := Occupation.tkey(ger, pol)
+	w.nations[ger].is_player = true   # без ИИ-гарнизона
+	Occupation.step(w)
+	var s0 := Occupation.stats(w, k)
+	check(int(s0[0]) == pp2.size(), "территория — все провинции Польши (%d)" % s0[0])
+	for i in 36:
+		w.day += Occupation.STEP
+		Occupation.step(w)
+	var s1 := Occupation.stats(w, k)
+	print("  без гарнизона за 180 дней: сопротивление %.0f%%, принятие %.0f%%, отдача %.0f%%" % [s1[1], s1[2], s1[3] * 100.0])
+	check(s1[1] > 15.0, "без гарнизона сопротивление растёт")
+	w.nations[ger].manpower = 5000.0
+	w.nations[ger].stock[Military.EQ_INF] = 5000.0
+	Occupation.set_garrison(w, k, ceilf(float(w.occ_need[k])))
+	check(float(w.occ_garrison[k]) >= float(w.occ_need[k]), "гарнизон набран (%d)" % int(w.occ_garrison[k]))
+	for i in 36:
+		w.day += Occupation.STEP
+		Occupation.step(w)
+	var s2 := Occupation.stats(w, k)
+	print("  с гарнизоном ещё 180 дней: сопротивление %.0f%%, принятие %.0f%%" % [s2[1], s2[2]])
+	check(s2[1] < s1[1], "гарнизон гасит сопротивление")
+	# жёсткие законы — сразу больше, мягкие — меньше
+	var p0: int = pp2[0]
+	w.occ_law[k] = 3
+	Occupation.step(w)
+	var y_hard := w.p_yield[p0]
+	w.occ_law[k] = 0
+	Occupation.step(w)
+	var y_soft := w.p_yield[p0]
+	check(y_hard > y_soft, "жёсткие законы дают больше сразу (%.0f%% против %.0f%%)" % [y_hard * 100.0, y_soft * 100.0])
+	# мир, аннексия, интеграция — до 100 %
+	w.nations[ger].is_player = false
+	Peace.start(w, [ger], [pol])
+	w.nations[ger].is_player = true
+	var annexed := 0
+	for p in pp2:
+		if w.p_owner[p] == ger:
+			annexed += 1
+	check(annexed > 0 and w.p_from[pp2[0]] == pol or annexed == 0, "присоединённое помнит прежнего владельца")
+	var pa := -1
+	for p in pp2:
+		if w.p_owner[p] == ger:
+			pa = p
+			break
+	if pa >= 0:
+		w.occ_law[k] = 0
+		w.occ_integrate[k] = true
+		Occupation.set_garrison(w, k, ceilf(float(w.occ_need.get(k, 50.0))) + 20.0)
+		for i in 300:
+			w.day += Occupation.STEP
+			Occupation.step(w)
+		print("  мягкие законы + интеграция, 1500 дней: принятие %.0f%%, отдача %.0f%%" % [w.p_comply[pa], w.p_yield[pa] * 100.0])
+		check(w.p_yield[pa] > 0.95, "полная отдача достижима")
+		var inc := w.compute_all_income()
+		var civ0: int = inc[ger][0]
+		Occupation.adjust_income(w, inc)
+		check(int(inc[ger][0]) <= civ0, "интеграция и отдача учтены в доходе (%d → %d)" % [civ0, inc[ger][0]])
+
+	# --- 5. Марионетки: отчисления и свобода -----------------------------------
+	print("Марионетки:")
+	fresh()
+	ger = t("GER")
+	pol = t("POL")
+	var np: World.Nation = w.nations[pol]
+	np.overlord = ger
+	np.puppet_since = w.day
+	np.freedom = Puppets.START_FREEDOM
+	check(absf(Puppets.share(w, pol) - 0.5) < 0.001, "первый год — 50 %")
+	w.day += 400
+	check(absf(Puppets.share(w, pol) - 0.3) < 0.001, "потом — 30 %")
+	np.freedom = 0.0
+	check(absf(Puppets.share(w, pol) - 0.9) < 0.001, "без свободы — 90 %")
+	np.freedom = 100.0
+	check(Puppets.share(w, pol) == 0.0, "полная свобода — ничего")
+	np.freedom = 50.0
+	var inc2 := w.compute_all_income()
+	var pc0: int = inc2[pol][0]
+	var gc0: int = inc2[ger][0]
+	Puppets.adjust_income(w, inc2)
+	check(int(inc2[pol][0]) < pc0 and int(inc2[ger][0]) - gc0 == pc0 - int(inc2[pol][0]), "фабрики марионетки уходят сюзерену (%d → %d)" % [pc0, inc2[pol][0]])
+	Peace.add_score(w, pol, 40.0)
+	check(np.freedom > 50.0, "вклад в войну поднимает свободу (%.0f)" % np.freedom)
+	var f1 := np.freedom
+	w.nations[ger].stock[Military.EQ_INF] = 1000.0
+	Relations.give_aid(w, ger, pol)
+	check(np.freedom < f1, "помощь сюзерена снижает свободу")
+	f1 = np.freedom
+	w.nations[ger].build_puppet = pol
+	check(Puppets.build_in(w, w.nations[ger], pol) and np.freedom < f1, "стройка сюзерена снижает свободу")
+
 	print("ОШИБОК: %d" % errors if errors > 0 else "Мир: OK")
 	quit(1 if errors > 0 else 0)

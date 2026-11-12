@@ -216,6 +216,7 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 				var id: String = nat.focus_current
 				nat.focus_current = ""
 				nat.focus_done[id] = true
+				Puppets.on_focus(world, nat.id)
 				var fd := focus_def(world, nat.id, id)
 				if nat.is_player or nat.major:
 					world.log_event("%s: «%s»" % [nat.name, fd.get("name", id)])
@@ -1157,6 +1158,9 @@ static func release(world: World, tag: String, provs: Array, overlord: int, take
 				else:
 					d.alive = false
 	nat.overlord = overlord
+	if overlord >= 0:
+		nat.puppet_since = world.day
+		nat.freedom = Puppets.START_FREEDOM
 	var income := world.compute_all_income()
 	nat.civ = income[n][0]
 	nat.mil = income[n][1]

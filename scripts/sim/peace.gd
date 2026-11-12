@@ -34,6 +34,7 @@ const OTHER_REST := 3.0      # …и при марионетке или осво
 static func add_score(world: World, n: int, v: float) -> void:
 	if n >= 0 and v > 0.0:
 		world.nations[n].war_score += v
+		Puppets.on_score(world, n, v)   # вклад марионетки — её свобода
 
 
 ## Цена провинции: заводы и фабрики, ресурсы, очки победы.

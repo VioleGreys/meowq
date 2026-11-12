@@ -1208,6 +1208,10 @@ func _province_text(p: int) -> String:
 		s += "\nСуровый климат: %s — непривычные войска медленнее, слабее и теряют людей" % ", ".join(cl)
 	s += "\nФабрики: %d гражд. / %d воен. · Население: %s · Резерв: %dк · Очки победы: %d" % [
 		w.p_civ[p], w.p_mil[p], _fmt_pop(w.p_population[p]), w.p_manpower[p], w.p_vp[p]]
+	var ok := Occupation.key_of(w, p) if p < w.p_resist.size() else -1
+	if ok >= 0 and w.p_resist[p] >= 0.0:
+		s += "\nЗемли страны %s под властью: %s · сопротивление %d%% · принятие %d%% · отдача %d%%" % [
+			w.nations[ok % 4096].name, w.nations[ok / 4096].name, roundi(w.p_resist[p]), roundi(w.p_comply[p]), roundi(w.p_yield[p] * 100.0)]
 	var ri := w.res_prov.find(p)
 	if ri >= 0:
 		var rs: Array = []
@@ -1264,6 +1268,12 @@ func show_province(p: int) -> void:
 					info_actions.add_child(_button("Улучшить узел", func():
 						Supply.order(w, n, p, Supply.JOB_UP)
 						show_province(p)))
+		var ok := Occupation.key_of(w, p) if p < w.p_resist.size() else -1
+		if ok >= 0 and ok / 4096 == me:
+			info_actions.add_child(_button("Управление землёй", func():
+				_prod_page = "lands"
+				_occ_key = ok
+				open_tab("production")))
 		if c != me and w.nations[c].alive:
 			info_actions.add_child(_button("Страна: %s" % w.nations[c].name, func():
 				_card_nation = c
@@ -1621,6 +1631,8 @@ func _build_diplomacy(w: World, me: int) -> void:
 		popup_body.add_child(_section("Правительство в изгнании: метрополия потеряна, воюем из колоний"))
 	if n.overlord >= 0:
 		popup_body.add_child(_section("Мы — марионетка страны %s" % w.nations[n.overlord].name))
+		popup_body.add_child(_small("Свобода %d%%: отдаём %d%% заводов, фабрик и ресурсов. Свобода растёт от нашего вклада в войну, помощи другим и фокусов." % [
+				roundi(n.freedom), roundi(Puppets.share(w, me) * 100.0)]))
 	elif fname != "":
 		var members: Array = []
 		for m in Diplomacy.faction_members(w, n.faction):
@@ -1689,7 +1701,8 @@ func _build_nation_card(w: World, me: int, oid: int) -> void:
 	var f := Diplomacy.faction_name(w, oid)
 	var info := "Фракция: %s · Дивизий: %d · Фабрики: %d/%d" % [f if f != "" else "нет", o.division_count, o.civ, o.mil]
 	if o.overlord >= 0:
-		info += "\nМарионетка страны %s" % w.nations[o.overlord].name
+		info += "\nМарионетка страны %s · свобода %d%% · отдаёт %d%% заводов и ресурсов" % [
+				w.nations[o.overlord].name, roundi(o.freedom), roundi(Puppets.share(w, oid) * 100.0)]
 	if o.exile:
 		info += "\nПравительство в изгнании: метрополия потеряна, воюет из колоний"
 	if o.neutral:
@@ -1732,6 +1745,13 @@ func _build_nation_card(w: World, me: int, oid: int) -> void:
 				shown += 1
 		popup_body.add_child(_small("\n".join(rl)))
 	popup_body.add_child(_section("Действия"))
+	if o.overlord == me:
+		var mine: World.Nation = w.nations[me]
+		var on := mine.build_puppet == oid
+		popup_body.add_child(_button("Строить фабрики у марионетки: %s" % ("да" if on else "нет"), func():
+			game.act(func(): mine.build_puppet = -1 if on else oid)
+			_rebuild_popup.call_deferred(), Vector2(0, 50)))
+		popup_body.add_child(_small("Наши готовые фабрики встают на её земле: каждая снижает её свободу на %d%%, и она отдаёт нам больше." % int(-Puppets.F_BUILD)))
 	# претензии и война
 	if w.nations[me].wargoals.has(oid):
 		_action("Объявить войну", Diplomacy.can_declare(w, me, oid), func():
@@ -2989,7 +3009,7 @@ var _buy_res := -1
 func _prod_pages() -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
-	for pg in [["factories", "Заводы"], ["trade", "Внешняя экономика"]]:
+	for pg in [["factories", "Заводы"], ["trade", "Торговля"], ["lands", "Чужие земли"]]:
 		var id: String = pg[0]
 		var b := _button(pg[1], func():
 			_prod_page = id
@@ -2999,6 +3019,90 @@ func _prod_pages() -> void:
 		b.disabled = _prod_page == id
 		row.add_child(b)
 	popup_body.add_child(row)
+
+
+var _occ_key := -1   # открытая территория (Occupation.tkey)
+
+
+## Чужие земли под нашей властью: список территорий и одна территория —
+## законы, гарнизон, интеграция (Occupation).
+func _build_lands(w: World, me: int) -> void:
+	popup_title.text = "Чужие земли"
+	_prod_pages()
+	var ks: Array = Occupation.territories(w, me)
+	if _occ_key >= 0 and not ks.has(_occ_key):
+		_occ_key = -1
+	if _occ_key < 0:
+		if ks.is_empty():
+			popup_body.add_child(_small("Занятых в войне и присоединённых по миру земель нет."))
+			return
+		popup_body.add_child(_small("Занятые в войне и присоединённые на мирных переговорах земли. Отдача заводов, фабрик и ресурсов зависит от законов, принятия и сопротивления; гарнизон гасит сопротивление."))
+		for k in ks:
+			var st := Occupation.stats(w, k)
+			var nm: String = w.nations[k % 4096].name
+			var b := _button("%s · %d пров." % [nm, st[0]], func():
+						_occ_key = k
+						_rebuild_popup(), Vector2(0, 48))
+			b.clip_text = true
+			popup_body.add_child(b)
+			popup_body.add_child(_small("Сопротивление %d%% · принятие %d%% · отдача %d%% · гарнизон %d из %d" % [
+					roundi(st[1]), roundi(st[2]), roundi(st[3] * 100.0), int(w.occ_garrison.get(k, 0.0)), int(ceilf(float(w.occ_need.get(k, 0.0))))]))
+		return
+	var k := _occ_key
+	var st := Occupation.stats(w, k)
+	var from: World.Nation = w.nations[k % 4096]
+	var n: World.Nation = w.nations[me]
+	popup_body.add_child(_button("← Ко всем землям", func():
+		_occ_key = -1
+		_rebuild_popup(), Vector2(0, 46)))
+	var kind := "присоединены по миру" if int(st[4]) == int(st[0]) else ("заняты в войне" if int(st[4]) == 0 else "заняты и присоединены")
+	popup_body.add_child(_section("Земли страны %s — %s" % [from.name, kind]))
+	popup_body.add_child(_label("Провинций %d · сопротивление %d%% · принятие %d%% · отдача %d%%" % [st[0], roundi(st[1]), roundi(st[2]), roundi(st[3] * 100.0)], 17))
+	# гарнизон
+	var need: float = ceilf(float(w.occ_need.get(k, 0.0)))
+	var g: float = w.occ_garrison.get(k, 0.0)
+	popup_body.add_child(_section("Гарнизон: %d из %d нужных (%d%%)" % [int(g), int(need), roundi(100.0 * minf(1.0, g / maxf(0.1, need)))]))
+	popup_body.add_child(_small("Единица — %dк человек и %d пехотного снаряжения. Без гарнизона сопротивление растёт, при сильном сопротивлении гарнизон несёт потери. Роспуск возвращает людей." % [int(Occupation.GARR_MP), int(Occupation.GARR_EQ)]))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	for d in [-5, 5]:
+		var dd: int = d
+		var b := _button("%+d" % dd, func():
+			game.act(func(): Occupation.set_garrison(w, k, g + dd))
+			_rebuild_popup.call_deferred(), Vector2(0, 48))
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(b)
+	var fb := _button("По нужде", func():
+		game.act(func(): Occupation.set_garrison(w, k, need))
+		_rebuild_popup.call_deferred(), Vector2(0, 48))
+	fb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(fb)
+	popup_body.add_child(row)
+	# законы
+	popup_body.add_child(_section("Законы"))
+	var cur := Occupation.law_of(w, k)
+	for i in Occupation.LAWS.size():
+		var li: int = i
+		var law: Dictionary = Occupation.LAWS[i]
+		var lb := _button(("● " if i == cur else "") + String(law["name"]), func():
+			game.act(func(): w.occ_law[k] = li)
+			_rebuild_popup.call_deferred(), Vector2(0, 46))
+		lb.disabled = i == cur
+		popup_body.add_child(lb)
+		popup_body.add_child(_small(String(law["desc"])))
+	# интеграция
+	if int(st[4]) > 0:
+		popup_body.add_child(_section("Интеграция"))
+		var on := w.occ_integrate.has(k)
+		popup_body.add_child(_small("Присоединённые земли: −%d гражд. фабрик, принятие растёт быстрее; без интеграции принятие даёт не больше 70 %% прибавки к отдаче." % Occupation.integ_cost(w, k)))
+		popup_body.add_child(_button("Интеграция: %s" % ("идёт — остановить" if on else "начать"), func():
+			game.act(func():
+				if w.occ_integrate.has(k):
+					w.occ_integrate.erase(k)
+				else:
+					w.occ_integrate[k] = true)
+			_rebuild_popup.call_deferred(), Vector2(0, 48)))
+	popup_body.add_child(_small("Люди: %dк · пехотное снаряжение: %d" % [int(n.manpower), int(n.stock[Military.EQ_INF])]))
 
 
 func _build_trade(w: World, me: int) -> void:
@@ -3142,6 +3246,9 @@ func _build_sellers(w: World, me: int, r: int) -> void:
 func _build_production(w: World, me: int) -> void:
 	if _prod_page == "trade":
 		_build_trade(w, me)
+		return
+	if _prod_page == "lands":
+		_build_lands(w, me)
 		return
 	popup_title.text = "Производство"
 	var n: World.Nation = w.nations[me]

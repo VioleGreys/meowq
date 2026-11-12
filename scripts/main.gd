@@ -307,6 +307,18 @@ func _auto_screenshot_locked() -> void:
 				if wg.alive and wg.owner == me:
 					select_wing(wg.id)
 					break
+		if _arg("occupy") != "":
+			# скриншоты: страна сдаётся нам, её земли — под нашей оккупацией
+			var occ_t := nation_by_tag(_arg("occupy"))
+			for p in world.prov_count:
+				if world.p_owner[p] == occ_t:
+					world.p_controller[p] = me
+			Peace.capitulate(world, occ_t, me)
+			Occupation.step(world)
+		if _arg("prodpage") != "":
+			hud._prod_page = _arg("prodpage")   # factories / trade / lands
+		if _arg("occ") != "":
+			hud._occ_key = Occupation.tkey(me, nation_by_tag(_arg("occ")))
 		if _arg("card") != "":
 			hud._card_nation = nation_by_tag(_arg("card"))
 		if _arg("mapmode") != "":

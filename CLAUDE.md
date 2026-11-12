@@ -32,6 +32,9 @@
 - `military.md` — дивизии, шаблоны из батальонов, ширина фронта, военные заводы (`military.gd`).
 - `balance_ai.md` — укрепления, зима, акклиматизация, черты стран, военный ИИ (`ai.gd`,
   `ai.cpp`), планирование наступления, `balance_check`.
+- `peace.md` — конец войны: капитуляция в оккупацию, вклад, мирные переговоры,
+  сопротивление и законы на чужих землях, свобода марионеток (`peace.gd`,
+  `occupation.gd`, `puppets.gd`).
 - `economy.md` — ресурсы, торговля, договоры, блокада (`economy.gd`).
 - `supply.md` — снабжение по узлам районов: нагрузка, улучшение, присоединение, грузовики (`supply.gd`); Испания.
 - `science.md` — наука: слоты исследований, дерево технологий, бонусы родов
@@ -85,6 +88,7 @@
   (конвои по годам: `tests/convoy_diag.gd [-- --dates=...]`)
 - Узлы снабжения: `godot --headless --path . --script res://tests/supply_check.gd`
 - Акклиматизация: `godot --headless --path . --script res://tests/climate_check.gd`
+- Конец войны, оккупация, марионетки: `godot --headless --path . --script res://tests/peace_check.gd`
 - Снабжение, сравнение моделей: `godot --headless --path . --script res://tests/supply_compare.gd [-- --supply=regions]`
 - Сохранение и загрузка: `godot --headless --path . --script res://tests/save_check.gd [-- --dates=1941-08-01 --step=60 --nation=SWE]`
   (страна «игрока» в тесте никем не управляется — для дальних дат брать нейтральную)
@@ -105,7 +109,7 @@
 - Сборка APK и C++ — `docs/notes/build.md`.
 - Скриншот без человека: `godot --path . -- --screenshot=out.png --nation=GER --days=120`
   (доп. флаги: `--zoom=1.6 --select --tab=army --pick=1 --mapmode=4 --card=AUS --peace=AUS`;
-  наука: `--tech=inf:mot2`, доктрины: `--tech=doc:l_mob1`; армия и война: `--group --war=POL --warday=30`; фокусы и события: `--focus`, `--event=munich`; флот: `--tab=navy --sel=fleet|wing --center=NOR`; конструктор самолёта: `--plane=fig|bmb|new|N`; корабля: `--ship=new|N|ss|cr|cv|bb|dd`; прокрутка окна: `--scroll=N`).
+  наука: `--tech=inf:mot2`, доктрины: `--tech=doc:l_mob1`; армия и война: `--group --war=POL --warday=30`; фокусы и события: `--focus`, `--event=munich`; переговоры: `--peace=POL`; чужие земли: `--occupy=POL --prodpage=lands [--occ=POL]`; флот: `--tab=navy --sel=fleet|wing --center=NOR`; конструктор самолёта: `--plane=fig|bmb|new|N`; корабля: `--ship=new|N|ss|cr|cv|bb|dd`; прокрутка окна: `--scroll=N`).
   В облачном контейнере: `xvfb-run -a godot --rendering-driver opengl3 ...`.
 После изменений: парсинг без ошибок, sim_bench проходит, скриншот посмотреть.
 

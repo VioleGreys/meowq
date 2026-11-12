@@ -103,6 +103,7 @@ static func _refresh_prod(world: World) -> void:
 		nat.res_prod.fill(0.0)
 	var ctrl := world.p_controller
 	world.res_ctrl.resize(world.res_prov.size())
+	var yl := world.p_yield.size() == world.prov_count
 	for i in world.res_prov.size():
 		var c := ctrl[world.res_prov[i]]
 		world.res_ctrl[i] = c
@@ -110,8 +111,11 @@ static func _refresh_prod(world: World) -> void:
 			continue
 		var nat: World.Nation = world.nations[c]
 		var mult := 1.0 + nat.b("resources")
+		if yl:
+			mult *= world.p_yield[world.res_prov[i]]   # чужие земли — по законам (Occupation)
 		for r in RES_COUNT:
 			nat.res_prod[r] += world.res_val[i * RES_COUNT + r] * mult
+	Puppets.adjust_resources(world)   # отчисления марионеток сюзерену
 	# синтетика (заводы синтетического горючего и каучука — эффект synthetic)
 	for nat in world.nations:
 		if nat.alive:

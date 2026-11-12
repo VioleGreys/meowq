@@ -49,6 +49,8 @@ func _init(w: World, fresh := true) -> void:
 func refresh_income() -> void:
 	world.refresh_stats()
 	var all := world.compute_all_income()
+	Occupation.adjust_income(world, all)
+	Puppets.adjust_income(world, all)
 	for nat in world.nations:
 		var r: Array = all[nat.id]
 		nat.civ = r[0]
@@ -96,6 +98,7 @@ func tick() -> void:
 		_pt = Time.get_ticks_usec()
 		_refresh_sides()
 		Prof.add("подг:стороны", _pt))
+	_timed("оккупация", Occupation.daily.bind(world))
 	_timed("экономика", _phase_economy)
 	_timed("флот", _phase_navy)
 	# авиация конвейером: снимок и расчёт районов в фоне сейчас, применение —
@@ -135,6 +138,8 @@ func _phase_economy() -> void:
 	# один проход по всем провинциям дешевле, чем по проходу на каждую страну
 	var _pt := Time.get_ticks_usec()
 	var results := world.compute_all_income()
+	Occupation.adjust_income(world, results)   # отдача чужих земель по законам
+	Puppets.adjust_income(world, results)      # отчисления марионеток сюзерену
 	Prof.add("эк:доход", _pt)
 
 	_pt = Time.get_ticks_usec()
@@ -195,7 +200,8 @@ func _phase_economy() -> void:
 		# заказы узлов снабжения берут до половины очков стройки (Supply.build)
 		nat.build_progress += Supply.build(world, nat, civ_free * BUILD_RATE * (1.0 + nat.b("construction")))
 		if nat.build_progress >= FACTORY_COST:
-			if _place_factory(i, nat.build_mode):
+			var bt := Puppets.build_target(world, nat)
+			if (bt >= 0 and Puppets.build_in(world, nat, bt)) or _place_factory(i, nat.build_mode):
 				nat.build_progress -= FACTORY_COST
 			else:
 				nat.build_progress = FACTORY_COST
