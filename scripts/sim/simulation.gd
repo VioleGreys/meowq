@@ -106,6 +106,7 @@ func tick() -> void:
 	_timed("упреждение", Spec.start.bind(world))
 	_timed("авиация", Forces.air_finish.bind(world, Parallel.rng(world.seed_value, world.day, 6001)))
 	var battles := {}
+	_timed("климат", Climate.daily.bind(world))
 	_timed("сбор боёв", func(): battles.merge(_collect_battles()))
 	_timed("движение", _phase_movement.bind(battles))
 	_timed("бои", _phase_combat.bind(battles))

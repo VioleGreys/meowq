@@ -30,7 +30,7 @@
   ИИ, дипломатия, данные стран (`history.gd`, `relations.gd`, `diplomacy.gd`).
 - `forces.md` — флот, авиация, порты, высадки, конвои (`forces.gd`, `convoys.gd`).
 - `military.md` — дивизии, шаблоны из батальонов, ширина фронта, военные заводы (`military.gd`).
-- `balance_ai.md` — укрепления, зима, черты стран, военный ИИ (`ai.gd`,
+- `balance_ai.md` — укрепления, зима, акклиматизация, черты стран, военный ИИ (`ai.gd`,
   `ai.cpp`), планирование наступления, `balance_check`.
 - `economy.md` — ресурсы, торговля, договоры, блокада (`economy.gd`).
 - `supply.md` — снабжение по узлам районов: нагрузка, улучшение, присоединение, грузовики (`supply.gd`); Испания.
@@ -84,6 +84,7 @@
 - Флот и авиация: `godot --headless --path . --script res://tests/forces_check.gd`
   (конвои по годам: `tests/convoy_diag.gd [-- --dates=...]`)
 - Узлы снабжения: `godot --headless --path . --script res://tests/supply_check.gd`
+- Акклиматизация: `godot --headless --path . --script res://tests/climate_check.gd`
 - Снабжение, сравнение моделей: `godot --headless --path . --script res://tests/supply_compare.gd [-- --supply=regions]`
 - Сохранение и загрузка: `godot --headless --path . --script res://tests/save_check.gd [-- --dates=1941-08-01 --step=60 --nation=SWE]`
   (страна «игрока» в тесте никем не управляется — для дальних дат брать нейтральную)

@@ -1199,6 +1199,13 @@ func _province_text(p: int) -> String:
 		s += " (оккупирована: %s)" % ctrl.name
 	if w.p_colony[p] == 1:
 		s += " · колония"
+	if p < w.p_hot.size() and (w.p_hot[p] > 0.0 or w.p_cold[p] > 0.0):
+		var cl: Array = []
+		if w.p_hot[p] > 0.0:
+			cl.append("жара %d%%" % roundi(w.p_hot[p] * 100.0))
+		if w.p_cold[p] > 0.0:
+			cl.append("холод %d%%" % roundi(w.p_cold[p] * 100.0))
+		s += "\nСуровый климат: %s — непривычные войска медленнее, слабее и теряют людей" % ", ".join(cl)
 	s += "\nФабрики: %d гражд. / %d воен. · Население: %s · Резерв: %dк · Очки победы: %d" % [
 		w.p_civ[p], w.p_mil[p], _fmt_pop(w.p_population[p]), w.p_manpower[p], w.p_vp[p]]
 	var ri := w.res_prov.find(p)
@@ -1329,13 +1336,38 @@ func _update_group_text(g: World.ArmyGroup) -> void:
 			exh += 1
 		elif d.supply < World.SUP_BAD:
 			bad += 1
+		_clim_count(w, d.slot)
 	var n := maxi(1, divs.size())
 	var order := "держит фронт" if g.mode == "hold" else "наступает"
 	if g.mode == "attack" and g.objective >= 0:
 		order += " · цель: %s" % w.p_name[g.objective]
 	_info_text("%s · %d %s\n%s · сила %d%%\nСнабжение %d%% · план %d%% (+%d%% к атаке) · в бою %d" % [
 		g.name, divs.size(), _plural(divs.size(), "дивизия", "дивизии", "дивизий"), order[0].to_upper() + order.substr(1),
-		s / n, sup / n * 100.0, pl / n * 100.0, pl / n * Simulation.PLAN_MAX * 100.0, fights] + _sup_flags(bad, exh))
+		s / n, sup / n * 100.0, pl / n * 100.0, pl / n * Simulation.PLAN_MAX * 100.0, fights] + _sup_flags(bad, exh) + _clim_flags())
+
+
+var _clim_pen := 0      # дивизий выделения с климатическим штрафом (счётчик для _clim_flags)
+var _clim_bon := 0
+
+
+func _clim_count(w: World, slot: int) -> void:
+	if slot < w.d_cmul.size():
+		if w.d_cmul[slot] < 0.999:
+			_clim_pen += 1
+		elif w.d_cmul[slot] > 1.001:
+			_clim_bon += 1
+
+
+## Пометки климата (Climate): не привыкли — медленнее, слабее, теряют людей; коренные — бонус.
+func _clim_flags() -> String:
+	var parts: Array = []
+	if _clim_pen > 0:
+		parts.append("не привыкли к климату: %d (медленнее, слабее, теряют людей)" % _clim_pen)
+	if _clim_bon > 0:
+		parts.append("в родном климате: %d (до +15 %%)" % _clim_bon)
+	_clim_pen = 0
+	_clim_bon = 0
+	return ("\n" + " · ".join(parts)) if not parts.is_empty() else ""
 
 
 ## Пометки снабжения: «плохое снабжение» (< 50 %, атака и оборона −25 %),
@@ -1370,13 +1402,14 @@ func _update_selection_text() -> void:
 			exh += 1
 		elif d.supply < World.SUP_BAD:
 			bad += 1
+		_clim_count(w, d.slot)
 		if not d.path.is_empty():
 			moving += 1
 		if d.in_battle:
 			fighting += 1
 	_info_text("Выбрано: %d %s\nСила %d%% · организация %d%% · план %d%% · в пути %d · в бою %d%s\nПлан копится, пока войска стоят у фронта (до +%d%% к атаке), и тает в наступлении. Коснитесь провинции, чтобы отправить войска." % [
 		sel.size(), _plural(sel.size(), "дивизия", "дивизии", "дивизий"), s / sel.size(), o / sel.size() * 100.0, pl / sel.size() * 100.0, moving, fighting,
-		_sup_flags(bad, exh), roundi(Simulation.PLAN_MAX * 100.0)])
+		_sup_flags(bad, exh) + _clim_flags(), roundi(Simulation.PLAN_MAX * 100.0)])
 
 
 # --- Всплывающие окна --------------------------------------------------------

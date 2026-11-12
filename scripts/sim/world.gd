@@ -540,6 +540,16 @@ var d_morg := PackedFloat64Array()
 var d_atk := PackedFloat64Array()
 var d_def := PackedFloat64Array()
 var d_spd := PackedFloat64Array()
+var d_acl_hot := PackedFloat64Array()     # акклиматизация к жаре 0..1 (Climate)
+var d_acl_cold := PackedFloat64Array()    # к холоду и горам 0..1
+var d_spd_eff := PackedFloat64Array()     # скорость с климатом (Climate.daily, на день)
+var d_atk_eff := PackedFloat64Array()     # атака с климатом
+var d_def_eff := PackedFloat64Array()     # оборона с климатом
+var d_cmul := PackedFloat64Array()        # множитель боя от климата (окно)
+var p_hot := PackedFloat32Array()         # суровость жары провинции 0..1 (Climate, раз в месяц)
+var p_cold := PackedFloat32Array()        # суровость холода и гор 0..1
+var n_hot := PackedFloat64Array()         # уровень страны к жаре 0..1,5 (коренные > 1 — бонус)
+var n_cold := PackedFloat64Array()
 var d_hard := PackedFloat64Array()
 var d_owner := PackedInt32Array()
 var d_prov := PackedInt32Array()
@@ -651,6 +661,7 @@ func refresh_def_mult() -> void:
 	if m == _def_month and p_def_mult.size() == prov_count:
 		return
 	_def_month = m
+	Climate.refresh_provinces(self, m)
 	p_def_mult.resize(prov_count)
 	var deep := m == 11 or m <= 2
 	var mid := m == 11 or m <= 1
@@ -1282,6 +1293,9 @@ func _d_append() -> int:
 	d_atk.append(10.0)
 	d_def.append(12.0)
 	d_spd.append(0.28)
+	if d_acl_hot.size() == d_spd.size() - 1:
+		d_acl_hot.append(0.0)
+		d_acl_cold.append(0.0)
 	d_hard.append(0.0)
 	d_owner.append(0)
 	d_prov.append(0)
@@ -1329,6 +1343,13 @@ func compact_divisions() -> void:
 	d_atk = Native.gather_f64(d_atk, keep)
 	d_def = Native.gather_f64(d_def, keep)
 	d_spd = Native.gather_f64(d_spd, keep)
+	if d_acl_hot.size() == n and d_acl_cold.size() == n:
+		d_acl_hot = Native.gather_f64(d_acl_hot, keep)
+		d_acl_cold = Native.gather_f64(d_acl_cold, keep)
+	d_spd_eff = PackedFloat64Array()   # на день — пересчитаются в Climate.daily
+	d_atk_eff = PackedFloat64Array()
+	d_def_eff = PackedFloat64Array()
+	d_cmul = PackedFloat64Array()
 	d_hard = Native.gather_f64(d_hard, keep)
 	d_owner = Native.gather_i32(d_owner, keep)
 	d_prov = Native.gather_i32(d_prov, keep)
@@ -1366,6 +1387,12 @@ func clear_divisions() -> void:
 	d_atk = PackedFloat64Array()
 	d_def = PackedFloat64Array()
 	d_spd = PackedFloat64Array()
+	d_acl_hot = PackedFloat64Array()
+	d_acl_cold = PackedFloat64Array()
+	d_spd_eff = PackedFloat64Array()
+	d_atk_eff = PackedFloat64Array()
+	d_def_eff = PackedFloat64Array()
+	d_cmul = PackedFloat64Array()
 	d_hard = PackedFloat64Array()
 	d_owner = PackedInt32Array()
 	d_prov = PackedInt32Array()
@@ -1514,12 +1541,13 @@ func k_supply(side_of: PackedInt32Array, dist: PackedInt32Array) -> void:
 ## порядку, идущие по порядку].
 func k_march() -> Array:
 	if Native.core != null:
-		var r: Array = Native.core.call("march", d_alive, d_transit, d_next, d_owner, d_prov, d_prog, d_spd, d_org,
+		var r: Array = Native.core.call("march", d_alive, d_transit, d_next, d_owner, d_prov, d_prog, _eff(d_spd_eff, d_spd), d_org,
 				d_morg, d_sup, p_land, p_controller, war, nation_count, p_move_mult)
 		d_battle.fill(0)
 		d_prog = r[0]
 		d_next = r[1]
 		return [r[2], r[3], r[4]]
+	var spd_e := _eff(d_spd_eff, d_spd)
 	d_battle.fill(0)
 	var n := d_id.size()
 	var nc := nation_count
@@ -1562,7 +1590,7 @@ func k_march() -> Array:
 			attackers.append(i)
 			continue
 		movers.append(i)
-		var speed: float = d_spd[i] * p_move_mult[t]
+		var speed: float = spd_e[i] * p_move_mult[t]
 		var org_factor := 0.5 + 0.5 * clampf(d_org[i] / maxf(1.0, d_morg[i]), 0.0, 1.0)
 		d_prog[i] = d_prog[i] + speed * org_factor * (0.5 + 0.5 * d_sup[i])
 	return [cleared, attackers, movers]
@@ -1627,18 +1655,19 @@ func k_snapshot() -> void:
 ## состоянию до боя, потом применяются по порядку провинций.
 func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: PackedInt32Array, seeds: PackedInt64Array,
 		plan_max: float = 0.0) -> void:
-	# атака с учётом планирования — только у наступающих
-	var atk := d_atk
+	# атака и оборона с климатом (Climate.daily); планирование — только у наступающих
+	var atk := _eff(d_atk_eff, d_atk)
+	var def := _eff(d_def_eff, d_def)
 	if plan_max > 0.0 and d_plan.size() == d_atk.size():
-		atk = d_atk.duplicate()
+		atk = atk.duplicate()
 		for i in att_list:
-			atk[i] = d_atk[i] * (1.0 + plan_max * d_plan[i])
+			atk[i] = atk[i] * (1.0 + plan_max * d_plan[i])
 	# ширина фронта: 8 значений по местности, затем прибавка за направление и их предел
 	var fw := PackedFloat32Array(FRONT_WIDTH)
 	fw.append(FRONT_FLANK)
 	fw.append(FRONT_DIRS)
 	if Native.core != null:
-		var r: Array = Native.core.call("combat", provs, att_start, att_list, seeds, d_str, d_org, d_eq, d_def, atk,
+		var r: Array = Native.core.call("combat", provs, att_start, att_list, seeds, d_str, d_org, d_eq, def, atk,
 				d_ent, d_land, d_sup, d_tpl, d_hard, d_owner, d_battle, pl_head, d_nx, war, nation_count, p_def_mult,
 				p_terrain, p_region, cas_mult, tpl_terrain, d_prov, tpl_width, fw)
 		d_org = r[0]
@@ -1682,8 +1711,8 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 		var dw := PackedFloat64Array()
 		attackers = front_pick(attackers, limit, aw)
 		defenders = front_pick(defenders, limit, dw)
-		var sa := _side_power(attackers, terr, false, atk, aw)
-		var sd := _side_power(defenders, terr, true, atk, dw)
+		var sa := _side_power(attackers, terr, false, atk, def, aw)
+		var sd := _side_power(defenders, terr, true, atk, def, dw)
 		var reg := p_region[p]
 		var att_power: float = sa[0] * cas_mult[reg * nc + att_owner]
 		var att_hard: float = sa[1]
@@ -1729,6 +1758,11 @@ static func sup_mult(s: float) -> float:
 	return 1.0 if s >= SUP_BAD else (0.75 if s >= SUP_EXH else 0.5)
 
 
+## Действующие значения дня (с климатом), если посчитаны для всех дивизий, иначе базовые.
+func _eff(e: PackedFloat64Array, base: PackedFloat64Array) -> PackedFloat64Array:
+	return e if e.size() == base.size() else base
+
+
 ## Ширина фронта боя: по местности провинции и числу направлений атаки
 ## (разных провинций, откуда идут атакующие). fw — как в k_combat.
 func front_limit(attackers: PackedInt32Array, terr: int, fw: PackedFloat32Array) -> float:
@@ -1772,14 +1806,14 @@ static func _wsum(w: PackedFloat64Array) -> float:
 
 
 ## Сила стороны (как Military.side_power, по массивам): [сила, бронированность].
-func _side_power(slots: PackedInt32Array, terr: int, defending: bool, atk: PackedFloat64Array, part: PackedFloat64Array) -> PackedFloat64Array:
+func _side_power(slots: PackedInt32Array, terr: int, defending: bool, atk: PackedFloat64Array, def: PackedFloat64Array, part: PackedFloat64Array) -> PackedFloat64Array:
 	var power := 0.0
 	var hard := 0.0
 	var wsum := 0.0
 	for j in slots.size():
 		var i := slots[j]
 		var w: float = d_str[i] / 100.0 * part[j]
-		var base: float = d_def[i] * (1.0 + 0.3 * d_ent[i]) if defending else atk[i] * (0.5 if d_land[i] == 1 else 1.0)
+		var base: float = def[i] * (1.0 + 0.3 * d_ent[i]) if defending else atk[i] * (0.5 if d_land[i] == 1 else 1.0)
 		power += base * w * (0.4 + 0.6 * d_eq[i]) * sup_mult(d_sup[i]) * tpl_terrain[d_tpl[i] * 8 + terr]
 		hard += d_hard[i] * w
 		wsum += w

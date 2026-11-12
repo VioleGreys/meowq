@@ -9,6 +9,7 @@ void MeowqCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("supply_bfs", "adj_start", "adj_list", "land", "ctrl", "ally", "nation_count", "side", "hubs"), &MeowqCore::supply_bfs);
 	ClassDB::bind_method(D_METHOD("supply_field", "t"), &MeowqCore::supply_field);
 	ClassDB::bind_method(D_METHOD("plan_update", "alive", "transit", "next", "battle", "prov", "owner", "ctrl", "adj_start", "adj_list", "land", "hostile", "nc", "plan", "gain", "active", "rear"), &MeowqCore::plan_update);
+	ClassDB::bind_method(D_METHOD("climate", "t"), &MeowqCore::climate);
 	ClassDB::bind_method(D_METHOD("supply_divs", "t"), &MeowqCore::supply_divs);
 	ClassDB::bind_method(D_METHOD("land_dist", "adj_start", "adj_list", "land", "from"), &MeowqCore::land_dist);
 	ClassDB::bind_method(D_METHOD("path_bfs", "adj_start", "adj_list", "land", "ctrl", "war", "nation_count", "nation", "from", "goals"), &MeowqCore::path_bfs);

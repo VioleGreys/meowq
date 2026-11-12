@@ -859,3 +859,67 @@ PackedByteArray MeowqCore::ports_hub(const PackedInt32Array &ports, const Packed
 	}
 	return out;
 }
+
+// --- Акклиматизация (Climate.kernel_gd — двойник) ---------------------------------
+Array MeowqCore::climate(const Dictionary &t) const {
+	const PackedByteArray alive_a = t["alive"];
+	const PackedInt32Array transit_a = t["transit"], prov_a = t["prov"], owner_a = t["owner"];
+	PackedFloat64Array st_a = t["str"], ah_a = t["acl_hot"], ac_a = t["acl_cold"];
+	st_a = st_a.duplicate();
+	ah_a = ah_a.duplicate();
+	ac_a = ac_a.duplicate();
+	const PackedFloat64Array spd_a = t["spd"], atk_a = t["atk"], def_a = t["def"], nh_a = t["n_hot"], nc_a = t["n_cold"], k_a = t["k"];
+	const PackedFloat32Array ph_a = t["p_hot"], pc_a = t["p_cold"];
+	const uint8_t *alive = alive_a.ptr();
+	const int32_t *transit = transit_a.ptr(), *prov = prov_a.ptr(), *owner = owner_a.ptr();
+	const double *spd = spd_a.ptr(), *atk = atk_a.ptr(), *def = def_a.ptr(), *nh = nh_a.ptr(), *ncd = nc_a.ptr();
+	const float *ph = ph_a.ptr(), *pcd = pc_a.ptr();
+	double *st = st_a.ptrw(), *ah = ah_a.ptrw(), *ac = ac_a.ptrw();
+	const double gain = k_a[0], decay = k_a[1], spd_pen = k_a[2], cpen = k_a[3], attr = k_a[4], floor_s = k_a[5], bonus = k_a[6];
+	const int64_t n = alive_a.size();
+	PackedFloat64Array se_a, ae_a, de_a, cm_a;
+	se_a.resize(n);
+	ae_a.resize(n);
+	de_a.resize(n);
+	cm_a.resize(n);
+	double *se = se_a.ptrw(), *ae = ae_a.ptrw(), *de = de_a.ptrw(), *cm = cm_a.ptrw();
+	for (int64_t i = 0; i < n; i++) {
+		se[i] = spd[i];
+		ae[i] = atk[i];
+		de[i] = def[i];
+		cm[i] = 1.0;
+		if (alive[i] == 0 || transit[i] > 0)
+			continue;
+		const int32_t p = prov[i], o = owner[i];
+		const double hh = double(ph[p]), hc = double(pcd[p]);
+		const double bh = mind(1.0, nh[o]), bc = mind(1.0, ncd[o]);
+		if (hh > 0.0)
+			ah[i] = mind(1.0, maxd(ah[i], bh) + gain * hh);
+		else
+			ah[i] = maxd(bh, ah[i] - decay);
+		if (hc > 0.0)
+			ac[i] = mind(1.0, maxd(ac[i], bc) + gain * hc);
+		else
+			ac[i] = maxd(bc, ac[i] - decay);
+		const double u = mind(1.0, hh * (1.0 - ah[i]) + hc * (1.0 - ac[i]));
+		const double b = mind(1.0, hh * clampd((nh[o] - 1.0) / 0.5, 0.0, 1.0) + hc * clampd((ncd[o] - 1.0) / 0.5, 0.0, 1.0));
+		if (u <= 0.0 && b <= 0.0)
+			continue;
+		const double mult = (1.0 - cpen * u) * (1.0 + bonus * b);
+		cm[i] = mult;
+		se[i] = spd[i] * (1.0 - spd_pen * u);
+		ae[i] = atk[i] * mult;
+		de[i] = def[i] * mult;
+		if (u > 0.0 && st[i] > floor_s)
+			st[i] = maxd(floor_s, st[i] - attr * u);
+	}
+	Array r;
+	r.push_back(ah_a);
+	r.push_back(ac_a);
+	r.push_back(st_a);
+	r.push_back(se_a);
+	r.push_back(ae_a);
+	r.push_back(de_a);
+	r.push_back(cm_a);
+	return r;
+}
