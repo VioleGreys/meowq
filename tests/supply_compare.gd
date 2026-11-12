@@ -12,8 +12,11 @@ func _init():
 			until = a.split("=")[1]
 		if a.begins_with("--seed="):
 			w.seed_value = int(a.split("=")[1])
-	var dates := ["1937-06-01", "1937-12-01", "1938-04-01", "1939-10-01", "1940-03-01", "1940-06-01", "1941-08-01", "1941-12-01"]
+	var dates := ["1941-03-01", "1941-06-01", "1941-09-01", "1941-10-15", "1941-11-15", "1937-06-01", "1937-12-01", "1938-04-01", "1939-10-01", "1940-03-01", "1940-06-01", "1941-08-01", "1941-12-01"]
 	var tags := ["GER", "SOV", "FRA", "ENG", "ITA", "JAP", "MAN", "CHI", "POL"]
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--tags="):
+			tags = Array(a.split("=")[1].split(","))
 	var t_sum := 0
 	var t_n := 0
 	var end := w.day_of(until)
