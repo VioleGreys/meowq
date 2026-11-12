@@ -14,7 +14,7 @@ extends RefCounted
 static func plan_economy(world: World, nid: int, rng: RandomNumberGenerator, mine: int) -> Dictionary:
 	var nat: World.Nation = world.nations[nid]
 	var result := {"train": 0, "build": nat.build_mode, "war": -1}
-	if not nat.alive:
+	if not nat.alive or nat.capitulated:
 		return result
 	var at_war := not nat.at_war.is_empty()
 

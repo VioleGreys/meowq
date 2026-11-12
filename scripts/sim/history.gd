@@ -200,15 +200,15 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 	if world.month_of(world.day) != world.month_of(world.day - 1):
 		for nat in world.nations:
 			var vol: float = nat.b("volunteers")
-			if vol > 0.0 and nat.alive and not nat.at_war.is_empty() and nat.capital >= 0 \
+			if vol > 0.0 and nat.alive and not nat.capitulated and not nat.at_war.is_empty() and nat.capital >= 0 \
 					and world.p_controller[nat.capital] == nat.id:
 				nat.volunteer_acc += vol
 				while nat.volunteer_acc >= 1.0:
 					nat.volunteer_acc -= 1.0
 					world.spawn_division(nat.id, nat.capital, Military.T_INF)
-	# фокусы
+	# фокусы (у сдавшейся страны правительства нет — фокусы стоят)
 	for nat in world.nations:
-		if not nat.alive:
+		if not nat.alive or nat.capitulated:
 			continue
 		if nat.focus_current != "":
 			nat.focus_days -= 1

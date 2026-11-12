@@ -335,7 +335,7 @@ func _auto_screenshot_locked() -> void:
 			if ta.size() > 1:
 				hud.tech_view._select(ta[1])
 		if _arg("peace") != "":
-			world.pending_peace.append([nation_by_tag(_arg("peace")), me])
+			Peace.debug_start(world, nation_by_tag(_arg("peace")), me)
 		if _arg("tpl") != "":
 			# конструктор шаблонов: --tpl=N (на основе шаблона N) или --tpl=new
 			hud.open_tab("army")
@@ -1129,9 +1129,12 @@ func _after_event() -> void:
 		hud.open_tab("event")
 
 
-func resolve_peace(mode: String) -> void:
-	sim.resolve_peace(mode)
-	hud.close_popup()
+func resolve_peace(kind: String, arg: int = -1) -> void:
+	sim.resolve_peace(kind, arg)   # ход стоит, пока переговоры ждут игрока
+	if world.pending_peace.is_empty():
+		hud.close_popup()
+	else:
+		hud.open_tab("peace")
 	hud.on_tick()
 
 

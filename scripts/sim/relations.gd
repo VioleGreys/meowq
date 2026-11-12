@@ -516,6 +516,9 @@ static func give_aid(world: World, from: int, to: int) -> void:
 	var part := nf.stock[Military.EQ_INF] * 0.05
 	nf.stock[Military.EQ_INF] -= part
 	nt.stock[Military.EQ_INF] += part
+	if not nt.at_war.is_empty():
+		Peace.add_score(world, from, part * Peace.SCORE_AID)   # ленд-лиз — вклад в победу
+	Puppets.on_aid(world, from, to)
 
 
 static func aided(world: World, from: int, to: int) -> bool:

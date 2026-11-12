@@ -1813,24 +1813,78 @@ func _action(text: String, why: String, cb: Callable) -> void:
 
 
 func _build_peace(w: World) -> void:
-	popup_title.text = "Мирный договор"
-	if w.pending_peace.is_empty():
+	popup_title.text = "Мирная конференция"
+	var c: Dictionary = w.conference
+	if c.is_empty() or w.pending_peace.is_empty():
 		close_popup()
 		return
-	var pp: Array = w.pending_peace[0]
-	var loser: World.Nation = w.nations[pp[0]]
-	var head := HBoxContainer.new()
-	head.add_theme_constant_override("separation", 10)
-	head.add_child(Flag.make(loser.flag, Vector2(60, 40)))
-	var title := _label("%s капитулирует!" % loser.name, 22)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	head.add_child(title)
-	popup_body.add_child(head)
-	popup_body.add_child(_small("Выберите условия мира. Время стоит, пока вы не решите."))
-	popup_body.add_child(_button("Аннексировать", func(): game.resolve_peace("annex"), Vector2(0, 56)))
-	popup_body.add_child(_small("Оккупанты забирают занятые провинции, остальное — нам. Напряжённость +1,5%."))
-	popup_body.add_child(_button("Сделать марионеткой", func(): game.resolve_peace("puppet"), Vector2(0, 56)))
-	popup_body.add_child(_small("Страна сохраняет все земли, распускает армию и воюет на нашей стороне."))
+	var me := Peace.current(w)
+	var budget: float = c["budget"][me]
+	popup_body.add_child(_small("Война окончена. Победители по очереди, начиная с наибольшего вклада, делят земли проигравших. Время стоит, пока вы не решите."))
+	popup_body.add_child(_section("Победители"))
+	for x in c["winners"]:
+		var nx: World.Nation = w.nations[x]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		row.add_child(Flag.make(nx.flag, Vector2(36, 24)))
+		var t := "%s — очков %d (вклад %d)%s" % [nx.name, int(c["budget"][x]), int(c["score"].get(x, 0.0)),
+				"  ◀ ход" if x == me else ("  · закончила" if c["out"].has(x) else "")]
+		var l := _label(t, 17, UiStyle.INK if x == me else UiStyle.INK_SOFT)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		popup_body.add_child(row)
+	var lg: Array = c["log"]
+	if not lg.is_empty():
+		popup_body.add_child(_small("Решено: " + "; ".join(lg.slice(maxi(0, lg.size() - 6)))))
+	popup_body.add_child(_button("Пропустить ход", func(): game.resolve_peace("pass"), Vector2(0, 48)))
+	popup_body.add_child(_button("Закончить — остальное другим", func(): game.resolve_peace("done"), Vector2(0, 48)))
+	var taken: PackedInt32Array = c["u_taken"]
+	for l in c["losers"]:
+		var nl: World.Nation = w.nations[l]
+		var rest := Peace.rest_cost(w, l)
+		if rest <= 0.0:
+			continue
+		var head := HBoxContainer.new()
+		head.add_theme_constant_override("separation", 8)
+		head.add_child(Flag.make(nl.flag, Vector2(48, 32)))
+		var hl := _section("%s — свободных земель на %d очков" % [nl.name, int(rest)])
+		hl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		head.add_child(hl)
+		popup_body.add_child(head)
+		var ide: String = w.ideology_names.get(w.nations[me].ideology, w.nations[me].ideology)
+		var fb := _button("Освободить (строй — %s) · %d" % [ide, int(Peace.price(w, me, "free", l))],
+				func(): game.resolve_peace("free", l), Vector2(0, 48))
+		fb.disabled = not Peace.can_do(w, me, "free", l)
+		popup_body.add_child(fb)
+		var pb := _button("Сделать марионеткой · %d" % int(Peace.price(w, me, "puppet", l)),
+				func(): game.resolve_peace("puppet", l), Vector2(0, 48))
+		pb.disabled = not Peace.can_do(w, me, "puppet", l)
+		popup_body.add_child(pb)
+		# участки: сначала занятые нами, потом дорогие
+		var us: Array = []
+		for u in taken.size():
+			if taken[u] == -1 and int(c["u_owner"][u]) == l:
+				us.append(u)
+		var held := func(u: int) -> int:
+			var n := 0
+			for p in c["u_provs"][u]:
+				if w.p_controller[p] == me:
+					n += 1
+			return n
+		us.sort_custom(func(a, b):
+			var ha: int = held.call(a)
+			var hb: int = held.call(b)
+			return ha > hb if ha != hb else float(c["u_cost"][a]) > float(c["u_cost"][b]))
+		for u in us:
+			var pr := Peace.unit_price(w, u, me)
+			var big: int = c["u_big"][u]
+			var mine: int = held.call(u)
+			var provs: PackedInt32Array = c["u_provs"][u]
+			var b := _button("%d · Взять %s, %d пров.%s" % [int(pr), w.p_name[big], provs.size(),
+					" (наше)" if mine > 0 else ""], func(): game.resolve_peace("annex", u), Vector2(0, 44))
+			b.disabled = pr > budget + 0.001
+			b.clip_text = true
+			popup_body.add_child(b)
 
 
 func _build_event(w: World) -> void:

@@ -422,29 +422,33 @@ static func make_peace(world: World, loser: int, winner: int, mode: String) -> v
 	world.rebuild_prov_divs()
 
 
-const EXILE_VP := 10   # нужно свободных колоний, очков победы
+const EXILE_VP := 10       # нужно свободных колоний, очков победы
+const EXILE_POP := 2000    # и населения в них, тыс.
 
 
 ## Правительство в изгнании (решение пользователя, ноябрь 2026): вместо
-## аннексии страна, у которой остались свободные колонии и чьи союзники
-## (кто воюет с победителем) продолжают войну, теряет только метрополию —
-## занятое отходит оккупантам, остальное победителю, — а сама переезжает в
-## крупнейший колониальный город и воюет дальше: колонии, их гарнизоны, флот и
-## авиация остаются. Колонии потом капитулируют по одной (_cap_colonies).
+## капитуляции страна, у которой остались свободные колонии и чьи союзники
+## (кто воюет с победителем) продолжают войну, теряет только метрополию — она
+## занята до мирных переговоров (Peace), — а сама переезжает в крупнейший
+## колониальный город и воюет дальше: колонии, их гарнизоны, флот и авиация
+## остаются. Колонии потом сдаются по одной (_cap_colonies), без последней —
+## капитуляция (Peace.capitulate).
 static func try_exile(world: World, loser: int, winner: int) -> bool:
 	if world.p_colony.size() != world.prov_count:
 		return false
 	var nl: World.Nation = world.nations[loser]
 	var best := -1
 	var free_vp := 0
+	var free_pop := 0
 	for p in world.prov_count:
 		if world.p_owner[p] == loser and world.p_controller[p] == loser and world.p_colony[p] == 1 and world.p_land[p] == 1:
 			free_vp += world.p_vp[p]
+			free_pop += world.p_population[p]
 			if best < 0 or world.p_vp[p] > world.p_vp[best] or (world.p_vp[p] == world.p_vp[best] and world.p_population[p] > world.p_population[best]):
 				best = p
-	# только настоящая колониальная держава: клочок земли (Гренландия, отнятый
-	# у соседа порт) не держит правительство
-	if best < 0 or free_vp < EXILE_VP:
+	# только настоящая колониальная держава: клочок земли (Гренландия, Намибия,
+	# отнятый у соседа порт) не держит правительство
+	if best < 0 or free_vp < EXILE_VP or free_pop < EXILE_POP:
 		return false
 	var ally := false
 	for o in world.nations:
@@ -454,19 +458,15 @@ static func try_exile(world: World, loser: int, winner: int) -> bool:
 	if not ally:
 		return false
 	world.focus_epoch += 1
+	# метрополия остаётся за страной, но занята до мирных переговоров (Peace)
 	var moved := PackedByteArray()
 	moved.resize(world.prov_count)
-	var n_moved := 0
 	for p in world.prov_count:
 		if world.p_owner[p] != loser or world.p_colony[p] == 1:
 			continue
-		var c := world.p_controller[p]
-		var to := c if c >= 0 and c != loser and world.is_at_war(loser, c) else winner
-		world.p_owner[p] = to
-		if c == loser or c < 0:
-			world.p_controller[p] = to
+		if world.p_controller[p] == loser:
+			world.p_controller[p] = winner
 		moved[p] = 1
-		n_moved += 1
 	# войска в метрополии сдаются, за её пределами (колонии, фронт союзников) — воюют дальше
 	for d in world.divisions:
 		if d.alive and d.owner == loser and moved[d.prov] == 1:
@@ -511,7 +511,7 @@ static func daily(world: World) -> void:
 ## Решения ИИ по дипломатии (раз в неделю на страну).
 static func ai_turn(world: World, n: int, rng: RandomNumberGenerator) -> void:
 	var nat: World.Nation = world.nations[n]
-	if not nat.alive or nat.is_player or nat.overlord >= 0:
+	if not nat.alive or nat.is_player or nat.overlord >= 0 or nat.capitulated:
 		return
 
 	# 1. Фракции (в исторической игре союзы складываются только фокусами и событиями)
@@ -637,13 +637,13 @@ static func reachable_neighbours(world: World, n: int) -> Dictionary:
 ## Белый мир: война без продвижения больше года между странами ИИ.
 static func check_stalemates(world: World) -> void:
 	for nat in world.nations:
-		if not nat.alive or nat.is_player or nat.at_war.is_empty():
+		if not nat.alive or nat.is_player or nat.capitulated or nat.at_war.is_empty():
 			continue
 		if world.day - nat.war_activity_day < 365:
 			continue
 		for e in nat.at_war.keys():
 			var ne: World.Nation = world.nations[e]
-			if ne.is_player or world.day - ne.war_activity_day < 365:
+			if ne.is_player or ne.capitulated or world.day - ne.war_activity_day < 365:
 				continue
 			# гражданская война миром не кончается — только победой одной из сторон
 			if nat.spirits.has("civil_war_attrition") and ne.spirits.has("civil_war_attrition"):

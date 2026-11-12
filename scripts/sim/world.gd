@@ -126,6 +126,10 @@ class Nation:
 	var stats_dirty := true
 	var dormant := false        # появится по событию
 	var exile := false          # правительство в изгнании: метрополия потеряна, воюет колониями (Diplomacy.try_exile)
+	var capitulated := false    # сдалась: армии нет, земли оккупированы до мирных переговоров (Peace)
+	var war_score := 0.0        # вклад в победу в текущей войне (Peace.add_score)
+	var puppet_since := -1      # день, с которого марионетка (Puppets)
+	var freedom := 50.0         # свобода марионетки 0..100 (Puppets)
 	var capital_lonlat := Vector2.ZERO
 	# Фокусы (этап 5)
 	var focus_current := ""
@@ -585,6 +589,8 @@ var diplomacy := false          # историческая дипломатия 
 var tension := 0.0              # мировая напряжённость, 0..100 %
 var factions: Array = []        # Array[Faction]
 var pending_peace: Array = []
+var conference := {}          # идущие мирные переговоры (Peace.start)
+var col_done := {}            # сдавшиеся колонии: владелец * 4096 + территория -> true (до конца войны)
 # История (этап 5)
 var historical := true          # исторический ИИ: фокусы и события по истории, без случайной агрессии
 var flags := {}

@@ -115,6 +115,7 @@ func tick() -> void:
 	_timed("планирование", _phase_planning)
 	_timed("дипломатия", _phase_diplomacy)
 	_timed("капитуляции", _check_capitulation)
+	_timed("мир", func(): Peace.check_end(world))
 	_timed("ИИ:ожидание", _finish_ai)
 	# доктрины ИИ — когда фоновых задач уже нет (меняют бонусы стран)
 	Doctrine.ai_daily(world)
@@ -951,6 +952,8 @@ func _capture(p: int, nid: int) -> void:
 	# освобождение своей провинции возвращает её владельцу-союзнику
 	world.p_controller[p] = nid
 	world.palette_dirty = true
+	if prev >= 0 and world.is_at_war(nid, prev):
+		Peace.add_score(world, nid, world.p_vp[p] + 1.0)   # вклад в победу
 	world.nations[nid].war_activity_day = world.day
 	if prev >= 0:
 		world.nations[prev].war_activity_day = world.day
@@ -972,7 +975,16 @@ func _phase_combat(battles: Dictionary) -> void:
 			att_list.append(a.slot)
 		att_start.append(att_list.size())
 		seeds.append(hash([world.seed_value, world.day, p]))   # как Parallel.rng
+	# численность до боя — для вклада в победу (Peace.SCORE_KILL)
+	var pre := {}
+	for p in provs:
+		for a in battles[p]:
+			pre[a.slot] = a.strength
+		for e in world.divs_in(p):
+			if e.alive:
+				pre[e.slot] = e.strength
 	world.k_combat(pv, att_start, att_list, seeds, PLAN_MAX)
+	_combat_score(provs, battles, pre)
 	# боевой опыт армии: дивизии-участники сражений за день (Doctrine)
 	var engaged := PackedInt32Array()
 	engaged.resize(world.nations.size())
@@ -1000,6 +1012,35 @@ func _phase_combat(battles: Dictionary) -> void:
 				continue
 			if e.org <= 0.5 or e.strength <= 5.0:
 				_retreat(e)
+
+
+## Вклад в победу: потери стороны делятся между дивизиями противника в бою.
+func _combat_score(provs: Array, battles: Dictionary, pre: Dictionary) -> void:
+	for p in provs:
+		var ao: int = battles[p][0].owner
+		var att := {}
+		var a_loss := 0.0
+		for a in battles[p]:
+			a_loss += maxf(0.0, float(pre[a.slot]) - a.strength)
+			att[a.owner] = int(att.get(a.owner, 0)) + 1
+		var dfn := {}
+		var d_loss := 0.0
+		for e in world.divs_in(p):
+			if pre.has(e.slot) and not att.has(e.owner) and world.is_at_war(ao, e.owner):
+				d_loss += maxf(0.0, float(pre[e.slot]) - e.strength)
+				dfn[e.owner] = int(dfn.get(e.owner, 0)) + 1
+		_share_score(att, d_loss)
+		_share_score(dfn, a_loss)
+
+
+func _share_score(side: Dictionary, loss: float) -> void:
+	var n := 0
+	for k in side:
+		n += int(side[k])
+	if n == 0 or loss <= 0.0:
+		return
+	for k in side:
+		Peace.add_score(world, k, loss * Peace.SCORE_KILL * float(side[k]) / float(n))
 
 
 func _retreat(d: World.Division) -> void:
@@ -1166,7 +1207,7 @@ func _cap_colonies() -> void:
 		var o: int = key / 4096
 		var g: int = key % 4096
 		var nat: World.Nation = world.nations[o]
-		if int(t[0]) <= 0 or not nat.alive or float(t[1]) / float(t[0]) >= nat.capitulate_at:
+		if int(t[0]) <= 0 or not nat.alive or world.col_done.has(key) or float(t[1]) / float(t[0]) >= nat.capitulate_at:
 			continue
 		# главный захватчик территории
 		var occ := {}
@@ -1185,25 +1226,29 @@ func _cap_colonies() -> void:
 				winner = c
 		if winner < 0:
 			continue
+		# территория занята до мирных переговоров (Peace), гарнизон сдаётся
+		world.col_done[key] = true
 		var big := -1
 		for p in _col_provs:
 			if owner[p] == o and _col_group[p] == g:
 				if big < 0 or world.p_vp[p] > world.p_vp[big]:
 					big = p
-				world.p_owner[p] = winner
-				world.p_controller[p] = winner
+				if world.p_controller[p] == o:
+					world.p_controller[p] = winner
 		for d in world.divisions:
-			if d.alive and d.owner == o and world.p_owner[d.prov] == winner:
-				d.alive = false   # гарнизон колонии сдаётся
+			if d.alive and d.owner == o and _col_group[d.prov] == g and world.p_owner[d.prov] == o:
+				d.alive = false
 		world.palette_dirty = true
-		world.log_event("Колония сдаётся: %s (%s) переходит к стране %s" % [world.p_name[big], nat.name, world.nations[winner].name])
-		var left := false
-		for p in world.prov_count:
-			if world.p_owner[p] == o:
-				left = true
-				break
-		if not left:
-			Diplomacy.make_peace(world, o, winner, "annex")   # последняя земля правительства в изгнании
+		world.log_event("Колония сдаётся: %s (%s) занята страной %s до мирных переговоров" % [world.p_name[big], nat.name, world.nations[winner].name])
+		# правительство в изгнании без последней земли — капитуляция
+		if nat.exile:
+			var left := false
+			for p in world.prov_count:
+				if world.p_owner[p] == o and world.p_controller[p] == o:
+					left = true
+					break
+			if not left:
+				Peace.capitulate(world, o, winner)
 		_fix_capitals()
 
 
@@ -1237,7 +1282,9 @@ func _cap_countries() -> void:
 	# капитуляция в этом же проходе меняет карту — тогда счётчик своих провинций устарел
 	var moved := false
 	for nat in world.nations:
-		if not nat.alive or nat.at_war.is_empty() or _cap_total[nat.id] == 0 or _peace_pending(nat.id):
+		if nat.alive and nat.exile and world.p_controller[nat.capital] != nat.id:
+			_move_capital(nat)   # изгнанники переезжают внутри колоний
+		if not nat.alive or nat.capitulated or nat.exile or nat.at_war.is_empty() or _cap_total[nat.id] == 0:
 			continue
 		var ratio := float(_cap_held[nat.id]) / float(_cap_total[nat.id])
 		# порог капитуляции: базовый + черты (расколотое правительство, бескрайние
@@ -1257,12 +1304,12 @@ func _cap_countries() -> void:
 		if nat.alive:
 			alive += 1
 	if player >= 0:
-		if not world.nations[player].alive or world.nations[player].overlord >= 0:
+		if not world.nations[player].alive or world.nations[player].overlord >= 0 or world.nations[player].capitulated:
 			world.game_over = "defeat"
 		else:
 			var rivals := 0
 			for nat in world.nations:
-				if nat.alive and not Diplomacy.same_side(world, player, nat.id):
+				if nat.alive and not nat.capitulated and not Diplomacy.same_side(world, player, nat.id):
 					rivals += 1
 			if rivals == 0:
 				world.game_over = "victory"
@@ -1281,24 +1328,13 @@ func _capitulate(nid: int) -> void:
 		return
 	var w_root := Diplomacy.root(world, winner)
 	_spoils(nid, occ)
+	# исторические правила (Виши, Московский мир, раздел Польши) — отдельный мир
 	if History.capitulation_hook(world, nid, w_root, Parallel.rng(world.seed_value, world.day, 8888)):
 		_fix_capitals()
 		return
-	if world.nations[w_root].is_player:
-		# условия мира выбирает игрок: тик ставится на паузу до решения
-		for pp in world.pending_peace:
-			if pp[0] == nid:
-				return
-		world.pending_peace.append([nid, w_root])
-		return
-	_peace(nid, winner, Diplomacy.ai_peace_mode(world, w_root))
-
-
-## Мир после капитуляции; вместо аннексии — правительство в изгнании, если есть куда.
-func _peace(nid: int, winner: int, mode: String) -> void:
-	if mode != "annex" or not Diplomacy.try_exile(world, nid, winner):
-		Diplomacy.make_peace(world, nid, winner, mode)
-	_fix_capitals()
+	# иначе — изгнание (есть колонии и союзники) или оккупация до конца войны
+	if not Diplomacy.try_exile(world, nid, winner):
+		Peace.capitulate(world, nid, winner)
 
 
 ## Кто занял наши провинции: страна → очки победы занятого (+1 за провинцию).
@@ -1343,11 +1379,24 @@ func resolve_event(option: int) -> void:
 	_fix_capitals()
 
 
-func resolve_peace(mode: String) -> void:
-	if world.pending_peace.is_empty():
+## Переговоры ждут хода игрока: kind = "annex" / "puppet" / "free" / "pass" / "done";
+## "auto" — за игрока до конца ходит ИИ (тесты, замеры).
+func resolve_peace(kind: String, arg: int = -1) -> void:
+	var w := Peace.current(world)
+	if w < 0:
+		world.pending_peace.clear()
 		return
-	var pp: Array = world.pending_peace.pop_front()
-	_peace(pp[0], pp[1], mode)
+	if kind == "auto" or kind == "annex" and arg < 0:
+		while not world.conference.is_empty() and world.nations[Peace.current(world)].is_player:
+			var me := Peace.current(world)
+			var pick := Peace.ai_pick(world, me)
+			if pick.is_empty():
+				Peace.act(world, me, "done")
+			else:
+				Peace.act(world, me, pick[0], pick[1])
+	else:
+		Peace.act(world, w, kind, arg)
+	_fix_capitals()
 
 
 func _phase_diplomacy() -> void:
@@ -1401,9 +1450,3 @@ func _move_capital(nat: World.Nation) -> bool:
 	world.log_event("%s: столица захвачена (%s), правительство переезжает в %s" % [nat.name, world.p_name[old], world.p_name[best]])
 	return true
 
-
-func _peace_pending(nid: int) -> bool:
-	for pp in world.pending_peace:
-		if pp[0] == nid:
-			return true
-	return false
