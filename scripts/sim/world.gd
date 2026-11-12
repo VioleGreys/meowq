@@ -586,6 +586,7 @@ var d_acl_cold := PackedFloat64Array()    # к холоду и горам 0..1
 var d_spd_eff := PackedFloat64Array()     # скорость с климатом (Climate.daily, на день)
 var d_atk_eff := PackedFloat64Array()     # атака с климатом
 var d_def_eff := PackedFloat64Array()     # оборона с климатом
+var civil_held := {}                      # провинция -> [кто держит, с какого дня]: гражданская война (History.civil_owner)
 var civil_pairs: Array = []               # [a, b] — стороны гражданской войны: взятое переходит во владение (History.civil_owner)
 var reg_chaos := {}                       # район -> множитель: неразбериха раскола страны (Climate.chaos)
 var chaos_lift := {}                      # страна -> {район: true}: где сторона навела порядок

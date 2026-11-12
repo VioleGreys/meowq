@@ -1403,9 +1403,12 @@ static func release(world: World, tag: String, provs: Array, overlord: int, take
 
 
 ## Гражданская война (как в жанре): страна одна, и взятая у другой стороны
-## провинция сразу её — с заводами и людьми (а не оккупация: половина заводов,
-## пятая часть людей). Потерявшая столицу сторона переносит её в крупнейший
+## провинция, удержанная CIVIL_INTEGRATE дней, — её, с заводами и людьми (до
+## того — занятая: половина заводов, пятая часть людей). Потерявшая столицу сторона переносит её в крупнейший
 ## свой город (правительство Республики — в Валенсию, потом в Барселону).
+const CIVIL_INTEGRATE := 120   # гражданская война: дней удержания, после которых взятая провинция — своя
+
+
 static func civil_owner(world: World) -> void:
 	var keep: Array = []
 	for pr in world.civil_pairs:
@@ -1419,8 +1422,17 @@ static func civil_owner(world: World) -> void:
 			var o := world.p_owner[p]
 			var c := world.p_controller[p]
 			if (o == a and c == b) or (o == b and c == a):
-				world.p_owner[p] = c
-				moved = true
+				# удержана CIVIL_INTEGRATE дней подряд — своя; до того — занятая
+				# (половина заводов, пятая часть людей): ранний успех не лавина
+				var hd: Variant = world.civil_held.get(p)
+				if hd == null or int(hd[0]) != c:
+					world.civil_held[p] = [c, world.day]
+				elif world.day - int(hd[1]) >= CIVIL_INTEGRATE:
+					world.p_owner[p] = c
+					world.civil_held.erase(p)
+					moved = true
+			elif world.civil_held.has(p):
+				world.civil_held.erase(p)
 		if moved:
 			for n in [a, b]:
 				var nat: World.Nation = world.nations[n]

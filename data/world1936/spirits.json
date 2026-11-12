@@ -161,7 +161,7 @@
         "attack": 0.05,
         "org": 0.05,
         "volunteers": 0.6,
-        "aid_eq": 2.5
+        "aid_eq": 4.0
       }
     },
     "nsp_condor": {
@@ -170,7 +170,7 @@
       "bonus": {
         "attack": 0.05,
         "volunteers": 0.3,
-        "aid_eq": 1.5
+        "aid_eq": 2.5
       }
     },
     "spr_casado": {
