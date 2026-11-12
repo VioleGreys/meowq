@@ -1617,6 +1617,8 @@ func _build_diplomacy(w: World, me: int) -> void:
 	popup_body.add_child(_dynamic["justify"])
 	# своя фракция
 	var fname := Diplomacy.faction_name(w, me)
+	if n.exile:
+		popup_body.add_child(_section("Правительство в изгнании: метрополия потеряна, воюем из колоний"))
 	if n.overlord >= 0:
 		popup_body.add_child(_section("Мы — марионетка страны %s" % w.nations[n.overlord].name))
 	elif fname != "":
@@ -1688,6 +1690,8 @@ func _build_nation_card(w: World, me: int, oid: int) -> void:
 	var info := "Фракция: %s · Дивизий: %d · Фабрики: %d/%d" % [f if f != "" else "нет", o.division_count, o.civ, o.mil]
 	if o.overlord >= 0:
 		info += "\nМарионетка страны %s" % w.nations[o.overlord].name
+	if o.exile:
+		info += "\nПравительство в изгнании: метрополия потеряна, воюет из колоний"
 	if o.neutral:
 		info += "\nТрадиционный нейтралитет"
 	popup_body.add_child(_small(info))

@@ -125,6 +125,7 @@ class Nation:
 	var trained_count := 0
 	var stats_dirty := true
 	var dormant := false        # появится по событию
+	var exile := false          # правительство в изгнании: метрополия потеряна, воюет колониями (Diplomacy.try_exile)
 	var capital_lonlat := Vector2.ZERO
 	# Фокусы (этап 5)
 	var focus_current := ""

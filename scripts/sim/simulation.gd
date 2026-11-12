@@ -1197,6 +1197,14 @@ func _cap_colonies() -> void:
 				d.alive = false   # гарнизон колонии сдаётся
 		world.palette_dirty = true
 		world.log_event("Колония сдаётся: %s (%s) переходит к стране %s" % [world.p_name[big], nat.name, world.nations[winner].name])
+		var left := false
+		for p in world.prov_count:
+			if world.p_owner[p] == o:
+				left = true
+				break
+		if not left:
+			Diplomacy.make_peace(world, o, winner, "annex")   # последняя земля правительства в изгнании
+		_fix_capitals()
 
 
 ## Двойник MeowqCore::cap_totals.
@@ -1261,12 +1269,8 @@ func _cap_countries() -> void:
 
 
 func _capitulate(nid: int) -> void:
+	var occ := _occupants(nid)
 	# главный победитель — тот, кто держит больше всего наших провинций
-	var occ := {}
-	for p in world.prov_count:
-		if world.p_owner[p] == nid and world.p_controller[p] != nid and world.p_controller[p] >= 0 \
-				and not Diplomacy.same_side(world, world.p_controller[p], nid):
-			occ[world.p_controller[p]] = int(occ.get(world.p_controller[p], 0)) + world.p_vp[p] + 1
 	var winner := -1
 	var best := -1
 	for k in occ:
@@ -1276,6 +1280,7 @@ func _capitulate(nid: int) -> void:
 	if winner < 0:
 		return
 	var w_root := Diplomacy.root(world, winner)
+	_spoils(nid, occ)
 	if History.capitulation_hook(world, nid, w_root, Parallel.rng(world.seed_value, world.day, 8888)):
 		_fix_capitals()
 		return
@@ -1286,8 +1291,47 @@ func _capitulate(nid: int) -> void:
 				return
 		world.pending_peace.append([nid, w_root])
 		return
-	Diplomacy.make_peace(world, nid, winner, Diplomacy.ai_peace_mode(world, w_root))
+	_peace(nid, winner, Diplomacy.ai_peace_mode(world, w_root))
+
+
+## Мир после капитуляции; вместо аннексии — правительство в изгнании, если есть куда.
+func _peace(nid: int, winner: int, mode: String) -> void:
+	if mode != "annex" or not Diplomacy.try_exile(world, nid, winner):
+		Diplomacy.make_peace(world, nid, winner, mode)
 	_fix_capitals()
+
+
+## Кто занял наши провинции: страна → очки победы занятого (+1 за провинцию).
+func _occupants(nid: int) -> Dictionary:
+	var occ := {}
+	for p in world.prov_count:
+		var c := world.p_controller[p]
+		if world.p_owner[p] == nid and c != nid and c >= 0 and not Diplomacy.same_side(world, c, nid):
+			occ[c] = int(occ.get(c, 0)) + world.p_vp[p] + 1
+	return occ
+
+
+const SPOILS := 0.5   # доля складов проигравшего, что достаётся победителям (решение пользователя)
+
+
+## Трофеи: половина складов проигравшего — победителям, по доле занятого ими.
+func _spoils(nid: int, occ: Dictionary) -> void:
+	var nl: World.Nation = world.nations[nid]
+	var tot := 0
+	for k in occ:
+		tot += int(occ[k])
+	if tot <= 0:
+		return
+	var ks := occ.keys()
+	ks.sort()
+	for k in ks:
+		var nw: World.Nation = world.nations[k]
+		var f := SPOILS * float(occ[k]) / float(tot)
+		for e in Military.EQ_COUNT:
+			nw.stock[e] += nl.stock[e] * f
+	for e in Military.EQ_COUNT:
+		nl.stock[e] *= 1.0 - SPOILS
+	world.log_event("%s: половина складов достаётся победителям" % nl.name)
 
 
 func resolve_event(option: int) -> void:
@@ -1303,8 +1347,7 @@ func resolve_peace(mode: String) -> void:
 	if world.pending_peace.is_empty():
 		return
 	var pp: Array = world.pending_peace.pop_front()
-	Diplomacy.make_peace(world, pp[0], pp[1], mode)
-	_fix_capitals()
+	_peace(pp[0], pp[1], mode)
 
 
 func _phase_diplomacy() -> void:

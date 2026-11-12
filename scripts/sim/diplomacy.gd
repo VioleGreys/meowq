@@ -422,6 +422,68 @@ static func make_peace(world: World, loser: int, winner: int, mode: String) -> v
 	world.rebuild_prov_divs()
 
 
+const EXILE_VP := 10   # нужно свободных колоний, очков победы
+
+
+## Правительство в изгнании (решение пользователя, ноябрь 2026): вместо
+## аннексии страна, у которой остались свободные колонии и чьи союзники
+## (кто воюет с победителем) продолжают войну, теряет только метрополию —
+## занятое отходит оккупантам, остальное победителю, — а сама переезжает в
+## крупнейший колониальный город и воюет дальше: колонии, их гарнизоны, флот и
+## авиация остаются. Колонии потом капитулируют по одной (_cap_colonies).
+static func try_exile(world: World, loser: int, winner: int) -> bool:
+	if world.p_colony.size() != world.prov_count:
+		return false
+	var nl: World.Nation = world.nations[loser]
+	var best := -1
+	var free_vp := 0
+	for p in world.prov_count:
+		if world.p_owner[p] == loser and world.p_controller[p] == loser and world.p_colony[p] == 1 and world.p_land[p] == 1:
+			free_vp += world.p_vp[p]
+			if best < 0 or world.p_vp[p] > world.p_vp[best] or (world.p_vp[p] == world.p_vp[best] and world.p_population[p] > world.p_population[best]):
+				best = p
+	# только настоящая колониальная держава: клочок земли (Гренландия, отнятый
+	# у соседа порт) не держит правительство
+	if best < 0 or free_vp < EXILE_VP:
+		return false
+	var ally := false
+	for o in world.nations:
+		if o.alive and o.id != loser and o.id != winner and world.is_at_war(o.id, winner) and not world.is_at_war(o.id, loser):
+			ally = true
+			break
+	if not ally:
+		return false
+	world.focus_epoch += 1
+	var moved := PackedByteArray()
+	moved.resize(world.prov_count)
+	var n_moved := 0
+	for p in world.prov_count:
+		if world.p_owner[p] != loser or world.p_colony[p] == 1:
+			continue
+		var c := world.p_controller[p]
+		var to := c if c >= 0 and c != loser and world.is_at_war(loser, c) else winner
+		world.p_owner[p] = to
+		if c == loser or c < 0:
+			world.p_controller[p] = to
+		moved[p] = 1
+		n_moved += 1
+	# войска в метрополии сдаются, за её пределами (колонии, фронт союзников) — воюют дальше
+	for d in world.divisions:
+		if d.alive and d.owner == loser and moved[d.prov] == 1:
+			d.alive = false
+	var old := nl.capital
+	nl.capital = best
+	nl.exile = true
+	nl.training.clear()
+	nl.justify_target = -1
+	add_tension(world, 1.5)
+	world.log_event("%s: метрополия потеряна (%s), правительство в изгнании продолжает войну из колоний — столица %s" \
+			% [nl.name, world.p_name[old] if old >= 0 else "?", world.p_name[best]])
+	world.palette_dirty = true
+	world.rebuild_prov_divs()
+	return true
+
+
 static func ai_peace_mode(world: World, winner: int) -> String:
 	var ide: String = world.nations[winner].ideology
 	return "puppet" if ide == "democracy" else "annex"
