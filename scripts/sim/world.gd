@@ -1447,7 +1447,12 @@ func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus:
 		if d_battle[i] != 0:
 			continue
 		var rate := 0.06 if d_next[i] < 0 else 0.03
-		d_org[i] = minf(d_morg[i], d_org[i] + d_morg[i] * rate * (0.3 + 0.7 * sup))
+		# потолок организации — по снабжению (до 100 %); выше потолка — сползает к нему
+		var cap := d_morg[i] * minf(1.0, sup)
+		if d_org[i] > cap:
+			d_org[i] = maxf(cap, d_org[i] - d_morg[i] * ORG_DECAY)
+		else:
+			d_org[i] = minf(cap, d_org[i] + d_morg[i] * rate * (0.3 + 0.7 * sup))
 		var o := d_owner[i]
 		var c := p_controller[d_prov[i]]
 		if c != o and ally[o * nc + c] != 1:
@@ -1600,7 +1605,7 @@ func k_snapshot() -> void:
 		dv_str[i] = st
 		var orgf := clampf(d_org[i] / maxf(1.0, d_morg[i]), 0.0, 1.0)
 		dv_org[i] = orgf
-		dv_power[i] = st * (d_atk[i] / 10.0) * (0.4 + 0.6 * d_eq[i]) * (0.5 + 0.5 * d_sup[i])
+		dv_power[i] = st * (d_atk[i] / 10.0) * (0.4 + 0.6 * d_eq[i]) * sup_mult(d_sup[i])
 		dv_defw[i] = st * orgf * (0.4 + 0.6 * d_eq[i])
 		if d_transit[i] <= 0:
 			counts[d_prov[i] + 1] += 1
@@ -1691,14 +1696,15 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 		# урон — по доле в линии (не влезшая целиком дивизия получает меньше)
 		var to_def := att_power / _wsum(dw)
 		var to_att := def_power / _wsum(aw)
+		# истощённые (снабжение < SUP_EXH) теряют людей в 1,5 раза больше
 		for j in defenders.size():
 			dl.append(defenders[j])
 			dl.append(to_def * dw[j] * 0.55)
-			dl.append(to_def * dw[j] * 0.12)
+			dl.append(to_def * dw[j] * 0.12 * (EXH_LOSS if d_sup[defenders[j]] < SUP_EXH else 1.0))
 		for j in attackers.size():
 			dl.append(attackers[j])
 			dl.append(to_att * aw[j] * 0.5)
-			dl.append(to_att * aw[j] * 0.10)
+			dl.append(to_att * aw[j] * 0.10 * (EXH_LOSS if d_sup[attackers[j]] < SUP_EXH else 1.0))
 		all_deltas.append(dl)
 	for dl: PackedFloat64Array in all_deltas:
 		for j in range(0, dl.size(), 3):
@@ -1707,6 +1713,20 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 			d_org[i] = maxf(0.0, d_org[i] - dl[j + 1])
 			d_str[i] = maxf(0.0, d_str[i] - dl[j + 2])
 			d_eq[i] = maxf(0.0, d_eq[i] - dl[j + 2] / 100.0 * 0.9)   # потери техники
+
+
+# Снабжение (решение пользователя): ниже SUP_BAD — «плохое снабжение», атака и
+# оборона ×0,75; ниже SUP_EXH — «истощение», ×0,5 и потери людей в бою ×1,5.
+# Потолок организации = максимум × снабжение; выше него — −ORG_DECAY в день.
+const SUP_BAD := 0.5
+const SUP_EXH := 0.25
+const EXH_LOSS := 1.5
+const ORG_DECAY := 0.03
+
+
+## Множитель атаки и обороны по снабжению. C++ — sup_mult в kernels.cpp.
+static func sup_mult(s: float) -> float:
+	return 1.0 if s >= SUP_BAD else (0.75 if s >= SUP_EXH else 0.5)
 
 
 ## Ширина фронта боя: по местности провинции и числу направлений атаки
@@ -1760,7 +1780,7 @@ func _side_power(slots: PackedInt32Array, terr: int, defending: bool, atk: Packe
 		var i := slots[j]
 		var w: float = d_str[i] / 100.0 * part[j]
 		var base: float = d_def[i] * (1.0 + 0.3 * d_ent[i]) if defending else atk[i] * (0.5 if d_land[i] == 1 else 1.0)
-		power += base * w * (0.4 + 0.6 * d_eq[i]) * (0.5 + 0.5 * d_sup[i]) * tpl_terrain[d_tpl[i] * 8 + terr]
+		power += base * w * (0.4 + 0.6 * d_eq[i]) * sup_mult(d_sup[i]) * tpl_terrain[d_tpl[i] * 8 + terr]
 		hard += d_hard[i] * w
 		wsum += w
 	return PackedFloat64Array([power, hard / maxf(wsum, 0.01)])

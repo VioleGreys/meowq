@@ -58,6 +58,13 @@ func _init() -> void:
 	var low: float = Military.side_power([inf], World.T_PLAINS, tmul, true)[0]
 	inf.eq = 1.0
 	check(low < Military.side_power([inf], World.T_PLAINS, tmul, true)[0] * 0.7, "нехватка снаряжения ослабляет дивизию")
+	var full: float = Military.side_power([inf], World.T_PLAINS, tmul, true)[0]
+	inf.supply = 0.4
+	var p_bad: float = Military.side_power([inf], World.T_PLAINS, tmul, true)[0]
+	inf.supply = 0.2
+	var p_exh: float = Military.side_power([inf], World.T_PLAINS, tmul, true)[0]
+	inf.supply = 1.0
+	check(is_equal_approx(p_bad, full * 0.75) and is_equal_approx(p_exh, full * 0.5), "плохое снабжение — сила ×0,75, истощение — ×0,5 (%.1f, %.1f из %.1f)" % [p_bad, p_exh, full])
 
 	print("Ширина фронта:")
 	r = fresh()

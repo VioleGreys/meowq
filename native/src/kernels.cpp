@@ -9,6 +9,10 @@
 
 using namespace godot;
 
+// Снабжение (World.sup_mult и константы — двойники)
+static constexpr double SUP_BAD = 0.5, SUP_EXH = 0.25, EXH_LOSS = 1.5, ORG_DECAY = 0.03;
+static inline double sup_mult(double s) { return s >= SUP_BAD ? 1.0 : (s >= SUP_EXH ? 0.75 : 0.5); }
+
 static inline double clampd(double v, double lo, double hi) { return v < lo ? lo : (v > hi ? hi : v); }
 static inline double maxd(double a, double b) { return a > b ? a : b; }   // как maxf в Godot
 static inline double mind(double a, double b) { return a < b ? a : b; }
@@ -42,7 +46,11 @@ Array MeowqCore::recovery(const PackedByteArray &alive, const PackedInt32Array &
 		o_ent[i] = nx[i] < 0 ? mind(1.0, o_ent[i] + 0.05) : 0.0;
 		if (bt[i] != 0) continue;
 		const double rate = nx[i] < 0 ? 0.06 : 0.03;
-		o_org[i] = mind(mo[i], o_org[i] + mo[i] * rate * (0.3 + 0.7 * s));
+		const double cap = mo[i] * mind(1.0, s);
+		if (o_org[i] > cap)
+			o_org[i] = maxd(cap, o_org[i] - mo[i] * ORG_DECAY);
+		else
+			o_org[i] = mind(cap, o_org[i] + mo[i] * rate * (0.3 + 0.7 * s));
 		const int32_t o = ow[i];
 		const int32_t c = ct[pv[i]];
 		if (c != o && ally_p[int64_t(o) * nc + c] != 1) continue;
@@ -196,7 +204,7 @@ Array MeowqCore::snapshot(const PackedInt32Array &next, const PackedByteArray &b
 		fs[i] = float(s);
 		const double orgf = clampd(og[i] / maxd(1.0, mo[i]), 0.0, 1.0);
 		fo[i] = float(orgf);
-		fp[i] = float(s * (at[i] / 10.0) * (0.4 + 0.6 * e[i]) * (0.5 + 0.5 * su[i]));
+		fp[i] = float(s * (at[i] / 10.0) * (0.4 + 0.6 * e[i]) * sup_mult(su[i]));
 		fd[i] = float(s * orgf * (0.4 + 0.6 * e[i]));
 		if (tr[i] <= 0) ps[pv[i] + 1]++;
 	}
@@ -403,7 +411,7 @@ static SidePower side_power(const int32_t *slots, const double *part, int64_t co
 		const int32_t i = slots[k];
 		const double w = str[i] / 100.0 * part[k];
 		const double base = defending ? def[i] * (1.0 + 0.3 * ent[i]) : atk[i] * (landing[i] == 1 ? 0.5 : 1.0);
-		power += base * w * (0.4 + 0.6 * eq[i]) * (0.5 + 0.5 * sup[i]) * double(tmul[tpl[i] * 8 + terr]);
+		power += base * w * (0.4 + 0.6 * eq[i]) * sup_mult(sup[i]) * double(tmul[tpl[i] * 8 + terr]);
 		hd += hard[i] * w;
 		wsum += w;
 	}
@@ -504,8 +512,10 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard);
 		const double to_def = att_power / wsum(dw);
 		const double to_att = def_power / wsum(aw);
-		for (size_t j = 0; j < defenders.size(); j++) deltas.push_back({ defenders[j], to_def * dw[j] * 0.55, to_def * dw[j] * 0.12 });
-		for (size_t j = 0; j < attackers.size(); j++) deltas.push_back({ attackers[j], to_att * aw[j] * 0.5, to_att * aw[j] * 0.10 });
+		for (size_t j = 0; j < defenders.size(); j++)
+			deltas.push_back({ defenders[j], to_def * dw[j] * 0.55, to_def * dw[j] * 0.12 * (su[defenders[j]] < SUP_EXH ? EXH_LOSS : 1.0) });
+		for (size_t j = 0; j < attackers.size(); j++)
+			deltas.push_back({ attackers[j], to_att * aw[j] * 0.5, to_att * aw[j] * 0.10 * (su[attackers[j]] < SUP_EXH ? EXH_LOSS : 1.0) });
 	}
 	double *o = org.ptrw(), *s = str.ptrw(), *q = eq.ptrw();
 	uint8_t *bt = battle.ptrw();
