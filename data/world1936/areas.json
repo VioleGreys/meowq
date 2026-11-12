@@ -20,5 +20,11 @@
   "teschen": {"name": "Тешинская область", "owner": "CZE", "boxes": [[18.3, 49.55, 18.95, 50.0]]},
   "macedonia": {"name": "Вардарская Македония", "owner": "YUG", "boxes": [[20.4, 40.8, 23.0, 42.4]]},
   "thrace": {"name": "Западная Фракия", "owner": "GRE", "boxes": [[23.6, 40.6, 26.7, 41.6]]},
-  "alsace_lorraine": {"name": "Эльзас и Лотарингия", "owner": "FRA", "boxes": [[5.9, 47.4, 8.3, 49.6]]}
+  "alsace_lorraine": {"name": "Эльзас и Лотарингия", "owner": "FRA", "boxes": [[5.9, 47.4, 8.3, 49.6]]},
+  "free_france_1940": {"name": "Французская Экваториальная Африка, Камерун и Тихий океан", "owner": "FRA", "adm0": ["TCD", "CMR", "COG", "GAB", "CAF", "NCL", "PYF", "IND"]},
+  "fra_occupied_1940": {"name": "Оккупированная зона (линия перемирия 1940 г.)", "owner": "FRA", "boxes": [[0.0, 46.9, 8.5, 51.5], [-5.5, 43.3, 0.4, 51.0]]},
+  "vichy_spm": {"name": "Сен-Пьер и Микелон", "owner": "VIC", "adm0": ["SPM", "WLF"]},
+  "vichy_levant": {"name": "Сирия и Ливан", "owner": "VIC", "adm0": ["SYR", "LBN"]},
+  "vichy_madagascar": {"name": "Мадагаскар и Коморы", "owner": "VIC", "adm0": ["MDG", "COM", "ATF"]},
+  "vichy_africa": {"name": "Северная и Западная Африка", "owner": "VIC", "adm0": ["DZA", "MAR", "TUN", "SEN", "MRT", "MLI", "GIN", "CIV", "BFA", "NER", "BEN", "TGO", "DJI"]}
 }

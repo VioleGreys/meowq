@@ -574,6 +574,7 @@ func _phase_ai() -> void:
 	var jobs: Array = []
 	for nat in world.nations:
 		if nat.alive and not nat.is_player:
+			_offensive_step(nat)
 			jobs.append({"nation": nat.id})
 			# развёртывание к запланированной фокусами войне: часть армии заранее
 			# держит фронт на границе с будущим противником (как армия игрока)
@@ -837,23 +838,62 @@ func _is_staged(slot: int) -> bool:
 
 ## Будущий противник для развёртывания: война из текущего или следующего фокуса,
 ## ещё не начатая, и есть общая сухопутная граница.
+## План наступления: веха взята (у нас или у союзника по стороне) — к следующей;
+## последняя взята или цель вышла из войны (сдалась, мир) — план закончен.
+func _offensive_step(nat: World.Nation) -> void:
+	if nat.offensive.is_empty():
+		return
+	var tgt: int = nat.offensive[0]
+	var route: PackedInt32Array = nat.offensive[1]
+	var t_nat: World.Nation = world.nations[tgt]
+	if not t_nat.alive or t_nat.capitulated or (not world.is_at_war(nat.id, tgt) and not nat.planned_wars.has(tgt)):
+		nat.offensive = []
+		return
+	var i: int = nat.offensive[2]
+	while i < route.size():
+		var c := world.p_controller[route[i]]
+		if c != nat.id and not (c >= 0 and Diplomacy.same_side(world, c, nat.id)):
+			break
+		i += 1
+		if i < route.size() and (nat.is_player or nat.major):
+			world.log_event("%s: план «%s» — взят %s, удар на %s" % [nat.name, nat.offensive[3], world.p_name[route[i - 1]], world.p_name[route[i]]])
+	if i >= route.size():
+		nat.offensive = []
+	else:
+		nat.offensive[2] = i
+
+
 func _staging_enemy(nat: World.Nation) -> int:
+	# из будущих противников, граничащих с нами, — тот, у кого длиннее граница с
+	# нынешними врагами (путь к ним: Бельгия к Франции в 1940 г., а не Нидерланды);
+	# при равенстве — меньший номер страны
 	if nat.planned_wars.is_empty():
 		return -1
 	var keys: Array = nat.planned_wars.keys()
 	keys.sort()
+	var ctrl := world.p_controller
+	var best := -1
+	var best_v := -1
 	for x in keys:
 		var xi: int = x
 		if xi < 0 or not world.nations[xi].alive or world.is_at_war(nat.id, xi):
 			continue
-		var ctrl := world.p_controller
+		var touch := false
+		var v := 0
 		for p in world.prov_count:
-			if ctrl[p] != nat.id:
+			var c := ctrl[p]
+			if c != nat.id and c != xi:
 				continue
 			for k in range(world.adj_start[p], world.adj_start[p + 1]):
-				if ctrl[world.adj_list[k]] == xi:
-					return xi
-	return -1
+				var q := ctrl[world.adj_list[k]]
+				if c == nat.id and q == xi:
+					touch = true
+				elif c == xi and q >= 0 and q != xi and nat.at_war.has(q):
+					v += 1
+		if touch and v > best_v:
+			best = xi
+			best_v = v
+	return best
 
 
 func _finish_ai() -> void:

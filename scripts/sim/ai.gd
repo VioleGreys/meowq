@@ -69,7 +69,25 @@ static func nation_args(world: World, nid: int, mine: PackedInt32Array) -> Array
 			ratio = 1.7
 	# черты с ключом caution — наступать только при большем перевесе
 	ratio *= 1.0 + maxf(0.0, nat.b("caution"))
-	return military_args(world, nid, mine, {"mode": "auto", "ratio": ratio})
+	var opts := {"mode": "auto", "ratio": ratio}
+	# план наступления: цели атаки ближе к текущей вехе — первыми, у направления
+	# удара — больше дивизий (Simulation._offensive_step двигает вехи)
+	var obj := offensive_objective(world, nat)
+	if obj >= 0:
+		opts["objective"] = obj
+	return military_args(world, nid, mine, opts)
+
+
+## Текущая веха плана наступления страны (-1 — плана нет или война с целью не идёт).
+static func offensive_objective(world: World, nat: World.Nation) -> int:
+	if nat.offensive.is_empty():
+		return -1
+	var tgt: int = nat.offensive[0]
+	if not world.is_at_war(nat.id, tgt):
+		return -1
+	var route: PackedInt32Array = nat.offensive[1]
+	var i: int = nat.offensive[2]
+	return route[i] if i < route.size() else -1
 
 
 ## Аргументы plan_job из opts (главный поток): всё, что план читает у страны.
@@ -317,6 +335,8 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		for entry in target_list:
 			var t: int = entry[1]
 			var need: float = entry[2] * ratio
+			# направление главного удара к цели наступления — сил с запасом (AXIS_COMMIT)
+			var commit := need * AXIS_COMMIT if objective >= 0 and main_axis.has(t) else need
 			# осторожная страна не лезет в пустую провинцию-выступ (котёл)
 			if float(entry[2]) <= 0.0 and ratio >= 4.0 and int(entry[3]) < 2:
 				continue
@@ -343,7 +363,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				chosen.append(i)
 				left[pv] = int(left[pv]) - 1
 				power += dv_power[i]
-				if power > need and (entry[2] <= 0.0 or chosen.size() >= 2):
+				if power > commit and (entry[2] <= 0.0 or chosen.size() >= 2):
 					break
 			if power > need and not chosen.is_empty():
 				for i in chosen:
@@ -395,6 +415,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		per_front[dv_prov[i]] = int(per_front.get(dv_prov[i], 0)) - 1
 	var weight := {}
 	var wsum := 0.0
+	var axis_front := {}   # к цели наступления: участки главного удара — до ёмкости снабжения
 	for f in fronts:
 		var threat := 0.0
 		for k in range(a_start[f], a_start[f + 1]):
@@ -409,14 +430,26 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			for k in range(a_start[f], a_start[f + 1]):
 				if main_axis.has(a_list[k]):
 					weight[f] = float(weight[f]) + 3.0
+					if objective >= 0:
+						axis_front[f] = true
 					break
 		wsum += weight[f]
 	var desired := {}
+	# план наступления: участкам главного удара — до ёмкости снабжения, прочим —
+	# остаток армии (их лишние дивизии уходят к удару)
+	var pool := divs.size()
+	if has_cap and not axis_front.is_empty():
+		for f in axis_front:
+			pool -= maxi(1, int(floor(supcap[f])))
+		pool = maxi(0, pool)
 	for f in fronts:
-		desired[f] = maxi(1, int(round(divs.size() * weight[f] / wsum)))
+		desired[f] = maxi(1, int(round(pool * weight[f] / wsum)))
 		# не больше, чем провинция прокормит (снабжение по узлам районов)
 		if has_cap:
 			desired[f] = mini(int(desired[f]), maxi(1, int(floor(supcap[f]))))
+			# план наступления: участки главного удара заполняем до ёмкости снабжения
+			if axis_front.has(f):
+				desired[f] = maxi(1, int(floor(supcap[f])))
 	for i in idle:
 		if used.has(i):
 			continue
@@ -424,9 +457,14 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		if fronts.has(pv) and int(per_front.get(pv, 0)) <= int(desired[pv]) + 1:
 			continue
 		var goal := {}
-		for f in fronts:
+		# план наступления: пока участки удара не заполнены — только к ним
+		for f in axis_front:
 			if int(per_front.get(f, 0)) < int(desired[f]) and f != pv:
 				goal[f] = true
+		if goal.is_empty():
+			for f in fronts:
+				if int(per_front.get(f, 0)) < int(desired[f]) and f != pv:
+					goal[f] = true
 		if goal.is_empty():
 			continue
 		var path := _nearest(tb, nid, pv, goal)
@@ -490,6 +528,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 const SUP_BAD := 0.5     # как World.SUP_BAD / SUP_EXH (константы скрипта мира из потоков не читаем)
 const SUP_EXH := 0.25
 const CLIM_ATK := 0.25   # как Climate: атака × (1 − 0,25 × неакклиматизированность)
+const AXIS_COMMIT := 2.0 # к цели наступления (план, группа с целью): на лучшие цели — вдвое больше нужного
 
 
 static func _sup_mult(sv: float) -> float:

@@ -267,6 +267,8 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		for (const Entry &entry : target_list) {
 			const int32_t t = entry.t;
 			const double need = entry.es * ratio;
+			// направление главного удара к цели наступления — сил с запасом (как ai.gd)
+			const double commit = (objective >= 0 && main_axis[t]) ? need * 2.0 : need;
 			// осторожная страна не лезет в пустую провинцию-выступ (котёл)
 			if (entry.es <= 0.0 && ratio >= 4.0 && entry.dirs < 2) continue;
 			group.clear();
@@ -291,7 +293,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 				chosen.push_back(i);
 				left[pv] -= 1;
 				power += double(dv_power[i]);
-				if (power > need && (entry.es <= 0.0 || chosen.size() >= 2)) break;
+				if (power > commit && (entry.es <= 0.0 || chosen.size() >= 2)) break;
 			}
 			if (power > need && !chosen.empty()) {
 				for (int32_t i : chosen) {
@@ -355,6 +357,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	}
 	for (int32_t i : rotated) per_front[dv_prov[i]] -= 1;
 	std::vector<double> weight(pc, 0.0);
+	std::vector<char> axis_front(pc, 0);
 	double wsum = 0.0;
 	for (int32_t f : fronts.order) {
 		double threat = 0.0;
@@ -371,15 +374,24 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			for (int32_t k = a_start[f]; k < a_start[f + 1]; k++)
 				if (main_axis[a_list[k]]) {
 					weight[f] += 3.0;
+					if (objective >= 0) axis_front[f] = 1;   // план наступления: до ёмкости снабжения (как ai.gd)
 					break;
 				}
 		}
 		wsum += weight[f];
 	}
 	std::vector<int32_t> desired(pc, 0);
+	// план наступления: участкам удара — до ёмкости снабжения, прочим — остаток (как ai.gd)
+	int64_t pool = divs.size();
+	if (has_cap) {
+		for (int32_t f : fronts.order)
+			if (axis_front[f]) pool -= capd(f);
+		if (pool < 0) pool = 0;
+	}
 	for (int32_t f : fronts.order) {
-		desired[f] = std::max(1, int(std::round(divs.size() * weight[f] / wsum)));
+		desired[f] = std::max(1, int(std::round(double(pool) * weight[f] / wsum)));
 		if (has_cap) desired[f] = std::min(desired[f], capd(f));
+		if (has_cap && axis_front[f]) desired[f] = capd(f);
 	}
 
 	// поиск пути к ближайшему участку (как Pathfinder.nearest_goal)
@@ -391,8 +403,12 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		const int32_t pv = dv_prov[i];
 		if (fronts.has[pv] && per_front[pv] <= desired[pv] + 1) continue;
 		std::vector<int32_t> goals;
+		// план наступления: пока участки удара не заполнены — только к ним (как ai.gd)
 		for (int32_t f : fronts.order)
-			if (per_front[f] < desired[f] && f != pv) goals.push_back(f);
+			if (axis_front[f] && per_front[f] < desired[f] && f != pv) goals.push_back(f);
+		if (goals.empty())
+			for (int32_t f : fronts.order)
+				if (per_front[f] < desired[f] && f != pv) goals.push_back(f);
 		if (goals.empty()) continue;
 		for (int32_t g : goals) goal[g] = 1;
 		std::fill(parent.begin(), parent.end(), -1);

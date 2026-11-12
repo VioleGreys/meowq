@@ -1072,6 +1072,18 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 					nat.no_attack[target] = true
 			"no_attack_end":
 				nat.no_attack.erase(target)
+			"offensive":
+				# план наступления: {"target", "route": [провинции-вехи по названиям], "name"}
+				var route := PackedInt32Array()
+				var names := Array(world.p_name)
+				for city in e.get("route", []):
+					var cp := names.find(String(city))
+					if cp >= 0:
+						route.append(cp)
+				if target >= 0 and not route.is_empty():
+					nat.offensive = [target, route, 0, String(e.get("name", ""))]
+			"offensive_end":
+				nat.offensive = []
 			"spirit_add":
 				nat.spirits[String(e["id"])] = float(e.get("v", 1.0))
 				world.recalc_spirits(nat)
@@ -1522,7 +1534,7 @@ static func capitulation_hook(world: World, loser: int, winner: int, rng: Random
 			return true
 		for e in rule.get("effects", []):
 			if e["t"] == "vichy":
-				_vichy(world, loser, winner, e["tag"])
+				_vichy(world, loser, winner, e["tag"], e.get("free", {}), String(e.get("zone", "")))
 			else:
 				apply(world, loser, [e], rng)   # например, мир с передачей области
 		if rule.has("fire"):
@@ -1546,17 +1558,55 @@ static func _partition(world: World, loser: int, winner: int) -> void:
 	annex(world, winner, loser)
 
 
-static func _vichy(world: World, loser: int, winner: int, tag: String) -> void:
-	# оккупированное остаётся оккупантам, неоккупированное — новому режиму
-	var free: Array = []
+static func _vichy(world: World, loser: int, winner: int, tag: String, free: Dictionary = {}, zone_name: String = "") -> void:
+	# «Свободная Франция» (free: {"tag", "area"}): свободные колонии из области
+	# уходят к правительству в изгнании — с гарнизонами, в блок и войны союзников
+	var lost_faction: int = world.nations[loser].faction
+	var ffr := -1
+	if not free.is_empty():
+		var fp: Array = []
+		for p in area(world, String(free.get("area", ""))):
+			if world.p_controller[p] == loser:
+				fp.append(p)
+		if not fp.is_empty():
+			ffr = release(world, String(free["tag"]), fp, -1, true)
+			if ffr >= 0:
+				var fn: World.Nation = world.nations[ffr]
+				fn.exile = true
+				if lost_faction >= 0 and world.factions[lost_faction].alive and world.factions[lost_faction].leader != loser:
+					Diplomacy.join_faction(world, ffr, lost_faction)
+				else:
+					for o in world.nations[loser].at_war:
+						world.set_war(ffr, int(o))
+				# флот в портах и морях за пределами занятой метрополии — часть кораблей ушла в Англию
+				var fl_best: World.Fleet = null
+				for f in world.fleets:
+					if f.alive and f.owner == loser and (fl_best == null or f.power < fl_best.power):
+						fl_best = f
+				if fl_best != null:
+					fl_best.owner = ffr
+				# добровольцы де Голля: части, ушедшие в Англию, и колониальные батальоны
+				for k in int(free.get("divisions", 0)):
+					world.spawn_division(ffr, fn.capital, Military.T_INF)
+				world.log_event(String(free.get("log", "Генерал де Голль из Лондона: «Франция проиграла битву, но не войну!» — %s продолжает борьбу" % fn.name)))
+	# оккупированное остаётся оккупантам; зона по линии перемирия (zone) — победителю,
+	# даже если её ещё держали французы (Мажино); остальное — новому режиму
+	var zone := {}
+	for p in area(world, zone_name):
+		zone[p] = true
+	var w_root := Diplomacy.root(world, winner)
+	var vfree: Array = []
 	for p in world.prov_count:
 		if world.p_owner[p] != loser:
 			continue
 		var c := world.p_controller[p]
-		if c != loser and world.is_at_war(loser, c):
+		if (c == loser or c < 0) and zone.has(p):
+			world.p_owner[p] = w_root
+			world.p_controller[p] = w_root
+		elif c != loser and world.is_at_war(loser, c):
 			world.p_owner[p] = c
 		else:
-			free.append(p)
+			vfree.append(p)
 	for d in world.divisions:
 		if d.owner == loser:
 			d.alive = false
@@ -1564,15 +1614,21 @@ static func _vichy(world: World, loser: int, winner: int, tag: String) -> void:
 	if world.nations[loser].faction >= 0:
 		Diplomacy.leave_faction(world, loser)
 	world.nations[loser].alive = false
-	if not free.is_empty():
-		for p in free:
+	if not vfree.is_empty():
+		for p in vfree:
 			world.p_controller[p] = loser
-		var v := release(world, tag, free, Diplomacy.root(world, winner))
+		var v := release(world, tag, vfree, Diplomacy.root(world, winner))
 		if v >= 0:
-			world.nations[v].at_war.clear()
-			for o in world.nations:
-				o.at_war.erase(v)
+			# режим вне войны: снять и унаследованные от сюзерена войны (матрица тоже)
+			world.end_wars_of(v)
+			# оставшийся флот — Виши
+			for f in world.fleets:
+				if f.alive and f.owner == loser:
+					f.owner = v
 			world.build_caches()
+	for wg in world.wings:
+		if wg.alive and wg.owner == loser:
+			wg.alive = false
 	world.rebuild_prov_divs()
 	world.palette_dirty = true
 
@@ -1710,6 +1766,10 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sбез наступления на %s" % [who, tname])
 			"no_attack_end":
 				parts.append("%sнаступление на %s" % [who, tname])
+			"offensive":
+				parts.append("%sплан наступления%s: %s" % [who, " «%s»" % e["name"] if e.has("name") else "", " → ".join(e.get("route", []))])
+			"offensive_end":
+				parts.append("%sплан наступления закончен" % who)
 			"spirit_add":
 				parts.append("%sчерта «%s»" % [who, world.spirit_defs.get(e["id"], {}).get("name", e["id"])])
 			"spirit_remove":

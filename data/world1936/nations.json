@@ -1188,6 +1188,37 @@
     "emblem": "#d4a017"
    }
   },
+  "FFR": {
+   "dormant": true,
+   "name": "Свободная Франция",
+   "full_name": "Свободная Франция",
+   "ideology": "democracy",
+   "leader": "Шарль де Голль",
+   "title": "Глава Свободной Франции",
+   "color": [
+    60,
+    90,
+    170
+   ],
+   "capital_lonlat": [
+    15.28,
+    -4.27
+   ],
+   "population": 0,
+   "civ": 0,
+   "mil": 0,
+   "divisions": 0,
+   "techs": ["inf1", "sw1", "mot1", "armor1", "lt2", "mnt1", "art1", "at1", "eng1", "dd1", "dd2", "cr1", "bb1", "ss1", "med1", "rec1"],
+   "flag": {
+    "t": "v",
+    "c": [
+     "#0055a4",
+     "#ffffff",
+     "#ef4135"
+    ],
+    "emblem": "#c8102e"
+   }
+  },
   "USA": {
    "doctrine": {"land": "fire", "navy": "car", "air": "bmb"},
    "spirits": ["usa_arsenal", "usa_isolation"],
