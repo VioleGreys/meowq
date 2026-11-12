@@ -1336,11 +1336,16 @@ func _cap_countries() -> void:
 	for nat in world.nations:
 		if nat.alive and nat.exile and world.p_controller[nat.capital] != nat.id:
 			_move_capital(nat)   # изгнанники переезжают внутри колоний
+		# гражданская война: взятое у другой стороны — своё (History.civil_owner),
+		# доля — к зоне в день раскола (и когда в метрополии не осталось ничего)
+		var cr := History.civil_ratio(world, nat.id) if nat.alive and not world.civil_pairs.is_empty() else -1.0
 		if nat.alive and _cap_total[nat.id] > 0:
 			nat.vp_ratio = float(_cap_held[nat.id]) / float(_cap_total[nat.id])
-		if not nat.alive or nat.capitulated or nat.exile or nat.at_war.is_empty() or _cap_total[nat.id] == 0:
+		if cr >= 0.0:
+			nat.vp_ratio = cr
+		if not nat.alive or nat.capitulated or nat.exile or nat.at_war.is_empty() or (_cap_total[nat.id] == 0 and cr < 0.0):
 			continue
-		var ratio := float(_cap_held[nat.id]) / float(_cap_total[nat.id])
+		var ratio := cr if cr >= 0.0 else float(_cap_held[nat.id]) / float(_cap_total[nat.id])
 		# порог капитуляции: базовый + черты (расколотое правительство, бескрайние
 		# просторы); черта capital_fall — капитуляция и при потере столицы противнику
 		var c_ctl := world.p_controller[nat.capital]
@@ -1378,6 +1383,11 @@ func _capitulate(nid: int) -> void:
 		if occ[k] > best:
 			best = occ[k]
 			winner = k
+	# гражданская война: взятое у нас — уже не наше (History.civil_owner), победитель — другая сторона
+	if winner < 0:
+		for pr in world.civil_pairs:
+			if int(pr[0]) == nid or int(pr[1]) == nid:
+				winner = int(pr[1]) if int(pr[0]) == nid else int(pr[0])
 	if winner < 0:
 		return
 	var w_root := Diplomacy.root(world, winner)

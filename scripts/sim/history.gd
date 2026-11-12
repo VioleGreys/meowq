@@ -240,6 +240,8 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 		world.scheduled = keep_s
 		for sc in due:
 			apply(world, int(sc[1]), sc[2], rng)
+	if not world.civil_pairs.is_empty():
+		civil_owner(world)
 	# добровольцы (черты с ключом volunteers — дивизий в месяц), пока страна воюет
 	if world.month_of(world.day) != world.month_of(world.day - 1):
 		for nat in world.nations:
@@ -920,6 +922,29 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 						if d.alive and d.owner == who and from.has(world.p_adm0[d.prov]):
 							d.path = PackedInt32Array()
 							d.prov = dst
+			"move_factories":
+				# перенос заводов внутри страны: {"moves": [{"from_ll", "to_ll", "mil", "civ"}]} —
+				# из ближайшей к from_ll своей провинции с заводами в ближайшую к to_ll
+				# (арсеналы армии, ушедшие к мятежникам в 1936 г.)
+				for mv in e.get("moves", []):
+					var dst := nearest_held(world, who, Vector2(float(mv["to_ll"][0]), float(mv["to_ll"][1])))
+					var fl := Vector2(float(mv["from_ll"][0]), float(mv["from_ll"][1]))
+					var src := -1
+					var bd := INF
+					for p in world.prov_count:
+						if world.p_owner[p] == who and world.p_mil[p] + world.p_civ[p] > 0:
+							var dd := world.p_lonlat[p].distance_squared_to(fl)
+							if dd < bd:
+								bd = dd
+								src = p
+					if src < 0 or dst < 0 or src == dst:
+						continue
+					var m := mini(int(mv.get("mil", 0)), world.p_mil[src])
+					var c := mini(int(mv.get("civ", 0)), world.p_civ[src])
+					world.p_mil[src] -= m
+					world.p_mil[dst] += m
+					world.p_civ[src] -= c
+					world.p_civ[dst] += c
 			"manpower":
 				nat.manpower += float(e["v"])
 			"event":
@@ -982,6 +1007,26 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 					world.nations[nt].war_activity_day = world.day
 					world.nations[old].war_activity_day = world.day
 					world.log_event("Гражданская война: %s против страны %s" % [world.nations[nt].name, world.nations[old].name])
+					# очки победы зон в день раскола — база доли для капитуляции (civil_ratio)
+					var va := 0
+					var vb := 0
+					var col := world.p_colony.size() == world.prov_count
+					for p in world.prov_count:
+						if col and world.p_colony[p] == 1:
+							continue   # колонии — отдельно (порог страны — по метрополии)
+						if world.p_owner[p] == nt:
+							va += world.p_vp[p]
+						elif world.p_owner[p] == old:
+							vb += world.p_vp[p]
+					world.civil_pairs.append([nt, old, va, vb])
+					_civil_population(world, nt, old)
+					# неразбериха раскола: "chaos": [от, до] дней, "chaos_v" — штраф (Climate.chaos)
+					if e.has("chaos"):
+						var ps := PackedInt32Array()
+						for p in world.prov_count:
+							if world.p_land[p] == 1 and (world.p_controller[p] == nt or world.p_controller[p] == old):
+								ps.append(p)
+						Climate.set_chaos(world, ps, float(e.get("chaos_v", 0.95)), int(e["chaos"][0]), int(e["chaos"][1]))
 			"peace":
 				if target >= 0 and world.is_at_war(who, target):
 					make_white_peace(world, who, target)
@@ -1338,6 +1383,80 @@ static func release(world: World, tag: String, provs: Array, overlord: int, take
 	return n
 
 
+## Гражданская война (как в жанре): страна одна, и взятая у другой стороны
+## провинция сразу её — с заводами и людьми (а не оккупация: половина заводов,
+## пятая часть людей). Потерявшая столицу сторона переносит её в крупнейший
+## свой город (правительство Республики — в Валенсию, потом в Барселону).
+static func civil_owner(world: World) -> void:
+	var keep: Array = []
+	for pr in world.civil_pairs:
+		var a: int = pr[0]
+		var b: int = pr[1]
+		if not world.nations[a].alive or not world.nations[b].alive or not world.is_at_war(a, b):
+			continue
+		keep.append(pr)
+		var moved := false
+		for p in world.prov_count:
+			var o := world.p_owner[p]
+			var c := world.p_controller[p]
+			if (o == a and c == b) or (o == b and c == a):
+				world.p_owner[p] = c
+				moved = true
+		if moved:
+			for n in [a, b]:
+				var nat: World.Nation = world.nations[n]
+				if nat.capital >= 0 and world.p_owner[nat.capital] != n:
+					_fix_capital(world, n)
+			_civil_population(world, a, b)
+			world.palette_dirty = true
+	world.civil_pairs = keep
+
+
+## Население сторон гражданской войны (потолок армии ИИ — AI.target_divisions):
+## общее делится по людским ресурсам их провинций.
+static func _civil_population(world: World, a: int, b: int) -> void:
+	var na: World.Nation = world.nations[a]
+	var nb: World.Nation = world.nations[b]
+	var ma := 0
+	var mb := 0
+	for p in world.prov_count:
+		if world.p_owner[p] == a:
+			ma += world.p_manpower[p]
+		elif world.p_owner[p] == b:
+			mb += world.p_manpower[p]
+	var tot := na.population + nb.population
+	if ma + mb > 0:
+		na.population = tot * float(ma) / float(ma + mb)
+		nb.population = tot - na.population
+
+
+## Доля для капитуляции стороны гражданской войны: очки победы земель страны в метрополии (без колоний),
+## что она (или её сторона) держит, к очкам её зоны в день раскола (до 1);
+## −1 — не сторона гражданской войны.
+static func civil_ratio(world: World, n: int) -> float:
+	for pr in world.civil_pairs:
+		var k := -1
+		if int(pr[0]) == n:
+			k = 0
+		elif int(pr[1]) == n:
+			k = 1
+		if k < 0 or pr.size() < 4:
+			continue
+		var a: int = pr[0]
+		var b: int = pr[1]
+		var held := 0
+		var col := world.p_colony.size() == world.prov_count
+		for p in world.prov_count:
+			var o := world.p_owner[p]
+			if (o != a and o != b) or (col and world.p_colony[p] == 1):
+				continue
+			var c := world.p_controller[p]
+			if c == n or (c >= 0 and c != a and c != b and Diplomacy.same_side(world, c, n)):
+				held += world.p_vp[p]
+		return minf(1.0, float(held) / maxf(1.0, float(pr[2 + k])))
+	return -1.0
+
+
 static func _fix_capital(world: World, n: int) -> void:
 	if n < 0 or not world.nations[n].alive:
 		return
@@ -1512,8 +1631,10 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sпретензии: %s" % [who, String(world.areas.get(e["area"], {}).get("name", e["area"])) if e.has("area") else tname])
 			"release":
 				parts.append("новое государство")
+			"move_factories":
+				parts.append("%sперенос заводов" % who)
 			"civil_war":
-				parts.append("гражданская война")
+				parts.append("гражданская война" + ((", неразбериха раскола %d–%d дн. (атака, оборона, скорость −%d%%)" % [int(e["chaos"][0]), int(e["chaos"][1]), roundi(100.0 * float(e.get("chaos_v", 0.95)))]) if e.has("chaos") else ""))
 			"peace":
 				parts.append("мир с %s" % tname)
 			"later":

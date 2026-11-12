@@ -133,6 +133,53 @@ static func daily(world: World) -> void:
 	world.d_atk_eff = r[4]
 	world.d_def_eff = r[5]
 	world.d_cmul = r[6]
+	chaos(world)
+
+
+## Раскол страны (решение пользователя, ноябрь 2026, как в жанре): в первые
+## недели гражданской войны вся её земля — неразбериха, атака и оборона войск
+## там (атака, оборона, скорость) × множитель (World.reg_chaos, ставит эффект civil_war); штраф снимается по
+## районам — у каждого в свой день (через 1–2 месяца).
+static func chaos(world: World) -> void:
+	if world.reg_chaos.is_empty():
+		return
+	var ks: Array = world.reg_chaos.keys()
+	for r in ks:
+		if int(world.reg_chaos[r][0]) <= world.day:
+			world.reg_chaos.erase(r)
+	if world.reg_chaos.is_empty():
+		return
+	var alive := world.d_alive
+	var prov := world.d_prov
+	var reg := world.p_region
+	var ae := world.d_atk_eff
+	var de := world.d_def_eff
+	var se := world.d_spd_eff
+	for i in alive.size():
+		if alive[i] == 0 or prov[i] < 0:
+			continue
+		var c: Variant = world.reg_chaos.get(reg[prov[i]])
+		if c != null:
+			var m: float = c[1]
+			ae[i] *= m
+			de[i] *= m
+			se[i] *= m
+	world.d_atk_eff = ae
+	world.d_def_eff = de
+	world.d_spd_eff = se
+
+
+## Поставить неразбериху раскола на районы провинций ps: штраф v (0,95 —
+## характеристики × 0,05), снятие — через от d0 до d1 дней, у района своё.
+static func set_chaos(world: World, ps: PackedInt32Array, v: float, d0: int, d1: int) -> void:
+	var seen := {}
+	for p in ps:
+		var r := world.p_region[p]
+		if r < 0 or seen.has(r):
+			continue
+		seen[r] = true
+		var rng := Parallel.rng(world.seed_value, world.day, 7100 + r)
+		world.reg_chaos[r] = [world.day + rng.randi_range(d0, d1), 1.0 - v]
 
 
 ## GDScript-двойник MeowqCore.climate → [acl_hot, acl_cold, str, spd_eff, atk_eff, def_eff, cmul].

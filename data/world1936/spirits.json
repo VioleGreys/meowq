@@ -114,7 +114,7 @@
         "org": 0.1,
         "speed": -0.3,
         "defense": 0.15,
-        "surrender": -0.2,
+        "surrender": -0.1,
         "conscription": 0.5
       }
     },
@@ -150,7 +150,8 @@
       "bonus": {
         "defense": 0.1,
         "attack": 0.05,
-        "volunteers": 0.6
+        "volunteers": 0.6,
+        "aid_eq": 1.0
       }
     },
     "nsp_ctv": {
@@ -159,7 +160,8 @@
       "bonus": {
         "attack": 0.05,
         "org": 0.05,
-        "volunteers": 0.6
+        "volunteers": 0.6,
+        "aid_eq": 2.5
       }
     },
     "nsp_condor": {
@@ -167,7 +169,8 @@
       "desc": "Германские лётчики и танкисты оттачивают тактику в Испании.",
       "bonus": {
         "attack": 0.05,
-        "volunteers": 0.3
+        "volunteers": 0.3,
+        "aid_eq": 1.5
       }
     },
     "spr_casado": {
