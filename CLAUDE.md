@@ -33,7 +33,7 @@
 - `balance_ai.md` — укрепления, зима, черты стран, военный ИИ (`ai.gd`,
   `ai.cpp`), планирование наступления, `balance_check`.
 - `economy.md` — ресурсы, торговля, договоры, блокада (`economy.gd`).
-- `supply.md` — снабжение по узлам районов (`supply.gd`); Испания.
+- `supply.md` — снабжение по узлам районов: нагрузка, улучшение, присоединение, грузовики (`supply.gd`); Испания.
 - `science.md` — наука: слоты исследований, дерево технологий, бонусы родов
   войск, флота и авиации, ИИ науки, окно дерева (`tech.gd`, `tech_view.gd`).
 - `save.md` — главное меню, сохранение, загрузка, автосохранение (`save.gd`).
@@ -83,6 +83,7 @@
 - История (вехи 1936–41): `godot --headless --path . --script res://tests/history_check.gd [-- --until=1941-07-01 --quiet]`
 - Флот и авиация: `godot --headless --path . --script res://tests/forces_check.gd`
   (конвои по годам: `tests/convoy_diag.gd [-- --dates=...]`)
+- Узлы снабжения: `godot --headless --path . --script res://tests/supply_check.gd`
 - Снабжение, сравнение моделей: `godot --headless --path . --script res://tests/supply_compare.gd [-- --supply=regions]`
 - Сохранение и загрузка: `godot --headless --path . --script res://tests/save_check.gd [-- --dates=1941-08-01 --step=60 --nation=SWE]`
   (страна «игрока» в тесте никем не управляется — для дальних дат брать нейтральную)
