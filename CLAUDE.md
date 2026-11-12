@@ -92,6 +92,7 @@
 - Акклиматизация: `godot --headless --path . --script res://tests/climate_check.gd`
 - Конец войны, оккупация, марионетки: `godot --headless --path . --script res://tests/peace_check.gd`
 - Политика и гарантии: `godot --headless --path . --script res://tests/politics_check.gd`
+- Ход войны по странам (дивизии, снабжение, заводы, перегруз): `godot --headless --path . --script res://tests/war_diag.gd -- --until=1942-01-01 --from=1941-06-01 --tags=SOV,GER [--stack --seed=N]`
 - Снабжение, сравнение моделей: `godot --headless --path . --script res://tests/supply_compare.gd [-- --supply=regions]`
 - Сохранение и загрузка: `godot --headless --path . --script res://tests/save_check.gd [-- --dates=1941-08-01 --step=60 --nation=SWE]`
   (страна «игрока» в тесте никем не управляется — для дальних дат брать нейтральную)
