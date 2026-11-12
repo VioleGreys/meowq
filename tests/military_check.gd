@@ -88,6 +88,12 @@ func _init() -> void:
 	check(hit == line, "на равнине в линии %d пехотных дивизий из 12, остальные в резерве (%d)" % [line, hit])
 	check(defd.org < org0 and w.d_battle[atts[11]] == 1, "резерв тоже в бою, защитник получил урон")
 	check(Military.template_width(w.templates[Military.T_ART]) == 26.0, "пехотная с артиллерией — ширина 26")
+	var arts := PackedInt32Array()
+	for i in 5:
+		arts.append(w.spawn_division(GER, fq, Military.T_ART).slot)
+	var part := PackedFloat64Array()
+	var picked := w.front_pick(arts, 100.0, part)
+	check(picked.size() == 4 and part[3] > 0.84 and part[3] < 0.85, "ширина 100: три дивизии по 26 целиком, четвёртая — с долей 22/26 (%s)" % [part])
 
 	print("Окружение:")
 	r = fresh()

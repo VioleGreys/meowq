@@ -1217,6 +1217,18 @@ func _province_text(p: int) -> String:
 			widths[d.owner] = float(widths.get(d.owner, 0.0)) + Military.template_width(w.templates[d.tpl])
 	for k in counts:
 		s += "\nДивизии %s: %d (ширина %d)" % [w.nations[k].name, counts[k], widths[k]]
+	var me: int = game.player()
+	if me >= 0:
+		var sd := Supply.side(w, me)
+		var nk := Supply.node_of(w, sd, p)
+		if nk >= 0:
+			var lvl := w.p_node_lvl[p] if p < w.p_node_lvl.size() else 0
+			if not Supply.node_ok(w, sd, p):
+				s += "\nУзел снабжения (захвачен): не работает, пока не присоединён к сети"
+			elif w.node_prov[nk] == p:
+				s += "\nУзел снабжения: ур. %d · подача %.1f · взято %d из %d" % [lvl, w.node_f[nk], roundi(w.node_used[nk]), roundi(w.node_f[nk] * Supply.BUDGET_K)]
+			else:
+				s += "\nУзел снабжения: ур. %d (район кормит более сильный источник)" % lvl
 	return s
 
 
@@ -1232,6 +1244,19 @@ func show_province(p: int) -> void:
 	if w.p_land[p] == 1:
 		var c := w.p_controller[p]
 		var me: int = game.player()
+		if c == me:
+			var sd := Supply.side(w, me)
+			if Supply.node_of(w, sd, p) >= 0:
+				var n: World.Nation = w.nations[me]
+				if not Supply.node_ok(w, sd, p):
+					if not Supply.has_job(n, p, Supply.JOB_JOIN):
+						info_actions.add_child(_button("Присоединить узел", func():
+							Supply.order(w, n, p, Supply.JOB_JOIN)
+							show_province(p)))
+				elif w.p_node_lvl[p] < Supply.NODE_MAX and not Supply.has_job(n, p, Supply.JOB_UP):
+					info_actions.add_child(_button("Улучшить узел", func():
+						Supply.order(w, n, p, Supply.JOB_UP)
+						show_province(p)))
 		if c != me and w.nations[c].alive:
 			info_actions.add_child(_button("Страна: %s" % w.nations[c].name, func():
 				_card_nation = c
@@ -2106,6 +2131,73 @@ func _build_army(w: World, me: int) -> void:
 		popup_body.add_child(_small("   атака %.1f · оборона %.1f · скорость ×%.1f · %.1fк чел. · %s · %d дн.%s" % [
 			tp["atk"], tp["def"], tp["spd"], tp["men"], _eq_text(tp["eq"]), tp["days"], ("\n   " + why) if why != "" else ""]))
 	popup_body.add_child(_button("Новый шаблон дивизии", func(): _open_tpl_editor(w, -1, false), Vector2(0, 50)))
+	_build_supply(w, me)
+
+
+const TRUCK_NAMES := ["конная", "половина на грузовиках", "грузовики"]
+
+
+## Снабжение: узлы страны, их загрузка, стройка узлов, доставка грузовиками.
+func _build_supply(w: World, me: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_body.add_child(_section("Снабжение"))
+	var s := Supply.side(w, me)
+	var nodes: Array = []   # [загрузка, провинция, взято, бюджет]
+	var wait: Array = []
+	for k in w.node_keys:
+		var h := w.node_hub[k]
+		if h >= 0 and w.p_controller[h] == me and not Supply.node_ok(w, s, h):
+			wait.append(h)
+		var p := w.node_prov[k]
+		if p < 0 or w.p_controller[p] != me:
+			continue
+		var cap := w.node_f[k] * Supply.BUDGET_K
+		nodes.append([w.node_used[k] / maxf(cap, 0.01), p, w.node_used[k], cap])
+	nodes.sort_custom(func(a, b): return a[0] > b[0] or (a[0] == b[0] and a[1] < b[1]))
+	var over := 0
+	for e in nodes:
+		if e[0] >= 0.95:
+			over += 1
+	popup_body.add_child(_label("Узлов %d, перегружено %d · ждут присоединения %d\nДоставка от узлов: %s%s" % [
+		nodes.size(), over, wait.size(), TRUCK_NAMES[clampi(n.truck_mode, 0, 2)],
+		(" · грузовиков %.1f в день (на складе %d%s)" % [n.truck_use, n.stock[Military.EQ_TRUCK], "" if n.truck_ok >= 0.999 else ", не хватает"]) if n.truck_mode > 0 else ""], 15))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	for m in 3:
+		var mm := m
+		var b := _button(("● " if n.truck_mode == m else "") + ["Конная", "½ грузовики", "Грузовики"][m], func():
+			n.truck_mode = mm
+			_rebuild_popup(), Vector2(0, 44))
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(b)
+	popup_body.add_child(row)
+	popup_body.add_child(_small("Половина на грузовиках — радиус узлов +1, подача +20 %%; грузовики — +2 и +40 %%. Расход — %.2f грузовика в день на единицу подачи (при половине — вдвое меньше)." % Supply.TRUCK_USE))
+	popup_body.add_child(_button("Присоединять захваченные узлы сами: %s" % ("да" if n.sup_auto else "нет"), func():
+		n.sup_auto = not n.sup_auto
+		_rebuild_popup(), Vector2(0, 44)))
+	if not n.sup_jobs.is_empty():
+		var lines: Array = []
+		for j in n.sup_jobs:
+			var p: int = j[0]
+			lines.append("%s: %s — %d из %d" % ["Присоединить" if int(j[1]) == Supply.JOB_JOIN else "Улучшить до ур. %d" % (w.p_node_lvl[p] + 1),
+				w.p_name[p], roundi(float(j[2])), roundi(Supply.job_cost(w, j))])
+		popup_body.add_child(_small("Стройка узлов (до половины очков стройки):\n" + "\n".join(lines)))
+	for h in wait.slice(0, 4):
+		var hh: int = h
+		if not Supply.has_job(n, hh, Supply.JOB_JOIN):
+			popup_body.add_child(_button("Присоединить узел: %s" % w.p_name[hh], func():
+				Supply.order(w, n, hh, Supply.JOB_JOIN)
+				_rebuild_popup(), Vector2(0, 44)))
+	for e in nodes.slice(0, 6):
+		var p: int = e[1]
+		var lvl := w.p_node_lvl[p] if p < w.p_node_lvl.size() else 0
+		var b := _button("%s · ур. %d · взято %d из %d (%d%%)" % [w.p_name[p], lvl, roundi(e[2]), roundi(e[3]), roundi(e[0] * 100.0)], func():
+			Supply.order(w, n, p, Supply.JOB_UP)
+			_rebuild_popup(), Vector2(0, 44))
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.disabled = lvl >= Supply.NODE_MAX or Supply.has_job(n, p, Supply.JOB_UP)
+		popup_body.add_child(b)
+	popup_body.add_child(_small("Узел района (главный город) кормит провинции вокруг себя. Войска берут снабжение сначала у ближайшего узла; не хватило — у соседних: чем ближе сосед к ближайшему узлу, тем больше он может взять на себя. Нажмите на узел — улучшить: подача +%d %%, дорога района шире, каждые 2 уровня — радиус +1. Захваченный узел работает, только когда присоединён к своей сети." % roundi(Supply.NODE_UP * 100.0)))
 
 
 const SHIP_SHORT := ["подл.", "крейс.", "авиан."]

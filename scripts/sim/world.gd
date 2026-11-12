@@ -145,6 +145,11 @@ class Nation:
 	var no_attack := {}         # страна -> true: воюем, но ИИ не наступает (эффект no_attack — «Странная война»)
 	var build_mode := "mil"     # "civ" или "mil"
 	var build_progress := 0.0
+	var truck_mode := 0          # доставка от узлов: 0 — конная, 1 — половина на грузовиках, 2 — грузовики
+	var truck_ok := 1.0          # доля нужных грузовиков, что нашлась на складе
+	var truck_use := 0.0         # грузовиков в день на доставку
+	var sup_jobs: Array = []     # стройка узлов: [провинция, вид (0 — улучшить, 1 — присоединить), очков вложено]
+	var sup_auto := true         # присоединять захваченные узлы самим
 	var training: Array = []    # в подготовке: [оставшиеся дни, шаблон]
 	# Кэш, пересчитывается в экономической фазе (параллельно)
 	var civ := 0
@@ -477,6 +482,13 @@ var reg_adj_start := PackedInt32Array()   # соседство районов п
 var reg_adj_list := PackedInt32Array()
 var p_supcap := PackedFloat32Array()      # ёмкость снабжения провинции в «дивизиях» (Supply → AIPlanner)
 var sup_job := {}                         # поле подачи на завтра (Supply.spec)
+var p_node_lvl := PackedByteArray()      # уровень узла снабжения провинции (Supply, стройка)
+var p_join := PackedInt32Array()          # страна, присоединившая захваченный узел к своей сети (−1 — нет)
+var node_f := PackedFloat64Array()        # узел s*nr+r: подача (бюджет — × Supply.BUDGET_K)
+var node_prov := PackedInt32Array()       # узел: провинция (−1 — нет)
+var node_used := PackedFloat64Array()     # узел: взято сегодня
+var node_keys := PackedInt32Array()       # узлы, где у стороны есть провинции района (обходить только их)
+var node_hub := PackedInt32Array()        # узел: главный город района стороны (может ждать присоединения)
 var sup_args: Array = []                  # стороны, источники, столицы сегодняшней фазы снабжения
 var supply_dist: Array = []               # по странам: PackedInt32Array, переходов до узла снабжения (-1 — нет)
 var groups: Array = []                    # Array[ArmyGroup]
@@ -1660,10 +1672,12 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 			dl.append(e)
 			dl.append(0.0)
 			dl.append(0.0)
-		attackers = front_pick(attackers, limit)
-		defenders = front_pick(defenders, limit)
-		var sa := _side_power(attackers, terr, false, atk)
-		var sd := _side_power(defenders, terr, true, atk)
+		var aw := PackedFloat64Array()
+		var dw := PackedFloat64Array()
+		attackers = front_pick(attackers, limit, aw)
+		defenders = front_pick(defenders, limit, dw)
+		var sa := _side_power(attackers, terr, false, atk, aw)
+		var sd := _side_power(defenders, terr, true, atk, dw)
 		var reg := p_region[p]
 		var att_power: float = sa[0] * cas_mult[reg * nc + att_owner]
 		var att_hard: float = sa[1]
@@ -1673,16 +1687,17 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 		def_power *= rng.randf_range(0.8, 1.2)
 		att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard)
 		def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard)
-		var to_def := att_power / defenders.size()
-		var to_att := def_power / attackers.size()
-		for e in defenders:
-			dl.append(e)
-			dl.append(to_def * 0.55)
-			dl.append(to_def * 0.12)
-		for e in attackers:
-			dl.append(e)
-			dl.append(to_att * 0.5)
-			dl.append(to_att * 0.10)
+		# урон — по доле в линии (не влезшая целиком дивизия получает меньше)
+		var to_def := att_power / _wsum(dw)
+		var to_att := def_power / _wsum(aw)
+		for j in defenders.size():
+			dl.append(defenders[j])
+			dl.append(to_def * dw[j] * 0.55)
+			dl.append(to_def * dw[j] * 0.12)
+		for j in attackers.size():
+			dl.append(attackers[j])
+			dl.append(to_att * aw[j] * 0.5)
+			dl.append(to_att * aw[j] * 0.10)
 		all_deltas.append(dl)
 	for dl: PackedFloat64Array in all_deltas:
 		for j in range(0, dl.size(), 3):
@@ -1705,8 +1720,10 @@ func front_limit(attackers: PackedInt32Array, terr: int, fw: PackedFloat32Array)
 
 
 ## Дивизии, что встают в ширину фронта: свежие (по организации) первыми, при
-## равенстве — по номеру; не влезающие пропускаются, первая — всегда. C++ — тот же порядок.
-func front_pick(slots: PackedInt32Array, limit: float) -> PackedInt32Array:
+## равенстве — по номеру; первая не влезающая целиком встаёт последней с долей
+## (сила и урон × влезшая часть её ширины), дальше — резерв. weights — доли
+## (1 — целиком). C++ — тот же порядок.
+func front_pick(slots: PackedInt32Array, limit: float, weights: PackedFloat64Array) -> PackedInt32Array:
 	var order := Array(slots)
 	var org := d_org
 	order.sort_custom(func(a: int, b: int) -> bool: return org[a] > org[b] or (org[a] == org[b] and a < b))
@@ -1716,17 +1733,31 @@ func front_pick(slots: PackedInt32Array, limit: float) -> PackedInt32Array:
 		var w: float = tpl_width[d_tpl[i]]
 		if out.is_empty() or used + w <= limit:
 			out.append(i)
+			weights.append(1.0)
 			used += w
+		else:
+			if limit - used > 0.0:
+				out.append(i)
+				weights.append((limit - used) / w)
+			break
 	return out
 
 
+static func _wsum(w: PackedFloat64Array) -> float:
+	var s := 0.0
+	for x in w:
+		s += x
+	return s
+
+
 ## Сила стороны (как Military.side_power, по массивам): [сила, бронированность].
-func _side_power(slots: PackedInt32Array, terr: int, defending: bool, atk: PackedFloat64Array) -> PackedFloat64Array:
+func _side_power(slots: PackedInt32Array, terr: int, defending: bool, atk: PackedFloat64Array, part: PackedFloat64Array) -> PackedFloat64Array:
 	var power := 0.0
 	var hard := 0.0
 	var wsum := 0.0
-	for i in slots:
-		var w: float = d_str[i] / 100.0
+	for j in slots.size():
+		var i := slots[j]
+		var w: float = d_str[i] / 100.0 * part[j]
 		var base: float = d_def[i] * (1.0 + 0.3 * d_ent[i]) if defending else atk[i] * (0.5 if d_land[i] == 1 else 1.0)
 		power += base * w * (0.4 + 0.6 * d_eq[i]) * (0.5 + 0.5 * d_sup[i]) * tpl_terrain[d_tpl[i] * 8 + terr]
 		hard += d_hard[i] * w

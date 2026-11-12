@@ -2,6 +2,7 @@
 // двойники; результаты совпадают до бита: тот же порядок обхода, double).
 #include "meowq_core.h"
 
+#include <unordered_map>
 #include <vector>
 #include <algorithm>
 
@@ -30,6 +31,14 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	const PackedByteArray gauge_a = t["gauge"];
 	const int32_t *owner = owner_a.ptr();
 	const uint8_t *gauge = gauge_a.ptr();
+	const PackedByteArray nlvl_a = t["nlvl"];
+	const PackedInt32Array join_a = t["join"], trange_a = t["trange"];
+	const PackedFloat64Array tcap_a = t["tcap"];
+	const uint8_t *nlvl = nlvl_a.ptr();
+	const int32_t *join = join_a.ptr(), *trange = trange_a.ptr();
+	const double *tcap = tcap_a.ptr();
+	const double node_up = kk_a[10], rail_up = kk_a[11];
+	const int kc = int(kk_a[12]);
 	const int pc = ctrl_a.size();
 	const bool has_pop = pop_a.size() == pc;
 	const int nk = ns * nr;
@@ -38,7 +47,11 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	ps_a.resize(pc);
 	int32_t *ps = ps_a.ptrw();
 	std::fill(ps, ps + pc, -1);
-	std::vector<int32_t> hub(nk, -1), pcount(nk, 0);
+	PackedInt32Array hub_a;
+	hub_a.resize(nk);
+	int32_t *hub = hub_a.ptrw();
+	std::fill(hub, hub + nk, -1);
+	std::vector<int32_t> pcount(nk, 0);
 	std::vector<double> hscore(nk, 0.0), capsum(nk, 0.0), level(nk, 0.0);
 	for (int p = 0; p < pc; p++) {
 		if (land[p] == 0 || ctrl[p] < 0)
@@ -48,14 +61,32 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 			continue;
 		ps[p] = s;
 		const int k = s * nr + preg[p];
-		const int o = owner[p];
-		capsum[k] += double(pcap[p]) * ((o >= 0 && gauge[o] != gauge[ctrl[p]]) ? gauge_loss : 1.0);
 		pcount[k] += 1;
 		const double sc = double(vp[p]) * 1.0e6 + (has_pop ? double(pop[p]) : 0.0);
 		if (hub[k] < 0 || sc > hscore[k]) {
 			hub[k] = p;
 			hscore[k] = sc;
 		}
+	}
+	// узел свой или присоединён к сети стороны
+	std::vector<uint8_t> hub_ok(nk, 0);
+	for (int k = 0; k < nk; k++) {
+		const int h = hub[k];
+		if (h < 0)
+			continue;
+		const int s = k / nr;
+		const int o = owner[h];
+		if ((o >= 0 && side_of[o] == s) || (join[h] >= 0 && side_of[join[h]] == s))
+			hub_ok[k] = 1;
+	}
+	for (int p = 0; p < pc; p++) {
+		const int s = ps[p];
+		if (s < 0)
+			continue;
+		const int k = s * nr + preg[p];
+		const int o = owner[p];
+		const bool lose = o >= 0 && gauge[o] != gauge[ctrl[p]] && !(hub[k] >= 0 && join[hub[k]] >= 0 && hub_ok[k] == 1);
+		capsum[k] += double(pcap[p]) * (lose ? gauge_loss : 1.0);
 	}
 	PackedByteArray conn_a;
 	conn_a.resize(pc);
@@ -84,11 +115,21 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 		}
 	}
 	for (int k = 0; k < nk; k++)
-		if (pcount[k] > 0)
+		if (pcount[k] > 0) {
 			level[k] = capsum[k] / double(pcount[k]);
+			if (hub_ok[k] == 1)
+				level[k] += rail_up * double(nlvl[hub[k]]);
+		}
 
-	std::vector<int32_t> best_src(nk, -1);
-	std::vector<double> best_f(nk, 0.0), best(nr, -1.0);
+	PackedInt32Array best_src_a;
+	best_src_a.resize(nk);
+	int32_t *best_src = best_src_a.ptrw();
+	std::fill(best_src, best_src + nk, -1);
+	PackedFloat64Array best_f_a;
+	best_f_a.resize(nk);
+	double *best_f = best_f_a.ptrw();
+	std::fill(best_f, best_f + nk, 0.0);
+	std::vector<double> best(nr, -1.0);
 	std::vector<int32_t> open, nxt, rd(nr, -1), q2;
 	for (int s = 0; s < ns; s++) {
 		std::fill(best.begin(), best.end(), -1.0);
@@ -132,9 +173,11 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 		}
 		for (int r = 0; r < nr; r++) {
 			const int k = s * nr + r;
-			if (hub[k] >= 0 && best[r] > 0.0 && conn[hub[k]] == 1) {
-				best_src[k] = hub[k];
-				best_f[k] = k_level * std::min(best[r], level[k]) * std::max(rail_min, 1.0 - rail_loss * double(rd[r]));
+			const int h = hub[k];
+			if (h >= 0 && hub_ok[k] == 1 && best[r] > 0.0 && conn[h] == 1) {
+				best_src[k] = h;
+				best_f[k] = k_level * std::min(best[r], level[k]) * std::max(rail_min, 1.0 - rail_loss * double(rd[r]))
+						* (1.0 + node_up * double(nlvl[h])) * tcap[ctrl[h]];
 			}
 		}
 		for (int j = src_off[s]; j < src_off[s + 1]; j++) {
@@ -145,7 +188,8 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 					is_cap = true;
 					break;
 				}
-			const double f = is_cap ? k_cap : (k_port + k_pvp * std::min(5.0, double(vp[h]))) * double(smult[h]);
+			double f = is_cap ? k_cap : (k_port + k_pvp * std::min(5.0, double(vp[h]))) * double(smult[h]);
+			f *= (1.0 + node_up * double(nlvl[h])) * tcap[ctrl[h]];
 			const int k = s * nr + preg[h];
 			if (f > best_f[k]) {
 				best_f[k] = f;
@@ -162,14 +206,27 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	gsrc_a.resize(pc);
 	int32_t *gsrc = gsrc_a.ptrw();
 	std::fill(gsrc, gsrc + pc, -1);
+	PackedInt32Array cand_a, chop_a;
+	cand_a.resize(int64_t(pc) * kc);
+	chop_a.resize(int64_t(pc) * kc);
+	int32_t *cand = cand_a.ptrw(), *chop = chop_a.ptrw();
+	std::fill(cand, cand + int64_t(pc) * kc, -1);
+	std::fill(chop, chop + int64_t(pc) * kc, 0);
+	std::vector<int32_t> pkey(pc, -1);
+	for (int k = 0; k < nk; k++)
+		if (best_src[k] >= 0)
+			pkey[best_src[k]] = k;
+	std::unordered_map<int64_t, int32_t> nn;   // (узел волны)*nk + (узел, до которого дошла) → переходов
 	std::vector<int32_t> mark(pc, 0), queue, hops;
 	int stamp = 0;
 	for (int r = 0; r < nr; r++) {
 		for (int s = 0; s < ns; s++) {
-			const int start = best_src[s * nr + r];
+			const int k = s * nr + r;
+			const int start = best_src[k];
 			if (start < 0)
 				continue;
-			const double f0 = best_f[s * nr + r];
+			const int rng = hub_range + int(nlvl[start]) / 2 + trange[ctrl[start]];
+			const double f0 = best_f[k];
 			stamp++;
 			mark[start] = stamp;
 			queue.assign(1, start);
@@ -179,12 +236,31 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 				const int p = queue[head];
 				const int h = hops[head];
 				head++;
+				if (pkey[p] >= 0)
+					nn[int64_t(k) * nk + pkey[p]] = h;
 				const double v = f0 * fall[h];
 				if (v > got[p]) {
 					got[p] = v;
 					gsrc[p] = start;
 				}
-				if (h >= hub_range)
+				const int64_t b = int64_t(p) * kc;
+				int pos = kc;
+				for (int m = 0; m < kc; m++) {
+					const int ck = cand[b + m];
+					if (ck < 0 || h < chop[b + m] || (h == chop[b + m] && k < ck)) {
+						pos = m;
+						break;
+					}
+				}
+				if (pos < kc) {
+					for (int m2 = kc - 1; m2 > pos; m2--) {
+						cand[b + m2] = cand[b + m2 - 1];
+						chop[b + m2] = chop[b + m2 - 1];
+					}
+					cand[b + pos] = k;
+					chop[b + pos] = h;
+				}
+				if (h >= rng)
 					continue;
 				for (int e = adj_start[p]; e < adj_start[p + 1]; e++) {
 					const int q = adj_list[e];
@@ -195,6 +271,25 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 					hops.push_back(h + 1);
 				}
 			}
+		}
+	}
+	const double spill_step = kk_a[13], spill_min = kk_a[14];
+	PackedFloat64Array cfac_a;
+	cfac_a.resize(int64_t(pc) * kc);
+	double *cfac = cfac_a.ptrw();
+	std::fill(cfac, cfac + int64_t(pc) * kc, 0.0);
+	for (int p = 0; p < pc; p++) {
+		const int64_t b = int64_t(p) * kc;
+		const int k0 = cand[b];
+		if (k0 < 0)
+			continue;
+		cfac[b] = 1.0;
+		for (int m = 1; m < kc; m++) {
+			const int km = cand[b + m];
+			if (km < 0)
+				break;
+			auto it = nn.find(int64_t(km) * nk + k0);
+			cfac[b + m] = it == nn.end() ? spill_min : std::max(spill_min, 1.0 - spill_step * double(it->second));
 		}
 	}
 	// ёмкость провинции для военного ИИ: подача + местное (в котле — урезанное)
@@ -213,14 +308,22 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	res.push_back(gsrc_a);
 	res.push_back(conn_a);
 	res.push_back(supcap_a);
+	res.push_back(cand_a);
+	res.push_back(chop_a);
+	res.push_back(best_f_a);
+	res.push_back(best_src_a);
+	res.push_back(hub_a);
+	PackedInt32Array keys_a;   // узлы, где у стороны есть провинции района
+	for (int k = 0; k < nk; k++)
+		if (hub[k] >= 0)
+			keys_a.push_back(k);
+	res.push_back(keys_a);
+	res.push_back(cfac_a);
 	return res;
 }
 
-PackedFloat64Array MeowqCore::supply_divs(const Dictionary &t) const {
+Array MeowqCore::supply_divs(const Dictionary &t) const {
 	const PackedInt32Array ps_a = t["ps"], side_a = t["side_of"], ctrl_a = t["ctrl"];
-	const PackedFloat64Array got_a = t["got"];
-	const PackedInt32Array gsrc_a = t["gsrc"];
-	const int32_t *gsrc = gsrc_a.ptr();
 	const PackedByteArray conn_a = t["conn"];
 	const uint8_t *conn = conn_a.ptr();
 	const double k_pocket = double(t["pocket"]);
@@ -228,16 +331,83 @@ PackedFloat64Array MeowqCore::supply_divs(const Dictionary &t) const {
 	const PackedByteArray alive_a = t["d_alive"];
 	const PackedInt32Array prov_a = t["d_prov"], owner_a = t["d_owner"], mot_a = t["mot"];
 	const double k_local = double(t["local"]);
+	const PackedInt32Array cand_a = t["cand"], chop_a = t["chop"], nprov_a = t["nprov"];
+	const PackedFloat64Array nf_a = t["nf"], fall_a = t["fall"], cfac_a = t["cfac"];
+	const double *cfac = cfac_a.ptr();
+	const double budget_k = double(t["budget"]);
+	const int kc = int(t["kc"]), nr = int(t["nr"]);
 	const int32_t *ps = ps_a.ptr(), *side_of = side_a.ptr(), *ctrl = ctrl_a.ptr();
 	const int32_t *prov = prov_a.ptr(), *owner = owner_a.ptr(), *mot = mot_a.ptr();
-	const double *got = got_a.ptr();
+	const int32_t *cand = cand_a.ptr(), *chop = chop_a.ptr(), *nprov = nprov_a.ptr();
+	const double *nf = nf_a.ptr(), *fall = fall_a.ptr();
 	const float *pcap = pcap_a.ptr();
 	const uint8_t *alive = alive_a.ptr();
 	const int n = alive_a.size();
-	std::vector<double> dem(ctrl_a.size(), 0.0);
+	const int pc = ctrl_a.size();
+	const int nk = nf_a.size();
+	std::vector<double> dem(pc, 0.0), have(pc, 0.0), need(pc, 0.0);
 	for (int i = 0; i < n; i++)
-		if (alive[i] == 1)
-			dem[prov[i]] += mot[i] >= 1 ? 1.5 : 1.0;
+		if (alive[i] == 1) {
+			const int s = side_of[owner[i]];
+			const int c = ctrl[prov[i]];
+			if (s >= 0 && c >= 0 && side_of[c] == s)
+				dem[prov[i]] += mot[i] >= 1 ? 1.5 : 1.0;
+		}
+	std::vector<int32_t> plist;
+	for (int p = 0; p < pc; p++) {
+		if (dem[p] <= 0.0)
+			continue;
+		const int s = side_of[ctrl[p]];
+		have[p] = k_local * double(pcap[p]) * ((ps[p] == s && conn[p] == 1) ? 1.0 : k_pocket);
+		if (ps[p] == s && dem[p] > have[p]) {
+			need[p] = dem[p] - have[p];
+			plist.push_back(p);
+		}
+	}
+	std::vector<double> rem(nk, 0.0), req(nk, 0.0), rq(plist.size(), 0.0);
+	std::vector<uint8_t> rset(nk, 0);
+	std::vector<int32_t> rk(plist.size(), -1);
+	PackedFloat64Array used_a;
+	used_a.resize(nk);
+	double *used = used_a.ptrw();
+	std::fill(used, used + nk, 0.0);
+	for (int j = 0; j < kc; j++) {
+		for (size_t m = 0; m < plist.size(); m++) {
+			const int p = plist[m];
+			rk[m] = -1;
+			const int k = cand[int64_t(p) * kc + j];
+			if (k < 0 || need[p] <= 0.0)
+				continue;
+			const int g = nprov[k];
+			if (ctrl[g] < 0 || side_of[ctrl[g]] != k / nr)
+				continue;
+			const double r = std::min(need[p], nf[k] * fall[chop[int64_t(p) * kc + j]] * cfac[int64_t(p) * kc + j]);
+			if (rset[k] == 0) {
+				rset[k] = 1;
+				rem[k] = nf[k] * budget_k;
+			}
+			rq[m] = r;
+			rk[m] = k;
+			req[k] += r;
+		}
+		for (size_t m = 0; m < plist.size(); m++) {
+			const int k = rk[m];
+			if (k < 0)
+				continue;
+			const int p = plist[m];
+			const double d = rem[k] >= req[k] ? rq[m] : rq[m] * (rem[k] / req[k]);
+			have[p] += d;
+			need[p] -= d;
+			used[k] += d;
+		}
+		for (size_t m = 0; m < plist.size(); m++) {
+			const int k = rk[m];
+			if (k >= 0 && req[k] > 0.0) {
+				rem[k] = std::max(0.0, rem[k] - req[k]);
+				req[k] = 0.0;
+			}
+		}
+	}
 	PackedFloat64Array sup_a;
 	sup_a.resize(n);
 	double *sup = sup_a.ptrw();
@@ -250,14 +420,13 @@ PackedFloat64Array MeowqCore::supply_divs(const Dictionary &t) const {
 		const int c = ctrl[p];
 		if (s < 0 || c < 0 || side_of[c] != s)
 			continue;
-		double have = k_local * double(pcap[p]) * ((ps[p] == s && conn[p] == 1) ? 1.0 : k_pocket);
-		const int g = gsrc[p];
-		if (ps[p] == s && g >= 0 && ctrl[g] >= 0 && side_of[ctrl[g]] == s)
-			have += got[p];
 		const double d = dem[p];
-		sup[i] = have >= d ? 1.0 : have / std::max(1.0, d);
+		sup[i] = have[p] >= d ? 1.0 : have[p] / std::max(1.0, d);
 	}
-	return sup_a;
+	Array r;
+	r.push_back(sup_a);
+	r.push_back(used_a);
+	return r;
 }
 
 // Планирование наступления (World.k_plan — двойник): стоящая на фронте дивизия

@@ -395,13 +395,13 @@ struct SidePower {
 };
 }
 
-static SidePower side_power(const int32_t *slots, int64_t count, int terr, bool defending, const double *str,
+static SidePower side_power(const int32_t *slots, const double *part, int64_t count, int terr, bool defending, const double *str,
 		const double *def, const double *ent, const double *atk, const uint8_t *landing, const double *eq,
 		const double *sup, const int32_t *tpl, const double *hard, const float *tmul) {
 	double power = 0.0, hd = 0.0, wsum = 0.0;
 	for (int64_t k = 0; k < count; k++) {
 		const int32_t i = slots[k];
-		const double w = str[i] / 100.0;
+		const double w = str[i] / 100.0 * part[k];
 		const double base = defending ? def[i] * (1.0 + 0.3 * ent[i]) : atk[i] * (landing[i] == 1 ? 0.5 : 1.0);
 		power += base * w * (0.4 + 0.6 * eq[i]) * (0.5 + 0.5 * sup[i]) * double(tmul[tpl[i] * 8 + terr]);
 		hd += hard[i] * w;
@@ -437,18 +437,32 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 	const float *tw = tpl_width.ptr(), *fwp = fw.ptr();
 	const double *og = org_in.ptr();
 	// ширина фронта (World.front_pick): свежие первыми, при равенстве — по номеру
-	auto pick = [&](std::vector<int32_t> &v, double limit) {
+	std::vector<double> aw, dw;
+	auto pick = [&](std::vector<int32_t> &v, std::vector<double> &part, double limit) {
 		std::sort(v.begin(), v.end(), [&](int32_t a, int32_t b) { return og[a] > og[b] || (og[a] == og[b] && a < b); });
 		size_t n = 0;
 		double used = 0.0;
+		part.clear();
 		for (int32_t i : v) {
 			const double w = double(tw[tp[i]]);
 			if (n == 0 || used + w <= limit) {
 				v[n++] = i;
+				part.push_back(1.0);
 				used += w;
+			} else {
+				if (limit - used > 0.0) {
+					v[n++] = i;
+					part.push_back((limit - used) / w);
+				}
+				break;
 			}
 		}
 		v.resize(n);
+	};
+	auto wsum = [](const std::vector<double> &w) {
+		double s = 0.0;
+		for (double x : w) s += x;
+		return s;
 	};
 	Ref<RandomNumberGenerator> rng;
 	rng.instantiate();
@@ -473,10 +487,10 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		const double limit = double(fwp[terr]) + double(fwp[8]) * double(dirs - 1);
 		for (int32_t e : defenders) deltas.push_back({ e, 0.0, 0.0 });   // резерв — тоже в бою
 		for (int32_t e : attackers) deltas.push_back({ e, 0.0, 0.0 });
-		pick(attackers, limit);
-		pick(defenders, limit);
-		const SidePower sa = side_power(attackers.data(), int64_t(attackers.size()), terr, false, s0, df, en, at, ld, e0, su, tp, hd, tm);
-		const SidePower sd = side_power(defenders.data(), int64_t(defenders.size()), terr, true, s0, df, en, at, ld, e0, su, tp, hd, tm);
+		pick(attackers, aw, limit);
+		pick(defenders, dw, limit);
+		const SidePower sa = side_power(attackers.data(), aw.data(), int64_t(attackers.size()), terr, false, s0, df, en, at, ld, e0, su, tp, hd, tm);
+		const SidePower sd = side_power(defenders.data(), dw.data(), int64_t(defenders.size()), terr, true, s0, df, en, at, ld, e0, su, tp, hd, tm);
 		const int32_t reg = rg[p];
 		double att_power = sa.power * double(cm[int64_t(reg) * nc + att_owner]);
 		const double att_hard = sa.hard;
@@ -488,10 +502,10 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		def_power *= r2;
 		att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard);
 		def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard);
-		const double to_def = att_power / double(defenders.size());
-		const double to_att = def_power / double(attackers.size());
-		for (int32_t e : defenders) deltas.push_back({ e, to_def * 0.55, to_def * 0.12 });
-		for (int32_t e : attackers) deltas.push_back({ e, to_att * 0.5, to_att * 0.10 });
+		const double to_def = att_power / wsum(dw);
+		const double to_att = def_power / wsum(aw);
+		for (size_t j = 0; j < defenders.size(); j++) deltas.push_back({ defenders[j], to_def * dw[j] * 0.55, to_def * dw[j] * 0.12 });
+		for (size_t j = 0; j < attackers.size(); j++) deltas.push_back({ attackers[j], to_att * aw[j] * 0.5, to_att * aw[j] * 0.10 });
 	}
 	double *o = org.ptrw(), *s = str.ptrw(), *q = eq.ptrw();
 	uint8_t *bt = battle.ptrw();

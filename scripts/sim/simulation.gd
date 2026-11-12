@@ -189,7 +189,8 @@ func _phase_economy() -> void:
 		Prof.add("эк:наука-день", _pt)
 		_pt = Time.get_ticks_usec()
 		var civ_free := maxf(0.0, float(nat.civ) - nat.trade_civ + nat.trade_civ_in)
-		nat.build_progress += civ_free * BUILD_RATE * (1.0 + nat.b("construction"))
+		# заказы узлов снабжения берут до половины очков стройки (Supply.build)
+		nat.build_progress += Supply.build(world, nat, civ_free * BUILD_RATE * (1.0 + nat.b("construction")))
 		if nat.build_progress >= FACTORY_COST:
 			if _place_factory(i, nat.build_mode):
 				nat.build_progress -= FACTORY_COST
@@ -408,6 +409,7 @@ func _phase_supply() -> void:
 				caps.append(world.nations[a].capital)
 		Supply.regions(world, so, srcs, caps)
 		world.sup_args = [so, srcs, caps]   # для упреждения поля на завтра (Supply.spec)
+		Supply.ai_daily(world)
 		Prof.add("снаб:сети", _pt0)
 		return
 	var results: Array = []
