@@ -160,6 +160,7 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	world.ai_wars = true
 	Diplomacy.load_setup(world, dir + "/diplomacy.json")
 	History.load(world, dir)
+	Claims.init(world, dir)   # национальные территории 1936 г.
 	_load_forts(world, dir + "/forts.json")
 	Economy.load_resources(world, dir + "/resources.json")
 	# национальные черты: определения и стартовые черты стран
@@ -168,6 +169,16 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	for nat in world.nations:
 		world.recalc_spirits(nat)
 	Relations.init(world)
+	# марионетки известны только теперь: их отчисления сюзерену (Puppets) меняют
+	# число заводов — линии подгоняются под них
+	var inc := world.compute_all_income()
+	Puppets.adjust_income(world, inc)
+	for nat in world.nations:
+		if nat.alive and (nat.mil != int(inc[nat.id][1]) or nat.civ != int(inc[nat.id][0])):
+			nat.civ = inc[nat.id][0]
+			nat.mil = inc[nat.id][1]
+			Military.trim_lines(nat)
+			Military.assign_free_factories(nat, Military.default_split(nat))
 	world.build_caches()
 	Forces.setup(world, dir)
 	world.rebuild_prov_divs()

@@ -1,0 +1,47 @@
+{
+  "_comment": "Национальные территории (претензии) на начало 1936 г. сверх своих земель (свои, кроме колоний, — у всех). Правило (решение пользователя): только земли, входившие в страну или её прямого предшественника в недавнем прошлом (примерно с конца XIX в. до 1920-х), — не дальше. areas — области из areas.json, nations — страны целиком. Претензии по фокусам — эффект {\"t\": \"claim\", \"area\"|\"target\"}.",
+  "GER": {
+    "areas": [
+      "danzig_corridor",
+      "polish_silesia",
+      "memel",
+      "eupen_malmedy",
+      "alsace_lorraine"
+    ],
+    "nations": [
+      "DNZ"
+    ]
+  },
+  "HUN": {
+    "areas": [
+      "south_slovakia",
+      "ruthenia",
+      "north_transylvania"
+    ]
+  },
+  "BUL": {
+    "areas": [
+      "south_dobruja"
+    ]
+  },
+  "LIT": {
+    "areas": [
+      "vilnius"
+    ]
+  },
+  "SOV": {
+    "areas": [
+      "bessarabia"
+    ]
+  },
+  "CHI": {
+    "nations": [
+      "MAN",
+      "SHX",
+      "YUN",
+      "GXC",
+      "XSM",
+      "PRC"
+    ]
+  }
+}

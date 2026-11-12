@@ -225,10 +225,13 @@ static func _held(world: World, u: int, w: int) -> Vector2:
 	return Vector2(mine, other) / float(provs.size())
 
 
-## Цена участка для победителя w: своё занятое дешевле, чужое занятое дороже.
+## Цена участка для победителя w: своё занятое дешевле, чужое занятое дороже,
+## национальная земля — за полцены (Claims).
 static func unit_price(world: World, u: int, w: int) -> float:
 	var h := _held(world, u, w)
-	return float(world.conference["u_cost"][u]) * (1.0 - (1.0 - OCC_DISCOUNT) * h.x + (OTHER_ANNEX - 1.0) * h.y)
+	var core := Claims.share(world, w, world.conference["u_provs"][u])
+	return float(world.conference["u_cost"][u]) * (1.0 - (1.0 - OCC_DISCOUNT) * h.x + (OTHER_ANNEX - 1.0) * h.y) \
+			* (1.0 - Claims.ANNEX_DISCOUNT * core)
 
 
 ## Цена марионетки или освобождения страны l для w (k — PUPPET_K / FREE_K).
@@ -383,9 +386,11 @@ static func ai_pick(world: World, w: int) -> Array:
 						adj = true
 						break
 		var share := float(mine) / float(provs.size())
+		var core := Claims.share(world, w, provs)
 		var v := float(c["u_cost"][u]) * (share * 1.5 + (0.5 if adj else 0.0) + 0.2)
-		if demo and not colony:
+		if demo and not colony and core < 0.5:
 			v *= 0.4
+		v *= 1.0 + core   # национальную землю берут охотно
 		var r := v / maxf(0.01, pr)
 		if r > best_r:
 			best_r = r

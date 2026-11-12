@@ -141,7 +141,12 @@ func _init() -> void:
 	w.nations[ger].is_player = true   # без ИИ-гарнизона
 	Occupation.step(w)
 	var s0 := Occupation.stats(w, k)
-	check(int(s0[0]) == pp2.size(), "территория — все провинции Польши (%d)" % s0[0])
+	var nc_pol := 0
+	for p in pp2:
+		if not Claims.is_core(w, ger, p):
+			nc_pol += 1
+	check(int(s0[0]) == nc_pol, "территория — провинции Польши, кроме национальной земли Германии (%d)" % s0[0])
+	pp2 = pp2.filter(func(p): return not Claims.is_core(w, ger, p))
 	for i in 36:
 		w.day += Occupation.STEP
 		Occupation.step(w)
@@ -172,10 +177,13 @@ func _init() -> void:
 	Peace.start(w, [ger], [pol])
 	w.nations[ger].is_player = true
 	var annexed := 0
+	var remembered := 0
 	for p in pp2:
 		if w.p_owner[p] == ger:
 			annexed += 1
-	check(annexed > 0 and w.p_from[pp2[0]] == pol or annexed == 0, "присоединённое помнит прежнего владельца")
+			if w.p_from[p] == pol:
+				remembered += 1
+	check(annexed == remembered, "присоединённое помнит прежнего владельца (%d из %d)" % [remembered, annexed])
 	var pa := -1
 	for p in pp2:
 		if w.p_owner[p] == ger:
@@ -226,6 +234,68 @@ func _init() -> void:
 	f1 = np.freedom
 	w.nations[ger].build_puppet = pol
 	check(Puppets.build_in(w, w.nations[ger], pol) and np.freedom < f1, "стройка сюзерена снижает свободу")
+
+	# --- 6. Национальные территории ---------------------------------------
+	print("Национальные территории:")
+	fresh()
+	ger = t("GER")
+	pol = t("POL")
+	sov = t("SOV")
+	for tag in ["GER", "HUN", "BUL", "LIT", "CHI"]:
+		var n := t(tag)
+		var extra := 0
+		for ck in w.cores:
+			if int(ck) % 4096 == n and w.p_owner[int(ck) / 4096] != n:
+				extra += 1
+		print("  %s: чужих провинций в претензиях %d" % [tag, extra])
+		check(extra > 0, "у %s есть претензии с 1936 г." % tag)
+	var before := 0
+	for p in provs_of(pol):
+		if Claims.is_core(w, sov, p):
+			before += 1
+	History.apply(w, sov, [{"t": "claim", "area": "east_poland"}], Parallel.rng(1, 1, 1))
+	var after := 0
+	for p in provs_of(pol):
+		if Claims.is_core(w, sov, p):
+			after += 1
+	check(before == 0 and after > 0, "фокус даёт претензии (СССР на восток Польши: %d пров.)" % after)
+	# переговоры: национальная земля за полцены и сразу интегрирована
+	war(ger, pol)
+	for p in provs_of(pol):
+		w.p_controller[p] = ger
+	Peace.capitulate(w, pol, ger)
+	w.nations[ger].is_player = true
+	Peace.start(w, [ger], [pol])
+	var cf: Dictionary = w.conference
+	var core_u := -1
+	var best_sh := 0.0
+	for u in (cf["u_owner"] as PackedInt32Array).size():
+		var sh := Claims.share(w, ger, cf["u_provs"][u])
+		if sh > best_sh:
+			best_sh = sh
+			core_u = u
+	check(core_u >= 0, "есть участок с национальной землёй Германии (доля %.2f)" % best_sh)
+	# всё занято Германией: ×0,75; национальная доля — ещё × (1 − 0,5 × доля)
+	var r1 := Peace.unit_price(w, core_u, ger) / float(cf["u_cost"][core_u])
+	check(absf(r1 - 0.75 * (1.0 - 0.5 * best_sh)) < 0.01, "скидка 50%% на национальную землю (цена %.2f от стоимости)" % r1)
+	var cp: PackedInt32Array = cf["u_provs"][core_u]
+	Peace.act(w, ger, "annex", core_u)
+	if not w.conference.is_empty():
+		Peace.act(w, ger, "done")
+	var integ := 0
+	var bad := 0
+	var cp0 := -1
+	for p in cp:
+		if not Claims.is_core(w, ger, p):
+			continue
+		if w.p_owner[p] == ger and w.p_from[p] == -1 and Occupation.key_of(w, p) < 0:
+			integ += 1
+			cp0 = p
+		else:
+			bad += 1
+	check(integ > 0 and bad == 0, "после мира национальная земля сразу часть страны (%d пров.)" % integ)
+	Occupation.step(w)
+	check(cp0 >= 0 and w.p_yield[cp0] == 1.0, "отдача национальной земли — 100 %%")
 
 	print("ОШИБОК: %d" % errors if errors > 0 else "Мир: OK")
 	quit(1 if errors > 0 else 0)

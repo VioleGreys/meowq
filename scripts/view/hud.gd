@@ -1208,6 +1208,12 @@ func _province_text(p: int) -> String:
 		s += "\nСуровый климат: %s — непривычные войска медленнее, слабее и теряют людей" % ", ".join(cl)
 	s += "\nФабрики: %d гражд. / %d воен. · Население: %s · Резерв: %dк · Очки победы: %d" % [
 		w.p_civ[p], w.p_mil[p], _fmt_pop(w.p_population[p]), w.p_manpower[p], w.p_vp[p]]
+	var cl := Claims.claimants(w, p)
+	if not cl.is_empty():
+		var cn: Array = []
+		for x in cl:
+			cn.append(w.nations[x].name)
+		s += "\nНациональная территория: " + ", ".join(cn)
 	var ok := Occupation.key_of(w, p) if p < w.p_resist.size() else -1
 	if ok >= 0 and w.p_resist[p] >= 0.0:
 		s += "\nЗемли страны %s под властью: %s · сопротивление %d%% · принятие %d%% · отдача %d%%" % [
@@ -1840,7 +1846,7 @@ func _build_peace(w: World) -> void:
 		return
 	var me := Peace.current(w)
 	var budget: float = c["budget"][me]
-	popup_body.add_child(_small("Война окончена. Победители по очереди, начиная с наибольшего вклада, делят земли проигравших. Время стоит, пока вы не решите."))
+	popup_body.add_child(_small("Война окончена. Победители по очереди, начиная с наибольшего вклада, делят земли проигравших. ★ — наша национальная территория: вдвое дешевле и сразу становится частью страны. Время стоит, пока вы не решите."))
 	popup_body.add_child(_section("Победители"))
 	for x in c["winners"]:
 		var nx: World.Nation = w.nations[x]
@@ -1900,8 +1906,9 @@ func _build_peace(w: World) -> void:
 			var big: int = c["u_big"][u]
 			var mine: int = held.call(u)
 			var provs: PackedInt32Array = c["u_provs"][u]
-			var b := _button("%d · Взять %s, %d пров.%s" % [int(pr), w.p_name[big], provs.size(),
-					" (наше)" if mine > 0 else ""], func(): game.resolve_peace("annex", u), Vector2(0, 44))
+			var nat_land := Claims.share(w, me, provs) >= 0.5
+			var b := _button("%d · %s%s, %d пров.%s" % [int(pr), "★ " if nat_land else "", w.p_name[big], provs.size(),
+					" (занято нами)" if mine > 0 else ""], func(): game.resolve_peace("annex", u), Vector2(0, 44))
 			b.disabled = pr > budget + 0.001
 			b.clip_text = true
 			popup_body.add_child(b)

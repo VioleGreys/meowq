@@ -57,6 +57,8 @@ static func key_of(world: World, p: int) -> int:
 		var nc := world.nation_count
 		if world.ally.size() == nc * nc and world.ally[c * nc + o] == 1:
 			return -1
+		if world.cores.has(p * 4096 + c):
+			return -1   # своя национальная земля: сопротивления нет
 		return tkey(c, o)
 	if p < world.p_from.size():
 		var f := world.p_from[p]
@@ -96,6 +98,14 @@ static func _ensure(world: World) -> void:
 static func on_annex(world: World, provs: PackedInt32Array, to: int, from: int) -> void:
 	_ensure(world)
 	for p in provs:
+		if Claims.is_core(world, to, p):
+			# национальная земля сразу интегрирована: часть страны, без сопротивления
+			world.p_from[p] = -1
+			world.p_resist[p] = -1.0
+			world.p_comply[p] = 0.0
+			world.p_yield[p] = 1.0
+			world.p_yield_mp[p] = 1.0
+			continue
 		var f := world.p_from[p]
 		world.p_from[p] = from if f < 0 else f
 		if world.p_from[p] == to:

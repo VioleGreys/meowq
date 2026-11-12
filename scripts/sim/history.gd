@@ -774,6 +774,8 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 		match e["t"]:
 			"tension":
 				Diplomacy.add_tension(world, float(e["v"]))
+			"claim":
+				Claims.apply_effect(world, who, e)
 			"later":
 				# «через N дней»: эффекты выполнятся позже (для событий, разделённых
 				# неделей, — короче самого короткого фокуса)
@@ -1158,6 +1160,7 @@ static func release(world: World, tag: String, provs: Array, overlord: int, take
 				else:
 					d.alive = false
 	nat.overlord = overlord
+	Claims.add(world, n, provs)   # земли нового государства — его национальные
 	if overlord >= 0:
 		nat.puppet_since = world.day
 		nat.freedom = Puppets.START_FREEDOM
@@ -1315,6 +1318,8 @@ static func effects_text(world: World, effects: Array) -> String:
 			"transfer":
 				var to := tag_id(world, e.get("to", ""))
 				parts.append("передача земель → %s" % (world.nations[to].name if to >= 0 else "нам"))
+			"claim":
+				parts.append("%sпретензии: %s" % [who, String(world.areas.get(e["area"], {}).get("name", e["area"])) if e.has("area") else tname])
 			"release":
 				parts.append("новое государство")
 			"civil_war":
