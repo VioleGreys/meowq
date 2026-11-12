@@ -78,6 +78,7 @@ func _init() -> void:
 	w = r[0]
 	var psim: Simulation = r[1]
 	w.nations[GER].is_player = true
+	w.nations[GER].pol_power = 100.0   # обоснование стоит ПВ (Politics)
 	check(Diplomacy.start_justify(w, GER, AUS), "обоснование претензий началось")
 	var guard := 0
 	while not w.nations[GER].wargoals.has(AUS) and guard < 200:
@@ -89,11 +90,14 @@ func _init() -> void:
 		if w.p_owner[p] == AUS:
 			w.p_controller[p] = GER
 	psim.tick()
-	check(w.pending_peace.size() == 1 and w.pending_peace[0][0] == AUS, "игроку предложен мирный договор")
+	# с ноября 2026 сдача — мирная конференция (Peace): ход игрока ждёт
+	check(w.pending_peace.size() == 1 and Peace.current(w) == GER, "игроку — ход на мирной конференции")
 	var day_before := w.day
 	psim.tick()
 	check(w.day == day_before, "время стоит до решения игрока")
-	psim.resolve_peace("puppet")
+	psim.resolve_peace("puppet", AUS)
+	while not w.conference.is_empty() and Peace.current(w) == GER:
+		psim.resolve_peace("done")
 	check(w.nations[AUS].overlord == GER and w.pending_peace.is_empty(), "Австрия — марионетка Германии")
 
 	var years := 3

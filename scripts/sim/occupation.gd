@@ -152,10 +152,18 @@ static func step(world: World) -> void:
 		var integ := world.occ_integrate.has(k) and world.p_owner[p] == world.p_controller[p]
 		var r := world.p_resist[p]
 		var cm := world.p_comply[p]
-		var dr := RESIST_GAIN * float(law["resist"]) * (1.0 - cover) * (1.0 - 0.7 * cm / 100.0) - RESIST_SUPPRESS * cover
+		# черты и фокусы: оккупант гасит сопротивление (occ_resist < 0) и
+		# поднимает принятие (occ_comply); владелец земли (изгнанник, партизаны)
+		# разгоняет сопротивление (resistance) и сбивает принятие
+		var nc_: World.Nation = world.nations[k / 4096]
+		var no_: World.Nation = world.nations[k % 4096]
+		var rk := maxf(0.0, 1.0 + nc_.b("occ_resist") + no_.b("resistance"))
+		var dr := RESIST_GAIN * float(law["resist"]) * rk * (1.0 - cover) * (1.0 - 0.7 * cm / 100.0) - RESIST_SUPPRESS * cover
 		r = clampf(r + dr * STEP, 0.0, 100.0)
 		var lc: float = law["comply"]
 		var dc := COMPLY_GAIN * lc * ((1.0 - r / 100.0) if lc > 0.0 else 1.0)
+		if lc > 0.0:
+			dc *= maxf(0.0, 1.0 + nc_.b("occ_comply") - 0.5 * no_.b("resistance"))
 		if integ:
 			dc += INTEG_GAIN
 		cm = clampf(cm + dc * STEP, 0.0, 100.0)
@@ -231,6 +239,33 @@ static func _ai(world: World) -> void:
 			set_garrison(world, k, need)
 		if int(world.occ_stats[k][4]) > 0 and nat.at_war.is_empty() and nat.civ > 20 and not world.occ_integrate.has(k):
 			world.occ_integrate[k] = true
+
+
+## Игрок меняет закон территории: стоит ПВ. Пусто — сделано, иначе причина.
+static func set_law(world: World, k: int, law: int) -> String:
+	var nat: World.Nation = world.nations[k / 4096]
+	var why := Politics.spend(world, nat, Politics.COST_OCC_LAW) if nat.is_player else ""
+	if why != "":
+		return why
+	world.occ_law[k] = law
+	return ""
+
+
+## Разовый сдвиг шкал (эффекты фокусов «resist» / «comply») на землях стран
+## owners, занятых чужими: сопротивление или принятие ± v.
+static func shift(world: World, owners: Dictionary, v: float, resist: bool) -> void:
+	_ensure(world)
+	for p in world.prov_count:
+		var k := key_of(world, p)
+		if k < 0 or not owners.has(k % 4096):
+			continue
+		if world.p_resist[p] < 0.0:
+			world.p_resist[p] = RESIST_START
+			world.p_comply[p] = 0.0
+		if resist:
+			world.p_resist[p] = clampf(world.p_resist[p] + v, 0.0, 100.0)
+		else:
+			world.p_comply[p] = clampf(world.p_comply[p] + v, 0.0, 100.0)
 
 
 ## Гарнизон территории: набор стоит людей и пехотного снаряжения, роспуск

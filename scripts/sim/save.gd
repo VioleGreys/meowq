@@ -309,6 +309,8 @@ static func load_into(name: String, world: World, sim: Simulation) -> Dictionary
 		return {"err": str(sg.errors[0]), "meta": meta}
 	if int(meta.get("version", 0)) < 2:
 		Forces.migrate_v1(world)
+	for id in world.dyn_events:
+		world.event_defs[id] = world.dyn_events[id]   # события партии (вызов гаранта)
 	return {"err": "", "meta": meta}
 
 

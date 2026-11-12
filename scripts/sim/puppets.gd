@@ -21,6 +21,21 @@ const F_BUILD := -4.0          # сюзерен строит фабрику на
 const AI_BUILD_ABOVE := 65.0   # ИИ-сюзерен строит у марионетки со свободой выше
 
 
+## Существующая страна становится марионеткой: отсчёт первого года, средняя
+## свобода; вместо своего дерева фокусов — дерево марионетки (текущий фокус
+## своего дерева прерывается).
+static func make(world: World, n: int, overlord: int) -> void:
+	var nat: World.Nation = world.nations[n]
+	nat.overlord = overlord
+	nat.puppet_since = world.day
+	nat.freedom = START_FREEDOM
+	nat.puppet_tree = true
+	nat.focus_current = ""
+	nat.focus_days = 0
+	nat.focus_wait_until = 0
+	world.focus_epoch += 1
+
+
 static func is_puppet(world: World, n: int) -> bool:
 	var nat: World.Nation = world.nations[n]
 	return nat.alive and nat.overlord >= 0 and world.nations[nat.overlord].alive

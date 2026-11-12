@@ -1120,6 +1120,10 @@ static func set_law(world: World, nat: World.Nation, law: int) -> String:
 		return ""
 	if nat.law_day >= 0 and world.day - nat.law_day < LAW_COOLDOWN:
 		return "курс можно менять раз в %d дней" % LAW_COOLDOWN
+	if nat.is_player:
+		var why := Politics.spend(world, nat, Politics.COST_TRADE_LAW)
+		if why != "":
+			return why
 	nat.trade_law = law
 	nat.law_day = world.day
 	world.recalc_spirits(nat)

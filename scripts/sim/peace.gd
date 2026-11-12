@@ -478,9 +478,7 @@ static func finish(world: World) -> void:
 			Diplomacy.leave_faction(world, l)
 		if c["puppet"].has(l):
 			var w: int = c["puppet"][l]
-			nl.overlord = Diplomacy.root(world, w)
-			nl.puppet_since = world.day
-			nl.freedom = Puppets.START_FREEDOM
+			Puppets.make(world, l, Diplomacy.root(world, w))
 			world.log_event("Мир: %s становится марионеткой страны %s" % [nl.name, world.nations[nl.overlord].name])
 		elif c["free"].has(l):
 			var w: int = c["free"][l]

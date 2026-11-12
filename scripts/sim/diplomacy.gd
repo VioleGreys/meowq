@@ -117,7 +117,9 @@ static func can_justify(world: World, a: int, b: int) -> String:
 	if world.tension < need:
 		return "%s: нужна мировая напряжённость %d%% (сейчас %d%%)" % [
 			world.ideology_names.get(na.ideology, na.ideology), need, world.tension]
-	return ""
+	if na.is_player and na.war_support < Politics.WS_JUSTIFY:
+		return "нужна поддержка войны %d%% (сейчас %d%%)" % [roundi(Politics.WS_JUSTIFY * 100.0), roundi(na.war_support * 100.0)]
+	return Politics.can_pay(world, na, Politics.COST_JUSTIFY)
 
 
 static func justify_days(world: World, b: int) -> int:
@@ -129,6 +131,7 @@ static func start_justify(world: World, a: int, b: int) -> bool:
 	if can_justify(world, a, b) != "":
 		return false
 	var na: World.Nation = world.nations[a]
+	Politics.spend(world, na, Politics.COST_JUSTIFY)
 	na.justify_target = b
 	na.justify_days = justify_days(world, b)
 	na.justify_total = na.justify_days
@@ -169,6 +172,7 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 	for p in puppets_of(world, a):
 		attackers[p] = true
 	var defenders := {b: true}
+	var calls := {}   # гаранты-игроки: событие с выбором
 	var rb := root(world, b)
 	# члены фракции атакующего: ИИ решает, присоединиться ли к наступательной войне
 	var target_side := {}
@@ -185,12 +189,20 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 			var add: Array = [root(world, d)]
 			add.append_array(puppets_of(world, root(world, d)))
 			add.append_array(faction_members(world, world.nations[root(world, d)].faction))
-			if call_guarantors:
+			# гаранты — только за саму жертву (а не за всю её сторону: иначе
+			# британская гарантия Румынии 1939 г. ставила Британию за Германию)
+			if call_guarantors and d == b:
 				for nat in world.nations:
 					if nat.alive and nat.guarantees.has(d) and not nat.pacts.has(a):
-						add.append(nat.id)
+						if nat.is_player:
+							calls[nat.id] = true   # игрок решает сам (событие)
+						elif world.nations[a].is_player and not nat.guar_hist.has(d):
+							calls[nat.id] = true   # на игрока: ИИ взвешивает (событие)
+						else:
+							add.append(nat.id)
 			for x in add:
-				if not defenders.has(x) and not attackers.has(x):
+				if not defenders.has(x) and not attackers.has(x) and not _hostile_to_any(world, x, defenders) \
+						and not same_side(world, x, a):
 					defenders[x] = true
 					changed = true
 	for x in attackers:
@@ -200,6 +212,10 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 			if x != y and not attackers.has(y):
 				world.set_war(x, y)
 	add_tension(world, 8.0 if is_major(world, b) else (1.0 if world.nations[b].province_count <= 2 else 2.5))
+	Politics.on_declare(world, a, b)
+	for g in calls:
+		if not defenders.has(g) and not attackers.has(g) and not world.is_at_war(g, a):
+			Politics.guarantee_call(world, g, b, a)
 	Relations.on_war(world, a, b)
 	world.focus_epoch += 1
 	world.log_event("%s объявляет войну: %s!" % [na.name, world.nations[b].name])
@@ -212,6 +228,14 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 			Relations.add_aggression(world, x, 8.0)
 			world.log_event("%s поддерживает страну %s" % [world.nations[x].name, na.name])
 	return true
+
+
+## Страна x воюет с кем-то из списка (за врага она не встанет).
+static func _hostile_to_any(world: World, x: int, side: Dictionary) -> bool:
+	for y in side:
+		if world.is_at_war(x, y):
+			return true
+	return false
 
 
 static func _joins_offensive(world: World, m: int, a: int, b: int) -> bool:
@@ -294,7 +318,57 @@ static func leave_faction(world: World, n: int) -> void:
 	world.palette_dirty = true
 
 
-static func guarantee(world: World, a: int, b: int) -> void:
+## Гарантию даёт только тот, кто намного сильнее (решение пользователя, ноябрь
+## 2026): военная сила и промышленность — не меньше чем вдвое больше, чем у
+## гарантируемой страны (исторические гарантии 1936–39 гг. — от ×2,1).
+const GUAR_RATIO := 2.0
+
+
+## Военная сила для гарантий: дивизии, военные заводы, корабли (по 0,25),
+## самолёты (по 0,01).
+static func military_strength(world: World, n: int) -> float:
+	var ships := 0
+	for f in world.fleets:
+		if f.owner == n:
+			for c in f.counts:
+				ships += c
+	var planes := 0.0
+	for wg in world.wings:
+		if wg.owner == n:
+			planes += wg.planes
+	var nat: World.Nation = world.nations[n]
+	return nat.division_count + nat.mil + ships * 0.25 + planes / 100.0
+
+
+## Пустая строка — можно гарантировать; иначе причина.
+static func can_guarantee(world: World, a: int, b: int) -> String:
+	var na: World.Nation = world.nations[a]
+	var nb: World.Nation = world.nations[b]
+	if not nb.alive or a == b or same_side(world, a, b) or world.is_at_war(a, b):
+		return "невозможно"
+	if na.overlord >= 0:
+		return "марионетка не ведёт свою внешнюю политику"
+	var pp := Politics.can_pay(world, na, Politics.COST_GUARANTEE)
+	if pp != "":
+		return pp
+	var ma := military_strength(world, a)
+	var mb := military_strength(world, b)
+	if ma < mb * GUAR_RATIO:
+		return "нужна военная сила вдвое больше (%.0f против %.0f)" % [ma, mb]
+	if na.civ + na.mil < (nb.civ + nb.mil) * GUAR_RATIO:
+		return "нужна промышленность вдвое больше (%d против %d)" % [na.civ + na.mil, nb.civ + nb.mil]
+	return ""
+
+
+## historic — исторические гарантии (фокусы, события): без проверки перевеса.
+static func guarantee(world: World, a: int, b: int, historic: bool = false) -> void:
+	if not historic:
+		if can_guarantee(world, a, b) != "":
+			return
+		Politics.spend(world, world.nations[a], Politics.COST_GUARANTEE)
+		world.nations[a].guar_hist.erase(b)
+	else:
+		world.nations[a].guar_hist[b] = true
 	world.nations[a].guarantees[b] = true
 	Relations.on_guarantee(world, a, b)
 	Relations.add_diplo(world, a, 5.0)
@@ -391,9 +465,7 @@ static func make_peace(world: World, loser: int, winner: int, mode: String) -> v
 				world.p_controller[p] = loser
 			elif world.p_controller[p] == loser:
 				world.p_controller[p] = world.p_owner[p]
-		nl.overlord = root(world, winner)
-		nl.puppet_since = world.day
-		nl.freedom = Puppets.START_FREEDOM
+		Puppets.make(world, loser, root(world, winner))
 		_inherit_wars(world, loser, nl.overlord)
 		world.log_event("%s капитулирует и становится марионеткой страны %s" % [nl.name, world.nations[nl.overlord].name])
 	else:
@@ -650,6 +722,13 @@ static func check_stalemates(world: World) -> void:
 			# гражданская война миром не кончается — только победой одной из сторон
 			if nat.spirits.has("civil_war_attrition") and ne.spirits.has("civil_war_attrition"):
 				continue
+			# мировая война затуханием не кончается (ноябрь 2026): без сухопутного
+			# фронта Британия и Германия мирились в 1943–44 гг., и Ось выигрывала
+			# переговоры у одного СССР. Война великих держав и фракций — только
+			# капитуляцией и мирной конференцией; белый мир — для местных войн.
+			if is_major(world, nat.id) or is_major(world, e) \
+					or (world.nations[root(world, nat.id)].faction >= 0 and world.nations[root(world, e)].faction >= 0):
+				continue
 			nat.at_war.erase(e)
 			ne.at_war.erase(nat.id)
 			world.war[nat.id * world.nation_count + e] = 0
@@ -706,6 +785,7 @@ static func load_setup(world: World, path: String) -> void:
 		var b := world.nation_tags.find(g[1])
 		if a >= 0 and b >= 0:
 			world.nations[a].guarantees[b] = true
+			world.nations[a].guar_hist[b] = true
 	for p in d.get("pacts", []):
 		var a := world.nation_tags.find(p[0])
 		var b := world.nation_tags.find(p[1])

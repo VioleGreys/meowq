@@ -35,6 +35,8 @@
 - `peace.md` — конец войны: капитуляция в оккупацию, вклад, мирные переговоры,
   сопротивление и законы на чужих землях, свобода марионеток (`peace.gd`,
   `occupation.gd`, `puppets.gd`).
+- `politics.md` — политическая власть, стабильность, поддержка войны, гарантии
+  (перевес, событие «вступиться или нет»), баффы сторон войны (`politics.gd`).
 - `economy.md` — ресурсы, торговля, договоры, блокада (`economy.gd`).
 - `supply.md` — снабжение по узлам районов: нагрузка, улучшение, присоединение, грузовики (`supply.gd`); Испания.
 - `science.md` — наука: слоты исследований, дерево технологий, бонусы родов
@@ -89,6 +91,7 @@
 - Узлы снабжения: `godot --headless --path . --script res://tests/supply_check.gd`
 - Акклиматизация: `godot --headless --path . --script res://tests/climate_check.gd`
 - Конец войны, оккупация, марионетки: `godot --headless --path . --script res://tests/peace_check.gd`
+- Политика и гарантии: `godot --headless --path . --script res://tests/politics_check.gd`
 - Снабжение, сравнение моделей: `godot --headless --path . --script res://tests/supply_compare.gd [-- --supply=regions]`
 - Сохранение и загрузка: `godot --headless --path . --script res://tests/save_check.gd [-- --dates=1941-08-01 --step=60 --nation=SWE]`
   (страна «игрока» в тесте никем не управляется — для дальних дат брать нейтральную)

@@ -98,6 +98,7 @@ func tick() -> void:
 		_pt = Time.get_ticks_usec()
 		_refresh_sides()
 		Prof.add("подг:стороны", _pt))
+	_timed("политика", Politics.daily.bind(world))
 	_timed("оккупация", Occupation.daily.bind(world))
 	_timed("экономика", _phase_economy)
 	_timed("флот", _phase_navy)
@@ -1290,6 +1291,8 @@ func _cap_countries() -> void:
 	for nat in world.nations:
 		if nat.alive and nat.exile and world.p_controller[nat.capital] != nat.id:
 			_move_capital(nat)   # изгнанники переезжают внутри колоний
+		if nat.alive and _cap_total[nat.id] > 0:
+			nat.vp_ratio = float(_cap_held[nat.id]) / float(_cap_total[nat.id])
 		if not nat.alive or nat.capitulated or nat.exile or nat.at_war.is_empty() or _cap_total[nat.id] == 0:
 			continue
 		var ratio := float(_cap_held[nat.id]) / float(_cap_total[nat.id])

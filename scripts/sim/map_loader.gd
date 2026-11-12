@@ -168,6 +168,7 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		world.spirit_defs = JSON.parse_string(FileAccess.get_file_as_string(dir + "/spirits.json")).get("spirits", {})
 	for nat in world.nations:
 		world.recalc_spirits(nat)
+	Politics.init(world)   # стабильность и поддержка войны по строю и чертам
 	Relations.init(world)
 	# марионетки известны только теперь: их отчисления сюзерену (Puppets) меняют
 	# число заводов — линии подгоняются под них

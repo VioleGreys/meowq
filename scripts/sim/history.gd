@@ -8,6 +8,7 @@ static func load(world: World, dir: String) -> void:
 	var f = JSON.parse_string(FileAccess.get_file_as_string(dir + "/focuses.json"))
 	if typeof(f) == TYPE_DICTIONARY:
 		world.focus_trees = f.get("trees", {})
+		_build_exile_trees(world)
 	var e = JSON.parse_string(FileAccess.get_file_as_string(dir + "/events.json"))
 	if typeof(e) == TYPE_DICTIONARY:
 		world.event_defs = e.get("events", {})
@@ -17,18 +18,53 @@ static func load(world: World, dir: String) -> void:
 		world.areas = a
 
 
-static func tree_of(world: World, n: int) -> Array:
+## Правительство в изгнании (решение пользователя, ноябрь 2026): к своему дереву
+## добавляется ветка «_exile» — влияние на сопротивление и принятие на своих
+## занятых землях. Сводные деревья «тег+exile» собираются при загрузке (данные
+## деревьев не сохраняются), ветка — справа от своего дерева.
+static func _build_exile_trees(world: World) -> void:
+	var ex: Array = world.focus_trees.get("_exile", [])
+	if ex.is_empty():
+		return
+	for tag in world.focus_trees.keys():
+		if String(tag).begins_with("_") and tag != "_generic":
+			continue
+		var own: Array = world.focus_trees[tag]
+		var mx := -1
+		for fd in own:
+			mx = maxi(mx, int(fd.get("x", 0)))
+		var all: Array = own.duplicate()
+		for fd in ex:
+			var c: Dictionary = fd.duplicate()
+			c["x"] = int(fd.get("x", 0)) + mx + 2
+			all.append(c)
+		world.focus_trees[String(tag) + "+exile"] = all
+
+
+## Какое дерево ведёт страна: марионетка, ставшая ею в ходе игры, — дерево
+## марионетки (своё «TAG_puppet» или общее «_puppet»); изгнанник — своё дерево
+## с веткой изгнания; иначе — своё или общее.
+static func tree_key(world: World, n: int) -> String:
 	var tag: String = world.nation_tags[n]
-	if world.focus_trees.has(tag):
-		return world.focus_trees[tag]
-	return world.focus_trees.get("_generic", [])
+	var nat: World.Nation = world.nations[n]
+	if nat.puppet_tree and nat.overlord >= 0:
+		if world.focus_trees.has(tag + "_puppet"):
+			return tag + "_puppet"
+		if world.focus_trees.has("_puppet"):
+			return "_puppet"
+	var base := tag if world.focus_trees.has(tag) else "_generic"
+	if nat.exile and world.focus_trees.has(base + "+exile"):
+		return base + "+exile"
+	return base
+
+
+static func tree_of(world: World, n: int) -> Array:
+	return world.focus_trees.get(tree_key(world, n), [])
 
 
 static func focus_def(world: World, n: int, id: String) -> Dictionary:
 	# индекс id -> фокус по деревьям (строится один раз)
-	var tag: String = world.nation_tags[n]
-	if not world.focus_trees.has(tag):
-		tag = "_generic"
+	var tag := tree_key(world, n)
 	var idx: Dictionary = world.focus_index.get(tag, {})
 	if idx.is_empty():
 		for fd in world.focus_trees.get(tag, []):
@@ -69,6 +105,10 @@ static func check(world: World, n: int, cond: Dictionary, ahead: int = 0) -> Str
 			return "нужна война" if bool(cond["at_war"]) else "только в мирное время"
 	if cond.has("ideology") and world.nations[n].ideology != String(cond["ideology"]):
 		return "нужен строй: %s" % world.ideology_names.get(cond["ideology"], cond["ideology"])
+	if cond.has("exile") and bool(cond["exile"]) != world.nations[n].exile:
+		return "только правительству в изгнании" if bool(cond["exile"]) else "не в изгнании"
+	if cond.has("freedom_above") and world.nations[n].freedom < float(cond["freedom_above"]):
+		return "нужна свобода выше %d%%" % int(cond["freedom_above"])
 	if cond.has("at_war_pair"):
 		var a := tag_id(world, cond["at_war_pair"][0])
 		var b := tag_id(world, cond["at_war_pair"][1])
@@ -102,6 +142,10 @@ static func check_ok(world: World, n: int, cond: Dictionary, ahead: int = 0) -> 
 		if bool(cond["at_war"]) != (not nat_w.at_war.is_empty()):
 			return false
 	if cond.has("ideology") and world.nations[n].ideology != String(cond["ideology"]):
+		return false
+	if cond.has("exile") and bool(cond["exile"]) != world.nations[n].exile:
+		return false
+	if cond.has("freedom_above") and world.nations[n].freedom < float(cond["freedom_above"]):
 		return false
 	if cond.has("at_war_pair"):
 		var a := tag_id(world, cond["at_war_pair"][0])
@@ -679,7 +723,7 @@ static func _prep_cond(world: World, n: int, c: Dictionary, want: bool, ctx: Dic
 		var b := Relations._who(world, c["guarantee"][1], ctx)
 		if a == n and b >= 0 and world.nations[b].alive:
 			if want and not Diplomacy.same_side(world, n, b) and not world.is_at_war(n, b):
-				Diplomacy.guarantee(world, n, b)
+				Diplomacy.guarantee(world, n, b, true)
 			elif not want and nat.guarantees.has(b):
 				nat.guarantees.erase(b)
 	elif c.has("pact"):
@@ -770,8 +814,44 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 		if who < 0 or (not world.nations[who].alive and e["t"] != "release" and e["t"] != "civil_war"):
 			continue
 		var target := tag_id(world, e.get("target", "")) if e.has("target") else -1
+		if e.get("target", "") == "@overlord":
+			target = world.nations[who].overlord
 		var nat: World.Nation = world.nations[who]
 		match e["t"]:
+			"resist", "comply":
+				# сдвиг шкал на своих занятых землях (target — чьих; allies —
+				# ещё и земель сдавшихся и изгнанных союзников)
+				var owners := {target if target >= 0 else who: true}
+				if e.get("allies", false):
+					for o in world.nations:
+						if o.alive and (o.capitulated or o.exile) and Diplomacy.same_side(world, who, o.id):
+							owners[o.id] = true
+				Occupation.shift(world, owners, float(e["v"]), e["t"] == "resist")
+			"stability":
+				Politics.init_nation(nat)
+				Politics.add_stability(nat, float(e["v"]))
+			"war_support":
+				Politics.init_nation(nat)
+				Politics.add_war_support(nat, float(e["v"]))
+			"pol_power":
+				nat.pol_power = clampf(nat.pol_power + float(e["v"]), 0.0, Politics.PP_CAP)
+			"spirit_timed":
+				Politics.add_timed_spirit(world, nat, String(e["id"]), int(e.get("days", 90)))
+			"defend":
+				if target >= 0:
+					Politics.defend(world, who, target)
+			"unguarantee":
+				if target >= 0:
+					nat.guarantees.erase(target)
+			"freedom":
+				if e.get("puppets", false):
+					for pp in Diplomacy.puppets_of(world, who):
+						Puppets.add_freedom(world, pp, float(e["v"]))
+				else:
+					Puppets.add_freedom(world, target if target >= 0 else who, float(e["v"]))
+			"occ_law":
+				if target >= 0:
+					world.occ_law[Occupation.tkey(who, target)] = clampi(int(e["law"]), 0, Occupation.LAWS.size() - 1)
 			"tension":
 				Diplomacy.add_tension(world, float(e["v"]))
 			"claim":
@@ -837,7 +917,7 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 					nat.wargoals[target] = true
 			"guarantee":
 				if target >= 0 and world.nations[target].alive:
-					Diplomacy.guarantee(world, who, target)
+					Diplomacy.guarantee(world, who, target, true)
 			"pact":
 				if target >= 0:
 					Diplomacy.sign_pact(world, who, target)
@@ -1271,12 +1351,16 @@ static func _vichy(world: World, loser: int, winner: int, tag: String) -> void:
 static func effects_text(world: World, effects: Array) -> String:
 	var parts: Array = []
 	var bonus_names := Tech.BONUS_NAMES.duplicate()
-	bonus_names.merge({"research": "наука", "attack": "атака", "defense": "оборона", "speed": "скорость"}, true)
+	bonus_names.merge({"research": "наука", "attack": "атака", "defense": "оборона", "speed": "скорость",
+		"occ_resist": "рост сопротивления на занятых нами землях", "occ_comply": "рост принятия на занятых нами землях",
+		"resistance": "сопротивление на наших занятых землях"}, true)
 	for e in effects:
 		var tname := ""
 		if e.has("target"):
 			var t := tag_id(world, e["target"])
 			tname = world.nations[t].name if t >= 0 else e["target"]
+			if e["target"] == "@overlord":
+				tname = "сюзерена"
 		var who := ""
 		if e.has("who"):
 			var w := tag_id(world, e["who"])
@@ -1318,6 +1402,26 @@ static func effects_text(world: World, effects: Array) -> String:
 			"transfer":
 				var to := tag_id(world, e.get("to", ""))
 				parts.append("передача земель → %s" % (world.nations[to].name if to >= 0 else "нам"))
+			"stability":
+				parts.append("%sстабильность %+d%%" % [who, roundi(float(e["v"]) * 100.0)])
+			"war_support":
+				parts.append("%sподдержка войны %+d%%" % [who, roundi(float(e["v"]) * 100.0)])
+			"pol_power":
+				parts.append("%s%+d ПВ" % [who, int(e["v"])])
+			"spirit_timed":
+				parts.append("%sчерта «%s» на %d дн." % [who, world.spirit_defs.get(e["id"], {}).get("name", e["id"]), int(e.get("days", 90))])
+			"defend":
+				parts.append("война на стороне страны %s" % tname)
+			"unguarantee":
+				parts.append("гарантия стране %s снята" % tname)
+			"resist":
+				parts.append("%sсопротивление на землях %s: %+d%%" % [who, tname if tname != "" else "своих", int(e["v"])] if not e.get("allies", false) else "%sсопротивление на землях союзников: %+d%%" % [who, int(e["v"])])
+			"comply":
+				parts.append("%sпринятие оккупантов на землях %s: %+d%%" % [who, tname if tname != "" else "своих", int(e["v"])])
+			"freedom":
+				parts.append("%sсвобода %s: %+d" % [who, "марионеток" if e.get("puppets", false) else "марионетки", int(e["v"])])
+			"occ_law":
+				parts.append("%sзакон на землях %s: %s" % [who, tname, Occupation.LAWS[clampi(int(e["law"]), 0, Occupation.LAWS.size() - 1)]["name"]])
 			"claim":
 				parts.append("%sпретензии: %s" % [who, String(world.areas.get(e["area"], {}).get("name", e["area"])) if e.has("area") else tname])
 			"release":

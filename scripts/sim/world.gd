@@ -131,6 +131,16 @@ class Nation:
 	var puppet_since := -1      # день, с которого марионетка (Puppets)
 	var freedom := 50.0         # свобода марионетки 0..100 (Puppets)
 	var build_puppet := -1      # сюзерен строит следующую фабрику у этой марионетки (Puppets)
+	var puppet_tree := false    # стала марионеткой в ходе игры — ведёт дерево марионетки (History.tree_key)
+	var pol_power := 0.0        # политическая власть (Politics)
+	var stability := -1.0       # стабильность 0..1 (−1 — ещё не задана)
+	var war_support := -1.0     # поддержка войны 0..1
+	var pol_bonus := {}         # бонусы от шкал (Politics._refresh_mods)
+	var pol_cd := {}            # решение -> день последнего
+	var spirit_until := {}      # временные черты: id -> день окончания
+	var defending := false      # ведёт оборонительную войну (поддержка войны выше)
+	var guar_hist := {}         # исторические гарантии (старт, фокусы, события): срабатывают сами
+	var vp_ratio := 1.0         # доля своих очков победы под своим (союзным) контролем
 	var capital_lonlat := Vector2.ZERO
 	# Фокусы (этап 5)
 	var focus_current := ""
@@ -169,7 +179,7 @@ class Nation:
 	var volunteer_acc := 0.0    # накопленные дробные дивизии добровольцев (черты с volunteers)
 
 	func b(key: String) -> float:
-		return float(bonus.get(key, 0.0)) + float(spirit_bonus.get(key, 0.0))
+		return float(bonus.get(key, 0.0)) + float(spirit_bonus.get(key, 0.0)) + float(pol_bonus.get(key, 0.0))
 
 
 class Faction:
@@ -596,6 +606,7 @@ var p_comply := PackedFloat32Array()     # принятие, %
 var p_from := PackedInt32Array()         # прежний владелец присоединённой по миру провинции (−1)
 var p_yield := PackedFloat32Array()      # отдача заводов и ресурсов (1 — своя земля)
 var p_yield_mp := PackedFloat32Array()   # отдача призыва
+var dyn_events := {}          # события, созданные в ходе партии (вызов гаранта): id -> описание; при загрузке — в event_defs
 var occ_law := {}             # территория (держит * 4096 + чья) -> закон (Occupation.LAWS)
 var occ_garrison := {}        # территория -> единиц гарнизона
 var occ_integrate := {}       # территория -> true: идёт интеграция
@@ -1171,6 +1182,9 @@ func set_war(a: int, b: int) -> void:
 	nations[b].at_war[a] = true
 	war[a * nation_count + b] = 1
 	war[b * nation_count + a] = 1
+	# воюющие друг другу ничего не гарантируют
+	nations[a].guarantees.erase(b)
+	nations[b].guarantees.erase(a)
 	if not contracts.is_empty():
 		Economy.on_war(self, a, b)   # война рвёт поставки сразу
 
