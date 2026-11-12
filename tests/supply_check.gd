@@ -86,24 +86,14 @@ func _init() -> void:
 
 	print("Захваченный узел:")
 	# без войны: контроль меняем сами, чтобы Польша не отбила район за время проверки
-	var sp := Supply.side(w, POL)
 	# польский район у германской границы: все его польские провинции — Германии
 	var reg := -1
-	for k in w.node_keys:
-		var ph := w.node_hub[k]
-		if k / nr != sp or ph < 0 or w.p_owner[ph] != POL or ph == w.nations[POL].capital:
-			continue
-		var border := false
-		for q in w.prov_count:
-			if w.p_region[q] == w.p_region[ph] and w.p_controller[q] == POL:
-				for e in w.p_adj[q]:
-					if w.p_controller[e] == GER and w.p_land[e] == 1:
-						border = true
-		if border:
-			reg = w.p_region[ph]
+	for r in w.region_count:
+		if w.r_hub[r] >= 0 and w.p_owner[w.r_hub[r]] == POL:
+			reg = r
 			break
 	for q in w.prov_count:
-		if w.p_region[q] == reg and w.p_land[q] == 1 and w.p_controller[q] == POL:
+		if w.p_land[q] == 1 and w.p_controller[q] == POL:
 			w.p_controller[q] = GER
 	ger.sup_auto = false
 	for i in 3:

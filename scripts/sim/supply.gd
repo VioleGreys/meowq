@@ -40,16 +40,19 @@ const RAIL_LOSS := 0.0
 const RAIL_MIN := 0.3
 const GAUGE_LOSS := 0.5       # чужая колея: провинция даёт дороге вдвое меньше
 const POCKET_LOCAL := 0.3     # отрезанная от источников провинция: местного снабжения — 30 %
-# Узлы (ноябрь 2026): у каждого узла — бюджет подачи (BUDGET_K × его подача);
-# провинция берёт сначала у ближайшего узла, остаток — у следующих по
-# удалённости (до K_CAND узлов): основную нагрузку несут ближние.
-const K_CAND := 3
+# Узлы (ноябрь 2026, решения пользователя): у каждого узла — бюджет подачи
+# (BUDGET_K × его подача). Основной узел провинции — ближайший к войскам; ему
+# помогают вспомогательные — AUX_N узлов, ближайших к нему самому по дороге
+# (по районам своей стороны); потеря только на этой дороге: −AUX_STEP за район
+# между узлами (дальше 1/AUX_STEP − 1 районов не помогают).
+const K_CAND := 1
 const BUDGET_K := 2.0
-# помощь дальнего узла ближайшему к войскам (решение пользователя): чем ближе
-# он к ближайшему узлу, тем больше берёт — −SPILL_STEP за каждый переход между
-# узлами, не меньше SPILL_MIN (и SPILL_MIN, если узлы дальше радиуса друг от друга)
-const SPILL_STEP := 0.15
-const SPILL_MIN := 0.1
+const AUX_N := 2
+const AUX_STEP := 0.25
+# узлы — самые крупные города (порт — как +2 очка победы), по одному на район,
+# не ближе HUB_GAP переходов друг к другу (решение пользователя); открытые порты
+# и столицы — источники и узлы сверх этого
+const HUB_GAP := 4
 # улучшение узла (стройка): уровень 0..NODE_MAX — подача +NODE_UP за уровень,
 # радиус +1 за каждые 2 уровня, дорога района +RAIL_UP за уровень (узкие места)
 const NODE_MAX := 5
@@ -92,9 +95,67 @@ static func _static(world: World) -> void:
 		world.reg_adj_start.append(world.reg_adj_list.size())
 
 
+## Неизменная сеть узлов: главный город района (очки победы, население), если он
+## не ближе HUB_GAP переходов по суше к уже выбранному узлу (жадно, от крупных).
+static func hubs_static(world: World) -> void:
+	var nr := world.region_count
+	if world.r_hub.size() == nr:
+		return
+	var has_pop := world.p_population.size() == world.prov_count
+	if world.p_port.size() != world.prov_count:
+		Forces.refresh_ports(world)
+	var best := PackedInt32Array()
+	best.resize(nr)
+	best.fill(-1)
+	# самые крупные города (очки победы, население); порт — как +2 очка победы
+	var score := func(p: int) -> int: return (world.p_vp[p] + (2 if world.p_port[p] == 1 else 0)) * 1000000 + (world.p_population[p] if has_pop else 0)
+	for p in world.prov_count:
+		if world.p_land[p] == 0:
+			continue
+		var r := world.p_region[p]
+		if best[r] < 0 or int(score.call(p)) > int(score.call(best[r])):
+			best[r] = p
+	var cands: Array = []
+	for r in nr:
+		if best[r] >= 0:
+			cands.append(best[r])
+	cands.sort_custom(func(a: int, b: int) -> bool:
+		var sa: int = score.call(a)
+		var sb: int = score.call(b)
+		return sa > sb or (sa == sb and a < b))
+	var dist := PackedInt32Array()
+	dist.resize(world.prov_count)
+	dist.fill(1 << 20)
+	world.r_hub = PackedInt32Array()
+	world.r_hub.resize(nr)
+	world.r_hub.fill(-1)
+	for h: int in cands:
+		if dist[h] < HUB_GAP:
+			continue
+		world.r_hub[world.p_region[h]] = h
+		# расстояния до ближайшего узла — на HUB_GAP переходов вокруг
+		var q := PackedInt32Array([h])
+		var dq := PackedInt32Array([0])
+		dist[h] = 0
+		var i := 0
+		while i < q.size():
+			var p := q[i]
+			var d := dq[i]
+			i += 1
+			if d + 1 >= HUB_GAP:
+				continue
+			for k in range(world.adj_start[p], world.adj_start[p + 1]):
+				var e := world.adj_list[k]
+				if world.p_land[e] == 1 and dist[e] > d + 1:
+					dist[e] = d + 1
+					q.append(e)
+					dq.append(d + 1)
+
+
 ## Снимок для поля подачи (копии — можно считать в фоне, пока мир идёт дальше).
 static func field_snapshot(world: World, side_of: PackedInt32Array, sources: Array, capitals: PackedInt32Array) -> Dictionary:
 	_static(world)
+	hubs_static(world)
 	var src_flat := PackedInt32Array()
 	var src_off := PackedInt32Array([0])
 	for sl in sources:
@@ -129,9 +190,9 @@ static func field_snapshot(world: World, side_of: PackedInt32Array, sources: Arr
 		"pcap": world.p_supply_cap.duplicate(), "smult": smult, "side_of": side_of.duplicate(), "ns": sources.size(), "nr": world.region_count,
 		"reg_adj_start": world.reg_adj_start.duplicate(), "reg_adj_list": world.reg_adj_list.duplicate(),
 		"src": src_flat, "src_off": src_off, "capitals": capitals.duplicate(), "fall": fall,
-		"nlvl": world.p_node_lvl.duplicate(), "join": world.p_join.duplicate(), "tcap": tcap, "trange": trange,
+		"nlvl": world.p_node_lvl.duplicate(), "join": world.p_join.duplicate(), "tcap": tcap, "trange": trange, "rhub": world.r_hub.duplicate(),
 		"k": PackedFloat64Array([CAPITAL, PORT_BASE, PORT_VP, LEVEL_K, LOCAL, float(HUB_RANGE), RAIL_LOSS, RAIL_MIN, GAUGE_LOSS, POCKET_LOCAL,
-			NODE_UP, RAIL_UP, float(K_CAND), SPILL_STEP, SPILL_MIN])}
+			NODE_UP, RAIL_UP, float(K_CAND), AUX_STEP, float(AUX_N)])}
 
 
 ## Массивы узлов мира (уровень, присоединение) — по числу провинций.
@@ -167,7 +228,7 @@ static func regions(world: World, side_of: PackedInt32Array, sources: Array, cap
 	var t := {"ps": f[0], "conn": f[3], "pocket": POCKET_LOCAL, "side_of": side_of, "ctrl": world.p_controller, "pcap": world.p_supply_cap,
 		"d_alive": world.d_alive, "d_prov": world.d_prov, "d_owner": world.d_owner,
 		"mot": Native.gather_i32(world.tpl_motor, world.d_tpl), "local": LOCAL,
-		"cand": f[5], "chop": f[6], "cfac": f[11], "nf": f[7], "nprov": f[8], "fall": fall, "budget": BUDGET_K, "kc": K_CAND, "nr": world.region_count}
+		"cand": f[5], "chop": f[6], "aux": f[11], "afac": f[12], "naux": AUX_N, "nf": f[7], "nprov": f[8], "fall": fall, "budget": BUDGET_K, "kc": K_CAND, "nr": world.region_count}
 	world.p_supcap = f[4]   # для расстановки войск ИИ (AIPlanner: не скапливать сверх снабжения)
 	var r: Array = Native.core.call("supply_divs", t) if Native.core != null else divisions_gd(t)
 	world.d_sup = r[0]
@@ -272,8 +333,7 @@ static func field_gd(t: Dictionary) -> Array:
 	var hub := PackedInt32Array()
 	hub.resize(ns * nr)
 	hub.fill(-1)
-	var hscore := PackedFloat64Array()
-	hscore.resize(ns * nr)
+	var rhub: PackedInt32Array = t["rhub"]
 	var capsum := PackedFloat64Array()
 	capsum.resize(ns * nr)
 	var pcount := PackedInt32Array()
@@ -285,12 +345,12 @@ static func field_gd(t: Dictionary) -> Array:
 		if s < 0:
 			continue
 		ps[p] = s
-		var k := s * nr + preg[p]
-		pcount[k] += 1
-		var sc := float(vp[p]) * 1.0e6 + (float(pop[p]) if has_pop else 0.0)
-		if hub[k] < 0 or sc > hscore[k]:
-			hub[k] = p
-			hscore[k] = sc
+		pcount[s * nr + preg[p]] += 1
+	# узел района — неизменный главный город (Supply.hubs_static), если он за стороной
+	for r in nr:
+		var h := rhub[r]
+		if h >= 0 and ps[h] >= 0:
+			hub[ps[h] * nr + r] = h
 	# узел свой (владелец — своей стороны) или присоединён к сети; иначе не работает
 	var hub_ok := PackedByteArray()
 	hub_ok.resize(ns * nr)
@@ -422,23 +482,13 @@ static func field_gd(t: Dictionary) -> Array:
 	cand.fill(-1)
 	var chop := PackedInt32Array()
 	chop.resize(pc * kc)
-	# узел провинции (для расстояний между узлами)
 	var nk := ns * nr
-	var pkey := PackedInt32Array()
-	pkey.resize(pc)
-	pkey.fill(-1)
-	for k in nk:
-		if best_src[k] >= 0:
-			pkey[best_src[k]] = k
-	var nn := {}   # (узел волны)*nk + (узел, до которого дошла) → переходов
 	for r in nr:
 		var out: PackedInt32Array = parts[r]
 		for j in range(0, out.size(), 3):
 			var p := out[j]
 			var h := out[j + 1]
 			var k := out[j + 2]
-			if pkey[p] >= 0:
-				nn[k * nk + pkey[p]] = h
 			var v := best_f[k] * fall[h]
 			if v > got[p]:
 				got[p] = v
@@ -459,23 +509,61 @@ static func field_gd(t: Dictionary) -> Array:
 					m2 -= 1
 				cand[b + pos] = k
 				chop[b + pos] = h
-	# доля помощи узлов-кандидатов: ближайший — целиком, дальние — по расстоянию до него
-	var spill_step := kk[13]
-	var spill_min := kk[14]
-	var cfac := PackedFloat64Array()
-	cfac.resize(pc * kc)
-	for p in pc:
-		var b := p * kc
-		var k0 := cand[b]
-		if k0 < 0:
+	# вспомогательные узлы каждого узла: до naux ближайших по дороге (районы своей
+	# стороны), при равенстве — по номеру; доля помощи — 1 − aux_step × районов
+	var aux_step := kk[13]
+	var naux := int(kk[14])
+	var aux := PackedInt32Array()
+	aux.resize(nk * naux)
+	aux.fill(-1)
+	var afac := PackedFloat64Array()
+	afac.resize(nk * naux)
+	var maxd := int(ceil(1.0 / aux_step)) - 1
+	var rdist := PackedInt32Array()
+	rdist.resize(nr)
+	rdist.fill(-1)
+	for k in nk:
+		if best_src[k] < 0:
 			continue
-		cfac[b] = 1.0
-		for m in range(1, kc):
-			var km := cand[b + m]
-			if km < 0:
-				break
-			var d: int = nn.get(km * nk + k0, -1)
-			cfac[b + m] = spill_min if d < 0 else maxf(spill_min, 1.0 - spill_step * float(d))
+		var s := k / nr
+		var r0 := k % nr
+		var rq := PackedInt32Array([r0])
+		rdist[r0] = 0
+		var hd := 0
+		while hd < rq.size():
+			var r := rq[hd]
+			hd += 1
+			var d := rdist[r]
+			if d > 0:
+				var k2 := s * nr + r
+				if best_src[k2] >= 0:
+					# вставка по (районов, номер узла)
+					var b := k * naux
+					var pos := naux
+					for m in naux:
+						var ck := aux[b + m]
+						if ck < 0 or d < rdist[ck % nr] or (d == rdist[ck % nr] and k2 < ck):
+							pos = m
+							break
+					if pos < naux:
+						var m2 := naux - 1
+						while m2 > pos:
+							aux[b + m2] = aux[b + m2 - 1]
+							m2 -= 1
+						aux[b + pos] = k2
+			if d >= maxd:
+				continue
+			for j in range(radj_s[r], radj_s[r + 1]):
+				var r2 := radj_l[j]
+				if rdist[r2] < 0 and pcount[s * nr + r2] > 0:
+					rdist[r2] = d + 1
+					rq.append(r2)
+		for m in naux:
+			var ck := aux[k * naux + m]
+			if ck >= 0:
+				afac[k * naux + m] = 1.0 - aux_step * float(rdist[ck % nr])
+		for r in rq:
+			rdist[r] = -1
 	# ёмкость провинции для военного ИИ (сколько «дивизий» она прокормит):
 	# подача + местное снабжение (в котле — урезанное)
 	var k_loc := kk[4]
@@ -485,11 +573,11 @@ static func field_gd(t: Dictionary) -> Array:
 	for p in pc:
 		if ps[p] >= 0:
 			supcap[p] = got[p] + k_loc * float(pcap[p]) * (1.0 if conn[p] == 1 else k_pock)
-	var keys := PackedInt32Array()   # узлы, где у стороны есть провинции района
+	var keys := PackedInt32Array()   # узлы: главный город района за стороной или источник
 	for k in ns * nr:
-		if hub[k] >= 0:
+		if hub[k] >= 0 or best_src[k] >= 0:
 			keys.append(k)
-	return [ps, got, gsrc, conn, supcap, cand, chop, best_f, best_src, hub, keys, cfac]
+	return [ps, got, gsrc, conn, supcap, cand, chop, best_f, best_src, hub, keys, aux, afac]
 
 
 ## Волна от узла района r (тройки: провинция, переходов, номер узла s*nr+r) → parts[r].
@@ -558,7 +646,9 @@ static func divisions_gd(t: Dictionary) -> Array:
 	var k_local: float = t["local"]
 	var cand: PackedInt32Array = t["cand"]
 	var chop: PackedInt32Array = t["chop"]
-	var cfac: PackedFloat64Array = t["cfac"]
+	var aux: PackedInt32Array = t["aux"]
+	var afac: PackedFloat64Array = t["afac"]
+	var naux: int = t["naux"]
 	var nf: PackedFloat64Array = t["nf"]
 	var nprov: PackedInt32Array = t["nprov"]
 	var fall: PackedFloat64Array = t["fall"]
@@ -602,17 +692,21 @@ static func divisions_gd(t: Dictionary) -> Array:
 	rq.resize(plist.size())
 	var rk := PackedInt32Array()
 	rk.resize(plist.size())
-	for j in kc:
+	# круг 0 — основной узел (ближайший к войскам), круги 1..naux — его вспомогательные
+	for j in naux + 1:
 		for m in plist.size():
 			var p := plist[m]
 			rk[m] = -1
-			var k := cand[p * kc + j]
-			if k < 0 or need[p] <= 0.0:
+			var k0 := cand[p * kc]
+			if k0 < 0 or need[p] <= 0.0:
+				continue
+			var k := k0 if j == 0 else aux[k0 * naux + j - 1]
+			if k < 0:
 				continue
 			var g := nprov[k]
 			if ctrl[g] < 0 or side_of[ctrl[g]] != k / nr:
 				continue   # узел взят противником
-			var r := minf(need[p], nf[k] * fall[chop[p * kc + j]] * cfac[p * kc + j])
+			var r := minf(need[p], nf[k] * fall[chop[p * kc]] * (1.0 if j == 0 else afac[k0 * naux + j - 1]))
 			if rset[k] == 0:
 				rset[k] = 1
 				rem[k] = nf[k] * budget_k

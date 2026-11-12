@@ -2,7 +2,7 @@
 // двойники; результаты совпадают до бита: тот же порядок обхода, double).
 #include "meowq_core.h"
 
-#include <unordered_map>
+#include <cmath>
 #include <vector>
 #include <algorithm>
 
@@ -52,7 +52,9 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	int32_t *hub = hub_a.ptrw();
 	std::fill(hub, hub + nk, -1);
 	std::vector<int32_t> pcount(nk, 0);
-	std::vector<double> hscore(nk, 0.0), capsum(nk, 0.0), level(nk, 0.0);
+	std::vector<double> capsum(nk, 0.0), level(nk, 0.0);
+	const PackedInt32Array rhub_a = t["rhub"];
+	const int32_t *rhub = rhub_a.ptr();
 	for (int p = 0; p < pc; p++) {
 		if (land[p] == 0 || ctrl[p] < 0)
 			continue;
@@ -60,13 +62,13 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 		if (s < 0)
 			continue;
 		ps[p] = s;
-		const int k = s * nr + preg[p];
-		pcount[k] += 1;
-		const double sc = double(vp[p]) * 1.0e6 + (has_pop ? double(pop[p]) : 0.0);
-		if (hub[k] < 0 || sc > hscore[k]) {
-			hub[k] = p;
-			hscore[k] = sc;
-		}
+		pcount[s * nr + preg[p]] += 1;
+	}
+	// узел района — неизменный главный город (Supply.hubs_static), если он за стороной
+	for (int r = 0; r < nr; r++) {
+		const int h = rhub[r];
+		if (h >= 0 && ps[h] >= 0)
+			hub[ps[h] * nr + r] = h;
 	}
 	// узел свой или присоединён к сети стороны
 	std::vector<uint8_t> hub_ok(nk, 0);
@@ -212,11 +214,6 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	int32_t *cand = cand_a.ptrw(), *chop = chop_a.ptrw();
 	std::fill(cand, cand + int64_t(pc) * kc, -1);
 	std::fill(chop, chop + int64_t(pc) * kc, 0);
-	std::vector<int32_t> pkey(pc, -1);
-	for (int k = 0; k < nk; k++)
-		if (best_src[k] >= 0)
-			pkey[best_src[k]] = k;
-	std::unordered_map<int64_t, int32_t> nn;   // (узел волны)*nk + (узел, до которого дошла) → переходов
 	std::vector<int32_t> mark(pc, 0), queue, hops;
 	int stamp = 0;
 	for (int r = 0; r < nr; r++) {
@@ -236,8 +233,6 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 				const int p = queue[head];
 				const int h = hops[head];
 				head++;
-				if (pkey[p] >= 0)
-					nn[int64_t(k) * nk + pkey[p]] = h;
 				const double v = f0 * fall[h];
 				if (v > got[p]) {
 					got[p] = v;
@@ -273,24 +268,65 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 			}
 		}
 	}
-	const double spill_step = kk_a[13], spill_min = kk_a[14];
-	PackedFloat64Array cfac_a;
-	cfac_a.resize(int64_t(pc) * kc);
-	double *cfac = cfac_a.ptrw();
-	std::fill(cfac, cfac + int64_t(pc) * kc, 0.0);
-	for (int p = 0; p < pc; p++) {
-		const int64_t b = int64_t(p) * kc;
-		const int k0 = cand[b];
-		if (k0 < 0)
+	// вспомогательные узлы: до naux ближайших по дороге (районы стороны), доля 1 − aux_step × районов
+	const double aux_step = kk_a[13];
+	const int naux = int(kk_a[14]);
+	PackedInt32Array aux_a;
+	aux_a.resize(int64_t(nk) * naux);
+	int32_t *aux = aux_a.ptrw();
+	std::fill(aux, aux + int64_t(nk) * naux, -1);
+	PackedFloat64Array afac_a;
+	afac_a.resize(int64_t(nk) * naux);
+	double *afac = afac_a.ptrw();
+	std::fill(afac, afac + int64_t(nk) * naux, 0.0);
+	const int maxd = int(std::ceil(1.0 / aux_step)) - 1;
+	std::vector<int32_t> rdist(nr, -1), rq;
+	for (int k = 0; k < nk; k++) {
+		if (best_src[k] < 0)
 			continue;
-		cfac[b] = 1.0;
-		for (int m = 1; m < kc; m++) {
-			const int km = cand[b + m];
-			if (km < 0)
-				break;
-			auto it = nn.find(int64_t(km) * nk + k0);
-			cfac[b + m] = it == nn.end() ? spill_min : std::max(spill_min, 1.0 - spill_step * double(it->second));
+		const int s = k / nr;
+		const int r0 = k % nr;
+		rq.assign(1, r0);
+		rdist[r0] = 0;
+		for (size_t hd = 0; hd < rq.size(); hd++) {
+			const int r = rq[hd];
+			const int d = rdist[r];
+			if (d > 0) {
+				const int k2 = s * nr + r;
+				if (best_src[k2] >= 0) {
+					const int64_t b = int64_t(k) * naux;
+					int pos = naux;
+					for (int m = 0; m < naux; m++) {
+						const int ck = aux[b + m];
+						if (ck < 0 || d < rdist[ck % nr] || (d == rdist[ck % nr] && k2 < ck)) {
+							pos = m;
+							break;
+						}
+					}
+					if (pos < naux) {
+						for (int m2 = naux - 1; m2 > pos; m2--)
+							aux[b + m2] = aux[b + m2 - 1];
+						aux[b + pos] = k2;
+					}
+				}
+			}
+			if (d >= maxd)
+				continue;
+			for (int j = radj_s[r]; j < radj_s[r + 1]; j++) {
+				const int r2 = radj_l[j];
+				if (rdist[r2] < 0 && pcount[s * nr + r2] > 0) {
+					rdist[r2] = d + 1;
+					rq.push_back(r2);
+				}
+			}
 		}
+		for (int m = 0; m < naux; m++) {
+			const int ck = aux[int64_t(k) * naux + m];
+			if (ck >= 0)
+				afac[int64_t(k) * naux + m] = 1.0 - aux_step * double(rdist[ck % nr]);
+		}
+		for (int r : rq)
+			rdist[r] = -1;
 	}
 	// ёмкость провинции для военного ИИ: подача + местное (в котле — урезанное)
 	const double k_loc = kk_a[4], k_pock = kk_a[9];
@@ -313,12 +349,13 @@ Array MeowqCore::supply_field(const Dictionary &t) const {
 	res.push_back(best_f_a);
 	res.push_back(best_src_a);
 	res.push_back(hub_a);
-	PackedInt32Array keys_a;   // узлы, где у стороны есть провинции района
+	PackedInt32Array keys_a;   // узлы: главный город района за стороной или источник
 	for (int k = 0; k < nk; k++)
-		if (hub[k] >= 0)
+		if (hub[k] >= 0 || best_src[k] >= 0)
 			keys_a.push_back(k);
 	res.push_back(keys_a);
-	res.push_back(cfac_a);
+	res.push_back(aux_a);
+	res.push_back(afac_a);
 	return res;
 }
 
@@ -332,8 +369,11 @@ Array MeowqCore::supply_divs(const Dictionary &t) const {
 	const PackedInt32Array prov_a = t["d_prov"], owner_a = t["d_owner"], mot_a = t["mot"];
 	const double k_local = double(t["local"]);
 	const PackedInt32Array cand_a = t["cand"], chop_a = t["chop"], nprov_a = t["nprov"];
-	const PackedFloat64Array nf_a = t["nf"], fall_a = t["fall"], cfac_a = t["cfac"];
-	const double *cfac = cfac_a.ptr();
+	const PackedFloat64Array nf_a = t["nf"], fall_a = t["fall"], afac_a = t["afac"];
+	const PackedInt32Array aux_a = t["aux"];
+	const double *afac = afac_a.ptr();
+	const int32_t *aux = aux_a.ptr();
+	const int naux = int(t["naux"]);
 	const double budget_k = double(t["budget"]);
 	const int kc = int(t["kc"]), nr = int(t["nr"]);
 	const int32_t *ps = ps_a.ptr(), *side_of = side_a.ptr(), *ctrl = ctrl_a.ptr();
@@ -371,17 +411,20 @@ Array MeowqCore::supply_divs(const Dictionary &t) const {
 	used_a.resize(nk);
 	double *used = used_a.ptrw();
 	std::fill(used, used + nk, 0.0);
-	for (int j = 0; j < kc; j++) {
+	for (int j = 0; j <= naux; j++) {
 		for (size_t m = 0; m < plist.size(); m++) {
 			const int p = plist[m];
 			rk[m] = -1;
-			const int k = cand[int64_t(p) * kc + j];
-			if (k < 0 || need[p] <= 0.0)
+			const int k0 = cand[int64_t(p) * kc];
+			if (k0 < 0 || need[p] <= 0.0)
+				continue;
+			const int k = j == 0 ? k0 : aux[int64_t(k0) * naux + j - 1];
+			if (k < 0)
 				continue;
 			const int g = nprov[k];
 			if (ctrl[g] < 0 || side_of[ctrl[g]] != k / nr)
 				continue;
-			const double r = std::min(need[p], nf[k] * fall[chop[int64_t(p) * kc + j]] * cfac[int64_t(p) * kc + j]);
+			const double r = std::min(need[p], nf[k] * fall[chop[int64_t(p) * kc]] * (j == 0 ? 1.0 : afac[int64_t(k0) * naux + j - 1]));
 			if (rset[k] == 0) {
 				rset[k] = 1;
 				rem[k] = nf[k] * budget_k;

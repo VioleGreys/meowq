@@ -487,6 +487,7 @@ var p_join := PackedInt32Array()          # страна, присоединив
 var node_f := PackedFloat64Array()        # узел s*nr+r: подача (бюджет — × Supply.BUDGET_K)
 var node_prov := PackedInt32Array()       # узел: провинция (−1 — нет)
 var node_used := PackedFloat64Array()     # узел: взято сегодня
+var r_hub := PackedInt32Array()           # район: город-узел снабжения (−1 — нет; Supply.hubs_static)
 var node_keys := PackedInt32Array()       # узлы, где у стороны есть провинции района (обходить только их)
 var node_hub := PackedInt32Array()        # узел: главный город района стороны (может ждать присоединения)
 var sup_args: Array = []                  # стороны, источники, столицы сегодняшней фазы снабжения
