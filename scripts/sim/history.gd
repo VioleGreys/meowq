@@ -884,6 +884,10 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 					place_factory(world, who, "civ")
 				for k in int(e.get("mil", 0)):
 					place_factory(world, who, "mil")
+			"relocate":
+				var fr: Array = e.get("from_lon", [-180.0, 180.0])
+				var to: Array = e.get("to_lon", [-180.0, 180.0])
+				relocate(world, who, float(e.get("share", 0.5)), Vector2(float(fr[0]), float(fr[1])), Vector2(float(to[0]), float(to[1])))
 			"bonus":
 				nat.bonus[e["key"]] = float(nat.bonus.get(e["key"], 0.0)) + float(e["v"])
 				nat.stats_dirty = true
@@ -898,6 +902,10 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 					var an := tag_id(world, e["at"])
 					if an >= 0 and world.nations[an].alive and world.nations[an].capital >= 0:
 						at = world.nations[an].capital
+				# "at_ll": [долгота, широта] — ближайшая своя (или союзная) суша,
+				# например подкрепления Содружества в Египет и Кению в 1940 г.
+				if e.has("at_ll"):
+					at = nearest_held(world, who, Vector2(float(e["at_ll"][0]), float(e["at_ll"][1])))
 				if at >= 0 and (world.p_controller[at] == who or Diplomacy.same_side(world, world.p_controller[at], who)):
 					for k in int(e.get("n", 1)):
 						world.spawn_division(who, at, keys.get(e.get("tpl", "inf"), 0))
@@ -1138,6 +1146,64 @@ static func place_factory(world: World, nid: int, mode: String) -> void:
 		world.p_mil[best] += 1
 
 
+## Ближайшая к точке (долгота, широта) сухопутная провинция под контролем
+## страны или её стороны; -1 — нет такой.
+static func nearest_held(world: World, who: int, ll: Vector2) -> int:
+	var best := -1
+	var best_d := INF
+	for p in world.prov_count:
+		if world.p_land[p] == 0:
+			continue
+		var c := world.p_controller[p]
+		if c < 0 or (c != who and not Diplomacy.same_side(world, c, who)):
+			continue
+		var d := world.p_lonlat[p].distance_squared_to(ll)
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+
+## Эвакуация промышленности: доля share заводов (гражд. и воен.) своих
+## провинций с долготой в диапазоне from_lon (x..y) уезжает в свои провинции
+## с долготой в to_lon: Китай в 1937–38 гг. — в Сычуань и Юньнань, СССР в
+## 1941 г. — на Урал и в Сибирь.
+static func relocate(world: World, nid: int, share: float, from_lon: Vector2, to_lon: Vector2) -> void:
+	var civ := 0
+	var mil := 0
+	for p in world.prov_count:
+		var lon := world.p_lonlat[p].x
+		if world.p_owner[p] != nid or world.p_controller[p] != nid or lon < from_lon.x or lon > from_lon.y:
+			continue
+		var c := floori(world.p_civ[p] * share + 0.5)
+		var m := floori(world.p_mil[p] * share + 0.5)
+		world.p_civ[p] -= c
+		world.p_mil[p] -= m
+		civ += c
+		mil += m
+	for k in civ + mil:
+		var best := -1
+		var best_score := INF
+		for p in world.prov_count:
+			var lon := world.p_lonlat[p].x
+			if world.p_owner[p] != nid or world.p_controller[p] != nid or lon < to_lon.x or lon > to_lon.y:
+				continue
+			var total := world.p_civ[p] + world.p_mil[p]
+			if total >= Simulation.factory_slots(world, p) + 2:
+				continue
+			var score := float(total) - float(world.p_vp[p]) * 0.1 + float(p % 7) * 0.01
+			if score < best_score:
+				best_score = score
+				best = p
+		if best < 0:
+			break
+		if k < civ:
+			world.p_civ[best] += 1
+		else:
+			world.p_mil[best] += 1
+	world.log_event("%s эвакуирует заводы вглубь страны: %d гражд., %d воен." % [world.nations[nid].name, civ, mil])
+
+
 ## Передача провинций: войска прежнего владельца отходят к своей столице.
 static func transfer(world: World, provs: Array, to: int) -> void:
 	if provs.is_empty() or to < 0:
@@ -1356,7 +1422,7 @@ static func effects_text(world: World, effects: Array) -> String:
 	var bonus_names := Tech.BONUS_NAMES.duplicate()
 	bonus_names.merge({"research": "наука", "attack": "атака", "defense": "оборона", "speed": "скорость",
 		"occ_resist": "рост сопротивления на занятых нами землях", "occ_comply": "рост принятия на занятых нами землях",
-		"resistance": "сопротивление на наших занятых землях"}, true)
+		"resistance": "сопротивление на наших занятых землях", "aid_eq": "помощь снаряжением из-за рубежа (заводов)"}, true)
 	for e in effects:
 		var tname := ""
 		if e.has("target"):
@@ -1376,6 +1442,8 @@ static func effects_text(world: World, effects: Array) -> String:
 					parts.append("+%d гражд. фабр." % e["civ"])
 				if int(e.get("mil", 0)) > 0:
 					parts.append("+%d воен. зав." % e["mil"])
+			"relocate":
+				parts.append("эвакуация %d%% заводов вглубь страны" % roundi(float(e.get("share", 0.5)) * 100.0))
 			"bonus":
 				parts.append("%s%s %+d%%" % [who, bonus_names.get(e["key"], e["key"]), float(e["v"]) * 100.0])
 			"tech":

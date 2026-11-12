@@ -398,6 +398,12 @@ static func produce(nat: World.Nation) -> void:
 		nat.daily_output[eq] += units
 		nat.prod_acc[eq] += units
 		line[2] = minf(1.0, eff + 0.01)
+	# помощь из-за рубежа (черты с aid_eq — в военных заводах), пока страна
+	# воюет: три четверти — стрелковое оружие, четверть — артиллерия
+	var aid := nat.b("aid_eq")
+	if aid > 0.0 and not nat.at_war.is_empty():
+		nat.stock[EQ_INF] += aid * 0.75 / EQ_COST[EQ_INF]
+		nat.stock[EQ_ART] += aid * 0.25 / EQ_COST[EQ_ART]
 
 
 ## Пересмотр распределения заводов (раз в месяц, ИИ и игрок с автораспределением).

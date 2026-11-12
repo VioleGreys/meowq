@@ -786,6 +786,8 @@ const SUP_SHARE := 0.5        # доля очков стройки на узлы
 const UPGRADE_COST := 12.0    # очков за уровень × (новый уровень)
 const JOIN_COST := 2.5        # присоединить захваченный узел (восстановить пути)
 const GAUGE_JOIN := 4.0       # узел чужой колеи — перешивка дороже
+const JOIN_DAYS := 5.0        # присоединение — не быстрее 5 дней (узлы — параллельно)
+const GAUGE_DAYS := 25.0      # перешивка чужой колеи — не быстрее 25 дней
 const JOB_UP := 0
 const JOB_JOIN := 1
 
@@ -874,13 +876,20 @@ static func build(world: World, nat: World.Nation, pts: float) -> float:
 	nodes_init(world)
 	var budget := pts * SUP_SHARE
 	var spent := 0.0
-	while not nat.sup_jobs.is_empty() and budget - spent > 1e-9:
-		var job: Array = nat.sup_jobs[0]
+	# по очереди; присоединение узла идёт не быстрее JOIN_DAYS (перешивка
+	# колеи — GAUGE_DAYS), поэтому несколько присоединений идут параллельно,
+	# а остаток бюджета дня переходит к следующим заказам
+	var keep: Array = []
+	for job in nat.sup_jobs:
+		if budget - spent <= 1e-9:
+			keep.append(job)
+			continue
 		if not job_valid(world, nat, job):
-			nat.sup_jobs.pop_front()
 			continue
 		var cost := job_cost(world, job)
 		var put := minf(budget - spent, cost - float(job[2]))
+		if int(job[1]) == JOB_JOIN:
+			put = minf(put, cost / (GAUGE_DAYS if cost > JOIN_COST else JOIN_DAYS))
 		job[2] = float(job[2]) + put
 		spent += put
 		if float(job[2]) >= cost - 1e-9:
@@ -893,7 +902,9 @@ static func build(world: World, nat: World.Nation, pts: float) -> float:
 				world.p_node_lvl[p] += 1
 				if nat.is_player:
 					world.log_event("Узел снабжения улучшен: %s, уровень %d" % [world.p_name[p], world.p_node_lvl[p]])
-			nat.sup_jobs.pop_front()
+		else:
+			keep.append(job)
+	nat.sup_jobs = keep
 	return pts - spent
 
 
@@ -930,25 +941,29 @@ static func ai_daily(world: World) -> void:
 		# грузовики: на войне, если запас позволяет
 		var tr: float = nat.stock[Military.EQ_TRUCK]
 		nat.truck_mode = (2 if tr > 400.0 else (1 if tr > 80.0 else 0)) if at_war else 0
-		var busy := false
+		# заказов улучшения сразу — по величине страны: 1 + гражд. заводы / 50
+		var ups := 0
 		for j in nat.sup_jobs:
 			if int(j[1]) == JOB_UP:
-				busy = true
-				break
-		if busy or not at_war:
+				ups += 1
+		if not at_war:
 			continue
-		var best := -1
-		var best_load := 0.9
-		for k in world.node_keys:
-			var p := world.node_prov[k]
-			if p < 0 or ctrl[p] != nat.id or world.p_node_lvl[p] >= NODE_MAX:
-				continue
-			var cap := world.node_f[k] * BUDGET_K
-			if cap <= 0.0:
-				continue
-			var load := world.node_used[k] / cap
-			if load > best_load:
-				best_load = load
-				best = p
-		if best >= 0:
+		var slots: int = 1 + nat.civ / 50 - ups
+		while slots > 0:
+			slots -= 1
+			var best := -1
+			var best_load := 0.9
+			for k in world.node_keys:
+				var p := world.node_prov[k]
+				if p < 0 or ctrl[p] != nat.id or world.p_node_lvl[p] >= NODE_MAX or has_job(nat, p, JOB_UP):
+					continue
+				var cap := world.node_f[k] * BUDGET_K
+				if cap <= 0.0:
+					continue
+				var load := world.node_used[k] / cap
+				if load > best_load:
+					best_load = load
+					best = p
+			if best < 0:
+				break
 			order(world, nat, best, JOB_UP)
