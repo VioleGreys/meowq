@@ -1093,7 +1093,9 @@ func _check_capitulation() -> void:
 		side[n * 2 + 1] = world.nations[r].faction
 	var owner := world.p_owner
 	var ctrl := world.p_controller
-	var vp := world.p_vp
+	# порог страны — только по метрополии (решение пользователя): колонии
+	# капитулируют отдельно (_cap_colonies)
+	var vp := _metro_vp()
 	if _cap_total.size() != nc or side != _cap_side or owner != _cap_owner or ctrl != _cap_ctrl or vp != _cap_vp:
 		_cap_side = side
 		_cap_owner = owner.duplicate()
@@ -1107,6 +1109,94 @@ func _check_capitulation() -> void:
 		else:
 			_cap_totals_gd(owner, ctrl, vp, side, nc)
 	_cap_countries()
+	_cap_colonies()
+
+
+var _vp_metro := PackedInt32Array()
+var _col_provs := PackedInt32Array()    # колониальные провинции
+var _col_group := PackedInt32Array()    # провинция → номер территории (код страны Natural Earth)
+
+
+## Очки победы метрополии: у колоний — 0 (флаг колонии неизменен).
+func _metro_vp() -> PackedInt32Array:
+	if _vp_metro.size() != world.prov_count:
+		_vp_metro = world.p_vp.duplicate()
+		_col_provs = PackedInt32Array()
+		_col_group = PackedInt32Array()
+		_col_group.resize(world.prov_count)
+		_col_group.fill(-1)
+		var ids := {}
+		for p in world.prov_count:
+			if world.p_colony[p] == 1:
+				_vp_metro[p] = 0
+				_col_provs.append(p)
+				var a: String = world.p_adm0[p] if p < world.p_adm0.size() else ""
+				if not ids.has(a):
+					ids[a] = ids.size()
+				_col_group[p] = ids[a]
+	return _vp_metro
+
+
+## Колонии капитулируют отдельно от метрополии: территория (по коду страны),
+## потерявшая больше (1 − порог страны без черт) своих очков, отходит главному
+## захватчику — только она, метрополия ничего не теряет.
+func _cap_colonies() -> void:
+	if _col_provs.is_empty():
+		return
+	var nc := world.nation_count
+	var ctrl := world.p_controller
+	var owner := world.p_owner
+	var total := {}   # владелец * 4096 + территория → [всего, держит]
+	for p in _col_provs:
+		var o := owner[p]
+		if o < 0 or world.nations[o].at_war.is_empty():
+			continue
+		var key := o * 4096 + _col_group[p]
+		var v := world.p_vp[p]
+		if not total.has(key):
+			total[key] = [0, 0]
+		total[key][0] += v
+		var c := ctrl[p]
+		if c == o or (c >= 0 and Diplomacy.same_side(world, c, o)):
+			total[key][1] += v
+	var keys := total.keys()
+	keys.sort()
+	for key in keys:
+		var t: Array = total[key]
+		var o: int = key / 4096
+		var g: int = key % 4096
+		var nat: World.Nation = world.nations[o]
+		if int(t[0]) <= 0 or not nat.alive or float(t[1]) / float(t[0]) >= nat.capitulate_at:
+			continue
+		# главный захватчик территории
+		var occ := {}
+		for p in _col_provs:
+			if owner[p] == o and _col_group[p] == g:
+				var c := ctrl[p]
+				if c >= 0 and c != o and not Diplomacy.same_side(world, c, o) and world.is_at_war(o, c):
+					occ[c] = int(occ.get(c, 0)) + world.p_vp[p] + 1
+		var winner := -1
+		var best := -1
+		var ks := occ.keys()
+		ks.sort()
+		for c in ks:
+			if int(occ[c]) > best:
+				best = occ[c]
+				winner = c
+		if winner < 0:
+			continue
+		var big := -1
+		for p in _col_provs:
+			if owner[p] == o and _col_group[p] == g:
+				if big < 0 or world.p_vp[p] > world.p_vp[big]:
+					big = p
+				world.p_owner[p] = winner
+				world.p_controller[p] = winner
+		for d in world.divisions:
+			if d.alive and d.owner == o and world.p_owner[d.prov] == winner:
+				d.alive = false   # гарнизон колонии сдаётся
+		world.palette_dirty = true
+		world.log_event("Колония сдаётся: %s (%s) переходит к стране %s" % [world.p_name[big], nat.name, world.nations[winner].name])
 
 
 ## Двойник MeowqCore::cap_totals.
