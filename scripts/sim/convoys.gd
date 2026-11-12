@@ -293,7 +293,7 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 	over.resize(nc)
 	for x in nc:
 		over[x] = []
-	for p in world.port_list:
+	for p in Depots.sea_points(world):   # порты и столицы колоний на побережье
 		var c := ctrl[p]
 		if c < 0:
 			continue

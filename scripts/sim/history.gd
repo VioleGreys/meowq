@@ -909,6 +909,17 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				if at >= 0 and (world.p_controller[at] == who or Diplomacy.same_side(world, world.p_controller[at], who)):
 					for k in int(e.get("n", 1)):
 						world.spawn_division(who, at, keys.get(e.get("tpl", "inf"), 0))
+			"airlift":
+				# переброска дивизий страны с её земель за морем (коды стран Natural
+				# Earth "from") к ближайшей своей суше у "at_ll" — воздушный мост
+				# Африканской армии в Севилью (июль — август 1936 г.)
+				var dst := nearest_held(world, who, Vector2(float(e["at_ll"][0]), float(e["at_ll"][1])))
+				var from: Array = e.get("from", [])
+				if dst >= 0:
+					for d in world.divisions:
+						if d.alive and d.owner == who and from.has(world.p_adm0[d.prov]):
+							d.path = PackedInt32Array()
+							d.prov = dst
 			"manpower":
 				nat.manpower += float(e["v"])
 			"event":
@@ -1450,6 +1461,8 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("технология «%s»" % Tech.get_tech(e["id"]).get("name", e["id"]))
 			"divisions":
 				parts.append("%s+%d дивизий" % [who, e.get("n", 1)])
+			"airlift":
+				parts.append("%sпереброска войск по воздуху" % who)
 			"manpower":
 				parts.append("+%dк призывников" % e["v"])
 			"event":

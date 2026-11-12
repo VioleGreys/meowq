@@ -412,14 +412,15 @@ func _phase_supply() -> void:
 			if open_sea or not _blockaded(c, p, sup_memo):
 				hubs[rep_index[rep[c]]].append(p)
 	Prof.add("уз:блокада", _px)
-	# пункты снабжения в глубине суши за морем (крупные города не у моря):
-	# подают, пока участок снабжается конвоями или со складов (Depots)
-	if cut_ok and world.p_comp.size() == world.prov_count:
+	# пункты снабжения в глубине суши (крупные города не у моря) — источники,
+	# как и порты-пункты; за морем — пока участок снабжается конвоями или со
+	# складов (Depots: подача p_dsup)
+	if cut_ok:
 		for p in world.prov_count:
 			var c := ctl[p]
 			if c < 0 or port[p] == 1 or is_land[p] == 0 or not rep_index.has(rep[c]) or pconv[p] <= 0.0:
 				continue
-			if world.p_vp[p] >= Depots.DEPOT_VP and Depots.overseas(world, c, p):
+			if world.nations[c].capital != p and Depots.is_depot(world, p):
 				hubs[rep_index[rep[c]]].append(p)
 	# плацдармы высадок временно работают как порты
 	for p in world.beachheads.keys():

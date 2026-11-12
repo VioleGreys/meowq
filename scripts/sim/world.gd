@@ -478,6 +478,8 @@ var straits: Array = []
 # пункты снабжения и склады (Depots): участки суши сторон, запасы складов за морем
 var p_comp := PackedInt32Array()          # участок: связная по суше земля своей стороны (−1 — море, ничья)
 var p_dsup := PackedFloat32Array()        # подача пункта снабжения (поле снабжения, вместо p_conv)
+var p_colcap := PackedByteArray()         # столица колонии — пункт снабжения (Depots._colcap, раз за партию)
+var dep_linked: Dictionary = {}           # пункт -> страна: вчера связан со столицей (Depots._split_cut)
 var dep_stock: Dictionary = {}            # склад за морем: провинция -> PackedFloat64Array(4) снаряжения
 var dep_owner: Dictionary = {}            # провинция склада -> страна-хозяин запаса
 var dep_share: Dictionary = {}            # провинция -> доля запаса страны, что держать (игрок; ИИ — Depots)

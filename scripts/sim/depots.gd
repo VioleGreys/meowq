@@ -17,9 +17,11 @@ extends RefCounted
 ##    дивизию); недостача берётся со складов участка (SUP_EQ снаряжения в день
 ##    на дивизию). Нет ни пути, ни запаса — пункты участка не подают (котёл).
 ##  * Пополнение дивизий — из запаса, доступного по суше: в метрополии — склады
-##    страны, за морем — склады участка; нет склада на участке — не пополняется.
+##    страны, за морем — склад участка; он пуст — во вторую очередь морем (из
+##    метрополии, если к пункту участка есть путь конвоев); иначе не пополняется.
 
 const DEPOT_VP := 15            # крупный город (очки победы) — пункт снабжения
+const CAP_W := 3.0              # вес столицы в раскладке запаса страны по пунктам
 const DEFAULT_SHARE := 0.5      # доля запаса страны на складе (игрок, по умолчанию)
 const SHARE_SUM_MAX := 0.8      # склады за морем вместе — не больше (метрополии остаётся)
 const AI_SHARE_K := 1.5         # ИИ: доля = доля дивизий страны на участке × K…
@@ -42,7 +44,47 @@ static func is_depot(world: World, p: int) -> bool:
 		return true
 	if world.p_vp[p] >= DEPOT_VP:
 		return true
+	if _colcap(world)[p] == 1:
+		return true
 	return world.p_node_lvl.size() == world.prov_count and world.p_node_lvl[p] >= 1 and Forces.is_port(world, p)
+
+
+## Столицы колоний: крупнейший город (очки победы; при равенстве — меньший
+## номер) каждой колониальной территории владельца на начало игры (код страны
+## Natural Earth; сначала порт, потом побережье) — тоже пункт снабжения (Тетуан, Эль-Аюн, Асмэра, Дакар):
+## иначе гарнизоны колоний без большого города сидели без снабжения
+## (Африканская армия франкистов в Марокко 1936 г. — 11 %).
+static func _colcap(world: World) -> PackedByteArray:
+	if world.p_colcap.size() == world.prov_count:
+		return world.p_colcap
+	var res := PackedByteArray()
+	res.resize(world.prov_count)
+	var best := {}
+	for p in world.prov_count:
+		if world.p_land[p] == 0 or world.p_colony.size() != world.prov_count or world.p_colony[p] != 1:
+			continue
+		var key := "%d:%s" % [world.p_owner[p], world.p_adm0[p]]
+		if not best.has(key) or _colscore(world, p) > _colscore(world, int(best[key])):
+			best[key] = p
+	for key in best:
+		res[int(best[key])] = 1
+	world.p_colcap = res
+	return res
+
+
+## Столица колонии — сначала порт (туда ходят конвои), потом очки победы.
+static func _colscore(world: World, p: int) -> int:
+	return world.p_vp[p] + (1000 if Forces.is_port(world, p) else (500 if world.p_coastal[p] == 1 else 0))
+
+
+## Пункты, куда ходят конвои снабжения: порты и столицы колоний на побережье.
+static func sea_points(world: World) -> PackedInt32Array:
+	var res := world.port_list.duplicate()
+	var cc := _colcap(world)
+	for p in world.prov_count:
+		if cc[p] == 1 and world.p_coastal[p] == 1 and world.p_port[p] == 0:
+			res.append(p)
+	return res
 
 
 ## Участки суши сторон: обход от каждой провинции по соседям той же стороны
@@ -127,6 +169,7 @@ static func daily(world: World) -> void:
 				world.nations[o].stock[k] += st[k]
 			world.dep_stock.erase(p)
 			world.dep_owner.erase(p)
+	_split_cut(world)
 	# пункты за морем по странам и участкам; дивизии там
 	var divs := {}   # страна * pc + участок -> дивизий
 	var alive := world.d_alive
@@ -318,6 +361,46 @@ static func ai_ports(world: World, divs: Dictionary, by_nat: Array) -> void:
 			Supply.order(world, world.nations[c], p, Supply.JOB_UP)
 
 
+## Запас страны лежит по её пунктам снабжения (столица — с весом CAP_W по
+## очкам победы). Пункт, вчера связанный со столицей, а сегодня отрезанный
+## (котёл, раскол страны), оставляет себе свою долю запаса метрополии —
+## отрезанный город держится на своих складах (юг националистов 1936 г.).
+static func _split_cut(world: World) -> void:
+	var pc := world.prov_count
+	var ctrl := world.p_controller
+	var prev: Dictionary = world.dep_linked
+	var now := {}
+	var weight := PackedFloat64Array()
+	weight.resize(world.nation_count)
+	var cut: Array = []
+	for p in pc:
+		var c := ctrl[p]
+		if c < 0 or not is_depot(world, p):
+			continue
+		var w := float(maxi(1, world.p_vp[p])) * (CAP_W if world.nations[c].capital == p else 1.0)
+		if overseas(world, c, p):
+			if int(prev.get(p, -1)) == c:
+				cut.append(p)
+				weight[c] += w
+		else:
+			now[p] = c
+			weight[c] += w
+	world.dep_linked = now
+	for p in cut:
+		var c := ctrl[p]
+		var nat: World.Nation = world.nations[c]
+		var f := float(maxi(1, world.p_vp[p])) / maxf(1.0, weight[c])
+		if not world.dep_stock.has(p):
+			world.dep_stock[p] = PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
+			world.dep_owner[p] = c
+		var st: PackedFloat64Array = world.dep_stock[p]
+		for k in Military.EQ_LAND:
+			var mv: float = nat.stock[k] * f
+			nat.stock[k] -= mv
+			st[k] += mv
+		world.dep_stock[p] = st
+
+
 ## Длина пути конвоев до порта (в бассейнах; нет — 1).
 static func _route_len(nat: World.Nation, p: int) -> int:
 	for rt in nat.conv_routes:
@@ -368,8 +451,17 @@ static func pools(world: World) -> Array:
 		var key: int = o * pc + world.p_comp[p]
 		var j := order.size()
 		order.append(p)
+		if _value(world.dep_stock[p]) <= 0.0:
+			continue
 		if not best.has(key) or _value(world.dep_stock[p]) > _value(world.dep_stock[order[int(best[key])]]):
 			best[key] = j
+	# склад участка пуст — во вторую очередь морем: из запаса метрополии, если
+	# к пункту участка есть путь конвоев
+	var sea := {}   # страна * pc + участок
+	for nat in world.nations:
+		for p in nat.conv_safe:
+			if float(nat.conv_safe[p]) > 0.0 and world.p_controller[int(p)] == nat.id:
+				sea[nat.id * pc + world.p_comp[int(p)]] = true
 	var comp := world.p_comp
 	for i in n:
 		var o := world.d_owner[i]
@@ -381,5 +473,6 @@ static func pools(world: World) -> Array:
 		if cpv >= 0 and cpv == world.nations[o].dep_home:
 			pool[i] = o
 		else:
-			pool[i] = nc + int(best[o * pc + cpv]) if best.has(o * pc + cpv) else -1
+			var key := o * pc + cpv
+			pool[i] = nc + int(best[key]) if best.has(key) else (o if sea.has(key) else -1)
 	return [pool, order]

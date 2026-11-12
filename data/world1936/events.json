@@ -188,6 +188,12 @@
               "area": "nationalist_spain"
             },
             {
+              "t": "airlift",
+              "who": "NSP",
+              "from": ["MAR", "SAH"],
+              "at_ll": [-5.98, 37.39]
+            },
+            {
               "t": "divisions",
               "tpl": "inf",
               "n": 12
