@@ -2092,7 +2092,7 @@ static func _raid_region(world: World, n: int) -> int:
 		var r := world.p_region[p]
 		if not reach.has(r):
 			continue
-		value[r] = float(value.get(r, 0.0)) + world.p_civ[p] + world.p_mil[p] * 1.5 + world.p_vp[p] * 0.5
+		value[r] = float(value.get(r, 0.0)) + world.p_civ[p] + world.p_mil[p] * 1.5 + world.vp_ai()[p] * 0.5
 	var best := -1
 	var best_v := 0.0
 	for r in value:
@@ -2162,7 +2162,7 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 			if world.p_controller[p] != enemy or world.p_coastal[p] == 0:
 				continue
 			# порты в приоритете: без порта плацдарм останется без снабжения
-			var score: float = world.divs_count(p) * 25.0 - world.p_vp[p] * 2.0 - (8.0 if world.p_vp[p] >= 3 else 0.0) + rng.randf()
+			var score: float = world.divs_count(p) * 25.0 - world.vp_ai()[p] * 2.0 - (8.0 if world.p_vp[p] >= 3 else 0.0) + rng.randf()
 			if score < best_score:
 				best_score = score
 				best = p

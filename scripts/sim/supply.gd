@@ -192,7 +192,7 @@ static func field_snapshot(world: World, side_of: PackedInt32Array, sources: Arr
 		trange[nat.id] = int(TRUCK_RANGE[m]) if nat.truck_ok >= 0.5 else 0
 	nodes_init(world)
 	return {"owner": world.p_owner.duplicate(), "gauge": gauge, "adj_start": world.adj_start.duplicate(), "adj_list": world.adj_list.duplicate(), "land": world.p_land.duplicate(),
-		"ctrl": world.p_controller.duplicate(), "preg": world.p_region.duplicate(), "vp": world.p_vp.duplicate(),
+		"ctrl": world.p_controller.duplicate(), "preg": world.p_region.duplicate(), "vp": world.vp_ai().duplicate(),
 		"pop": world.p_population.duplicate() if world.p_population.size() == world.prov_count else PackedInt32Array(),
 		"pcap": world.p_supply_cap.duplicate(), "smult": smult, "side_of": side_of.duplicate(), "ns": sources.size(), "nr": world.region_count,
 		"reg_adj_start": world.reg_adj_start.duplicate(), "reg_adj_list": world.reg_adj_list.duplicate(),

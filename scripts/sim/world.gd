@@ -546,6 +546,7 @@ var d_spd_eff := PackedFloat64Array()     # скорость с климатом
 var d_atk_eff := PackedFloat64Array()     # атака с климатом
 var d_def_eff := PackedFloat64Array()     # оборона с климатом
 var d_cmul := PackedFloat64Array()        # множитель боя от климата (окно)
+var p_vp_ai := PackedInt32Array()        # очки победы в прежней шкале — для военного ИИ (vp_ai)
 var p_hot := PackedFloat32Array()         # суровость жары провинции 0..1 (Climate, раз в месяц)
 var p_cold := PackedFloat32Array()        # суровость холода и гор 0..1
 var n_hot := PackedFloat64Array()         # уровень страны к жаре 0..1,5 (коренные > 1 — бонус)
@@ -1756,6 +1757,19 @@ const ORG_DECAY := 0.03
 ## Множитель атаки и обороны по снабжению. C++ — sup_mult в kernels.cpp.
 static func sup_mult(s: float) -> float:
 	return 1.0 if s >= SUP_BAD else (0.75 if s >= SUP_EXH else 0.5)
+
+
+## Очки победы в прежней шкале (20 / 10 / 5 / 3 / 1) для военного ИИ: веса
+## обороны и целей подобраны под неё; новая шкала (50 / 15 / 8 / 4 / 2 / 1,
+## решение пользователя) — для капитуляций и окон. Очки провинций не меняются
+## в ходе партии — таблица считается один раз.
+func vp_ai() -> PackedInt32Array:
+	if p_vp_ai.size() != prov_count:
+		p_vp_ai.resize(prov_count)
+		for p in prov_count:
+			var v := p_vp[p]
+			p_vp_ai[p] = 20 if v >= 50 else (10 if v >= 15 else (5 if v >= 8 else (3 if v >= 4 else (1 if v >= 1 else 0))))
+	return p_vp_ai
 
 
 ## Действующие значения дня (с климатом), если посчитаны для всех дивизий, иначе базовые.

@@ -65,6 +65,7 @@ func tick() -> void:
 	var t0 := Time.get_ticks_usec()
 	world.day += 1
 	world.refresh_def_mult()   # зима и укрепления (раз в месяц)
+	world.vp_ai()              # таблица очков для ИИ — до фоновых задач
 	_timed("подготовка", func():
 		var _pt := Time.get_ticks_usec()
 		world.rebuild_prov_divs()

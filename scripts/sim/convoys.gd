@@ -508,7 +508,7 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 		var wsum := 0.0
 		for rt in nat.conv_routes:
 			if int(rt[0]) == 1:
-				wsum += 1.0 + float(world.p_vp[int(rt[1])])
+				wsum += 1.0 + float(world.vp_ai()[int(rt[1])])
 		var sunk := 0.0
 		var sea_total := 0.0
 		var lost_total := 0.0
@@ -533,7 +533,7 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 					world.p_conv[p] = 0.0
 					continue
 				world.p_conv[p] = sup_fill * safe
-				var share := (1.0 + float(world.p_vp[p])) / maxf(1.0, wsum)
+				var share := (1.0 + float(world.vp_ai()[p])) / maxf(1.0, wsum)
 				sunk += sup_need * share * sup_fill * (1.0 - safe) * SINK
 		nat.conv_trade = 1.0 if sea_total <= 0.0 else 1.0 - lost_total / sea_total
 		nat.trade_penalty = 1.0 - nat.conv_trade
