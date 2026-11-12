@@ -672,7 +672,8 @@ static func _map_dist(world: World, side_of: PackedInt32Array, ps: PackedInt32Ar
 
 const SUP_SHARE := 0.5        # доля очков стройки на узлы, пока есть заказы
 const UPGRADE_COST := 12.0    # очков за уровень × (новый уровень)
-const JOIN_COST := 2.5        # присоединить захваченный узел (перешить колею, восстановить пути)
+const JOIN_COST := 2.5        # присоединить захваченный узел (восстановить пути)
+const GAUGE_JOIN := 4.0       # узел чужой колеи — перешивка дороже
 const JOB_UP := 0
 const JOB_JOIN := 1
 
@@ -710,6 +711,12 @@ static func node_ok(world: World, s: int, p: int) -> bool:
 
 static func job_cost(world: World, job: Array) -> float:
 	if int(job[1]) == JOB_JOIN:
+		# узел чужой колеи (широкая — СССР, Финляндия) — перешивка: вчетверо дороже
+		var p: int = job[0]
+		var o := world.p_owner[p]
+		var c := world.p_controller[p]
+		if o >= 0 and c >= 0 and BROAD_GAUGE.has(world.nations[o].tag) != BROAD_GAUGE.has(world.nations[c].tag):
+			return JOIN_COST * GAUGE_JOIN
 		return JOIN_COST
 	return UPGRADE_COST * float(world.p_node_lvl[int(job[0])] + 1)
 
