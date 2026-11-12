@@ -47,8 +47,12 @@ const POCKET_LOCAL := 0.3     # отрезанная от источников �
 # между узлами (дальше 1/AUX_STEP − 1 районов не помогают).
 const K_CAND := 1
 const BUDGET_K := 2.0
-const AUX_N := 2
+const AUX_N := 4               # вспомогательных у узла — не больше
 const AUX_STEP := 0.25
+# сколько вспомогательных работает на основной узел — по длине его фронта
+# (решение пользователя): 1 + (провинций с войсками на нём − 1) / AUX_PER, до AUX_N;
+# узкий фронт упирается в предел, длинный охватывают соседи
+const AUX_PER := 3
 # узлы — самые крупные города (порт — как +2 очка победы), по одному на район,
 # не ближе HUB_GAP переходов друг к другу (решение пользователя); открытые порты
 # и столицы — источники и узлы сверх этого
@@ -228,7 +232,7 @@ static func regions(world: World, side_of: PackedInt32Array, sources: Array, cap
 	var t := {"ps": f[0], "conn": f[3], "pocket": POCKET_LOCAL, "side_of": side_of, "ctrl": world.p_controller, "pcap": world.p_supply_cap,
 		"d_alive": world.d_alive, "d_prov": world.d_prov, "d_owner": world.d_owner,
 		"mot": Native.gather_i32(world.tpl_motor, world.d_tpl), "local": LOCAL,
-		"cand": f[5], "chop": f[6], "aux": f[11], "afac": f[12], "naux": AUX_N, "nf": f[7], "nprov": f[8], "fall": fall, "budget": BUDGET_K, "kc": K_CAND, "nr": world.region_count}
+		"cand": f[5], "chop": f[6], "aux": f[11], "afac": f[12], "naux": AUX_N, "aux_per": AUX_PER, "nf": f[7], "nprov": f[8], "fall": fall, "budget": BUDGET_K, "kc": K_CAND, "nr": world.region_count}
 	world.p_supcap = f[4]   # для расстановки войск ИИ (AIPlanner: не скапливать сверх снабжения)
 	var r: Array = Native.core.call("supply_divs", t) if Native.core != null else divisions_gd(t)
 	world.d_sup = r[0]
@@ -692,6 +696,15 @@ static func divisions_gd(t: Dictionary) -> Array:
 	rq.resize(plist.size())
 	var rk := PackedInt32Array()
 	rk.resize(plist.size())
+	# провинций с нуждой на каждом основном узле (длина его фронта) → сколько
+	# вспомогательных ему помогают
+	var aux_per: int = t["aux_per"]
+	var front := PackedInt32Array()
+	front.resize(nk)
+	for p in plist:
+		var k0 := cand[p * kc]
+		if k0 >= 0:
+			front[k0] += 1
 	# круг 0 — основной узел (ближайший к войскам), круги 1..naux — его вспомогательные
 	for j in naux + 1:
 		for m in plist.size():
@@ -699,6 +712,8 @@ static func divisions_gd(t: Dictionary) -> Array:
 			rk[m] = -1
 			var k0 := cand[p * kc]
 			if k0 < 0 or need[p] <= 0.0:
+				continue
+			if j > 1 + (front[k0] - 1) / aux_per:
 				continue
 			var k := k0 if j == 0 else aux[k0 * naux + j - 1]
 			if k < 0:

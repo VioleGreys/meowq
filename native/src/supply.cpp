@@ -411,12 +411,21 @@ Array MeowqCore::supply_divs(const Dictionary &t) const {
 	used_a.resize(nk);
 	double *used = used_a.ptrw();
 	std::fill(used, used + nk, 0.0);
+	const int aux_per = int(t["aux_per"]);
+	std::vector<int32_t> front(nk, 0);
+	for (int p : plist) {
+		const int k0 = cand[int64_t(p) * kc];
+		if (k0 >= 0)
+			front[k0] += 1;
+	}
 	for (int j = 0; j <= naux; j++) {
 		for (size_t m = 0; m < plist.size(); m++) {
 			const int p = plist[m];
 			rk[m] = -1;
 			const int k0 = cand[int64_t(p) * kc];
 			if (k0 < 0 || need[p] <= 0.0)
+				continue;
+			if (j > 1 + (front[k0] - 1) / aux_per)
 				continue;
 			const int k = j == 0 ? k0 : aux[int64_t(k0) * naux + j - 1];
 			if (k < 0)
