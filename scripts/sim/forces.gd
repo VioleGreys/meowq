@@ -609,6 +609,7 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 	Prof.add("флот:сражения", _pt)
 	_pt = Time.get_ticks_usec()
 	Convoys.daily(world, rng)
+	Depots.daily(world)   # пункты снабжения: участки, склады за морем, подвоз снаряжения
 	_refresh_cache(world)
 	Prof.add("флот:торговля", _pt)
 

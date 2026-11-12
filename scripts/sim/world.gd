@@ -83,6 +83,10 @@ class Nation:
 	var conv_zone_set := {}     # морская зона -> конвоев на путях через неё (для рейдеров и охраны)
 	var conv_basins := {}       # бассейны путей конвоев (Convoys.build_basins)
 	var conv_danger := {}       # бассейн -> перехват сегодня (0..1), только опасные
+	var conv_safe := {}         # порт за морем -> доля, что доходит по пути (0..1; Convoys.daily)
+	var conv_eq_need := 0.0     # конвоев нужно на подвоз снаряжения складам (Depots)
+	var conv_eq_use := 0.0      # занято вчера подвозом снаряжения (вычитается из торговли)
+	var dep_home := -1          # участок суши столицы (World.p_comp; Depots)
 	var res_lost := PackedFloat32Array([0, 0, 0, 0, 0, 0])   # морской импорт, что не дошёл (ед. в день)
 	var ship_queue: Array = []  # заложенные корабли: номера проектов (World.ship_designs)
 	var ship_role := PackedInt32Array([-1, -1, -1, -1, -1])  # основные проекты ролей (ShipDesigns.ROLES)
@@ -471,6 +475,13 @@ var bas_zone_list := PackedInt32Array()
 # проливы (Convoys.setup_straits): [зона a, зона b, 1 — связь, которой нет на
 # карте (Суэц, Босфор), провинции-держатели PackedInt32Array, страна-страж (−1), название]
 var straits: Array = []
+# пункты снабжения и склады (Depots): участки суши сторон, запасы складов за морем
+var p_comp := PackedInt32Array()          # участок: связная по суше земля своей стороны (−1 — море, ничья)
+var p_dsup := PackedFloat32Array()        # подача пункта снабжения (поле снабжения, вместо p_conv)
+var dep_stock: Dictionary = {}            # склад за морем: провинция -> PackedFloat64Array(4) снаряжения
+var dep_owner: Dictionary = {}            # провинция склада -> страна-хозяин запаса
+var dep_share: Dictionary = {}            # провинция -> доля запаса страны, что держать (игрок; ИИ — Depots)
+var dep_want: Dictionary = {}             # провинция -> доля на сегодня (с поправкой суммы)
 var p_waste := PackedByteArray()        # безлюдная пустыня (Supply._static): связь со снабжением не проходит
 var conv_units: Array = []              # кэш Convoys._units_by_buyer
 var conv_units_sig := -1.0
@@ -1485,13 +1496,15 @@ func _bury(d: Division) -> void:
 # Формулы и порядок обхода обязаны совпадать до бита: sim_bench сравнивает.
 
 ## Восстановление: организация, окапывание, окружение, пополнение со складов.
-## stock — склады стран подряд (страна*7 + тип), manpower — призывники стран.
+## stock — запасы пулов подряд (пул*7 + тип): пул страны — её метрополия, дальше —
+## склады за морем (Depots.pools); pool — пул дивизии (−1 — запаса по суше нет:
+## не пополняется); manpower — призывники стран.
 ## Возвращает слоты дивизий, погибших в окружении.
-func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus: PackedFloat64Array) -> Array:
+func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus: PackedFloat64Array, pool: PackedInt32Array) -> Array:
 	if Native.core != null:
 		var r: Array = Native.core.call("recovery", d_alive, d_transit, d_sup, d_org, d_morg, d_str, d_eq, d_ent,
 				d_next, d_battle, d_owner, d_prov, d_tpl, p_controller, ally, nation_count, stock, manpower, rbonus,
-				tpl_eq, tpl_men)
+				tpl_eq, tpl_men, pool)
 		d_org = r[0]
 		d_str = r[1]
 		d_eq = r[2]
@@ -1525,8 +1538,9 @@ func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus:
 		var c := p_controller[d_prov[i]]
 		if c != o and ally[o * nc + c] != 1:
 			continue
-		# пополнение (Military.reinforce)
-		if sup < 0.3 or (d_eq[i] >= 1.0 and d_str[i] >= 100.0):
+		# пополнение (Military.reinforce) — из пула, доступного по суше
+		var pl := pool[i]
+		if pl < 0 or sup < 0.3 or (d_eq[i] >= 1.0 and d_str[i] >= 100.0):
 			continue
 		var t := d_tpl[i]
 		var rr := 0.04 * (1.0 + rbonus[o]) * sup
@@ -1535,10 +1549,10 @@ func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus:
 			for k in 7:
 				var e := tpl_eq[t * 7 + k]
 				if e > 0:
-					want = minf(want, stock[o * 7 + k] / e)
+					want = minf(want, stock[pl * 7 + k] / e)
 			if want > 0.0:
 				for k in 7:
-					stock[o * 7 + k] -= tpl_eq[t * 7 + k] * want
+					stock[pl * 7 + k] -= tpl_eq[t * 7 + k] * want
 				d_eq[i] += want
 		if d_str[i] < 100.0:
 			var add := minf(100.0 - d_str[i], rr * 100.0)

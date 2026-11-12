@@ -2748,7 +2748,45 @@ func _build_convoys(w: World, me: int) -> void:
 	bo.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(bo)
 	popup_body.add_child(row)
-	popup_body.add_child(_small("Конвой — %d очков судостроения, строится раньше кораблей. Сначала конвои идут на снабжение войск за морем, остаток — на торговлю. Рейдеры и флот противника, господствующий на пути, топят конвои: теряется только то, что идёт через это море." % roundi(Convoys.COST)))
+	popup_body.add_child(_small("Конвой — %d очков судостроения, строится раньше кораблей. Сначала конвои идут на снабжение войск за морем, затем везут снаряжение на склады, остаток — на торговлю. Рейдеры и флот противника, господствующий на пути, топят конвои: теряется только то, что идёт через это море." % roundi(Convoys.COST)))
+	_build_depots(w, me)
+
+
+## Склады за морем: главный пункт снабжения каждого участка — запас, доля
+## запаса страны, что держать там (игрок меняет), подача, подвоз.
+func _build_depots(w: World, me: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_body.add_child(_section("Склады за морем"))
+	var ps: Array = []
+	for p in w.dep_want:
+		if w.p_controller[int(p)] == me:
+			ps.append(int(p))
+	ps.sort()
+	if ps.is_empty():
+		popup_body.add_child(_small("Пунктов снабжения за морем нет. Пункт снабжения — столица, крупный город или порт с улучшенным узлом; обычный порт — только база и ремонт кораблей."))
+		return
+	popup_body.add_child(_label("Подвоз снаряжения: конвоев занято %d из нужных %d" % [roundi(n.conv_eq_use), roundi(n.conv_eq_need)], 15))
+	for p in ps:
+		var pp: int = p
+		var st: PackedFloat64Array = w.dep_stock.get(pp, PackedFloat64Array([0.0, 0.0, 0.0, 0.0]))
+		var share: float = float(w.dep_share.get(pp, Depots.DEFAULT_SHARE))
+		popup_body.add_child(_label("%s — запас %d (стрелковое %d, артиллерия %d, бронетехника %d, грузовики %d), подача %d%%" % [w.p_name[pp],
+			roundi(Depots._value(st)), roundi(st[0]), roundi(st[1]), roundi(st[2]), roundi(st[3]), roundi(100.0 * w.p_dsup[pp]) if w.p_dsup.size() == w.prov_count else 100], 15))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		for dv in [-0.1, 0.1]:
+			var d: float = dv
+			var b := _button(("−10%" if d < 0.0 else "+10%"), func():
+				var v := clampf(share + d, 0.0, 1.0)
+				game.act(func(): w.dep_share[pp] = v)
+				_rebuild_popup(), Vector2(0, 44))
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(b)
+		var lb := _label("держать %d%% запаса страны" % roundi(share * 100.0), 15)
+		lb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(lb)
+		popup_body.add_child(row)
+	popup_body.add_child(_small("Дивизии пополняются из запаса, доступного по суше: в метрополии — со складов страны, за морем — со склада своего участка. Конвои довозят снаряжение до указанной доли (вместе — не больше %d%% запаса страны). Нет пути конвоев — участок живёт запасом склада; кончится — войска без снабжения." % roundi(Depots.SHARE_SUM_MAX * 100.0)))
 
 
 func _build_ship_designs(w: World, me: int) -> void:

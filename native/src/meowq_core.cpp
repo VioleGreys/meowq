@@ -16,7 +16,7 @@ void MeowqCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("gather_f64", "a", "idx"), &MeowqCore::gather_f64);
 	ClassDB::bind_method(D_METHOD("gather_i32", "a", "idx"), &MeowqCore::gather_i32);
 	ClassDB::bind_method(D_METHOD("gather_u8", "a", "idx"), &MeowqCore::gather_u8);
-	ClassDB::bind_method(D_METHOD("recovery", "alive", "transit", "sup", "org", "morg", "str", "eq", "ent", "next", "battle", "owner", "prov", "tpl", "ctrl", "ally", "nc", "stock", "manpower", "rbonus", "tpl_eq", "tpl_men"), &MeowqCore::recovery);
+	ClassDB::bind_method(D_METHOD("recovery", "alive", "transit", "sup", "org", "morg", "str", "eq", "ent", "next", "battle", "owner", "prov", "tpl", "ctrl", "ally", "nc", "stock", "manpower", "rbonus", "tpl_eq", "tpl_men", "pool"), &MeowqCore::recovery);
 	ClassDB::bind_method(D_METHOD("supply_apply", "alive", "sup", "prov", "tpl", "owner", "side_of", "dist", "caps", "prov_count", "t_mot"), &MeowqCore::supply_apply);
 	ClassDB::bind_method(D_METHOD("march", "alive", "transit", "next", "owner", "prov", "prog", "spd", "org", "morg", "sup", "land", "ctrl", "war", "nc", "move_mult"), &MeowqCore::march);
 	ClassDB::bind_method(D_METHOD("snapshot", "next", "battle", "transit", "resv", "inv", "str", "org", "morg", "atk", "eq", "sup", "prov", "prov_count", "day"), &MeowqCore::snapshot);

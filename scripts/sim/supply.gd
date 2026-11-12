@@ -26,7 +26,7 @@ extends RefCounted
 ## функции от снимка: GDScript (подача — параллельно по районам) и C++
 ## (MeowqCore.supply_field / supply_divs), результаты совпадают до бита.
 
-const WASTE_CAP := 1.5   # пустыня ёмкостью меньше — безлюдна: связь со снабжением через неё не проходит (Сахара)
+const WASTE_CAP := 1.5   # пустыня ёмкостью меньше, не у моря — безлюдна: связь со снабжением через неё не проходит (Сахара; побережье — дорога)
 const HUB_RANGE := 6
 const FALLOFF := 0.8          # доля, доходящая через каждый переход после первого
 const LOCAL := 0.5            # местное снабжение провинции: × ёмкость (2–6)
@@ -81,7 +81,7 @@ static func _static(world: World) -> void:
 		world.p_waste.resize(world.prov_count)
 		var base := world.p_supply_base if world.p_supply_base.size() == world.prov_count else world.p_supply_cap
 		for p in world.prov_count:
-			if world.p_land[p] == 1 and world.p_terrain[p] == World.T_DESERT and base[p] < WASTE_CAP:
+			if world.p_land[p] == 1 and world.p_terrain[p] == World.T_DESERT and base[p] < WASTE_CAP and world.p_coastal[p] == 0:
 				world.p_waste[p] = 1
 	if world.reg_adj_start.size() == world.region_count + 1:
 		return
@@ -183,7 +183,7 @@ static func field_snapshot(world: World, side_of: PackedInt32Array, sources: Arr
 	# только копии: снимок читается в фоне, пока мир идёт дальше (правило
 	# многопоточности — часть записей в массивы мира идёт на месте)
 	# подача портов за морем — по доставке конвоями (Convoys; 1 — дома)
-	var smult := world.p_conv.duplicate()
+	var smult := (world.p_dsup if world.p_dsup.size() == world.prov_count else world.p_conv).duplicate()
 	if smult.size() != world.prov_count:
 		smult.resize(world.prov_count)
 		smult.fill(1.0)

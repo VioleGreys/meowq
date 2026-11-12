@@ -35,7 +35,6 @@ const RESERVE := 1.2         # ИИ держит запас сверх нужд�
 const RESERVE_MIN := 5.0
 const DEFAULT_PER_PORT := 3.0   # нет в forces.json — по 3 на порт метрополии…
 const DEFAULT_MAX := 40.0       # …но не больше 40
-const STOCK_DAYS := 150.0       # запасы отрезанного порта за морем (подача 1 → 0) — дней
 const CHARTER := 0.2            # страна без верфей фрахтует конвои: в день, до нужды (не больше DEFAULT_MAX)
 
 
@@ -298,11 +297,15 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 		var c := ctrl[p]
 		if c < 0:
 			continue
-		if hl[c] == null:
-			hl[c] = home_land(world, c)
-		var home: bool = hl[c][p] == 1
-		if not home:
-			over[c].append(p)
+		var home: bool
+		if world.p_comp.size() == world.prov_count:
+			home = not Depots.overseas(world, c, p)
+		else:
+			if hl[c] == null:
+				hl[c] = home_land(world, c)
+			home = hl[c][p] == 1
+		if not home and Depots.is_depot(world, p):
+			over[c].append(p)   # конвои снабжения — только в пункты снабжения (Depots)
 		for k in range(a_start[p], a_start[p + 1]):
 			var q := a_list[k]
 			if land[q] == 0:
@@ -329,11 +332,8 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 	_t0 = Time.get_ticks_usec()
 	for b in nc:
 		var bn: World.Nation = world.nations[b]
-		var prev := {}   # заморские порты прошлого обхода: у них есть склады
-		for rt in bn.conv_routes:
-			if int(rt[0]) == 1:
-				prev[int(rt[1])] = true
 		bn.conv_routes = []
+		bn.conv_safe = {}
 		bn.conv_zone_set = {}
 		bn.conv_basins = {}
 		bn.conv_trade_need = 0.0
@@ -384,8 +384,6 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 				if links[1].is_empty() or _route(_bfs(world, src, null, [links[0], {}]), tz).is_empty():
 					continue   # до порта не дойти (нет общей воды) — порт сам по себе
 				# иначе путь закрыт проливом — порт отрезан
-			if route.is_empty() and not prev.has(p) and world.p_conv.size() == world.prov_count:
-				world.p_conv[p] = 0.0   # взят уже отрезанным — своих запасов нет
 			bn.conv_routes.append([1, p, route, 0.0])   # пустой путь — порт отрезан блокадой
 		# зоны бассейнов путей — для рейдеров противника и своих охотников
 		for rt in bn.conv_routes:
@@ -613,7 +611,7 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 		var have := maxf(0.0, nat.convoys)
 		var sup_need := nat.conv_sup_need
 		var sup_fill := 1.0 if sup_need <= 0.0 else minf(1.0, have / sup_need)
-		var left := maxf(0.0, have - sup_need)
+		var left := maxf(0.0, have - sup_need - nat.conv_eq_use)   # снабжение, снаряжение складам (Depots), остаток — торговля
 		var trade_fill := 1.0 if nat.conv_trade_need <= 0.0 else minf(1.0, left / nat.conv_trade_need)
 		nat.conv_sup = sup_fill
 		var war := not nat.at_war.is_empty()
@@ -636,7 +634,9 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 			for rt in nat.conv_routes:
 				if int(rt[0]) == 1:
 					var pp := int(rt[1])
-					world.p_conv[pp] = sup_fill if not (rt[2] as PackedInt32Array).is_empty() else _stock(world.p_conv[pp])
+					var cut := (rt[2] as PackedInt32Array).is_empty()
+					world.p_conv[pp] = 0.0 if cut else sup_fill
+					nat.conv_safe[pp] = 0.0 if cut else 1.0
 			continue
 		if by_b.is_empty():
 			by_b = _units_by_buyer(world)
@@ -668,9 +668,11 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 			else:
 				var p: int = rt[1]
 				if route.is_empty():
-					world.p_conv[p] = _stock(world.p_conv[p])
+					world.p_conv[p] = 0.0
+					nat.conv_safe[p] = 0.0
 					continue
 				world.p_conv[p] = sup_fill * safe
+				nat.conv_safe[p] = safe
 				var share := (1.0 + float(world.vp_ai()[p])) / maxf(1.0, wsum)
 				sunk += sup_need * share * sup_fill * (1.0 - safe) * SINK
 		nat.conv_trade = 1.0 if sea_total <= 0.0 else 1.0 - lost_total / sea_total
@@ -743,13 +745,6 @@ static func _units_by_buyer(world: World) -> Array:
 	return by_b
 
 
-## Порт отрезан (нет пути конвоев): подача тает на складских запасах за
-## STOCK_DAYS дней, а не обрывается сразу (Восточная Африка держалась
-## с июня 1940 г. до весны 1941 г.).
-static func _stock(v: float) -> float:
-	return maxf(0.0, v - 1.0 / STOCK_DAYS)
-
-
 ## Дивизии за морем (вне земли метрополии) → нужда в конвоях снабжения.
 static func _count_overseas(world: World) -> void:
 	var nc := world.nation_count
@@ -768,9 +763,14 @@ static func _count_overseas(world: World) -> void:
 		var p := prov[i]
 		if o < 0 or p < 0 or land[p] == 0 or world.nations[o].capital < 0:
 			continue
-		if hl[o] == null:
-			hl[o] = home_land(world, o)
-		if hl[o][p] == 0:
+		var far: bool
+		if world.p_comp.size() == world.prov_count:
+			far = Depots.overseas(world, o, p)
+		else:
+			if hl[o] == null:
+				hl[o] = home_land(world, o)
+			far = hl[o][p] == 0
+		if far:
 			cnt[o] += 1
 	for nat in world.nations:
 		nat.conv_sup_need = PER_DIV * float(cnt[nat.id])
@@ -784,7 +784,7 @@ static func build(world: World) -> void:
 			continue
 		var want := float(nat.conv_order)
 		if nat.conv_auto:
-			var target := (nat.conv_trade_need + nat.conv_sup_need) * RESERVE
+			var target := (nat.conv_trade_need + nat.conv_sup_need + nat.conv_eq_need) * RESERVE
 			if target > 0.0:
 				target += RESERVE_MIN
 			want += maxf(0.0, ceilf(target - nat.convoys))

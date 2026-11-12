@@ -23,7 +23,8 @@ Array MeowqCore::recovery(const PackedByteArray &alive, const PackedInt32Array &
 		const PackedByteArray &battle, const PackedInt32Array &owner, const PackedInt32Array &prov,
 		const PackedInt32Array &tpl, const PackedInt32Array &ctrl, const PackedByteArray &ally, int nc,
 		const PackedFloat32Array &stock_in, const PackedFloat64Array &manpower_in, const PackedFloat64Array &rbonus,
-		const PackedFloat64Array &tpl_eq, const PackedFloat64Array &tpl_men) const {
+		const PackedFloat64Array &tpl_eq, const PackedFloat64Array &tpl_men, const PackedInt32Array &pool) const {
+	const int32_t *pl_p = pool.ptr();
 	PackedFloat64Array org = org_in, str = str_in, eq = eq_in, ent = ent_in, manpower = manpower_in;
 	PackedFloat32Array stock = stock_in;
 	PackedInt32Array dead;
@@ -54,17 +55,18 @@ Array MeowqCore::recovery(const PackedByteArray &alive, const PackedInt32Array &
 		const int32_t o = ow[i];
 		const int32_t c = ct[pv[i]];
 		if (c != o && ally_p[int64_t(o) * nc + c] != 1) continue;
-		if (s < 0.3 || (o_eq[i] >= 1.0 && o_str[i] >= 100.0)) continue;
+		const int32_t pl = pl_p[i];
+		if (pl < 0 || s < 0.3 || (o_eq[i] >= 1.0 && o_str[i] >= 100.0)) continue;
 		const int32_t t = tp[i];
 		const double rr = 0.04 * (1.0 + rb[o]) * s;
 		if (o_eq[i] < 1.0) {
 			double want = mind(1.0 - o_eq[i], rr);
 			for (int k = 0; k < 7; k++) {
 				const double e = te[t * 7 + k];
-				if (e > 0) want = mind(want, double(st[o * 7 + k]) / e);
+				if (e > 0) want = mind(want, double(st[pl * 7 + k]) / e);
 			}
 			if (want > 0.0) {
-				for (int k = 0; k < 7; k++) st[o * 7 + k] = float(double(st[o * 7 + k]) - te[t * 7 + k] * want);
+				for (int k = 0; k < 7; k++) st[pl * 7 + k] = float(double(st[pl * 7 + k]) - te[t * 7 + k] * want);
 				o_eq[i] += want;
 			}
 		}

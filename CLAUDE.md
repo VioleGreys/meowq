@@ -38,7 +38,7 @@
 - `politics.md` — политическая власть, стабильность, поддержка войны, гарантии
   (перевес, событие «вступиться или нет»), баффы сторон войны (`politics.gd`).
 - `economy.md` — ресурсы, торговля, договоры, блокада (`economy.gd`).
-- `supply.md` — снабжение по узлам районов: нагрузка, улучшение, присоединение, грузовики (`supply.gd`); Испания.
+- `supply.md` — снабжение по узлам районов: нагрузка, улучшение, присоединение, грузовики (`supply.gd`); пункты снабжения, склады за морем, проливы (`depots.gd`); Испания.
 - `science.md` — наука: слоты исследований, дерево технологий, бонусы родов
   войск, флота и авиации, ИИ науки, окно дерева (`tech.gd`, `tech_view.gd`).
 - `save.md` — главное меню, сохранение, загрузка, автосохранение (`save.gd`).
@@ -93,6 +93,7 @@
 - Конец войны, оккупация, марионетки: `godot --headless --path . --script res://tests/peace_check.gd`
 - Политика и гарантии: `godot --headless --path . --script res://tests/politics_check.gd`
 - Ход войны по странам (дивизии, снабжение, заводы, перегруз): `godot --headless --path . --script res://tests/war_diag.gd -- --until=1942-01-01 --from=1941-06-01 --tags=SOV,GER [--stack --seed=N]`
+- Склады и пункты снабжения за морем (участки, запасы, подача, конвои): `godot --headless --path . --script res://tests/depot_diag.gd -- --until=1941-06-01 --from=1940-01-01 --tags=ITA,ENG [--seed=N]`
 - Снабжение, сравнение моделей: `godot --headless --path . --script res://tests/supply_compare.gd [-- --supply=regions]`
 - Сохранение и загрузка: `godot --headless --path . --script res://tests/save_check.gd [-- --dates=1941-08-01 --step=60 --nation=SWE]`
   (страна «игрока» в тесте никем не управляется — для дальних дат брать нейтральную)

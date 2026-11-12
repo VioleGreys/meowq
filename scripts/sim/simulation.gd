@@ -348,7 +348,8 @@ func _phase_supply() -> void:
 	# порт за морем, отрезанный от метрополии (проливом или блокадой пути
 	# конвоев: World.p_conv = 0), — не источник: иначе узлы снабжения от него
 	# работали в полную силу (Италия в Восточной Африке 1940–41 гг.)
-	var pconv := world.p_conv
+	# подача пунктов снабжения (Depots: подвоз конвоями и склады за морем)
+	var pconv := world.p_dsup if world.p_dsup.size() == world.prov_count else world.p_conv
 	var cut_ok := pconv.size() == world.prov_count
 	# заморские порты союзника, что сам не воюет (Виши: Джибути, Мадагаскар),
 	# не снабжают воюющую сторону — их колонии в блокаде противника стороны
@@ -394,13 +395,13 @@ func _phase_supply() -> void:
 		for pi in plist.size():
 			var p := plist[pi]
 			var c := ctl[p]
-			if c >= 0 and rep_index.has(rep[c]) and hub_ok[pi] == 1 and not (cut_ok and pconv[p] <= 0.0):
+			if c >= 0 and rep_index.has(rep[c]) and hub_ok[pi] == 1 and not (cut_ok and pconv[p] <= 0.0) and Depots.is_depot(world, p):
 				hubs[rep_index[rep[c]]].append(p)
 	else:
 		for pi in plist.size():
 			var p := plist[pi]
 			var c := ctl[p]
-			if c < 0 or not rep_index.has(rep[c]) or (cut_ok and pconv[p] <= 0.0):
+			if c < 0 or not rep_index.has(rep[c]) or (cut_ok and pconv[p] <= 0.0) or not Depots.is_depot(world, p):
 				continue
 			var open_sea := false
 			for k in range(adj_s[p], adj_s[p + 1]):
@@ -411,6 +412,15 @@ func _phase_supply() -> void:
 			if open_sea or not _blockaded(c, p, sup_memo):
 				hubs[rep_index[rep[c]]].append(p)
 	Prof.add("уз:блокада", _px)
+	# пункты снабжения в глубине суши за морем (крупные города не у моря):
+	# подают, пока участок снабжается конвоями или со складов (Depots)
+	if cut_ok and world.p_comp.size() == world.prov_count:
+		for p in world.prov_count:
+			var c := ctl[p]
+			if c < 0 or port[p] == 1 or is_land[p] == 0 or not rep_index.has(rep[c]) or pconv[p] <= 0.0:
+				continue
+			if world.p_vp[p] >= Depots.DEPOT_VP and Depots.overseas(world, c, p):
+				hubs[rep_index[rep[c]]].append(p)
 	# плацдармы высадок временно работают как порты
 	for p in world.beachheads.keys():
 		if world.beachheads[p] < world.day:
@@ -1115,8 +1125,14 @@ func _phase_planning() -> void:
 
 func _phase_recovery() -> void:
 	var nc := world.nation_count
+	var pr := Depots.pools(world)   # пул дивизии: метрополия или склад участка за морем
+	var dep: PackedInt32Array = pr[1]
 	var stock := PackedFloat32Array()
-	stock.resize(nc * 7)
+	stock.resize((nc + dep.size()) * 7)
+	for j in dep.size():
+		var ds: PackedFloat64Array = world.dep_stock[dep[j]]
+		for k in Military.EQ_LAND:
+			stock[(nc + j) * 7 + k] = ds[k]
 	var manpower := PackedFloat64Array()
 	manpower.resize(nc)
 	var rbonus := PackedFloat64Array()
@@ -1127,9 +1143,14 @@ func _phase_recovery() -> void:
 			stock[nat.id * 7 + k] = st[k]
 		manpower[nat.id] = nat.manpower
 		rbonus[nat.id] = nat.b("reinforce")
-	var r := world.k_recovery(stock, manpower, rbonus)
+	var r := world.k_recovery(stock, manpower, rbonus, pr[0])
 	stock = r[0]
 	manpower = r[1]
+	for j in dep.size():
+		var ds: PackedFloat64Array = world.dep_stock[dep[j]]
+		for k in Military.EQ_LAND:
+			ds[k] = stock[(nc + j) * 7 + k]
+		world.dep_stock[dep[j]] = ds
 	for nat in world.nations:
 		var st := PackedFloat32Array()
 		st.resize(7)
