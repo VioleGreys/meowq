@@ -10,15 +10,28 @@ const EQ_INF := 0
 const EQ_ART := 1
 const EQ_TANK := 2
 const EQ_TRUCK := 3
-const EQ_SHIP := 4     # очки судостроения (корабли закладываются из них, см. Forces)
-const EQ_FIG := 5      # истребители (самолёты в резерве)
-const EQ_BOMB := 6     # бомбардировщики
-const EQ_COUNT := 7
-const EQ_LAND := 4     # первые 4 типа — снаряжение сухопутных дивизий
-const EQ_NAMES := ["Стрелковое оружие", "Артиллерия", "Бронетехника", "Грузовики", "Судостроение", "Истребители", "Бомбардировщики"]
-const EQ_SHORT := ["Винт.", "Ору.", "Танки", "Груз.", "Суда", "Истр.", "Бомб."]
-# цена единицы в «очках производства»; один военный завод даёт 1 очко в день
-const EQ_COST := [1.0, 3.5, 12.0, 2.5, 1.5, 9.0, 18.0]   # флот и самолёты ×1,5 (решение пользователя, ноябрь 2026)
+const EQ_AT := 4       # противотанковые пушки (решение пользователя, ноябрь 2026: своё снаряжение)
+const EQ_SHIP := 5     # очки судостроения (корабли закладываются из них, см. Forces)
+const EQ_FIG := 6      # истребители (самолёты в резерве)
+const EQ_BOMB := 7     # бомбардировщики
+const EQ_COUNT := 8
+const EQ_LAND := 5     # первые 5 типов — снаряжение сухопутных дивизий
+const EQ_NAMES := ["Стрелковое оружие", "Артиллерия", "Бронетехника", "Грузовики", "Противотанковые пушки", "Судостроение", "Истребители", "Бомбардировщики"]
+const EQ_SHORT := ["Винт.", "Ору.", "Танки", "Груз.", "ПТО", "Суда", "Истр.", "Бомб."]
+# Экономика «как в жанре» (решение пользователя, ноябрь 2026): завод даёт
+# FACTORY_PTS очков в день × эффективность линии; цена единицы — в очках.
+# Батальон — сотни единиц (пехотный: 100 стрелкового на 1000 человек).
+# Цены подобраны так, чтобы батальон стоил заводо-дней примерно как прежде
+# при эффективности ~55 %; рост эффективности технологиями — сверху.
+const EQ_COST := [0.35, 9.0, 5.0, 1.25, 4.0, 3.75, 22.5, 45.0]
+const FACTORY_PTS := 4.5
+const EFF_START := 0.1      # эффективность новой линии (и нового завода на ней)
+const EFF_CAP := 0.5        # потолок эффективности; технологии (бонус prod_eff) поднимают
+const EFF_GAIN := 0.03      # рост за день — доля оставшегося до потолка (быстрее в начале)
+const EFF_KEEP := 0.4       # завод, переведённый на другое снаряжение, сохраняет долю эффективности
+# Сохранения до ноября 2026 г.: во сколько раз больше единиц в новом счёте
+# (по прежним 7 типам; ПТО тогда не было — вставляется пятым).
+const EQ_UNIT_SCALE_OLD := [10.0, 1.0, 50.0 / 7.5, 5.0, 1.0, 1.0, 1.0]
 
 # --- Батальоны и шаблоны дивизий ------------------------------------------------
 # Шаблон — состав из батальонов (как в жанре): характеристики дивизии — сумма
@@ -34,31 +47,32 @@ const B_MOT := 4
 const B_TANK := 5
 const B_AT := 6
 const BAT_COUNT := 7
-# men — тыс. человек; eq — [винт., ору., танки, груз.]; terr — множитель на
+# men — тыс. человек; eq — [винт., ору., танки, груз., ПТО] (единиц); terr — множитель на
 # местности (равнины, лес, холмы, горы, город, море, пустыня, болота);
 # width — ширина фронта батальона (дивизия = сумма; в бою — не шире провинции);
 # motor — моторизован (скорость от бонуса «speed» полностью, снабжение ×1,5)
 const BATTALIONS := [
-	{"name": "Пехотный", "width": 2, "short": "пех.", "icon": "inf", "men": 1.0, "eq": [10.0, 1.2, 0.0, 0.0], "atk": 1.0, "def": 1.2, "org": 40.0, "spd": 1.0, "hard": 0.0, "days": 14, "req": "", "motor": false, "armor": 0.0, "pierce": 5.0,
+	{"name": "Пехотный", "width": 2, "short": "пех.", "icon": "inf", "men": 1.0, "eq": [100.0, 0.0, 0.0, 0.0, 0.0], "atk": 1.0, "def": 1.2, "org": 40.0, "spd": 1.0, "hard": 0.0, "days": 14, "req": "", "motor": false, "armor": 0.0, "pierce": 5.0,
 		"terr": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]},
-	{"name": "Горнострелковый", "width": 2, "short": "горн.", "icon": "mnt", "men": 1.0, "eq": [11.0, 0.6, 0.0, 0.0], "atk": 0.9, "def": 1.2, "org": 45.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "mnt1", "motor": false, "armor": 0.0, "pierce": 5.0,
+	{"name": "Горнострелковый", "width": 2, "short": "горн.", "icon": "mnt", "men": 1.0, "eq": [110.0, 0.0, 0.0, 0.0, 0.0], "atk": 0.9, "def": 1.2, "org": 45.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "mnt1", "motor": false, "armor": 0.0, "pierce": 5.0,
 		"terr": [1.0, 1.1, 1.35, 1.5, 1.0, 1.0, 0.9, 1.0]},
-	{"name": "Кавалерийский", "width": 2, "short": "кав.", "icon": "cav", "men": 1.0, "eq": [10.0, 0.0, 0.0, 0.0], "atk": 1.0, "def": 1.0, "org": 50.0, "spd": 1.5, "hard": 0.0, "days": 14, "req": "", "motor": false, "armor": 0.0, "pierce": 3.0,
+	{"name": "Кавалерийский", "width": 2, "short": "кав.", "icon": "cav", "men": 1.0, "eq": [80.0, 0.0, 0.0, 0.0, 0.0], "atk": 1.0, "def": 1.0, "org": 50.0, "spd": 1.5, "hard": 0.0, "days": 14, "req": "", "motor": false, "armor": 0.0, "pierce": 3.0,
 		"terr": [1.1, 0.8, 0.9, 0.7, 0.8, 1.0, 1.1, 0.7]},
 	# артиллерия: 2 батальона к 10 пехотным дают прежнюю «пехоту с артиллерией»;
 	# на трудной местности она обуза (значения ниже 1 тянут среднее вниз)
-	{"name": "Артиллерийский", "width": 3, "short": "арт.", "icon": "art", "men": 0.5, "eq": [0.0, 12.0, 0.0, 0.0], "atk": 3.0, "def": 1.0, "org": 18.0, "spd": 0.9, "hard": 0.0, "days": 18, "req": "", "motor": false, "armor": 0.0, "pierce": 5.0,
+	{"name": "Артиллерийский", "width": 3, "short": "арт.", "icon": "art", "men": 0.5, "eq": [0.0, 12.0, 0.0, 0.0, 0.0], "atk": 3.0, "def": 1.0, "org": 18.0, "spd": 0.9, "hard": 0.0, "days": 18, "req": "", "motor": false, "armor": 0.0, "pierce": 5.0,
 		"terr": [1.55, 0.45, 0.45, -0.65, 1.0, 1.0, 1.55, -0.1]},
-	{"name": "Моторизованный", "width": 2, "short": "мот.", "icon": "mot", "men": 1.0, "eq": [10.0, 1.2, 0.0, 6.0], "atk": 1.1, "def": 1.2, "org": 40.0, "spd": 2.0, "hard": 0.1, "days": 20, "req": "mot1", "motor": true, "armor": 2.0, "pierce": 6.0,
+	{"name": "Моторизованный", "width": 2, "short": "мот.", "icon": "mot", "men": 1.0, "eq": [100.0, 0.0, 0.0, 30.0, 0.0], "atk": 1.1, "def": 1.2, "org": 40.0, "spd": 2.0, "hard": 0.1, "days": 20, "req": "mot1", "motor": true, "armor": 2.0, "pierce": 6.0,
 		"terr": [1.1, 0.85, 0.9, 0.75, 0.9, 1.0, 1.1, 0.7]},
-	{"name": "Танковый", "width": 2, "short": "танк.", "icon": "arm", "men": 1.0, "eq": [5.0, 0.0, 7.5, 5.0], "atk": 3.75, "def": 1.5, "org": 35.0, "spd": 1.8, "hard": 0.7, "days": 30, "req": "armor1", "motor": true, "armor": 10.0, "pierce": 15.0,
+	{"name": "Танковый", "width": 2, "short": "танк.", "icon": "arm", "men": 1.0, "eq": [20.0, 0.0, 50.0, 10.0, 0.0], "atk": 3.75, "def": 1.5, "org": 35.0, "spd": 1.8, "hard": 0.7, "days": 30, "req": "armor1", "motor": true, "armor": 10.0, "pierce": 15.0,
 		"terr": [1.15, 0.75, 0.75, 0.55, 0.75, 1.0, 1.15, 0.55]},
 	# ПТО (решение пользователя, ноябрь 2026): бронебойность дивизии против танков;
 	# танковый батальон берёт броню и бронебойность из проекта (TankDesigns)
-	{"name": "Противотанковый", "width": 1, "short": "ПТО", "icon": "art", "men": 0.5, "eq": [1.0, 5.0, 0.0, 0.0], "atk": 0.6, "def": 1.0, "org": 20.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "at1", "motor": false, "armor": 0.0, "pierce": 35.0,
+	{"name": "Противотанковый", "width": 1, "short": "ПТО", "icon": "art", "men": 0.5, "eq": [10.0, 0.0, 0.0, 0.0, 12.0], "atk": 0.6, "def": 1.0, "org": 20.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "at1", "motor": false, "armor": 0.0, "pierce": 35.0,
 		"terr": [1.0, 0.9, 0.9, 0.7, 1.0, 1.0, 1.0, 0.8]},
 ]
-const AT2_PIERCE := 25.0   # «Тяжёлые пушки ПТО» (at2): бронебойность батальона ПТО +25
+const AT2_PIERCE := 25.0   # «Тяжёлые пушки ПТО» (at2): бронебойность батальона ПТО +25 (60)
+const AT3_PIERCE := 55.0   # «Пушки ПТО большой мощности» (at3): +55 (90)
 const ARMOR_MAX_W := 0.4   # броня и бронебойность дивизии: 0,4 · лучший батальон + 0,6 · средний
 const MAX_BATTALIONS := 15
 
@@ -95,7 +109,7 @@ static func make_template(name: String, short: String, bat_in: Array, owner: int
 	while bat.size() < BAT_COUNT:
 		bat.append(0)
 	var men := 0.0
-	var eq := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	var eq := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 	var atk := 0.0
 	var def := 0.0
 	var org := 0.0
@@ -116,7 +130,7 @@ static func make_template(name: String, short: String, bat_in: Array, owner: int
 		width += c * float(bt["width"])
 		var m: float = c * float(bt["men"])
 		men += m
-		for k in 4:
+		for k in EQ_LAND:
 			eq[k] += c * float(bt["eq"][k])
 		atk += c * float(bt["atk"])
 		def += c * float(bt["def"])
@@ -265,8 +279,8 @@ static func armor_pierce(nat: World.Nation, bat: Array, td: Dictionary) -> Packe
 		if b == B_TANK:
 			ar = float(td["armor"])
 			pr = float(td["pierce"])
-		elif b == B_AT and nat.techs.has("at2"):
-			pr += AT2_PIERCE
+		elif b == B_AT:
+			pr += AT3_PIERCE if nat.techs.has("at3") else (AT2_PIERCE if nat.techs.has("at2") else 0.0)
 		a_max = maxf(a_max, ar)
 		p_max = maxf(p_max, pr)
 		a_sum += c * ar
@@ -362,15 +376,18 @@ static func hide_template(world: World, nid: int, t: int) -> void:
 static func default_split(nat: World.Nation) -> Array:
 	var land: Array
 	if nat.techs.has("armor1"):
-		land = [0.45, 0.2, 0.2, 0.15]
+		land = [0.35, 0.2, 0.3, 0.15, 0.0]
 	elif nat.techs.has("mot1"):
-		land = [0.55, 0.25, 0.0, 0.2]
+		land = [0.45, 0.3, 0.0, 0.25, 0.0]
 	else:
-		land = [0.7, 0.3, 0.0, 0.0]
+		land = [0.6, 0.4, 0.0, 0.0, 0.0]
+	if nat.techs.has("at1"):
+		land[EQ_AT] = 0.06
+		land[EQ_INF] -= 0.06
 	# доли флота и авиации — из forces.json (nat.naval_share / air_share)
 	var rest := 1.0 - nat.naval_share - nat.air_share
 	var res: Array = []
-	for k in 4:
+	for k in EQ_LAND:
 		res.append(land[k] * rest)
 	res.append(nat.naval_share)
 	res.append(nat.air_share * 0.6)
@@ -383,7 +400,7 @@ static func assign_free_factories(nat: World.Nation, split: Array) -> void:
 	var free := nat.mil - assigned_factories(nat)
 	if free <= 0:
 		return
-	var current := [0, 0, 0, 0, 0, 0, 0]
+	var current := [0, 0, 0, 0, 0, 0, 0, 0]
 	for line in nat.lines:
 		current[line[0]] += int(line[1])
 	var total := nat.mil
@@ -407,16 +424,35 @@ static func assigned_factories(nat: World.Nation) -> int:
 	return s
 
 
-static func _add_to_line(nat: World.Nation, eq: int, n: int) -> void:
+## Потолок эффективности линий страны (технологии «Промышленности» — prod_eff).
+static func eff_cap(nat: World.Nation) -> float:
+	return clampf(EFF_CAP + nat.b("prod_eff"), EFF_START, 1.0)
+
+
+## Очков выпуска в день у одного завода линии с эффективностью eff (без нехватки ресурсов).
+static func factory_points(nat: World.Nation, eff: float) -> float:
+	return FACTORY_PTS * eff * maxf(0.1, 1.0 + nat.b("industry"))
+
+
+## n заводов на линию eq (n < 0 — снять); новые заводы приходят с эффективностью
+## eff_new — линия берёт среднее по заводам.
+static func _add_to_line(nat: World.Nation, eq: int, n: int, eff_new: float = EFF_START) -> void:
 	for line in nat.lines:
 		if line[0] == eq:
-			line[1] = maxi(0, int(line[1]) + n)
+			var had := int(line[1])
+			line[1] = maxi(0, had + n)
 			if n > 0:
-				# новые заводы разгоняются с нуля — эффективность линии чуть падает
-				line[2] = maxf(0.3, float(line[2]) - 0.5 * n / maxf(1.0, float(line[1])))
+				line[2] = (float(line[2]) * had + eff_new * n) / float(had + n)
 			return
 	if n > 0:
-		nat.lines.append([eq, n, 0.3])
+		nat.lines.append([eq, n, eff_new])
+
+
+static func _line_eff(nat: World.Nation, eq: int) -> float:
+	for line in nat.lines:
+		if line[0] == eq:
+			return float(line[2])
+	return EFF_START
 
 
 ## Игрок меняет число заводов на линии; true — получилось.
@@ -441,10 +477,12 @@ static func trim_lines(nat: World.Nation) -> void:
 		i -= 1
 
 
-## Дневной выпуск: очки -> единицы снаряжения; эффективность растёт до 100%.
+## Дневной выпуск: заводы × FACTORY_PTS × эффективность → очки → единицы
+## снаряжения; эффективность растёт к потолку (быстрее в начале).
 static func produce(nat: World.Nation) -> void:
 	# рейды по торговле бьют не по выпуску, а по морскому импорту (Convoys → res_fill)
-	var mult := 1.0 + nat.b("industry")
+	var mult := FACTORY_PTS * maxf(0.1, 1.0 + nat.b("industry"))
+	var cap := eff_cap(nat)
 	for k in EQ_COUNT:
 		nat.daily_output[k] = 0.0
 	for line in nat.lines:
@@ -465,10 +503,10 @@ static func produce(nat: World.Nation) -> void:
 		nat.stock[eq] += units
 		nat.daily_output[eq] += units
 		nat.prod_acc[eq] += units
-		line[2] = minf(1.0, eff + 0.01)
-	# помощь из-за рубежа (черты с aid_eq — в военных заводах), пока страна
-	# воюет: три четверти — стрелковое оружие, четверть — артиллерия
-	var aid := nat.b("aid_eq")
+		line[2] = minf(cap, eff + EFF_GAIN * (cap - eff)) if eff < cap else cap
+	# помощь из-за рубежа (черты с aid_eq — в военных заводах при потолке 1936 г.),
+	# пока страна воюет: три четверти — стрелковое оружие, четверть — артиллерия
+	var aid := nat.b("aid_eq") * FACTORY_PTS * EFF_CAP
 	if aid > 0.0 and not nat.at_war.is_empty():
 		nat.stock[EQ_INF] += aid * 0.75 / EQ_COST[EQ_INF]
 		nat.stock[EQ_ART] += aid * 0.25 / EQ_COST[EQ_ART]
@@ -553,12 +591,23 @@ static func plan_prep(world: World, nat: World.Nation, target_divs: int, prepare
 	if avail.has(T_ARM):
 		cycle.append(T_ARM)
 	return {"id": nat.id, "mil": float(nat.mil), "naval": nat.naval_share, "air": nat.air_share,
-		"use": nat.eq_use.duplicate(), "stock": PackedFloat64Array([nat.stock[0], nat.stock[1], nat.stock[2], nat.stock[3]]),
+		"use": nat.eq_use.duplicate(), "stock": PackedFloat64Array([nat.stock[0], nat.stock[1], nat.stock[2], nat.stock[3], nat.stock[4]]),
 		"target": target_divs, "training": nat.training.size(), "trained": nat.trained_count, "cycle": cycle,
 		"buffer": PROD_BUFFER_WAR if (not nat.at_war.is_empty() or prepare_war) else PROD_BUFFER,
-		"mult": maxf(0.1, 1.0 + nat.b("industry")),
+		"mult": factory_points(nat, 0.5 * (_avg_eff(nat) + eff_cap(nat))),
 		"doctrine": PackedFloat64Array(default_split(nat)),
-		"tpl_eq": world.tpl_eq.duplicate(), "tpl_motor": world.tpl_motor.duplicate()}
+		"tpl_eq": world.tpl_eq.duplicate(), "tpl_motor": world.tpl_motor.duplicate(),
+		"cost": PackedFloat64Array([EQ_COST[0], EQ_COST[1], EQ_COST[2] * nat.tank_cost, EQ_COST[3], EQ_COST[4]])}
+
+
+## Средняя эффективность заводов на линиях (без линий — стартовая).
+static func _avg_eff(nat: World.Nation) -> float:
+	var s := 0.0
+	var f := 0
+	for line in nat.lines:
+		s += float(line[2]) * int(line[1])
+		f += int(line[1])
+	return s / f if f > 0 else EFF_START
 
 
 ## Расчёт долей заводов (только данные p и totals — можно в потоке).
@@ -577,8 +626,8 @@ static func plan_compute(p: Dictionary, totals: Array) -> PackedFloat64Array:
 	var cnt: PackedInt32Array = totals[0]
 	var full: PackedFloat64Array = totals[1]
 	var lack: PackedFloat64Array = totals[2]
-	var fielded := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
-	var tiers := [PackedFloat64Array([0.0, 0.0, 0.0, 0.0]), PackedFloat64Array([0.0, 0.0, 0.0, 0.0]), PackedFloat64Array([0.0, 0.0, 0.0, 0.0])]
+	var fielded := PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0])
+	var tiers := [PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0]), PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0]), PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0])]
 	var t0: PackedFloat64Array = tiers[0]
 	var t1: PackedFloat64Array = tiers[1]
 	var t2: PackedFloat64Array = tiers[2]
@@ -603,11 +652,11 @@ static func plan_compute(p: Dictionary, totals: Array) -> PackedFloat64Array:
 	var naval: float = p["naval"]
 	var air: float = p["air"]
 	var land_cap := total * maxf(0.0, 1.0 - naval - air)
-	var split := PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+	var split := PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 	var left := land_cap
-	var stock := PackedFloat64Array([stock_in[0], stock_in[1], stock_in[2], stock_in[3]])
-	var cost := PackedFloat64Array([1.0, 3.5, 12.0, 2.5])   # EQ_COST сухопутных (константы — не из потока)
-	var use := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
+	var stock := PackedFloat64Array([stock_in[0], stock_in[1], stock_in[2], stock_in[3], stock_in[4]])
+	var cost: PackedFloat64Array = p["cost"]   # EQ_COST сухопутных (константы — не из потока)
+	var use := PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0])
 	var use_sum := 0.0
 	for k in EQ_LAND:
 		use[k] = use_in[k] * cost[k] / mult
@@ -620,7 +669,7 @@ static func plan_compute(p: Dictionary, totals: Array) -> PackedFloat64Array:
 		if left <= 0.0:
 			break
 		var tr: PackedFloat64Array = tier
-		var want := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
+		var want := PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0])
 		var want_sum := 0.0
 		for k in EQ_LAND:
 			var gap := maxf(0.0, tr[k] - stock[k])
@@ -638,7 +687,7 @@ static func plan_compute(p: Dictionary, totals: Array) -> PackedFloat64Array:
 	var keep := maxf(left * PROD_SURPLUS_LAND, land_cap * PROD_LAND_MIN - land_now)
 	keep = clampf(keep, 0.0, left)
 	for k in EQ_LAND:
-		split[k] += keep * (doctrine[k] / dsum if dsum > 0.0 else 0.25)
+		split[k] += keep * (doctrine[k] / dsum if dsum > 0.0 else 1.0 / EQ_LAND)
 	var to_air := left - keep
 	var air_w := maxf(air, 0.05)
 	var aw := air_w / (air_w + naval)
@@ -681,7 +730,7 @@ static func spec(world: World, jobs: Array) -> void:
 
 ## Сдвинуть линии к долям split: не больше PROD_MOVE заводов в месяц.
 static func _shift_lines(nat: World.Nation, split: Array) -> void:
-	var current := [0, 0, 0, 0, 0, 0, 0]
+	var current := [0, 0, 0, 0, 0, 0, 0, 0]
 	for line in nat.lines:
 		current[line[0]] += int(line[1])
 	var budget := maxi(1, int(nat.mil * PROD_MOVE))
@@ -700,8 +749,9 @@ static func _shift_lines(nat: World.Nation, split: Array) -> void:
 				to = k
 		if from < 0 or to < 0:
 			break
+		var keep := maxf(EFF_START, _line_eff(nat, from) * EFF_KEEP)
 		_add_to_line(nat, from, -1)
-		_add_to_line(nat, to, 1)
+		_add_to_line(nat, to, 1, keep)
 		current[from] -= 1
 		current[to] += 1
 		budget -= 1
@@ -764,7 +814,7 @@ static func reinforce(world: World, nat: World.Nation, d: World.Division) -> voi
 
 ## Сколько снаряжения нужно, чтобы укомплектовать все дивизии (для ИИ и экрана).
 static func shortage(world: World, n: int) -> Array:
-	var need := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	var need := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 	for d in world.divisions:
 		if d.alive and d.owner == n and d.eq < 1.0:
 			var eq: Array = world.templates[d.tpl]["eq"]
@@ -842,3 +892,51 @@ static func side_power(divs: Array, terr: int, tmul: PackedFloat32Array, defendi
 		hard += d.hard * w
 		wsum += w
 	return [power, hard / maxf(wsum, 0.01)]
+
+
+## Сохранение до ноября 2026 г. (7 типов снаряжения, прежний счёт единиц):
+## ПТО — пятым типом, склады и выпуск — в новые единицы (EQ_UNIT_SCALE_OLD),
+## линии судов и самолётов сдвигаются на номер, эффективность — к новому
+## потолку, шаблоны пересобираются из составов.
+static func migrate_eq8(world: World) -> void:
+	for nat in world.nations:
+		if nat.stock.size() != 7:
+			continue
+		nat.stock = _old_eq8(nat.stock) as PackedFloat32Array
+		nat.daily_output = _old_eq8(nat.daily_output) as PackedFloat32Array
+		nat.prod_acc = PackedFloat64Array(_old_eq8(nat.prod_acc))
+		nat.prod_stock = PackedFloat64Array(_old_eq8(nat.prod_stock))
+		nat.eq_use = PackedFloat64Array(_old_eq8(nat.eq_use))
+		var cap := eff_cap(nat)
+		for line in nat.lines:
+			if int(line[0]) >= EQ_AT:
+				line[0] = int(line[0]) + 1
+			line[2] = clampf(float(line[2]) * cap, EFF_START, cap)
+		if nat.prod_split.size() == 7:
+			nat.prod_split.insert(EQ_AT, 0.0)
+		nat.tank_heavy = nat.tank_design >= 0 and nat.tank_design < world.tank_designs.size() \
+			and String(world.tank_designs[nat.tank_design]["hull"]).begins_with("heavy")
+	for p in world.dep_stock:
+		var ds: PackedFloat64Array = world.dep_stock[p]
+		if ds.size() == 4:
+			var nd := PackedFloat64Array()
+			for k in 4:
+				nd.append(ds[k] * float(EQ_UNIT_SCALE_OLD[k]))
+			nd.append(0.0)
+			world.dep_stock[p] = nd
+	for i in world.templates.size():
+		var t: Dictionary = world.templates[i]
+		var nt := make_template(t["name"], t["short"], t["bat"], int(t["owner"]))
+		nt["hidden"] = bool(t.get("hidden", false))
+		world.templates[i] = nt
+	build_tables(world)
+
+
+static func _old_eq8(a: Variant) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	for k in 7:
+		var v: float = float(a[k]) * float(EQ_UNIT_SCALE_OLD[k])
+		if k == EQ_AT:
+			out.append(0.0)
+		out.append(v)
+	return out

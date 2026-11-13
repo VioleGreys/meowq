@@ -13,7 +13,7 @@
       {"id": "ger_axis", "name": "Ось Берлин — Рим", "desc": "Согласовать политику с Италией в Испании, на Дунае и в колониальном вопросе.", "days": 35, "x": 5, "y": 1, "requires": ["ger_rhine"], "available": {"date": "1936-10-25"},
        "effects": [{"t": "faction", "name": "Ось"}, {"t": "event", "id": "axis_offer"}]},
       {"id": "ger_4year", "name": "Четырёхлетний план", "desc": "Под руководством Геринга подготовить хозяйство к войне за четыре года: сталь, химия, заменители сырья.", "days": 70, "x": 1, "y": 1, "requires": ["ger_autobahn"], "available": {"date": "1936-10-18"},
-       "effects": [{"t": "factories", "civ": 2, "mil": 1}, {"t": "bonus", "key": "industry", "v": 0.1}, {"t": "bonus", "key": "research", "v": -0.03}, {"t": "synthetic", "res": "oil", "v": 4}]},
+       "effects": [{"t": "factories", "civ": 2, "mil": 1}, {"t": "bonus", "key": "industry", "v": 0.1}, {"t": "bonus", "key": "research", "v": -0.03}, {"t": "synthetic", "res": "oil", "v": 12}]},
       {"id": "ger_wehrmacht", "name": "Новые корпуса вермахта", "desc": "Развернуть из стотысячного рейхсвера массовую армию: новые пехотные дивизии и штабы корпусов.", "days": 35, "x": 7, "y": 1, "requires": ["ger_rearm"],
        "effects": [{"t": "divisions", "tpl": "inf", "n": 6}, {"t": "bonus", "key": "org", "v": -0.03}]},
       {"id": "ger_luftwaffe", "name": "Люфтваффе", "desc": "Создать сильнейшие военно-воздушные силы Европы и школы лётчиков.", "days": 35, "x": 8, "y": 1, "requires": ["ger_rearm"],
@@ -41,7 +41,7 @@
       {"id": "ger_anschluss", "name": "Аншлюс", "desc": "Потребовать от Вены правительства Зейсс-Инкварта и присоединить Австрию.", "days": 70, "x": 4, "y": 3, "requires": ["ger_hossbach", "ger_anticom"], "available": {"alive": "AUS", "date": "1938-03-12"},
        "effects": [{"t": "event", "id": "anschluss"}]},
       {"id": "ger_synth", "name": "Синтетическое горючее", "desc": "Заводы гидрогенизации угля избавят от зависимости от привозной нефти.", "days": 70, "x": 2, "y": 3, "requires": ["ger_4year"],
-       "effects": [{"t": "bonus", "key": "industry", "v": 0.08}, {"t": "bonus", "key": "speed", "v": 0.03}, {"t": "synthetic", "res": "oil", "v": 8}, {"t": "synthetic", "res": "rubber", "v": 5}]},
+       "effects": [{"t": "bonus", "key": "industry", "v": 0.08}, {"t": "bonus", "key": "speed", "v": 0.03}, {"t": "synthetic", "res": "oil", "v": 24}, {"t": "synthetic", "res": "rubber", "v": 18}]},
       {"id": "ger_sudeten", "name": "Судетский кризис", "desc": "Поддержать требования судетских немцев и добиться передачи края — миром или угрозой войны.", "days": 70, "x": 4, "y": 4, "requires": ["ger_anschluss"], "available": {"alive": "CZE", "date": "1938-09-29"},
        "effects": [{"t": "tension", "v": 4}, {"t": "event", "id": "munich"}]},
       {"id": "ger_westwall", "name": "Западный вал", "desc": "Линия бетонных укреплений вдоль французской границы прикроет тыл на время войны на востоке.", "days": 70, "x": 1, "y": 4, "requires": ["ger_reichswerke"], "available": {"date": "1938-06-01"},
@@ -65,7 +65,7 @@
       {"id": "ger_crusade", "name": "Поход на Москву", "desc": "Вместе с Польшей ударить по Советскому Союзу.", "days": 70, "x": 3, "y": 8, "requires": ["ger_warsaw"], "available": {"alive": "SOV", "date": "1939-09-01"},
        "effects": [{"t": "annex", "target": "DNZ"}, {"t": "war", "target": "SOV"}]},
       {"id": "ger_war_econ", "name": "Военная экономика", "desc": "Перевести промышленность на военные нужды: карточки, сверхурочные, трофейное сырьё. Запасы вольфрама и каучука, скопленные по Четырёхлетнему плану, расходуются до начала 1941 г.", "days": 70, "x": 1, "y": 5, "requires": ["ger_westwall"], "available": {"date": "1939-09-01"},
-       "effects": [{"t": "factories", "mil": 4}, {"t": "manpower", "v": 100}, {"t": "synthetic", "res": "tungsten", "v": 2.5}, {"t": "synthetic", "res": "rubber", "v": 3}, {"t": "later", "days": 480, "effects": [{"t": "synthetic", "res": "tungsten", "v": -2.5}, {"t": "synthetic", "res": "rubber", "v": -3}]}]},
+       "effects": [{"t": "factories", "mil": 4}, {"t": "manpower", "v": 100}, {"t": "synthetic", "res": "tungsten", "v": 10}, {"t": "synthetic", "res": "rubber", "v": 10.8}, {"t": "later", "days": 480, "effects": [{"t": "synthetic", "res": "tungsten", "v": -10}, {"t": "synthetic", "res": "rubber", "v": -10.8}]}]},
       {"id": "ger_iron", "name": "Шведская руда", "desc": "Обеспечить поставки руды из Кируны через Нарвик и Лулео.", "days": 35, "x": 5, "y": 8, "requires_any": ["ger_mr", "ger_crusade"],
        "effects": [{"t": "bonus", "key": "industry", "v": 0.05}]},
       {"id": "ger_weser", "name": "Учения на Везере", "desc": "Захватить Данию и Норвегию раньше британцев и сохранить путь шведской руды.", "days": 35, "x": 3, "y": 9, "requires": ["ger_mr"], "available": {"date": "1940-04-09"},
@@ -711,7 +711,7 @@
       {"id": "rom_resita", "name": "Заводы Решицы", "desc": "Сталь и вагоны Баната.", "days": 70, "x": 0, "y": 1, "requires": ["rom_oil"],
        "effects": [{"t": "factories", "mil": 2}]},
       {"id": "rom_oil_germany", "name": "Нефтяной договор", "desc": "Нефть в обмен на германское оружие.", "days": 35, "x": 2, "y": 1, "requires": ["rom_oil"], "available": {"date": "1939-03-23"},
-       "effects": [{"t": "trade", "who": "GER", "target": "ROM", "v": 15}, {"t": "factories", "mil": 1}, {"t": "supply", "target": "GER", "res": "oil", "v": 3, "days": 2000}]},
+       "effects": [{"t": "trade", "who": "GER", "target": "ROM", "v": 15}, {"t": "factories", "mil": 1}, {"t": "supply", "target": "GER", "res": "oil", "v": 9, "days": 2000}]},
       {"id": "rom_carol", "name": "Королевская диктатура", "desc": "Кароль II распускает партии.", "days": 35, "x": 4, "y": 0, "available": {"date": "1938-02-10"},
        "effects": [{"t": "bonus", "key": "org", "v": 0.03}]},
       {"id": "rom_antonescu", "name": "Генерал Антонеску", "desc": "После потерь 1940 года король отрекается, власть у генерала.", "days": 35, "x": 4, "y": 1, "requires": ["rom_carol"], "available": {"date": "1940-09-06"},
@@ -915,7 +915,7 @@
       {"id": "tur_x09", "name": "Британские самолёты", "desc": "Ленд-лиз для Турции.", "days": 35, "x": 7, "y": 1, "requires": ["tur_x08"], "available": {"date": "1942-01-01"},
        "effects": [{"t": "bonus", "key": "attack", "v": 0.04}]},
       {"id": "tur_x10", "name": "Соглашение Клодиуса", "desc": "Октябрь 1941 г.: Турция обязуется продавать Германии хром в обмен на оружие и машины.", "days": 35, "x": 1, "y": 2, "requires": ["tur_x06"], "available": {"date": "1941-10-09"},
-       "effects": [{"t": "supply", "target": "GER", "res": "chromium", "v": 3.0, "days": 900}, {"t": "rep", "by": "ENG", "of": "TUR", "v": -5}]}
+       "effects": [{"t": "supply", "target": "GER", "res": "chromium", "v": 11.4, "days": 900}, {"t": "rep", "by": "ENG", "of": "TUR", "v": -5}]}
     ],
     "FIN": [
       {"id": "fin_forest", "name": "Лес и бумага", "desc": "Экспорт древесины — главный источник валюты.", "days": 35, "x": 1, "y": 0,
@@ -1253,7 +1253,7 @@
       {"id": "por_x13", "name": "Флот колоний", "desc": "Шлюпы для Анголы и Мозамбика.", "days": 35, "x": 7, "y": 1, "requires": ["por_x11"],
        "effects": [{"t": "ships", "kind": "dd", "n": 1}, {"t": "divisions", "tpl": "inf", "n": 1}]},
       {"id": "por_x14", "name": "Вольфрамовое соглашение", "desc": "Договор января 1942 г.: часть добычи вольфрама — Германии в обмен на уголь, сталь и золото.", "days": 35, "x": 2, "y": 1, "requires": ["por_x09"], "available": {"date": "1942-01-24"},
-       "effects": [{"t": "supply", "target": "GER", "res": "tungsten", "v": 1.5, "days": 900}, {"t": "rep", "by": "ENG", "of": "POR", "v": -5}]}
+       "effects": [{"t": "supply", "target": "GER", "res": "tungsten", "v": 6, "days": 900}, {"t": "rep", "by": "ENG", "of": "POR", "v": -5}]}
     ],
     "LUX": [
       {"id": "lux_arbed", "name": "АРБЕД", "desc": "Сталь великого герцогства.", "days": 70, "x": 1, "y": 0,

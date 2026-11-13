@@ -16,19 +16,32 @@ const R_CHROME := 5
 const RES_NAMES := ["Нефть", "Сталь", "Алюминий", "Каучук", "Вольфрам", "Хром"]
 const RES_SHORT := ["Нефть", "Сталь", "Алюм.", "Кауч.", "Вольф.", "Хром"]
 
-## Расход ресурсов одним заводом линии в день по типу снаряжения (Military.EQ_*):
-## [нефть, сталь, алюминий, каучук, вольфрам, хром]. Стрелковое оружие — только
-## сталь; артиллерия — сталь и вольфрам; танки — сталь, хром, нефть; грузовики —
-## сталь, каучук, нефть; корабли — сталь и хром; самолёты — алюминий, каучук, нефть.
+## Расход ресурсов одним заводом линии в день по типу снаряжения (Military.EQ_*),
+## целыми единицами (решение пользователя, ноябрь 2026): [нефть, сталь,
+## алюминий, каучук, вольфрам, хром]. Стрелковое — сталь; артиллерия и ПТО —
+## сталь и вольфрам; танки — сталь, хром, нефть (тяжёлое шасси — HEAVY_TANK_NEED);
+## грузовики — сталь, каучук, нефть; корабли — сталь и хром; самолёты —
+## алюминий, каучук, нефть. Расход не зависит от эффективности линии.
 const RES_NEED := [
-	[0.0, 0.35, 0.0, 0.0, 0.0, 0.0],
-	[0.0, 0.6, 0.0, 0.0, 0.25, 0.0],
-	[0.35, 0.7, 0.0, 0.0, 0.0, 0.35],
-	[0.3, 0.3, 0.0, 0.3, 0.0, 0.0],
-	[0.0, 0.7, 0.0, 0.0, 0.0, 0.25],
-	[0.3, 0.0, 0.8, 0.25, 0.0, 0.0],
-	[0.4, 0.0, 1.0, 0.3, 0.0, 0.0],
+	[0, 1, 0, 0, 0, 0],
+	[0, 2, 0, 0, 1, 0],
+	[1, 2, 0, 0, 0, 1],
+	[1, 1, 0, 1, 0, 0],
+	[0, 2, 0, 0, 1, 0],
+	[0, 2, 0, 0, 0, 1],
+	[1, 0, 2, 1, 0, 0],
+	[1, 0, 3, 1, 0, 0],
 ]
+const HEAVY_TANK_NEED := [1, 3, 0, 0, 0, 2]
+
+
+## Нормы линии eq у страны (танки — по шасси проекта в производстве).
+static func need_of(nat: World.Nation, eq: int) -> Array:
+	if eq == Military.EQ_TANK and nat.tank_heavy:
+		return HEAVY_TANK_NEED
+	return RES_NEED[eq]
+
+
 ## Без ресурсов линия всё равно что-то выпускает (запасы, заменители, лом).
 const SHORT_FLOOR := 0.3
 
@@ -52,13 +65,43 @@ const CLOSED_PUPPETS := {"MAN": true, "SLO": true, "VIC": true}
 
 const CONTRACT_DAYS := 30    # поставка покупается на месяц
 const SWEEP_DAYS := 14       # обход поставок (сроки, отказы) — раз в 2 недели
-const UNITS_PER_CIV := 8.0   # единиц ресурса на один гражданский завод оплаты
+const UNITS_PER_CIV := 24.0  # единиц ресурса на один гражданский завод оплаты (до ноября 2026 г. — 8 прежних единиц)
 const SELLER_SHARE := 0.5    # продавцу — половина оплаты (заводы на его стройку)
 const AI_CIV_SHARE := 0.4    # ИИ тратит на закупки не больше этой доли гражданских заводов
 
 
+## Сохранение до ноября 2026 г.: ресурсы в прежних единицах — добыча провинций
+## заново из файла, синтетика и поставки — ×RES_SCALE_OLD.
+const RES_SCALE_OLD := [3.0, 3.0, 2.7, 3.6, 4.0, 3.8]   # = TOTAL в tools/build_resources.py к прежнему
+
+
+static func migrate_units(world: World) -> void:
+	var keep_ctrl := world.res_ctrl.duplicate()
+	load_resources_vals(world, "res://data/world1936/resources.json")
+	world.res_ctrl = keep_ctrl
+	for nat in world.nations:
+		for r in RES_COUNT:
+			var k: float = float(RES_SCALE_OLD[r])
+			nat.res_synth[r] *= k
+			nat.res_prod[r] *= k
+			nat.res_need[r] *= k
+			nat.res_in[r] *= k
+			nat.res_out[r] *= k
+			nat.res_lost[r] *= k
+	for c in world.contracts:
+		c[3] = float(c[3]) * float(RES_SCALE_OLD[int(c[2])])
+
+
 ## Загрузить ресурсы провинций (data/world1936/resources.json).
 static func load_resources(world: World, path: String) -> void:
+	load_resources_vals(world, path)
+	for nat in world.nations:
+		nat.trade_law = int(START_LAW.get(nat.tag, 2))
+		nat.trade_closed = CLOSED_PUPPETS.has(nat.tag)
+	refresh(world)
+
+
+static func load_resources_vals(world: World, path: String) -> void:
 	world.res_prov = PackedInt32Array()
 	world.res_val = PackedFloat32Array()
 	if FileAccess.file_exists(path):
@@ -73,10 +116,6 @@ static func load_resources(world: World, path: String) -> void:
 			var row: Array = data["provinces"][k]
 			for r in RES_COUNT:
 				world.res_val.append(float(row[r]))
-	for nat in world.nations:
-		nat.trade_law = int(START_LAW.get(nat.tag, 2))
-		nat.trade_closed = CLOSED_PUPPETS.has(nat.tag)
-	refresh(world)
 
 
 ## Добыча стран по контролируемым провинциям и потребность их линий.
@@ -92,7 +131,7 @@ static func refresh(world: World) -> void:
 			var f := float(line[1])
 			if f <= 0.0:
 				continue
-			var need: Array = RES_NEED[int(line[0])]
+			var need: Array = need_of(nat, int(line[0]))
 			for r in RES_COUNT:
 				nat.res_need[r] += f * float(need[r])
 
@@ -127,6 +166,13 @@ static func _refresh_prod(world: World) -> void:
 static func available(nat: World.Nation, r: int) -> float:
 	# морской импорт, не дошедший (нехватка конвоев, перехват на пути — Convoys)
 	return nat.res_prod[r] - nat.res_out[r] + nat.res_in[r] - nat.res_lost[r]
+
+
+## Сколько ресурса r у страны по договорам, без потерь в пути: ИИ докупает и
+## отказывается по этому числу — не хватает конвоев, и новые закупки только
+## раздувают нужду в них (до ноября 2026 г. Япония так скупала по 200 ед.).
+static func ordered(nat: World.Nation, r: int) -> float:
+	return nat.res_prod[r] - nat.res_out[r] + nat.res_in[r]
 
 
 ## Сколько ресурса r страна ещё может продать (её курс минус уже проданное).
@@ -458,7 +504,7 @@ static func _recount(world: World) -> void:
 
 ## Насколько линия обеспечена ресурсами (0..1) и множитель выпуска.
 static func line_mult(nat: World.Nation, eq: int) -> float:
-	var need: Array = RES_NEED[eq]
+	var need: Array = need_of(nat, eq)
 	var fill := 1.0
 	for r in RES_COUNT:
 		if float(need[r]) > 0.0:
@@ -703,7 +749,7 @@ static func plan_sales(t: Dictionary, i: int, s: int, row: PackedFloat32Array) -
 			var want: float = cur[k]
 			if auto[b] == 1:
 				want += maxf(0.0, need[k] * 1.05 - avail[k])
-			if want >= 0.1:
+			if want >= 0.3:
 				order.append([sc, b, want])
 		order.sort_custom(func(x, y): return x[0] > y[0] or (x[0] == y[0] and x[1] < y[1]))
 		for o in order:
@@ -730,7 +776,7 @@ static func apply_sales(world: World, s: int, plan: Array, index: Dictionary) ->
 		if not c.is_empty() and int(c[5]) > world.day:
 			continue   # договорная поставка — не трогаем
 		if c.is_empty():
-			if give >= 0.1 and can_trade(world, b, s) == "" and _budget(world, b) >= give / UNITS_PER_CIV:
+			if give >= 0.3 and can_trade(world, b, s) == "" and _budget(world, b) >= give / UNITS_PER_CIV:
 				var nc_: Array = [b, s, r, give, world.day + CONTRACT_DAYS, 0, -1.0]
 				world.contracts.append(nc_)
 				index[s * 100000 + b * 8 + r] = nc_
@@ -955,7 +1001,7 @@ static func _snapshot(world: World, due: PackedInt32Array) -> Dictionary:
 		auto[x] = 1 if nx.alive and (not nx.is_player or nx.trade_auto) else 0
 		for r in RES_COUNT:
 			need[x * RES_COUNT + r] = nx.res_need[r]
-			avail[x * RES_COUNT + r] = available(nx, r)
+			avail[x * RES_COUNT + r] = ordered(nx, r)   # по заказанному: потери в пути не докупают
 			prod[x * RES_COUNT + r] = nx.res_prod[r]
 			out[x * RES_COUNT + r] = nx.res_out[r]
 	# поставки продавцов этого дня: сколько берут (с учётом урезки) и сколько идёт сейчас
@@ -1048,7 +1094,7 @@ static func _update_fill(world: World) -> void:
 static func _ai_buy(world: World, nat: World.Nation, free: Array) -> void:
 	var any := false
 	for r in RES_COUNT:
-		if nat.res_need[r] * 1.05 - available(nat, r) >= 0.3:
+		if nat.res_need[r] * 1.05 - ordered(nat, r) >= 1.0:
 			any = true
 			break
 	if not any:
@@ -1060,13 +1106,13 @@ static func _ai_buy(world: World, nat: World.Nation, free: Array) -> void:
 			for x in nc:
 				var xn: World.Nation = world.nations[x]
 				# с запасом: союзникам продают и сверх курса (проверка ниже)
-				if xn.alive and maxf(0.0, export_cap(xn, r, not xn.is_player) - xn.res_out[r]) >= 0.3:
+				if xn.alive and maxf(0.0, export_cap(xn, r, not xn.is_player) - xn.res_out[r]) >= 1.0:
 					lst.append(x)
 			free.append(lst)
 	var budget := _budget(world, nat.id)
 	for r in RES_COUNT:
-		var lack: float = nat.res_need[r] * 1.05 - available(nat, r)
-		if lack < 0.3 or budget <= 0.05:
+		var lack: float = nat.res_need[r] * 1.05 - ordered(nat, r)
+		if lack < 1.0 or budget <= 0.05:
 			continue
 		lack = minf(lack, budget * UNITS_PER_CIV)
 		# сначала у тех продавцов, у кого мы выше в рейтинге; кто уже не может
@@ -1074,7 +1120,7 @@ static func _ai_buy(world: World, nat: World.Nation, free: Array) -> void:
 		var lst: PackedInt32Array = free[r]
 		var dead := PackedByteArray()
 		dead.resize(lst.size())
-		while lack >= 0.3:
+		while lack >= 1.0:
 			var best := -1
 			var best_score := 0.0
 			for j in lst.size():
@@ -1086,7 +1132,7 @@ static func _ai_buy(world: World, nat: World.Nation, free: Array) -> void:
 					if sc <= 0.0:
 						dead[j] = 1
 					continue
-				if exportable(world, world.nations[s], r, nat.id) < 0.3:
+				if exportable(world, world.nations[s], r, nat.id) < 1.0:
 					dead[j] = 1
 					continue
 				best_score = sc
@@ -1104,7 +1150,7 @@ static func _ai_buy(world: World, nat: World.Nation, free: Array) -> void:
 ## mine — номера договоров этого покупателя по возрастанию (обход — с конца).
 static func _ai_cut(world: World, nat: World.Nation, mine: Array) -> void:
 	for r in RES_COUNT:
-		var extra: float = available(nat, r) - nat.res_need[r] * 1.15
+		var extra: float = ordered(nat, r) - nat.res_need[r] * 1.15
 		if extra <= 0.5:
 			continue
 		for j in range(mine.size() - 1, -1, -1):

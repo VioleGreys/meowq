@@ -35,8 +35,8 @@ func _init() -> void:
 		sim.tick()
 	check(ger.stock[0] > before[0] and ger.stock[2] > before[2], "за 30 дней выросли запасы винтовок (%d→%d) и танков (%d→%d)" % [before[0], ger.stock[0], before[2], ger.stock[2]])
 	check(Military.can_train(w, w.nations[POL], Military.T_ARM).contains("технолог"), "Польше без технологии танковые дивизии недоступны")
-	ger.stock[Military.EQ_TANK] = 500.0
-	ger.stock[Military.EQ_TRUCK] = 500.0
+	ger.stock[Military.EQ_TANK] = 5000.0
+	ger.stock[Military.EQ_TRUCK] = 5000.0
 	ger.manpower = 500.0
 	var n_train := ger.training.size()
 	check(Military.start_training(w, ger, Military.T_ARM) and ger.training.size() == n_train + 1, "Германия формирует танковую дивизию")
@@ -143,6 +143,39 @@ func _init() -> void:
 	Military.build_tables(w)
 	var at_d := w.spawn_division(POL, fq, at_t)
 	check(at_d.pierce > 15.0 and at_d.pierce > pol_inf.pierce, "батальон ПТО поднимает бронебойность пехоты (%.1f против %.1f)" % [at_d.pierce, pol_inf.pierce])
+
+	print("Экономика: ПТО, выпуск, эффективность, нормы ресурсов:")
+	var at_eq: Array = Military.BATTALIONS[Military.B_AT]["eq"]
+	check(float(at_eq[Military.EQ_AT]) > 0.0 and float(at_eq[Military.EQ_ART]) == 0.0, "батальон ПТО — из противотанковых пушек, не из артиллерии")
+	var inf_eq: Array = Military.BATTALIONS[Military.B_INF]["eq"]
+	check(float(inf_eq[Military.EQ_INF]) == 100.0, "пехотный батальон — 100 единиц стрелкового на 1000 человек")
+	var all_int := true
+	for row in Economy.RES_NEED:
+		for v in row:
+			all_int = all_int and float(v) == floorf(float(v))
+	check(all_int, "нормы ресурсов на завод — целые")
+	var pn: World.Nation = w.nations[POL]
+	pn.lines = []
+	var mil0 := pn.mil
+	pn.mil = 10
+	Military._add_to_line(pn, Military.EQ_INF, 10)
+	var st0 := pn.stock[Military.EQ_INF]
+	pn.res_fill.fill(1.0)
+	Military.produce(pn)
+	var want_u := 10.0 * Military.factory_points(pn, Military.EFF_START) / float(Military.EQ_COST[Military.EQ_INF])
+	check(absf(pn.stock[Military.EQ_INF] - st0 - want_u) < 0.05 * want_u, "10 заводов при %d%% дают %.0f стрелкового в день (ожидалось %.0f)" % [
+		roundi(Military.EFF_START * 100.0), pn.stock[Military.EQ_INF] - st0, want_u])
+	for i in 400:
+		Military.produce(pn)
+	var cap := Military.eff_cap(pn)
+	check(absf(float(pn.lines[0][2]) - cap) < 0.01, "эффективность растёт к потолку %d%% (%d%%)" % [roundi(cap * 100.0), roundi(float(pn.lines[0][2]) * 100.0)])
+	Military._shift_lines(pn, [0.5, 0, 0, 0, 0.5, 0, 0, 0])
+	var at_line := -1.0
+	for ln in pn.lines:
+		if int(ln[0]) == Military.EQ_AT:
+			at_line = float(ln[2])
+	check(at_line > Military.EFF_START and at_line < cap, "переведённые заводы сохраняют часть эффективности (%d%%)" % roundi(at_line * 100.0))
+	pn.mil = mil0
 
 	print("Окружение:")
 	r = fresh()

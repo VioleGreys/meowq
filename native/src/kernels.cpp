@@ -61,12 +61,12 @@ Array MeowqCore::recovery(const PackedByteArray &alive, const PackedInt32Array &
 		const double rr = 0.04 * (1.0 + rb[o]) * s;
 		if (o_eq[i] < 1.0) {
 			double want = mind(1.0 - o_eq[i], rr);
-			for (int k = 0; k < 7; k++) {
-				const double e = te[t * 7 + k];
-				if (e > 0) want = mind(want, double(st[pl * 7 + k]) / e);
+			for (int k = 0; k < 8; k++) {
+				const double e = te[t * 8 + k];
+				if (e > 0) want = mind(want, double(st[pl * 8 + k]) / e);
 			}
 			if (want > 0.0) {
-				for (int k = 0; k < 7; k++) st[pl * 7 + k] = float(double(st[pl * 7 + k]) - te[t * 7 + k] * want);
+				for (int k = 0; k < 8; k++) st[pl * 8 + k] = float(double(st[pl * 8 + k]) - te[t * 8 + k] * want);
 				o_eq[i] += want;
 			}
 		}

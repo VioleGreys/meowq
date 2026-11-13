@@ -193,6 +193,7 @@ static func of_nation(world, nat) -> Dictionary:
 static func set_production(world, nat, did: int) -> void:
 	nat.tank_design = did
 	nat.tank_cost = maxf(0.5, float(world.tank_designs[did]["cost"]))
+	nat.tank_heavy = String(world.tank_designs[did]["hull"]).begins_with("heavy")
 	for d in world.divisions:
 		if d.alive and d.owner == nat.id and Military.bat_n(world.templates[d.tpl]["bat"], Military.B_TANK) > 0:
 			Military.refresh_division(world, d)

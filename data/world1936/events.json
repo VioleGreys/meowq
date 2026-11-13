@@ -1085,14 +1085,14 @@
                   "t": "supply",
                   "target": "GER",
                   "res": "oil",
-                  "v": 4,
+                  "v": 12,
                   "days": 700
                 },
                 {
                   "t": "supply",
                   "target": "GER",
                   "res": "chromium",
-                  "v": 2,
+                  "v": 7.6,
                   "days": 700
                 }
               ]

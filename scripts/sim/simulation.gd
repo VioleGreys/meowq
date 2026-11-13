@@ -38,7 +38,7 @@ func _init(w: World, fresh := true) -> void:
 		if nat.lines.is_empty() and nat.mil > 0:
 			Military.assign_free_factories(nat, Military.default_split(nat))
 			if nat.stock[0] == 0.0:
-				nat.stock = PackedFloat32Array([300.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+				nat.stock = PackedFloat32Array([3000.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 	if world.ally.size() != world.nation_count * world.nation_count:
 		_refresh_sides()
 	if world.p_region.size() != world.prov_count:
@@ -1315,19 +1315,19 @@ func _phase_recovery() -> void:
 	var pr := Depots.pools(world)   # пул дивизии: метрополия или склад участка за морем
 	var dep: PackedInt32Array = pr[1]
 	var stock := PackedFloat32Array()
-	stock.resize((nc + dep.size()) * 7)
+	stock.resize((nc + dep.size()) * 8)
 	for j in dep.size():
 		var ds: PackedFloat64Array = world.dep_stock[dep[j]]
 		for k in Military.EQ_LAND:
-			stock[(nc + j) * 7 + k] = ds[k]
+			stock[(nc + j) * 8 + k] = ds[k]
 	var manpower := PackedFloat64Array()
 	manpower.resize(nc)
 	var rbonus := PackedFloat64Array()
 	rbonus.resize(nc)
 	for nat in world.nations:
 		var st: PackedFloat32Array = nat.stock
-		for k in 7:
-			stock[nat.id * 7 + k] = st[k]
+		for k in 8:
+			stock[nat.id * 8 + k] = st[k]
 		manpower[nat.id] = nat.manpower
 		rbonus[nat.id] = nat.b("reinforce")
 	var r := world.k_recovery(stock, manpower, rbonus, pr[0])
@@ -1336,13 +1336,13 @@ func _phase_recovery() -> void:
 	for j in dep.size():
 		var ds: PackedFloat64Array = world.dep_stock[dep[j]]
 		for k in Military.EQ_LAND:
-			ds[k] = stock[(nc + j) * 7 + k]
+			ds[k] = stock[(nc + j) * 8 + k]
 		world.dep_stock[dep[j]] = ds
 	for nat in world.nations:
 		var st := PackedFloat32Array()
-		st.resize(7)
-		for k in 7:
-			st[k] = stock[nat.id * 7 + k]
+		st.resize(8)
+		for k in 8:
+			st[k] = stock[nat.id * 8 + k]
 		nat.stock = st
 		nat.manpower = manpower[nat.id]
 	for i in r[2]:

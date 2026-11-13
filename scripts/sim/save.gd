@@ -143,6 +143,10 @@ func decode(data: Dictionary, world: World, sim: Simulation) -> void:
 			_assign(world, name, _dec(w[name]))
 	world.spec_gid = -1
 	world.palette_dirty = true
+	# сохранение до экономики «как в жанре» (7 типов снаряжения, прежние единицы)
+	if not world.nations.is_empty() and world.nations[0].stock.size() == 7:
+		Military.migrate_eq8(world)
+		Economy.migrate_units(world)
 	# сохранение до брони танков: броня и бронебойность дивизий — пересчитать
 	if world.d_armor.size() != world.d_id.size() or world.d_pierce.size() != world.d_id.size():
 		world.d_armor.resize(world.d_id.size())

@@ -63,8 +63,8 @@ class Nation:
 	var justify_days := 0       # сколько дней осталось
 	var justify_total := 0
 	var war_activity_day := 0   # последний день с захватом провинций (для белого мира)
-	var stock := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0])        # склад по типам (Military.EQ_*)
-	var daily_output := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0]) # выпуск за последний день
+	var stock := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0])     # склад по типам (Military.EQ_*)
+	var daily_output := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0]) # выпуск за последний день
 	var naval_share := 0.0      # доля заводов на судостроение (forces.json)
 	var air_share := 0.1        # доля заводов на авиацию
 	var trade_penalty := 0.0    # доля морского импорта, потерянная за день (нехватка конвоев, перехват; Convoys)
@@ -128,10 +128,10 @@ class Nation:
 	var trade_closed := false   # марионетка торгует только с сюзереном (Economy.CLOSED_PUPPETS, эффект closed_trade)
 	var prod_split: Array = []
 	var prod_auto := true       # игрок: распределять заводы автоматически
-	var prod_acc := PackedFloat64Array([0, 0, 0, 0, 0, 0, 0])
-	var prod_stock := PackedFloat64Array([0, 0, 0, 0, 0, 0, 0])
+	var prod_acc := PackedFloat64Array([0, 0, 0, 0, 0, 0, 0, 0])
+	var prod_stock := PackedFloat64Array([0, 0, 0, 0, 0, 0, 0, 0])
 	var prod_day := -1
-	var eq_use := PackedFloat64Array([0, 0, 0, 0, 0, 0, 0])
+	var eq_use := PackedFloat64Array([0, 0, 0, 0, 0, 0, 0, 0])
 	var trained_count := 0
 	var stats_dirty := true
 	var dormant := false        # появится по событию
@@ -171,6 +171,7 @@ class Nation:
 	var plane_cost := PackedFloat64Array([1.0, 1.0]) # цена выпуска самолёта по проекту (множитель)
 	var tank_design := -1       # проект танка в производстве (World.tank_designs, TankDesigns)
 	var tank_cost := 1.0        # цена выпуска бронетехники по проекту (множитель)
+	var tank_heavy := false     # проект в производстве на тяжёлом шасси (ресурсы — Economy.HEAVY_TANK_NEED)
 	var tank_techs := -1        # ИИ: число технологий при прошлой сборке проекта танка
 	var design_techs := -1      # сколько технологий было при последней сборке проектов ИИ
 	var no_attack := {}         # страна -> true: воюем, но ИИ не наступает (эффект no_attack — «Странная война»)
@@ -502,7 +503,7 @@ var p_comp := PackedInt32Array()          # участок: связная по 
 var p_dsup := PackedFloat32Array()        # подача пункта снабжения (поле снабжения, вместо p_conv)
 var p_colcap := PackedByteArray()         # столица колонии — пункт снабжения (Depots._colcap, раз за партию)
 var dep_linked: Dictionary = {}           # пункт -> страна: вчера связан со столицей (Depots._split_cut)
-var dep_stock: Dictionary = {}            # склад за морем: провинция -> PackedFloat64Array(4) снаряжения
+var dep_stock: Dictionary = {}            # склад за морем: провинция -> PackedFloat64Array(5) снаряжения
 var dep_owner: Dictionary = {}            # провинция склада -> страна-хозяин запаса
 var dep_share: Dictionary = {}            # провинция -> доля запаса страны, что держать (игрок; ИИ — Depots)
 var dep_want: Dictionary = {}             # провинция -> доля на сегодня (с поправкой суммы)
@@ -1534,7 +1535,7 @@ func _bury(d: Division) -> void:
 # Формулы и порядок обхода обязаны совпадать до бита: sim_bench сравнивает.
 
 ## Восстановление: организация, окапывание, окружение, пополнение со складов.
-## stock — запасы пулов подряд (пул*7 + тип): пул страны — её метрополия, дальше —
+## stock — запасы пулов подряд (пул*8 + тип): пул страны — её метрополия, дальше —
 ## склады за морем (Depots.pools); pool — пул дивизии (−1 — запаса по суше нет:
 ## не пополняется); manpower — призывники стран.
 ## Возвращает слоты дивизий, погибших в окружении.
@@ -1584,13 +1585,13 @@ func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus:
 		var rr := 0.04 * (1.0 + rbonus[o]) * sup
 		if d_eq[i] < 1.0:
 			var want := minf(1.0 - d_eq[i], rr)
-			for k in 7:
-				var e := tpl_eq[t * 7 + k]
+			for k in 8:
+				var e := tpl_eq[t * 8 + k]
 				if e > 0:
-					want = minf(want, stock[pl * 7 + k] / e)
+					want = minf(want, stock[pl * 8 + k] / e)
 			if want > 0.0:
-				for k in 7:
-					stock[pl * 7 + k] -= tpl_eq[t * 7 + k] * want
+				for k in 8:
+					stock[pl * 8 + k] -= tpl_eq[t * 8 + k] * want
 				d_eq[i] += want
 		if d_str[i] < 100.0:
 			var add := minf(100.0 - d_str[i], rr * 100.0)

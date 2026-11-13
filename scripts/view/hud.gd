@@ -1076,8 +1076,8 @@ static func top_snapshot(w: World, me: int, sim: Simulation) -> Dictionary:
 				focus_idle = 1
 				break
 	return {"alerts": {"research": free, "focus": focus_idle}, "flag": n.flag, "name": n.name.to_upper(), "date": w.date_string(),
-		"res": "Винт. %d  Ору. %d  Танки %d  Груз. %d  Люди %dк  Див. %d  ПВ %d  Стаб. %d%%  Война %d%%" % [
-			n.stock[0], n.stock[1], n.stock[2], n.stock[3], n.manpower, n.division_count,
+		"res": "Винт. %d  Ору. %d  Танки %d  Груз. %d  ПТО %d  Люди %dк  Див. %d  ПВ %d  Стаб. %d%%  Война %d%%" % [
+			n.stock[0], n.stock[1], n.stock[2], n.stock[3], n.stock[4], n.manpower, n.division_count,
 			int(n.pol_power), roundi(n.stability * 100.0), roundi(n.war_support * 100.0)],
 		"phases": sim.phase_usec.duplicate() if sim != null else {}, "tick": sim.last_tick_usec if sim != null else 0}
 
@@ -3580,7 +3580,8 @@ func _build_production(w: World, me: int) -> void:
 	_prod_pages()
 	_dynamic["prod"] = _label("", 17)
 	popup_body.add_child(_dynamic["prod"])
-	popup_body.add_child(_small("Военные заводы выпускают снаряжение для новых дивизий и пополнения. Новая линия разгоняется с 30% до 100% эффективности."))
+	popup_body.add_child(_small("Военный завод даёт %s очка в день × эффективность линии. Новая линия начинает с %d%% и растёт к потолку %d%% (технологии «Производства» поднимают его); завод, переведённый на другое снаряжение, сохраняет %d%% своей эффективности." % [
+		("%.1f" % Military.FACTORY_PTS).replace(".", ","), roundi(Military.EFF_START * 100.0), roundi(Military.eff_cap(n) * 100.0), roundi(Military.EFF_KEEP * 100.0)]))
 	var auto := _button("Автораспределение: %s" % ("да" if n.prod_auto else "нет"), func():
 		n.prod_auto = not n.prod_auto
 		if n.prod_auto:
@@ -3599,8 +3600,8 @@ func _build_production(w: World, me: int) -> void:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
 		var rm := Economy.line_mult(n, k)
-		var l := _label("%s\nзаводов %d · эфф. %d%% · +%.1f/день · склад %d · не хватает %d%s" % [
-			Military.EQ_NAMES[k], f, eff * 100.0, n.daily_output[k], n.stock[k], need[k],
+		var l := _label("%s\nзаводов %d · эфф. %d%% · +%s/день · склад %d · не хватает %d%s" % [
+			Military.EQ_NAMES[k], f, eff * 100.0, ("%d" % roundi(n.daily_output[k])) if n.daily_output[k] >= 10.0 else ("%.1f" % n.daily_output[k]), n.stock[k], need[k],
 			(" · ресурсы %d%%" % roundi(rm * 100.0)) if rm < 0.999 else ""], 16)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(l)

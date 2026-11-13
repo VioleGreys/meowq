@@ -67,7 +67,7 @@ const RAIL_UP := 0.5
 const TRUCK_CAP := [1.0, 1.2, 1.4]
 const TRUCK_RANGE := [0, 1, 2]
 const TRUCK_SHARE := [0.0, 0.5, 1.0]
-const TRUCK_USE := 0.01       # грузовиков в день на единицу подачи узла (при полной доле)
+const TRUCK_USE := 0.05       # грузовиков в день на единицу подачи узла (при полной доле)
 const MAX_RANGE := HUB_RANGE + NODE_MAX / 2 + 2
 ## Широкая колея (как было: СССР, Финляндия); у остальных — стандартная.
 const BROAD_GAUGE := ["SOV", "FIN"]
@@ -967,7 +967,7 @@ static func ai_daily(world: World) -> void:
 				break
 		# грузовики: на войне, если запас позволяет
 		var tr: float = nat.stock[Military.EQ_TRUCK]
-		nat.truck_mode = (2 if tr > 400.0 else (1 if tr > 80.0 else 0)) if at_war else 0
+		nat.truck_mode = (2 if tr > 2000.0 else (1 if tr > 400.0 else 0)) if at_war else 0
 		# заказов улучшения сразу — по величине страны: 1 + гражд. заводы / 50
 		var ups := 0
 		for j in nat.sup_jobs:

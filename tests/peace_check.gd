@@ -154,7 +154,7 @@ func _init() -> void:
 	print("  без гарнизона за 180 дней: сопротивление %.0f%%, принятие %.0f%%, отдача %.0f%%" % [s1[1], s1[2], s1[3] * 100.0])
 	check(s1[1] > 15.0, "без гарнизона сопротивление растёт")
 	w.nations[ger].manpower = 5000.0
-	w.nations[ger].stock[Military.EQ_INF] = 5000.0
+	w.nations[ger].stock[Military.EQ_INF] = 50000.0
 	Occupation.set_garrison(w, k, ceilf(float(w.occ_need[k])))
 	check(float(w.occ_garrison[k]) >= float(w.occ_need[k]), "гарнизон набран (%d)" % int(w.occ_garrison[k]))
 	for i in 36:
@@ -228,7 +228,7 @@ func _init() -> void:
 	Peace.add_score(w, pol, 40.0)
 	check(np.freedom > 50.0, "вклад в войну поднимает свободу (%.0f)" % np.freedom)
 	var f1 := np.freedom
-	w.nations[ger].stock[Military.EQ_INF] = 1000.0
+	w.nations[ger].stock[Military.EQ_INF] = 10000.0
 	Relations.give_aid(w, ger, pol)
 	check(np.freedom < f1, "помощь сюзерена снижает свободу")
 	f1 = np.freedom

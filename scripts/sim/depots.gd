@@ -26,13 +26,13 @@ const DEFAULT_SHARE := 0.5      # доля запаса страны на скл
 const SHARE_SUM_MAX := 0.8      # склады за морем вместе — не больше (метрополии остаётся)
 const AI_SHARE_K := 1.5         # ИИ: доля = доля дивизий страны на участке × K…
 const AI_SHARE_MAX := 0.5       # …не больше
-const CARGO := 6.0              # снаряжения (в очках заводов) за рейс конвоя
+const CARGO := 15.0             # снаряжения (в очках заводов) за рейс конвоя
 const TRIP_BASE := 4.0          # рейс: дней…
 const TRIP_PER := 3.0           # …и ещё за каждый бассейн пути
 const HORIZON := 20.0           # недостачу склада закрывают за столько дней
 const RETURN_AT := 1.5          # запас склада сверх доли × столько — излишек…
 const RETURN_RATE := 0.05       # …вывозится домой по столько в день
-const SUP_EQ := 1.0             # снаряжения (очки заводов) в день на дивизию без подвоза
+const SUP_EQ := 2.5             # снаряжения (очки заводов) в день на дивизию без подвоза
 
 
 ## Пункт снабжения: столица хозяина, крупный город или порт с улучшенным узлом.
@@ -235,7 +235,7 @@ static func daily(world: World) -> void:
 			share_sum += sh
 		var norm := 1.0 if share_sum <= SHARE_SUM_MAX else SHARE_SUM_MAX / share_sum
 		# запас страны всего (метрополия + склады)
-		var tot := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
+		var tot := PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0])
 		for k in Military.EQ_LAND:
 			tot[k] = nat.stock[k]
 		for p in world.dep_stock:
@@ -250,7 +250,7 @@ static func daily(world: World) -> void:
 			var mp: int = mains[cpv]
 			var sh: float = float(world.dep_want[mp]) * norm
 			world.dep_want[mp] = sh
-			var st: PackedFloat64Array = world.dep_stock.get(mp, PackedFloat64Array([0.0, 0.0, 0.0, 0.0]))
+			var st: PackedFloat64Array = world.dep_stock.get(mp, PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0]))
 			# ежедневное снабжение: недостача подвоза — со складов участка
 			var dv := int(divs.get(n * pc + int(cpv), 0))
 			var f := 0.0
@@ -283,7 +283,7 @@ static func daily(world: World) -> void:
 			if safe <= 0.0:
 				continue
 			# излишки (доля упала) — понемногу домой теми же конвоями
-			if st.size() == 4:
+			if st.size() == Military.EQ_LAND:
 				for k in Military.EQ_LAND:
 					var over := st[k] - RETURN_AT * sh * tot[k]
 					if over > 0.0:
@@ -294,10 +294,10 @@ static func daily(world: World) -> void:
 					world.dep_stock[mp] = st
 			if sh <= 0.0:
 				continue
-			var gap := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
+			var gap := PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0])
 			var gv := 0.0
 			for k in Military.EQ_LAND:
-				gap[k] = maxf(0.0, sh * tot[k] - (st[k] if st.size() == 4 else 0.0))
+				gap[k] = maxf(0.0, sh * tot[k] - (st[k] if st.size() == Military.EQ_LAND else 0.0))
 				gv += gap[k] * float(Military.EQ_COST[k])
 			if gv <= 0.0:
 				continue
@@ -319,7 +319,7 @@ static func daily(world: World) -> void:
 			var flow := cv * CARGO / float(pl[3])   # очков заводов в день
 			var frac := minf(1.0, flow / float(pl[5]))
 			if not world.dep_stock.has(mp):
-				world.dep_stock[mp] = PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
+				world.dep_stock[mp] = PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0])
 				world.dep_owner[mp] = n
 			var st: PackedFloat64Array = world.dep_stock[mp]
 			for k in Military.EQ_LAND:
@@ -391,7 +391,7 @@ static func _split_cut(world: World) -> void:
 		var nat: World.Nation = world.nations[c]
 		var f := float(maxi(1, world.p_vp[p])) / maxf(1.0, weight[c])
 		if not world.dep_stock.has(p):
-			world.dep_stock[p] = PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
+			world.dep_stock[p] = PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0])
 			world.dep_owner[p] = c
 		var st: PackedFloat64Array = world.dep_stock[p]
 		for k in Military.EQ_LAND:

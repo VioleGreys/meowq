@@ -1403,7 +1403,7 @@ static func release(world: World, tag: String, provs: Array, overlord: int, take
 	var income := world.compute_all_income()
 	nat.civ = income[n][0]
 	nat.mil = income[n][1]
-	nat.stock = PackedFloat32Array([300.0 + nat.mil * 50.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+	nat.stock = PackedFloat32Array([3000.0 + nat.mil * 500.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 	Military.assign_free_factories(nat, Military.default_split(nat))
 	if overlord >= 0:
 		Diplomacy._inherit_wars(world, n, overlord)

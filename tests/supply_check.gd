@@ -71,7 +71,7 @@ func _init() -> void:
 	check(w.node_f[k0] > f0 * 1.45, "уровень 2: подача узла +50%% (%.1f → %.1f)" % [f0, w.node_f[k0]])
 	var f1 := w.node_f[k0]
 	ger.truck_mode = 2
-	ger.stock[Military.EQ_TRUCK] = 1000.0
+	ger.stock[Military.EQ_TRUCK] = 5000.0
 	for i in 3:
 		sim.tick()
 	check(w.node_f[k0] > f1 * 1.35, "грузовики: подача +40%% (%.1f → %.1f)" % [f1, w.node_f[k0]])
