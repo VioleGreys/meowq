@@ -208,9 +208,9 @@ Array MeowqCore::snapshot(const PackedInt32Array &next, const PackedByteArray &b
 		fs[i] = float(s);
 		const double orgf = clampd(og[i] / maxd(1.0, mo[i]), 0.0, 1.0);
 		fo[i] = float(orgf);
-		// как в бою: атака × 0,5 и планирование; оборона с окопами и организацией (как world.gd)
+		// как в бою: атака с планированием (×0,5 там — только у десанта); оборона с окопами и организацией (как world.gd)
 		const double eqf = (0.4 + 0.6 * e[i]) * sup_mult(su[i]);
-		fp[i] = float(s / 100.0 * at[i] * 0.5 * (1.0 + plan_max * pl0[i]) * eqf);
+		fp[i] = float(s / 100.0 * at[i] * (1.0 + plan_max * pl0[i]) * eqf);
 		fd[i] = float(s / 100.0 * df[i] * (1.0 + 0.3 * en[i]) * orgf * eqf);
 		if (tr[i] <= 0) ps[pv[i] + 1]++;
 	}

@@ -560,7 +560,7 @@ var dv_prov := PackedInt32Array()
 var dv_flags := PackedInt32Array()      # 1 — свободна (без пути и боя, не в море, не в резерве), 2 — в бою
 var dv_str := PackedFloat32Array()
 var dv_org := PackedFloat32Array()      # доля организации 0..1
-var dv_power := PackedFloat32Array()    # атакующая сила, как в бою: численность × атака × 0,5 × план × снаряжение × снабжение
+var dv_power := PackedFloat32Array()    # атакующая сила, как в бою: численность × атака × план × снаряжение × снабжение
 var dv_defw := PackedFloat32Array()     # сила защитника, как в бою: оборона × окопы × организация × снаряжение × снабжение
 var pd_start := PackedInt32Array()      # CSR: дивизии провинции p — pd_list[pd_start[p] .. pd_start[p+1])
 var pd_list := PackedInt32Array()                 # страна -> [день, районы в радиусе авиации]                     # страна -> Dictionary торговых зон (пересчёт раз в 30 дней)
@@ -1706,9 +1706,9 @@ func k_snapshot() -> void:
 		dv_str[i] = st
 		var orgf := clampf(d_org[i] / maxf(1.0, d_morg[i]), 0.0, 1.0)
 		dv_org[i] = orgf
-		# как в бою (_side_power): атака × 0,5 и планирование; оборона с окопами и организацией
+		# как в бою (_side_power): атака с планированием (×0,5 там — только у десанта с моря); оборона с окопами и организацией
 		var eqf := (0.4 + 0.6 * d_eq[i]) * sup_mult(d_sup[i])
-		dv_power[i] = st / 100.0 * d_atk[i] * 0.5 * (1.0 + Simulation.PLAN_MAX * d_plan[i]) * eqf
+		dv_power[i] = st / 100.0 * d_atk[i] * (1.0 + Simulation.PLAN_MAX * d_plan[i]) * eqf
 		dv_defw[i] = st / 100.0 * d_def[i] * (1.0 + 0.3 * d_ent[i]) * orgf * eqf
 		if d_transit[i] <= 0:
 			counts[d_prov[i] + 1] += 1

@@ -62,7 +62,7 @@ static func nation_args(world: World, nid: int, mine: PackedInt32Array) -> Array
 	var nat: World.Nation = world.nations[nid]
 	# осторожность наступления по идеологии: демократии атакуют только с большим перевесом
 	# (перевес — настоящий, оценка сил как в бою; прежние 1,3 / 1,7 / 2,2 были под
-	# завышенную в 3–4 раза оценку атаки)
+	# оценку без обороны и окопов защитника)
 	var ratio := 1.2
 	match nat.ideology:
 		"democracy":
