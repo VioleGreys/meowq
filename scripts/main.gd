@@ -352,6 +352,11 @@ func _auto_screenshot_locked() -> void:
 			# конструктор шаблонов: --tpl=N (на основе шаблона N) или --tpl=new
 			hud.open_tab("army")
 			hud._open_tpl_editor(world, -1 if _arg("tpl") == "new" else int(_arg("tpl")), false)
+		elif _arg("tank") != "":
+			# конструктор танка: --tank=N (копия проекта N), --tank=new или --tank=cur (выпускаемый)
+			hud.open_tab("army")
+			var ta := _arg("tank")
+			hud._open_tank_editor(world, -1 if ta == "new" else (world.nations[me].tank_design if ta == "cur" else int(ta)))
 		elif _arg("plane") != "":
 			# конструктор самолёта: --plane=N (копия проекта N), --plane=new или --plane=fig|bmb (выпускаемый)
 			hud.open_tab("navy")

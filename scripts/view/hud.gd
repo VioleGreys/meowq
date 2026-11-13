@@ -2159,7 +2159,7 @@ func _tpl_stats_text(tp: Dictionary) -> String:
 		if v < wv:
 			wv = v
 			worst = TERRAIN_SHORT[k]
-	return "атака %.1f · оборона %.1f · орг. %d · скорость ×%.1f · броня %d%% · ширина %d · %.1fк чел. · %d дн.\n%s\nместность: лучше всего — %s (×%.2f), хуже — %s (×%.2f)" % [
+	return "атака %.1f · оборона %.1f · орг. %d · скорость ×%.1f · бронированность %d%% · ширина %d · %.1fк чел. · %d дн.\n%s\nместность: лучше всего — %s (×%.2f), хуже — %s (×%.2f)" % [
 		tp["atk"], tp["def"], tp["org"], tp["spd"], tp["hard"] * 100.0, Military.template_width(tp), tp["men"], tp["days"], _eq_text(tp["eq"]), best, bv, worst, wv]
 
 
@@ -2168,7 +2168,9 @@ const TERRAIN_SHORT := ["равнины", "лес", "холмы", "горы", "�
 
 func _open_tpl_editor(w: World, t: int, own: bool) -> void:
 	var tp: Dictionary = w.templates[t] if t >= 0 else {}
-	_tpl_bat = (tp["bat"] as Array).duplicate() if t >= 0 else [9, 0, 0, 0, 0, 0]
+	_tpl_bat = (tp["bat"] as Array).duplicate() if t >= 0 else [9, 0, 0, 0, 0, 0, 0]
+	while _tpl_bat.size() < Military.BAT_COUNT:
+		_tpl_bat.append(0)   # составы из старых сохранений — без ПТО
 	_tpl_name = tp["name"] if own else ((tp["name"] + " (нов.)") if t >= 0 else "Новая дивизия")
 	_tpl_edit = t if own else -1
 	_rebuild_popup()
@@ -2188,6 +2190,11 @@ func _build_tpl_editor(w: World, me: int) -> void:
 		total += int(_tpl_bat[b])
 	var tp := Military.make_template(_tpl_name, "", _tpl_bat, me)
 	popup_body.add_child(_label(_tpl_stats_text(tp) if total > 0 else "Нет батальонов.", 15))
+	if total > 0:
+		var td := TankDesigns.of_nation(w, n)
+		var ap := Military.armor_pierce(n, _tpl_bat, td)
+		popup_body.add_child(_label("Броня %.0f · бронебойность %.0f%s" % [ap[0], ap[1],
+			(" (танки — по проекту «%s»)" % td.get("name", "лёгкий танк")) if Military.bat_n(_tpl_bat, Military.B_TANK) > 0 else ""], 15))
 	popup_body.add_child(_section("Батальоны: %d из %d" % [total, Military.MAX_BATTALIONS]))
 	for b in Military.BAT_COUNT:
 		var bt: Dictionary = Military.BATTALIONS[b]
@@ -2219,7 +2226,7 @@ func _build_tpl_editor(w: World, me: int) -> void:
 		plus.disabled = total >= Military.MAX_BATTALIONS
 		row.add_child(plus)
 		popup_body.add_child(row)
-	popup_body.add_child(_small("Атака, оборона, люди и снаряжение складываются; организация, броня и местность — средние; скорость — по самому медленному батальону."))
+	popup_body.add_child(_small("Атака, оборона, люди и снаряжение складываются; организация, бронированность и местность — средние; скорость — по самому медленному батальону. Броня и бронебойность дивизии — 0,4 от лучшего батальона + 0,6 от среднего; кого противник не пробивает, тот получает вдвое меньше урона."))
 	var miss := Military.tech_missing(tp, n)
 	if miss != "":
 		popup_body.add_child(_small("Пока нельзя готовить: нужна технология «%s»." % Tech.get_tech(miss).get("name", miss)))
@@ -2261,10 +2268,14 @@ func _build_tpl_editor(w: World, me: int) -> void:
 
 
 func _bat_line(bt: Dictionary) -> String:
-	return "ат. %.2f · об. %.2f · орг. %d · ×%.1f · шир. %d" % [bt["atk"], bt["def"], bt["org"], bt["spd"], bt["width"]]
+	var ap := "бр. и пробит. — по проекту танка" if bt["icon"] == "arm" else "бр. %d · пробит. %d" % [bt["armor"], bt["pierce"]]
+	return "ат. %.2f · об. %.2f · орг. %d · ×%.1f · шир. %d · %s" % [bt["atk"], bt["def"], bt["org"], bt["spd"], bt["width"], ap]
 
 
 func _build_army(w: World, me: int) -> void:
+	if _tk_open:
+		_build_tank_editor(w, me)
+		return
 	if _tpl_edit != -2:
 		_build_tpl_editor(w, me)
 		return
@@ -2308,7 +2319,213 @@ func _build_army(w: World, me: int) -> void:
 		popup_body.add_child(_small("   атака %.1f · оборона %.1f · скорость ×%.1f · %.1fк чел. · %s · %d дн.%s" % [
 			tp["atk"], tp["def"], tp["spd"], tp["men"], _eq_text(tp["eq"]), tp["days"], ("\n   " + why) if why != "" else ""]))
 	popup_body.add_child(_button("Новый шаблон дивизии", func(): _open_tpl_editor(w, -1, false), Vector2(0, 50)))
+	_build_tank_designs(w, me)
 	_build_supply(w, me)
+
+
+# --- Конструктор танков (TankDesigns) -------------------------------------------
+# во вкладке «Армия»: шасси + модули в слотах; проект в производстве — у всех
+# танковых батальонов страны
+var _tk_open := false
+var _tk_hull := ""
+var _tk_mods: Array = []
+var _tk_name := ""
+
+
+func _build_tank_designs(w: World, me: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_body.add_child(_section("Проекты танков"))
+	var order: Array = []
+	if n.tank_design >= 0 and n.tank_design < w.tank_designs.size():
+		order.append(n.tank_design)
+	for i in w.tank_designs.size():
+		if int(w.tank_designs[i]["owner"]) == me and not order.has(i):
+			order.append(i)
+	if order.is_empty():
+		popup_body.add_child(_small("Проектов нет: шасси открывает технология «Лёгкие танки»." if not n.techs.has("armor1") else "Проектов нет — соберите первый."))
+	for i in order:
+		var d: Dictionary = w.tank_designs[i]
+		var did: int = i
+		var cur: bool = n.tank_design == i
+		var hr := TankDesigns.hull(d["hull"])
+		popup_body.add_child(_label("%s%s" % [d["name"], " — выпускается" if cur else ""], 16))
+		popup_body.add_child(_small("   %s: %s" % [hr[1] if not hr.is_empty() else d["hull"], TankDesigns.stats_text(d)]))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		if not cur:
+			var bp := _button("В производство", func():
+				TankDesigns.set_production(w, n, did)
+				toast("В производстве: %s" % d["name"])
+				_rebuild_popup(), Vector2(0, 44))
+			bp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(bp)
+		var bc := _button("Копия и правка", func(): _open_tank_editor(w, did), Vector2(0, 44))
+		bc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(bc)
+		popup_body.add_child(row)
+	var bn := _button("Новый проект танка", func(): _open_tank_editor(w, -1), Vector2(0, 50))
+	bn.disabled = TankDesigns.hulls_for(n).is_empty()
+	popup_body.add_child(bn)
+	popup_body.add_child(_small("Проект в производстве — у всех танковых батальонов страны: броня, бронебойность, атака и скорость. Цена проекта делит выпуск бронетехники."))
+
+
+## Открыть редактор: на основе проекта did или новый (-1 — с лучшего доступного шасси).
+func _open_tank_editor(w: World, did: int) -> void:
+	if did >= 0:
+		var d: Dictionary = w.tank_designs[did]
+		_tk_hull = d["hull"]
+		_tk_mods = (d["mods"] as Array).duplicate()
+		_tk_name = String(d["name"]) + " (нов.)"
+	else:
+		var hs := TankDesigns.hulls_for(w.nations[maxi(0, w.player_nation())])
+		_tk_hull = hs[hs.size() - 1] if not hs.is_empty() else TankDesigns.HULLS[0][0]
+		_tk_mods = []
+		_tk_name = "Новый танк"
+	_tk_open = true
+	_rebuild_popup()
+
+
+func _tk_eff_text(eff: Dictionary) -> String:
+	var parts: Array = []
+	for key in eff:
+		var v: float = eff[key]
+		var nm: String = TankDesigns.STAT_NAMES[key]
+		if key == "atk" or key == "speed" or key == "cost":
+			parts.append("%s %s%.2f" % [nm, "+" if v > 0 else "−", absf(v)])
+		elif key == "pierce":
+			parts.append("%s %d" % [nm, roundi(v)])
+		else:
+			parts.append("%s %s%d" % [nm, "+" if v > 0 else "−", roundi(absf(v))])
+	return ", ".join(parts)
+
+
+func _build_tank_editor(w: World, me: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_title.text = "Проект танка"
+	var h := TankDesigns.hull(_tk_hull)
+	var name_edit := LineEdit.new()
+	name_edit.text = _tk_name
+	name_edit.max_length = 32
+	name_edit.custom_minimum_size = Vector2(0, 48)
+	name_edit.text_changed.connect(func(tx: String): _tk_name = tx)
+	popup_body.add_child(name_edit)
+	var s := TankDesigns.stats(_tk_hull, _tk_mods)
+	var did: int = n.tank_design
+	var has_b := did >= 0 and did < w.tank_designs.size()
+	var b: Dictionary = w.tank_designs[did] if has_b else s
+	var lines: Array = []
+	if has_b:
+		lines.append("Сравнение с выпускаемым «%s»" % b["name"])
+	lines.append("броня %s · бронебойность %s" % [_pl_cmp(float(s["armor"]), float(b["armor"]), "%.0f", has_b),
+		_pl_cmp(float(s["pierce"]), float(b["pierce"]), "%.0f", has_b)])
+	lines.append("атака ×%s · скорость ×%s · цена ×%s" % [_pl_cmp(float(s["atk"]), float(b["atk"]), "%.2f", has_b),
+		_pl_cmp(float(s["speed"]), float(b["speed"]), "%.2f", has_b), _pl_cmp(float(s["cost"]), float(b["cost"]), "%.2f", has_b)])
+	popup_body.add_child(_label("\n".join(lines), 15))
+
+	popup_body.add_child(_section("Шасси"))
+	for hr in TankDesigns.HULLS:
+		var hid: String = hr[0]
+		var ok := TankDesigns.has_tech(n, hr[2])
+		var txt := "%s%s\n%d сл. · броня %d · скорость ×%.2f · цена ×%.2f" % ["▶ " if hid == _tk_hull else "", hr[1], hr[3], hr[4], hr[5], hr[6]]
+		if not ok:
+			txt = "%s\nнужна «%s»" % [hr[1], Tech.get_tech(hr[2]).get("name", hr[2])]
+		var bh := _button(txt, func():
+			_tk_hull = hid
+			var keep: Array = []
+			for m in _tk_mods:
+				if keep.size() < int(TankDesigns.hull(hid)[3]):
+					keep.append(m)
+			_tk_mods = keep
+			_rebuild_popup(), Vector2(0, 54))
+		bh.add_theme_font_size_override("font_size", 13)
+		bh.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		bh.clip_text = true
+		bh.disabled = not ok or hid == _tk_hull
+		if hid == _tk_hull:
+			bh.add_theme_color_override("font_disabled_color", UiStyle.ink(Color(0.95, 0.85, 0.5)))
+		popup_body.add_child(bh)
+
+	var slots: int = int(h[3]) if not h.is_empty() else 0
+	popup_body.add_child(_section("Слоты: %d из %d" % [_tk_mods.size(), slots]))
+	if _tk_mods.is_empty():
+		popup_body.add_child(_small("Пусто — добавьте модули из списка ниже."))
+	for i in _tk_mods.size():
+		var ii := i
+		var m := TankDesigns.module(String(_tk_mods[i]))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var l := _label("%d. %s — %s" % [i + 1, m[1], _tk_eff_text(m[3])], 15)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		row.add_child(l)
+		row.add_child(_button("✕", func():
+			_tk_mods.remove_at(ii)
+			_rebuild_popup(), Vector2(44, 44)))
+		popup_body.add_child(row)
+
+	popup_body.add_child(_section("Модули"))
+	var guns := 0
+	for m in _tk_mods:
+		if TankDesigns.is_gun(String(m)):
+			guns += 1
+	for mr in TankDesigns.MODS:
+		var mid: String = mr[0]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 0)
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var cnt := _tk_mods.count(mid)
+		col.add_child(_label("%s%s" % [mr[1], (" × %d" % cnt) if cnt > 0 else ""], 16))
+		var why := ""
+		if not TankDesigns.has_tech(n, mr[2]):
+			why = "нужна технология «%s»" % Tech.get_tech(mr[2]).get("name", mr[2])
+		elif bool(mr[4]) and guns >= TankDesigns.MAX_GUNS and cnt == 0:
+			why = "пушка в башне одна — сначала снимите другую"
+		var sm := _small(why if why != "" else _tk_eff_text(mr[3]))
+		sm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		col.add_child(sm)
+		row.add_child(col)
+		var plus := _button("+", func():
+			_tk_mods.append(mid)
+			_rebuild_popup(), Vector2(44, 44))
+		plus.disabled = why != "" or _tk_mods.size() >= slots or cnt >= TankDesigns.MAX_SAME \
+			or (bool(mr[4]) and guns >= TankDesigns.MAX_GUNS)
+		row.add_child(plus)
+		popup_body.add_child(row)
+	popup_body.add_child(_small("Пушка одна, другие модули — не больше двух раз. Бронебойность — лучшая из пушки и пулемётов. Если бронебойности противника не хватает против брони дивизии, его урон по ней вдвое меньше."))
+
+	var ok_save := not _tk_mods.is_empty() and TankDesigns.valid(n, _tk_hull, _tk_mods)
+	var row2 := HBoxContainer.new()
+	row2.add_theme_constant_override("separation", 8)
+	for prod in [true, false]:
+		var pr: bool = prod
+		var bs := _button("В производство" if prod else "Сохранить", func():
+			if not TankDesigns.valid(n, _tk_hull, _tk_mods) or _tk_mods.is_empty():
+				toast("Проект собран неверно")
+				return
+			var nm := _tk_name.strip_edges()
+			if nm == "":
+				nm = "Танк"
+			var before := w.tank_designs.size()
+			var id := TankDesigns.add(w, me, nm, _tk_hull, _tk_mods)
+			if id < before:
+				nm = w.tank_designs[id]["name"]
+				toast("Такой проект уже есть: «%s»" % nm)
+			elif not pr:
+				toast("Проект «%s» сохранён" % nm)
+			if pr:
+				TankDesigns.set_production(w, n, id)
+				toast("В производстве: %s" % nm)
+			_tk_open = false
+			_rebuild_popup(), Vector2(0, 52))
+		bs.disabled = not ok_save
+		bs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row2.add_child(bs)
+	popup_body.add_child(row2)
+	popup_body.add_child(_button("Отмена", func():
+		_tk_open = false
+		_rebuild_popup(), Vector2(0, 48)))
 
 
 const TRUCK_NAMES := ["конная", "половина на грузовиках", "грузовики"]

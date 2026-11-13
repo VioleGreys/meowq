@@ -411,13 +411,16 @@ struct SidePower {
 
 static SidePower side_power(const int32_t *slots, const double *part, int64_t count, int terr, bool defending, const double *str,
 		const double *def, const double *ent, const double *atk, const uint8_t *landing, const double *eq,
-		const double *sup, const int32_t *tpl, const double *hard, const float *tmul) {
+		const double *sup, const int32_t *tpl, const double *hard, const float *tmul, std::vector<double> &pw) {
 	double power = 0.0, hd = 0.0, wsum = 0.0;
+	pw.clear();
 	for (int64_t k = 0; k < count; k++) {
 		const int32_t i = slots[k];
 		const double w = str[i] / 100.0 * part[k];
 		const double base = defending ? def[i] * (1.0 + 0.3 * ent[i]) : atk[i] * (landing[i] == 1 ? 0.5 : 1.0);
-		power += base * w * (0.4 + 0.6 * eq[i]) * sup_mult(sup[i]) * double(tmul[tpl[i] * 8 + terr]);
+		const double c = base * w * (0.4 + 0.6 * eq[i]) * sup_mult(sup[i]) * double(tmul[tpl[i] * 8 + terr]);
+		pw.push_back(c);
+		power += c;
 		hd += hard[i] * w;
 		wsum += w;
 	}
@@ -432,8 +435,17 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		const PackedByteArray &battle_in, const PackedInt32Array &pl_head, const PackedInt32Array &d_nx,
 		const PackedByteArray &war, int nc, const PackedFloat32Array &def_mult, const PackedByteArray &terrain,
 		const PackedInt32Array &region, const PackedFloat32Array &cas, const PackedFloat32Array &tmul,
-		const PackedInt32Array &prov, const PackedFloat32Array &tpl_width, const PackedFloat32Array &fw) const {
+		const PackedInt32Array &prov, const PackedFloat32Array &tpl_width, const PackedFloat32Array &fw,
+		const PackedFloat64Array &armor, const PackedFloat64Array &pierce, double armor_cut) const {
 	PackedFloat64Array str = str_in, org = org_in, eq = eq_in;
+	const double *arm = armor.ptr(), *prc = pierce.ptr();
+	std::vector<double> pa, pd;
+	// броня (как World._pierced): вклад дивизии без пробития брони цели — × armor_cut
+	auto pierced = [&](const std::vector<double> &pw, const std::vector<int32_t> &slots, double a) {
+		double sum = 0.0;
+		for (size_t k = 0; k < slots.size(); k++) sum += pw[k] * (prc[slots[k]] < a ? armor_cut : 1.0);
+		return sum;
+	};
 	PackedByteArray battle = battle_in;
 	const double *s0 = str_in.ptr(), *e0 = eq_in.ptr();
 	const double *df = def.ptr(), *at = atk.ptr(), *en = ent.ptr(), *su = sup.ptr(), *hd = hard.ptr();
@@ -503,25 +515,30 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		for (int32_t e : attackers) deltas.push_back({ e, 0.0, 0.0 });
 		pick(attackers, aw, limit);
 		pick(defenders, dw, limit);
-		const SidePower sa = side_power(attackers.data(), aw.data(), int64_t(attackers.size()), terr, false, s0, df, en, at, ld, e0, su, tp, hd, tm);
-		const SidePower sd = side_power(defenders.data(), dw.data(), int64_t(defenders.size()), terr, true, s0, df, en, at, ld, e0, su, tp, hd, tm);
+		const SidePower sa = side_power(attackers.data(), aw.data(), int64_t(attackers.size()), terr, false, s0, df, en, at, ld, e0, su, tp, hd, tm, pa);
+		const SidePower sd = side_power(defenders.data(), dw.data(), int64_t(defenders.size()), terr, true, s0, df, en, at, ld, e0, su, tp, hd, tm, pd);
 		const int32_t reg = rg[p];
-		double att_power = sa.power * double(cm[int64_t(reg) * nc + att_owner]);
+		const double cas_a = double(cm[int64_t(reg) * nc + att_owner]);
+		const double cas_d = double(cm[int64_t(reg) * nc + ow[defenders[0]]]);
 		const double att_hard = sa.hard;
-		double def_power = sd.power * double(cm[int64_t(reg) * nc + ow[defenders[0]]]);
 		const double def_hard = sd.hard;
 		const double r1 = double(rng->randf_range(0.8, 1.2));
-		att_power *= r1 * (1.0 - terrain_def * 0.6);
 		const double r2 = double(rng->randf_range(0.8, 1.2));
-		def_power *= r2;
-		att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard);
-		def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard);
-		const double to_def = att_power / wsum(dw);
-		const double to_att = def_power / wsum(aw);
-		for (size_t j = 0; j < defenders.size(); j++)
+		const double wd = wsum(dw), wa = wsum(aw);
+		for (size_t j = 0; j < defenders.size(); j++) {
+			double att_power = pierced(pa, attackers, arm[defenders[j]]) * cas_a;
+			att_power *= r1 * (1.0 - terrain_def * 0.6);
+			att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard);
+			const double to_def = att_power / wd;
 			deltas.push_back({ defenders[j], to_def * dw[j] * 0.55, to_def * dw[j] * 0.12 * (su[defenders[j]] < SUP_EXH ? EXH_LOSS : 1.0) });
-		for (size_t j = 0; j < attackers.size(); j++)
+		}
+		for (size_t j = 0; j < attackers.size(); j++) {
+			double def_power = pierced(pd, defenders, arm[attackers[j]]) * cas_d;
+			def_power *= r2;
+			def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard);
+			const double to_att = def_power / wa;
 			deltas.push_back({ attackers[j], to_att * aw[j] * 0.5, to_att * aw[j] * 0.10 * (su[attackers[j]] < SUP_EXH ? EXH_LOSS : 1.0) });
+		}
 	}
 	double *o = org.ptrw(), *s = str.ptrw(), *q = eq.ptrw();
 	uint8_t *bt = battle.ptrw();

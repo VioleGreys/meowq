@@ -169,6 +169,9 @@ class Nation:
 	var doctrine_pref := {}     # род сил -> историческая школа (nations.json)
 	var air_design := PackedInt32Array([-1, -1])     # проект в производстве: истребители, бомбардировщики (Designs)
 	var plane_cost := PackedFloat64Array([1.0, 1.0]) # цена выпуска самолёта по проекту (множитель)
+	var tank_design := -1       # проект танка в производстве (World.tank_designs, TankDesigns)
+	var tank_cost := 1.0        # цена выпуска бронетехники по проекту (множитель)
+	var tank_techs := -1        # ИИ: число технологий при прошлой сборке проекта танка
 	var design_techs := -1      # сколько технологий было при последней сборке проектов ИИ
 	var no_attack := {}         # страна -> true: воюем, но ИИ не наступает (эффект no_attack — «Странная война»)
 	# план наступления (эффект offensive, исторические нападения): ИИ ведёт удар через
@@ -283,6 +286,16 @@ class Division:
 			return w.d_hard[slot]
 		set(v):
 			w.ds_hard(slot, v)
+	var armor: float:  # броня (0,4 · лучший батальон + 0,6 · средний; танки — по проекту)
+		get:
+			return w.d_armor[slot]
+		set(v):
+			w.d_armor[slot] = v
+	var pierce: float:  # бронебойность (так же)
+		get:
+			return w.d_pierce[slot]
+		set(v):
+			w.d_pierce[slot] = v
 	var owner: int:
 		get:
 			return w.d_owner[slot]
@@ -541,6 +554,7 @@ var groups: Array = []                    # Array[ArmyGroup]
 var fleets: Array = []                    # Array[Fleet]
 var wings: Array = []                     # Array[AirWing]
 var plane_designs: Array = []             # проекты самолётов (Designs.add): словари характеристик
+var tank_designs: Array = []              # проекты танков (TankDesigns.add): словари характеристик
 var ship_designs: Array = []              # проекты кораблей (ShipDesigns.add): словари характеристик
 var region_count := 0
 var p_region := PackedInt32Array()        # воздушный район провинции
@@ -601,6 +615,8 @@ var p_cold := PackedFloat32Array()        # суровость холода и �
 var n_hot := PackedFloat64Array()         # уровень страны к жаре 0..1,5 (коренные > 1 — бонус)
 var n_cold := PackedFloat64Array()
 var d_hard := PackedFloat64Array()
+var d_armor := PackedFloat64Array()       # броня дивизии (Military.refresh_division)
+var d_pierce := PackedFloat64Array()      # бронебойность дивизии
 var d_owner := PackedInt32Array()
 var d_prov := PackedInt32Array()
 var d_tpl := PackedInt32Array()
@@ -1365,6 +1381,8 @@ func _d_append() -> int:
 		d_acl_hot.append(0.0)
 		d_acl_cold.append(0.0)
 	d_hard.append(0.0)
+	d_armor.append(0.0)
+	d_pierce.append(0.0)
 	d_owner.append(0)
 	d_prov.append(0)
 	d_tpl.append(0)
@@ -1419,6 +1437,8 @@ func compact_divisions() -> void:
 	d_def_eff = PackedFloat64Array()
 	d_cmul = PackedFloat64Array()
 	d_hard = Native.gather_f64(d_hard, keep)
+	d_armor = Native.gather_f64(d_armor, keep)
+	d_pierce = Native.gather_f64(d_pierce, keep)
 	d_owner = Native.gather_i32(d_owner, keep)
 	d_prov = Native.gather_i32(d_prov, keep)
 	d_tpl = Native.gather_i32(d_tpl, keep)
@@ -1462,6 +1482,8 @@ func clear_divisions() -> void:
 	d_def_eff = PackedFloat64Array()
 	d_cmul = PackedFloat64Array()
 	d_hard = PackedFloat64Array()
+	d_armor = PackedFloat64Array()
+	d_pierce = PackedFloat64Array()
 	d_owner = PackedInt32Array()
 	d_prov = PackedInt32Array()
 	d_tpl = PackedInt32Array()
@@ -1744,7 +1766,7 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 	if Native.core != null:
 		var r: Array = Native.core.call("combat", provs, att_start, att_list, seeds, d_str, d_org, d_eq, def, atk,
 				d_ent, d_land, d_sup, d_tpl, d_hard, d_owner, d_battle, pl_head, d_nx, war, nation_count, p_def_mult,
-				p_terrain, p_region, cas_mult, tpl_terrain, d_prov, tpl_width, fw)
+				p_terrain, p_region, cas_mult, tpl_terrain, d_prov, tpl_width, fw, d_armor, d_pierce, ARMOR_CUT)
 		d_org = r[0]
 		d_str = r[1]
 		d_eq = r[2]
@@ -1786,26 +1808,36 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 		var dw := PackedFloat64Array()
 		attackers = front_pick(attackers, limit, aw)
 		defenders = front_pick(defenders, limit, dw)
-		var sa := _side_power(attackers, terr, false, atk, def, aw)
-		var sd := _side_power(defenders, terr, true, atk, def, dw)
+		var pa := PackedFloat64Array()   # вклад каждой дивизии в силу стороны
+		var pd := PackedFloat64Array()
+		var sa := _side_power(attackers, terr, false, atk, def, aw, pa)
+		var sd := _side_power(defenders, terr, true, atk, def, dw, pd)
 		var reg := p_region[p]
-		var att_power: float = sa[0] * cas_mult[reg * nc + att_owner]
+		var cas_a: float = cas_mult[reg * nc + att_owner]
+		var cas_d: float = cas_mult[reg * nc + d_owner[defenders[0]]]
 		var att_hard: float = sa[1]
-		var def_power: float = sd[0] * cas_mult[reg * nc + d_owner[defenders[0]]]
 		var def_hard: float = sd[1]
-		att_power *= rng.randf_range(0.8, 1.2) * (1.0 - terrain_def * 0.6)
-		def_power *= rng.randf_range(0.8, 1.2)
-		att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard)
-		def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard)
-		# урон — по доле в линии (не влезшая целиком дивизия получает меньше)
-		var to_def := att_power / _wsum(dw)
-		var to_att := def_power / _wsum(aw)
+		var r1 := rng.randf_range(0.8, 1.2)
+		var r2 := rng.randf_range(0.8, 1.2)
+		var wd := _wsum(dw)
+		var wa := _wsum(aw)
+		# урон — по доле в линии (не влезшая целиком дивизия получает меньше);
+		# броня (решение пользователя): вклад дивизии, чьей бронебойности не хватает
+		# против брони цели, — ×ARMOR_CUT; без брони порядок счёта прежний
 		# истощённые (снабжение < SUP_EXH) теряют людей в 1,5 раза больше
 		for j in defenders.size():
+			var att_power := _pierced(pa, attackers, d_armor[defenders[j]]) * cas_a
+			att_power *= r1 * (1.0 - terrain_def * 0.6)
+			att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard)
+			var to_def := att_power / wd
 			dl.append(defenders[j])
 			dl.append(to_def * dw[j] * 0.55)
 			dl.append(to_def * dw[j] * 0.12 * (EXH_LOSS if d_sup[defenders[j]] < SUP_EXH else 1.0))
 		for j in attackers.size():
+			var def_power := _pierced(pd, defenders, d_armor[attackers[j]]) * cas_d
+			def_power *= r2
+			def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard)
+			var to_att := def_power / wa
 			dl.append(attackers[j])
 			dl.append(to_att * aw[j] * 0.5)
 			dl.append(to_att * aw[j] * 0.10 * (EXH_LOSS if d_sup[attackers[j]] < SUP_EXH else 1.0))
@@ -1894,7 +1926,8 @@ static func _wsum(w: PackedFloat64Array) -> float:
 
 
 ## Сила стороны (как Military.side_power, по массивам): [сила, бронированность].
-func _side_power(slots: PackedInt32Array, terr: int, defending: bool, atk: PackedFloat64Array, def: PackedFloat64Array, part: PackedFloat64Array) -> PackedFloat64Array:
+func _side_power(slots: PackedInt32Array, terr: int, defending: bool, atk: PackedFloat64Array, def: PackedFloat64Array, part: PackedFloat64Array,
+		pw: PackedFloat64Array) -> PackedFloat64Array:
 	var power := 0.0
 	var hard := 0.0
 	var wsum := 0.0
@@ -1902,10 +1935,24 @@ func _side_power(slots: PackedInt32Array, terr: int, defending: bool, atk: Packe
 		var i := slots[j]
 		var w: float = d_str[i] / 100.0 * part[j]
 		var base: float = def[i] * (1.0 + 0.3 * d_ent[i]) if defending else atk[i] * (0.5 if d_land[i] == 1 else 1.0)
-		power += base * w * (0.4 + 0.6 * d_eq[i]) * sup_mult(d_sup[i]) * tpl_terrain[d_tpl[i] * 8 + terr]
+		var c: float = base * w * (0.4 + 0.6 * d_eq[i]) * sup_mult(d_sup[i]) * tpl_terrain[d_tpl[i] * 8 + terr]
+		pw.append(c)
+		power += c
 		hard += d_hard[i] * w
 		wsum += w
 	return PackedFloat64Array([power, hard / maxf(wsum, 0.01)])
+
+
+const ARMOR_CUT := 0.5   # урон дивизии, чьей бронебойности не хватает против брони цели (решение пользователя)
+
+
+## Сила стороны против цели с бронёй armor: вклады pw дивизий slots, у кого
+## бронебойность ниже брони, — × ARMOR_CUT. C++ — тот же порядок сложения.
+func _pierced(pw: PackedFloat64Array, slots: PackedInt32Array, armor: float) -> float:
+	var s := 0.0
+	for k in slots.size():
+		s += pw[k] * (ARMOR_CUT if d_pierce[slots[k]] < armor else 1.0)
+	return s
 
 
 ## Планирование наступления (как в жанре): дивизия, стоящая на фронте (сосед —

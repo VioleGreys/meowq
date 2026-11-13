@@ -102,6 +102,48 @@ func _init() -> void:
 	var picked := w.front_pick(arts, 100.0, part)
 	check(picked.size() == 4 and part[3] > 0.84 and part[3] < 0.85, "ширина 100: три дивизии по 26 целиком, четвёртая — с долей 22/26 (%s)" % [part])
 
+	print("Броня и бронебойность (конструктор танков):")
+	var ger2: World.Nation = w.nations[GER]
+	check(not TankDesigns.valid(ger2, "light1", ["gun20", "gun20"]), "в проекте танка одна пушка")
+	var st := TankDesigns.stats("light1", ["gun20", "mg", "armor"])
+	check(is_equal_approx(float(st["armor"]), 16.0) and is_equal_approx(float(st["pierce"]), 15.0), "броня шасси + листы, бронебойность — лучшая из модулей (%s)" % TankDesigns.stats_text(st))
+	var tk := w.spawn_division(GER, fp, Military.T_ARM)
+	tk.org = tk.max_org
+	check(tk.armor >= 10.0 and tk.pierce >= 15.0, "танковая дивизия: броня %.0f, бронебойность %.0f" % [tk.armor, tk.pierce])
+	var pol_inf := w.spawn_division(POL, fq, Military.T_INF)
+	pol_inf.org = pol_inf.max_org
+	defd.alive = false
+	w.rebuild_prov_divs()
+	check(pol_inf.pierce < tk.armor, "пехота не пробивает танки (бронебойность %.0f < брони %.0f)" % [pol_inf.pierce, tk.armor])
+	# Польша атакует танки: без пробития урон пехоты ×0,5
+	var w_at := PackedInt32Array([pol_inf.slot])
+	var t0 := tk.org
+	var ps0 := pol_inf.strength
+	var po0 := pol_inf.org
+	var ts0 := tk.strength
+	var pe0 := pol_inf.eq
+	var te0 := tk.eq
+	w.set_war(POL, GER)
+	w.k_combat(PackedInt32Array([fp]), PackedInt32Array([0, 1]), w_at, PackedInt64Array([7]), 0.0)
+	var loss_cut := t0 - tk.org
+	tk.org = t0
+	tk.strength = ts0
+	pol_inf.strength = ps0
+	pol_inf.org = po0
+	pol_inf.eq = pe0
+	tk.eq = te0
+	var pr0 := pol_inf.pierce
+	pol_inf.pierce = 100.0
+	w.k_combat(PackedInt32Array([fp]), PackedInt32Array([0, 1]), w_at, PackedInt64Array([7]), 0.0)
+	var loss_full := t0 - tk.org
+	pol_inf.pierce = pr0
+	check(loss_cut > 0.0 and is_equal_approx(loss_cut * 2.0, loss_full), "без пробития урон по танкам вдвое меньше (%.2f против %.2f)" % [loss_cut, loss_full])
+	var at_t := w.templates.size()
+	w.templates.append(Military.make_template("Пехотная с ПТО", "п+пто", [9, 0, 0, 0, 0, 0, 1], POL))
+	Military.build_tables(w)
+	var at_d := w.spawn_division(POL, fq, at_t)
+	check(at_d.pierce > 15.0 and at_d.pierce > pol_inf.pierce, "батальон ПТО поднимает бронебойность пехоты (%.1f против %.1f)" % [at_d.pierce, pol_inf.pierce])
+
 	print("Окружение:")
 	r = fresh()
 	w = r[0]

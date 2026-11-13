@@ -187,6 +187,7 @@ func _phase_economy() -> void:
 			if not nat.is_player and (world.day + nat.id) % 30 == 0:
 				Designs.ai_update(world, nat)
 				ShipDesigns.ai_update(world, nat)
+				TankDesigns.ai_update(world, nat)
 		Prof.add("эк:наука-слоты", _pt)
 		_pt = Time.get_ticks_usec()
 		for tid in Tech.daily(world, nat):

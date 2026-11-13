@@ -143,6 +143,13 @@ func decode(data: Dictionary, world: World, sim: Simulation) -> void:
 			_assign(world, name, _dec(w[name]))
 	world.spec_gid = -1
 	world.palette_dirty = true
+	# сохранение до брони танков: броня и бронебойность дивизий — пересчитать
+	if world.d_armor.size() != world.d_id.size() or world.d_pierce.size() != world.d_id.size():
+		world.d_armor.resize(world.d_id.size())
+		world.d_pierce.resize(world.d_id.size())
+		for d in world.divisions:
+			if d.alive:
+				Military.refresh_division(world, d)
 	if sim != null:
 		var s: Dictionary = data.get("sim", {})
 		sim.land_totals = _dec(s.get("land_totals", []))

@@ -32,27 +32,34 @@ const B_CAV := 2
 const B_ART := 3
 const B_MOT := 4
 const B_TANK := 5
-const BAT_COUNT := 6
+const B_AT := 6
+const BAT_COUNT := 7
 # men — тыс. человек; eq — [винт., ору., танки, груз.]; terr — множитель на
 # местности (равнины, лес, холмы, горы, город, море, пустыня, болота);
 # width — ширина фронта батальона (дивизия = сумма; в бою — не шире провинции);
 # motor — моторизован (скорость от бонуса «speed» полностью, снабжение ×1,5)
 const BATTALIONS := [
-	{"name": "Пехотный", "width": 2, "short": "пех.", "icon": "inf", "men": 1.0, "eq": [10.0, 1.2, 0.0, 0.0], "atk": 1.0, "def": 1.2, "org": 40.0, "spd": 1.0, "hard": 0.0, "days": 14, "req": "", "motor": false,
+	{"name": "Пехотный", "width": 2, "short": "пех.", "icon": "inf", "men": 1.0, "eq": [10.0, 1.2, 0.0, 0.0], "atk": 1.0, "def": 1.2, "org": 40.0, "spd": 1.0, "hard": 0.0, "days": 14, "req": "", "motor": false, "armor": 0.0, "pierce": 5.0,
 		"terr": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]},
-	{"name": "Горнострелковый", "width": 2, "short": "горн.", "icon": "mnt", "men": 1.0, "eq": [11.0, 0.6, 0.0, 0.0], "atk": 0.9, "def": 1.2, "org": 45.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "mnt1", "motor": false,
+	{"name": "Горнострелковый", "width": 2, "short": "горн.", "icon": "mnt", "men": 1.0, "eq": [11.0, 0.6, 0.0, 0.0], "atk": 0.9, "def": 1.2, "org": 45.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "mnt1", "motor": false, "armor": 0.0, "pierce": 5.0,
 		"terr": [1.0, 1.1, 1.35, 1.5, 1.0, 1.0, 0.9, 1.0]},
-	{"name": "Кавалерийский", "width": 2, "short": "кав.", "icon": "cav", "men": 1.0, "eq": [10.0, 0.0, 0.0, 0.0], "atk": 1.0, "def": 1.0, "org": 50.0, "spd": 1.5, "hard": 0.0, "days": 14, "req": "", "motor": false,
+	{"name": "Кавалерийский", "width": 2, "short": "кав.", "icon": "cav", "men": 1.0, "eq": [10.0, 0.0, 0.0, 0.0], "atk": 1.0, "def": 1.0, "org": 50.0, "spd": 1.5, "hard": 0.0, "days": 14, "req": "", "motor": false, "armor": 0.0, "pierce": 3.0,
 		"terr": [1.1, 0.8, 0.9, 0.7, 0.8, 1.0, 1.1, 0.7]},
 	# артиллерия: 2 батальона к 10 пехотным дают прежнюю «пехоту с артиллерией»;
 	# на трудной местности она обуза (значения ниже 1 тянут среднее вниз)
-	{"name": "Артиллерийский", "width": 3, "short": "арт.", "icon": "art", "men": 0.5, "eq": [0.0, 12.0, 0.0, 0.0], "atk": 3.0, "def": 1.0, "org": 18.0, "spd": 0.9, "hard": 0.0, "days": 18, "req": "", "motor": false,
+	{"name": "Артиллерийский", "width": 3, "short": "арт.", "icon": "art", "men": 0.5, "eq": [0.0, 12.0, 0.0, 0.0], "atk": 3.0, "def": 1.0, "org": 18.0, "spd": 0.9, "hard": 0.0, "days": 18, "req": "", "motor": false, "armor": 0.0, "pierce": 5.0,
 		"terr": [1.55, 0.45, 0.45, -0.65, 1.0, 1.0, 1.55, -0.1]},
-	{"name": "Моторизованный", "width": 2, "short": "мот.", "icon": "mot", "men": 1.0, "eq": [10.0, 1.2, 0.0, 6.0], "atk": 1.1, "def": 1.2, "org": 40.0, "spd": 2.0, "hard": 0.1, "days": 20, "req": "mot1", "motor": true,
+	{"name": "Моторизованный", "width": 2, "short": "мот.", "icon": "mot", "men": 1.0, "eq": [10.0, 1.2, 0.0, 6.0], "atk": 1.1, "def": 1.2, "org": 40.0, "spd": 2.0, "hard": 0.1, "days": 20, "req": "mot1", "motor": true, "armor": 2.0, "pierce": 6.0,
 		"terr": [1.1, 0.85, 0.9, 0.75, 0.9, 1.0, 1.1, 0.7]},
-	{"name": "Танковый", "width": 2, "short": "танк.", "icon": "arm", "men": 1.0, "eq": [5.0, 0.0, 7.5, 5.0], "atk": 3.75, "def": 1.5, "org": 35.0, "spd": 1.8, "hard": 0.7, "days": 30, "req": "armor1", "motor": true,
+	{"name": "Танковый", "width": 2, "short": "танк.", "icon": "arm", "men": 1.0, "eq": [5.0, 0.0, 7.5, 5.0], "atk": 3.75, "def": 1.5, "org": 35.0, "spd": 1.8, "hard": 0.7, "days": 30, "req": "armor1", "motor": true, "armor": 10.0, "pierce": 15.0,
 		"terr": [1.15, 0.75, 0.75, 0.55, 0.75, 1.0, 1.15, 0.55]},
+	# ПТО (решение пользователя, ноябрь 2026): бронебойность дивизии против танков;
+	# танковый батальон берёт броню и бронебойность из проекта (TankDesigns)
+	{"name": "Противотанковый", "width": 1, "short": "ПТО", "icon": "art", "men": 0.5, "eq": [1.0, 5.0, 0.0, 0.0], "atk": 0.6, "def": 1.0, "org": 20.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "at1", "motor": false, "armor": 0.0, "pierce": 35.0,
+		"terr": [1.0, 0.9, 0.9, 0.7, 1.0, 1.0, 1.0, 0.8]},
 ]
+const AT2_PIERCE := 25.0   # «Тяжёлые пушки ПТО» (at2): бронебойность батальона ПТО +25
+const ARMOR_MAX_W := 0.4   # броня и бронебойность дивизии: 0,4 · лучший батальон + 0,6 · средний
 const MAX_BATTALIONS := 15
 
 const T_INF := 0
@@ -77,8 +84,16 @@ const BASE_ATK := 1.25
 const BASE_SPEED := 0.28   # доля провинции в день для скорости 1.0 на равнине
 
 
+## Число батальонов типа b в составе (составы из старых сохранений короче — нет ПТО).
+static func bat_n(bat: Array, b: int) -> int:
+	return int(bat[b]) if b < bat.size() else 0
+
+
 ## Собрать шаблон из состава bat (число батальонов каждого типа).
-static func make_template(name: String, short: String, bat: Array, owner: int = -1) -> Dictionary:
+static func make_template(name: String, short: String, bat_in: Array, owner: int = -1) -> Dictionary:
+	var bat := bat_in.duplicate()
+	while bat.size() < BAT_COUNT:
+		bat.append(0)
 	var men := 0.0
 	var eq := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 	var atk := 0.0
@@ -93,7 +108,7 @@ static func make_template(name: String, short: String, bat: Array, owner: int = 
 	var total := 0
 	var width := 0.0
 	for b in BAT_COUNT:
-		var c: int = int(bat[b])
+		var c: int = bat_n(bat, b)
 		if c <= 0:
 			continue
 		total += c
@@ -127,7 +142,7 @@ static func make_template(name: String, short: String, bat: Array, owner: int = 
 static func _template_class(bat: Array) -> int:
 	var total := 0
 	for b in BAT_COUNT:
-		total += int(bat[b])
+		total += bat_n(bat, b)
 	if int(bat[B_TANK]) > 0:
 		return T_ARM
 	if int(bat[B_MOT]) * 2 > total:
@@ -190,24 +205,75 @@ static func refresh_division(world: World, d: World.Division) -> void:
 	var nat: World.Nation = world.nations[d.owner]
 	var t: Dictionary = world.templates[d.tpl]
 	# общий бонус страны + бонусы родов войск (технологии) по батальонам состава
-	var atk: float = t["atk"] * (BASE_ATK + nat.b("attack"))
+	var bat: Array = t["bat"]
+	# танковые батальоны — по проекту страны в производстве (атака, скорость, броня, пробитие)
+	var n_tank := bat_n(bat, B_TANK)
+	var td: Dictionary = TankDesigns.of_nation(world, nat) if n_tank > 0 else TankDesigns.FALLBACK
+	var tmul: float = float(td["atk"])
+	var tank_atk: float = float(BATTALIONS[B_TANK]["atk"])
+	var atk_sum: float = t["atk"]
+	if n_tank > 0 and tmul != 1.0:
+		atk_sum += n_tank * tank_atk * (tmul - 1.0)
+	var atk: float = atk_sum * (BASE_ATK + nat.b("attack"))
 	var def: float = t["def"] * (1.0 + nat.b("defense"))
 	var ba := PackedFloat64Array([nat.b("inf_attack"), nat.b("art_attack"), nat.b("tank_attack")])
 	var bd := PackedFloat64Array([nat.b("inf_defense"), nat.b("art_defense"), nat.b("tank_defense")])
-	var bat: Array = t["bat"]
+	var spd: float = t["spd"]
 	for b in BAT_COUNT:
-		var c: int = int(bat[b])
+		var c: int = bat_n(bat, b)
 		if c <= 0:
 			continue
 		var kind := 2 if b == B_TANK else (1 if b == B_ART else 0)
-		atk += c * float(BATTALIONS[b]["atk"]) * ba[kind]
+		var ab: float = float(BATTALIONS[b]["atk"])
+		if b == B_TANK:
+			ab = tank_atk * tmul
+		atk += c * ab * ba[kind]
 		def += c * float(BATTALIONS[b]["def"]) * bd[kind]
+	if n_tank > 0 and float(td["speed"]) != 1.0:
+		# скорость — по самому медленному батальону; у танков — с множителем проекта
+		var s2 := 99.0
+		for b in BAT_COUNT:
+			if bat_n(bat, b) > 0:
+				s2 = minf(s2, float(BATTALIONS[b]["spd"]) * (float(td["speed"]) if b == B_TANK else 1.0))
+		spd = s2
 	d.atk = atk
 	d.def = def
 	d.max_org = t["org"] * (1.0 + nat.b("org"))
 	var spd_bonus := nat.b("speed") if t["motor"] else nat.b("speed") * 0.3
-	d.spd = BASE_SPEED * t["spd"] * (1.0 + spd_bonus)
+	d.spd = BASE_SPEED * spd * (1.0 + spd_bonus)
 	d.hard = t["hard"]
+	var ap := armor_pierce(nat, bat, td)
+	d.armor = ap[0]
+	d.pierce = ap[1]
+
+
+## Броня и бронебойность дивизии из состава bat (решение пользователя):
+## 0,4 · лучший батальон + 0,6 · среднее по батальонам; танки — по проекту td,
+## ПТО — +25 с «Тяжёлыми пушками ПТО». [броня, бронебойность]
+static func armor_pierce(nat: World.Nation, bat: Array, td: Dictionary) -> PackedFloat64Array:
+	var a_max := 0.0
+	var a_sum := 0.0
+	var p_max := 0.0
+	var p_sum := 0.0
+	var cnt := 0
+	for b in BAT_COUNT:
+		var c: int = bat_n(bat, b)
+		if c <= 0:
+			continue
+		var ar: float = float(BATTALIONS[b]["armor"])
+		var pr: float = float(BATTALIONS[b]["pierce"])
+		if b == B_TANK:
+			ar = float(td["armor"])
+			pr = float(td["pierce"])
+		elif b == B_AT and nat.techs.has("at2"):
+			pr += AT2_PIERCE
+		a_max = maxf(a_max, ar)
+		p_max = maxf(p_max, pr)
+		a_sum += c * ar
+		p_sum += c * pr
+		cnt += c
+	return PackedFloat64Array([ARMOR_MAX_W * a_max + (1.0 - ARMOR_MAX_W) * a_sum / maxf(1.0, cnt),
+		ARMOR_MAX_W * p_max + (1.0 - ARMOR_MAX_W) * p_sum / maxf(1.0, cnt)])
 
 
 ## Ширина фронта шаблона (у шаблонов из старых сохранений поля нет — считаем по составу).
@@ -216,7 +282,7 @@ static func template_width(t: Dictionary) -> float:
 		return float(t["width"])
 	var w := 0.0
 	for b in BAT_COUNT:
-		w += int(t["bat"][b]) * float(BATTALIONS[b]["width"])
+		w += bat_n(t["bat"], b) * float(BATTALIONS[b]["width"])
 	return w
 
 
@@ -248,7 +314,7 @@ static func build_tables(world: World) -> void:
 static func save_template(world: World, nid: int, name: String, bat: Array, edit: int = -1) -> int:
 	var total := 0
 	for b in BAT_COUNT:
-		total += int(bat[b])
+		total += bat_n(bat, b)
 	if total <= 0 or total > MAX_BATTALIONS:
 		return -1
 	var short := name.substr(0, 6).to_lower() + "."
@@ -390,7 +456,9 @@ static func produce(nat: World.Nation) -> void:
 		# нехватка ресурсов для того, что выпускает линия (Economy.RES_NEED)
 		var units: float = f * mult * eff * Economy.line_mult(nat, eq) / EQ_COST[eq]
 		# самолёты: цена выпуска по проекту в производстве (Designs)
-		if eq == EQ_FIG:
+		if eq == EQ_TANK:
+			units /= nat.tank_cost   # бронетехника: цена по проекту танка (TankDesigns)
+		elif eq == EQ_FIG:
 			units /= nat.plane_cost[0]
 		elif eq == EQ_BOMB:
 			units /= nat.plane_cost[1]
@@ -706,9 +774,52 @@ static func shortage(world: World, n: int) -> Array:
 
 
 ## Какой шаблон ИИ готовит следующим (детерминированно по номеру).
+## Общий шаблон «Пехотная с артиллерией и ПТО» (ИИ при «Противотанковых
+## пушках»): заводится при первой надобности — номер не фиксирован (в старых
+## сохранениях за 6-м номером могут быть шаблоны игроков).
+const AT_TEMPLATE := ["Пехотная с артиллерией и ПТО", "п+пто", [9, 0, 0, 2, 0, 0, 2]]
+
+
+const AT_NEED_ARMOR := 5.0    # бронебойность пехоты с артиллерией (артиллерия — против пехоты): броня выше — нужны ПТО
+static var _ea_day := -1
+static var _ea := {}
+
+
+## Наибольшая броня танковых дивизий противников страны (война или план войны);
+## раз в день на страну (по одному проходу дивизий в день).
+static func _enemy_armor(world: World, nat: World.Nation) -> float:
+	if _ea_day != world.day:
+		_ea_day = world.day
+		_ea = {}
+		for d in world.divisions:
+			if d.alive and bat_n(world.templates[d.tpl]["bat"], B_TANK) > 0:
+				_ea[d.owner] = maxf(float(_ea.get(d.owner, 0.0)), d.armor)
+	var best := 0.0
+	for e in nat.at_war:
+		best = maxf(best, float(_ea.get(e, 0.0)))
+	for e in nat.planned_wars:
+		best = maxf(best, float(_ea.get(e, 0.0)))
+	return best
+
+
+static func at_template(world: World) -> int:
+	for i in world.templates.size():
+		var t: Dictionary = world.templates[i]
+		if int(t["owner"]) < 0 and String(t.get("key", "")) == "inf_at":
+			return i
+	var nt := make_template(AT_TEMPLATE[0], AT_TEMPLATE[1], AT_TEMPLATE[2])
+	nt["key"] = "inf_at"
+	world.templates.append(nt)
+	build_tables(world)
+	return world.templates.size() - 1
+
+
 static func ai_template(world: World, nat: World.Nation, k: int, mountainous: bool) -> int:
 	var avail := available_templates(world, nat)
-	var cycle: Array = [T_INF, T_INF, T_ART, T_INF]
+	# с «Противотанковыми пушками» вместо пехоты с артиллерией — с ПТО, если у
+	# противника (нынешнего или запланированного) есть танки, которых она не пробивает
+	var art: int = at_template(world) if nat.techs.has("at1") and _enemy_armor(world, nat) > AT_NEED_ARMOR else T_ART
+	var cycle: Array = [T_INF, T_INF, art, T_INF]
 	if avail.has(T_MOT):
 		cycle.append(T_MOT)
 	if avail.has(T_ARM):

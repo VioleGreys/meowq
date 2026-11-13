@@ -29,7 +29,7 @@
 - `history.md` — фокусы, события, шансы, репутация и шкала сил, исторический
   ИИ, дипломатия, данные стран (`history.gd`, `relations.gd`, `diplomacy.gd`).
 - `forces.md` — флот, авиация, порты, высадки, конвои (`forces.gd`, `convoys.gd`).
-- `military.md` — дивизии, шаблоны из батальонов, ширина фронта, военные заводы (`military.gd`).
+- `military.md` — дивизии, шаблоны из батальонов, ширина фронта, военные заводы, броня и конструктор танков (`military.gd`, `tank_designs.gd`).
 - `balance_ai.md` — укрепления, зима, акклиматизация, черты стран, военный ИИ (`ai.gd`,
   `ai.cpp`), планирование наступления, `balance_check`.
 - `peace.md` — конец войны: капитуляция в оккупацию, вклад, мирные переговоры,
@@ -118,7 +118,7 @@
 - Сборка APK и C++ — `docs/notes/build.md`.
 - Скриншот без человека: `godot --path . -- --screenshot=out.png --nation=GER --days=120`
   (доп. флаги: `--zoom=1.6 --select --tab=army --pick=1 --mapmode=4 --card=AUS --peace=AUS`;
-  наука: `--tech=inf:mot2`, доктрины: `--tech=doc:l_mob1`; армия и война: `--group --war=POL --warday=30`; фокусы и события: `--focus`, `--event=munich`; переговоры: `--peace=POL`; чужие земли: `--occupy=POL --prodpage=lands [--occ=POL]`; флот: `--tab=navy --sel=fleet|wing --center=NOR`; конструктор самолёта: `--plane=fig|bmb|new|N`; корабля: `--ship=new|N|ss|cr|cv|bb|dd`; прокрутка окна: `--scroll=N`).
+  наука: `--tech=inf:mot2`, доктрины: `--tech=doc:l_mob1`; армия и война: `--group --war=POL --warday=30`; фокусы и события: `--focus`, `--event=munich`; переговоры: `--peace=POL`; чужие земли: `--occupy=POL --prodpage=lands [--occ=POL]`; флот: `--tab=navy --sel=fleet|wing --center=NOR`; конструктор самолёта: `--plane=fig|bmb|new|N`; танка: `--tank=new|cur|N`; корабля: `--ship=new|N|ss|cr|cv|bb|dd`; прокрутка окна: `--scroll=N`).
   В облачном контейнере: `xvfb-run -a godot --rendering-driver opengl3 ...`.
 После изменений: парсинг без ошибок, sim_bench проходит, скриншот посмотреть.
 

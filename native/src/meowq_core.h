@@ -107,7 +107,8 @@ public:
 			const PackedByteArray &battle, const PackedInt32Array &pl_head, const PackedInt32Array &d_nx,
 			const PackedByteArray &war, int nc, const PackedFloat32Array &def_mult, const PackedByteArray &terrain,
 			const PackedInt32Array &region, const PackedFloat32Array &cas, const PackedFloat32Array &tmul,
-			const PackedInt32Array &prov, const PackedFloat32Array &tpl_width, const PackedFloat32Array &fw) const;
+			const PackedInt32Array &prov, const PackedFloat32Array &tpl_width, const PackedFloat32Array &fw,
+			const PackedFloat64Array &armor, const PackedFloat64Array &pierce, double armor_cut) const;
 
 	PackedInt32Array income(const PackedInt32Array &ctrl, const PackedInt32Array &owner, const PackedInt32Array &civ,
 			const PackedInt32Array &mil, const PackedInt32Array &manpower, int nc) const;
@@ -130,7 +131,7 @@ public:
 			const PackedInt32Array &owner, const PackedInt32Array &ctrl, const PackedInt32Array &adj_start,
 			const PackedInt32Array &adj_list, const PackedByteArray &land, const PackedByteArray &hostile, int nc,
 			const PackedFloat64Array &plan_in, double gain, double active, double rear) const;
-	String version() const { return "meowq-core 39"; }
+	String version() const { return "meowq-core 40"; }
 	// Воздушный бой района i снимка t (Forces.air_begin): пачки по 100, обнаружение,
 	// день и ночь, превосходство; двойник — Forces.air_region_gd.
 	PackedFloat64Array air_region(const Dictionary &t, int i) const;
