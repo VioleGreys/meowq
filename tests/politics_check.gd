@@ -356,8 +356,8 @@ func _init() -> void:
 		if d.alive and d.owner == g3:
 			sl3 = d.slot
 			break
-	check(w.d_xp[sl3] >= 0.1 and w.d_xp[sl3] <= Leaders.DIV_XP_NEW + 1e-9, "дивизия 1936 г. — около «Обученных»: %.3f (%s)" % [w.d_xp[sl3], Leaders.div_level(w.d_xp[sl3])])
-	check(Leaders.div_bonus(0.8) == 0.12 and Leaders.div_bonus(0.05) == -0.05 and Leaders.div_bonus(0.2) == 0.0, "ветераны +12 %, новобранцы −5 %")
+	check(w.d_xp[sl3] >= 0.1 and w.d_xp[sl3] <= Leaders.DIV_XP_NEW + 1e-9, "дивизия 1936 г. — около «Начинающих»: %.3f (%s)" % [w.d_xp[sl3], Leaders.div_level(w.d_xp[sl3])])
+	check(Leaders.div_bonus(0.8) == 0.75 and Leaders.div_bonus(0.05) == -0.25 and Leaders.div_bonus(0.2) == 0.0, "ветераны +75 %, новобранцы −25 %")
 	w.d_xp[sl3] = 0.8
 	var st3 := w.d_str.duplicate()
 	st3[sl3] = 50.0
@@ -379,7 +379,7 @@ func _init() -> void:
 	w.d_xp[sl3] = 0.8
 	ae3 = w.d_atk_eff[sl3]
 	Leaders.daily(w)
-	check(w.d_atk_eff[sl3] > ae3 * 1.11, "ветераны бьют сильнее: %.2f → %.2f" % [ae3, w.d_atk_eff[sl3]])
+	check(w.d_atk_eff[sl3] > ae3 * 1.7, "ветераны бьют сильнее: %.2f → %.2f" % [ae3, w.d_atk_eff[sl3]])
 	w.d_xp[sl3] = 0.2
 	Leaders.daily(w)
 	check(w.d_xp[sl3] - 0.2 > g13 * 1.2, "инспектор боевой подготовки ускоряет опыт: +%.4f" % (w.d_xp[sl3] - 0.2))
