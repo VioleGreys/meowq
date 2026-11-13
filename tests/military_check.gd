@@ -357,7 +357,14 @@ func _check_leaders() -> void:
 	var d0: World.Division = divs[0]
 	var c: World.Commander = w.commanders[g1.general]
 	var m: World.Commander = w.commanders[f.marshal]
-	var want := (1.0 + Leaders.ATK_K * c.atk) * (1.0 + Leaders.ATK_K * m.atk * Leaders.MARSHAL_K)
+	var cls: int = w.tpl_cls[d0.tpl]
+	var want: float = Leaders._mults(w.commanders, c.id, m.id, cls)[0]
+	var plain := (1.0 + Leaders.ATK_K * c.atk) * (1.0 + Leaders.ATK_K * m.atk * Leaders.MARSHAL_K)
+	check(c.traits.is_empty() or want > plain, "черты генерала (%s) прибавляют к навыкам" % Leaders.traits_text(c))
+	# танкист: бонус танкам, пехоте — нет
+	var tk := World.Commander.new()
+	tk.traits = ["panzer"]
+	check(Leaders._mults([tk], 0, -1, Military.T_ARM)[0] > Leaders._mults([tk], 0, -1, Military.T_INF)[0], "«Танкист» усиливает танки, а не пехоту")
 	print("  %s: генерал %s, маршал %s, атака ×%.3f" % [g1.name, c.name, m.name, w.ld_atk[d0.slot]])
 	check(absf(w.ld_atk[d0.slot] - want) < 1e-9 and g1.general != g2.general, "бонус генерала и маршала у дивизии армии игрока")
 	Leaders.disband_front(w, f)

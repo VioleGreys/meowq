@@ -497,6 +497,7 @@ static func retrain(world: World, d: World.Division, t: int) -> bool:
 	var nat: World.Nation = world.nations[d.owner]
 	_convert(nat, d, world.templates[d.tpl], world.templates[t])
 	d.tpl = t
+	Leaders.touch(world, d)   # черты командира зависят от рода войск
 	refresh_division(world, d)
 	d.org = minf(d.org, d.max_org * RETRAIN_ORG)
 	return true

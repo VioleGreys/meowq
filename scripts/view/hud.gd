@@ -640,7 +640,8 @@ func _build_popup() -> void:
 	v.add_child(popup_rule)
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	# SHOW_NEVER, не DISABLED: с DISABLED ширина содержимого раздувала лист за край экрана
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	v.add_child(scroll)
 	popup_body = VBoxContainer.new()
 	popup_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -710,6 +711,9 @@ func _build_popup() -> void:
 
 ## Раскладка окна: папка-«дело» справа (створка слева от неё) или планшет по
 ## центру (события).
+var _popup_avail := 300.0   # ширина содержимого листа (для _fit_width)
+
+
 func _layout_popup(clipboard: bool) -> void:
 	var view := root.get_viewport_rect().size if root.is_inside_tree() else Vector2(1280, 720)
 	if clipboard:
@@ -729,6 +733,7 @@ func _layout_popup(clipboard: bool) -> void:
 		popup_clip.texture = UiStyle.ui_tex("clipboard_clip.png")
 		popup_clip.show()
 		popup_cover.hide()
+		_popup_avail = w - 100.0
 	else:
 		# разворот справа: ширина ~62% экрана, правая половина — окно с листом
 		var sw := clampf(view.x * 0.62, 760.0, 1180.0)
@@ -750,7 +755,38 @@ func _layout_popup(clipboard: bool) -> void:
 		popup_sheet.texture = UiStyle.ui_tex("sheet.png")
 		popup_sheet.rotation_degrees = -1.0
 		popup_clip.hide()
+		_popup_avail = sw * 0.5 - 8.0 - 94.0
 	popup_sheet.pivot_offset = popup_sheet.size * 0.5
+
+
+## Строки листа шире листа (узкий экран 1280): кнопки делят строку и обрезают
+## текст, переключатели переносят строки — лист не вылезает за край.
+func _fit_width() -> void:
+	if popup_body == null or not popup_body.is_inside_tree():
+		return
+	_fit_node(popup_body, _popup_avail - 8.0)
+
+
+func _fit_node(n: Node, lim: float) -> void:
+	for c in n.get_children():
+		if not (c is Control) or (c as Control).get_combined_minimum_size().x <= lim:
+			continue
+		if c is CheckButton or c is CheckBox:
+			(c as Button).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		elif c is Button:
+			(c as Button).clip_text = true
+		elif c is HBoxContainer:
+			for k in c.get_children():
+				if k is Button and (k as Control).get_combined_minimum_size().x > 90.0:
+					(k as Button).clip_text = true
+					(k as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				elif k is Label and (k as Label).autowrap_mode == TextServer.AUTOWRAP_OFF:
+					(k as Label).clip_text = true
+					(k as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		elif c is Label:
+			(c as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		else:
+			_fit_node(c, lim)
 
 
 func _set_margins(m: MarginContainer, l: int, r: int, t: int, b: int) -> void:
@@ -1640,6 +1676,7 @@ func _cycle_map_mode() -> void:
 
 
 func _rebuild_popup() -> void:
+	_fit_width.call_deferred()
 	popup_title.add_theme_font_size_override("font_size", 26)
 	popup_title.show()
 	popup_close.show()
@@ -2409,7 +2446,7 @@ func _open_retrain(divs: Array) -> void:
 func _army_button(w: World, g: World.ArmyGroup, indent: String) -> Button:
 	var cnt: int = game.group_divisions(g.id).size()
 	var gid: int = g.id
-	var b := _button("%s%s · %d/%d див. · %s · %s" % [indent, g.name, cnt, Leaders.ARMY_MAX,
+	var b := _button("%s%s · %d/%d · %s · %s" % [indent, g.name, cnt, Leaders.ARMY_MAX,
 		w.commanders[g.general].name if g.general >= 0 else "без генерала",
 		"держит фронт" if g.mode == "hold" else "наступает"], func():
 		close_popup()
@@ -2423,7 +2460,7 @@ func _army_button(w: World, g: World.ArmyGroup, indent: String) -> Button:
 ## Командиры страны: навыки, назначение, наём за ПВ.
 func _build_commanders(w: World, n: World.Nation) -> void:
 	popup_body.add_child(_section("Командиры"))
-	popup_body.add_child(_small("Генерал даёт дивизиям своей армии бонусы навыков (атака и оборона +2,5 % за единицу, план +10 %, скорость +2 %), маршал — половину своих всем дивизиям группы. Опыт — за бои, с уровнем растёт случайный навык."))
+	popup_body.add_child(_small("Генерал даёт дивизиям своей армии бонусы навыков (атака и оборона +2,5 % за единицу, план +10 %, скорость +2 %), маршал — половину своих всем дивизиям группы. Опыт — за бои, с уровнем растёт случайный навык, на 3-м и 5-м уровне — новая черта (бонус роду войск или всем)."))
 	for marshal in [true, false]:
 		var lst := Leaders.of_nation(w, n.id, marshal)
 		lst.sort_custom(Leaders._better)
@@ -2433,8 +2470,9 @@ func _build_commanders(w: World, n: World.Nation) -> void:
 				where = w.fronts[c.army].name if marshal else w.groups[c.army].name
 			popup_body.add_child(_label("%s %s · %s" % ["Маршал" if marshal else "Генерал", c.name, where], 16))
 			popup_body.add_child(_small("   %s · опыт %d/%d" % [Leaders.stats_text(c), int(c.xp), int(Leaders.XP_LEVEL * c.level)]))
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+			for tid in c.traits:
+				popup_body.add_child(_small("   ▸ " + Leaders.trait_help(tid)))
+	var row := VBoxContainer.new()
 	for marshal in [false, true]:
 		var mm: bool = marshal
 		var cost: float = Leaders.COST_MAR if marshal else Leaders.COST_GEN
@@ -2611,6 +2649,7 @@ func _build_army(w: World, me: int) -> void:
 			game.select_front(fid), Vector2(0, 48))
 		bf.add_theme_color_override("font_color", f.color)
 		bf.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		bf.clip_text = true
 		popup_body.add_child(bf)
 		for g in Leaders.armies_of_front(w, f):
 			popup_body.add_child(_army_button(w, g, "      "))
@@ -3278,7 +3317,7 @@ func _build_convoys(w: World, me: int) -> void:
 		popup_body.add_child(_small("Перехват на путях: " + ", ".join(parts) + ". Охранение — соединения с ПЛО в этих морях."))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
-	var ba := _button("Строить по нужде: %s" % ("да" if n.conv_auto else "нет"), func():
+	var ba := _button("Авто: %s" % ("да" if n.conv_auto else "нет"), func():
 		n.conv_auto = not n.conv_auto
 		_rebuild_popup(), Vector2(0, 44))
 	ba.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3338,7 +3377,7 @@ func _build_airlift(w: World, me: int) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	var auto := n.air_auto
-	var ba := _button("Пополнять по нужде: %s" % ("да" if auto else "нет"), func():
+	var ba := _button("Авто: %s" % ("да" if auto else "нет"), func():
 		game.act(func(): n.air_auto = not auto)
 		_rebuild_popup(), Vector2(0, 44))
 	ba.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3654,8 +3693,8 @@ var _buy_res := -1
 
 func _prod_pages() -> void:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	for pg in [["factories", "Заводы"], ["trade", "Торговля"], ["lands", "Чужие земли"]]:
+	row.add_theme_constant_override("separation", 4)
+	for pg in [["factories", "Заводы"], ["trade", "Рынок"], ["lands", "Земли"]]:
 		var id: String = pg[0]
 		var b := _button(pg[1], func():
 			_prod_page = id
@@ -3663,6 +3702,7 @@ func _prod_pages() -> void:
 			_rebuild_popup(), Vector2(0, 46))
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.disabled = _prod_page == id
+		b.add_theme_font_size_override("font_size", 15)   # три вкладки влезают и в узкий лист
 		row.add_child(b)
 	popup_body.add_child(row)
 

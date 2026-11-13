@@ -455,6 +455,7 @@ class Commander:
 	var level := 1
 	var xp := 0.0
 	var from_day := 0               # с какого дня доступен (исторические — по дате)
+	var traits: Array = []          # черты (Leaders.TRAITS): бонусы по роду войск и др.
 	var army := -1                  # армия игрока (генерал) или группа армий (маршал)
 	var boss := -1                  # маршал над генералом у ИИ (виртуальные группы)
 	var alive := true

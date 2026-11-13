@@ -31,6 +31,20 @@ const XP_LEVEL := 30.0     # опыт на следующий уровень × 
 const LEVEL_MAX := 5
 const STAT_MAX := 7
 const STAT_NAMES := ["атака", "оборона", "планирование", "манёвр"]
+# Черты: [название, классы шаблонов (пусто — все), атака, оборона, план, скорость].
+# Прибавки складываются с навыками; у маршала — × MARSHAL_K. Исторические —
+# из commanders.json, остальные получают черту на уровнях TRAIT_LEVELS.
+const TRAITS := {
+	"panzer": ["Танкист", [Military.T_ARM, Military.T_MOT], 0.10, 0.0, 0.0, 0.05],
+	"infantry": ["Пехотный командир", [Military.T_INF, Military.T_ART], 0.0, 0.08, 0.0, 0.0],
+	"mountain": ["Горный стрелок", [Military.T_MNT], 0.10, 0.10, 0.0, 0.0],
+	"cavalry": ["Кавалерист", [Military.T_CAV], 0.08, 0.0, 0.0, 0.06],
+	"assault": ["Мастер штурма", [], 0.05, 0.0, 0.0, 0.0],
+	"defender": ["Мастер обороны", [], 0.0, 0.06, 0.0, 0.0],
+	"planner": ["Штабист", [], 0.0, 0.0, 0.25, 0.0],
+	"swift": ["Стремительный", [], 0.0, 0.0, 0.0, 0.06],
+}
+const TRAIT_LEVELS := [3, 5]
 
 
 # --- Стартовые командиры ------------------------------------------------------
@@ -57,8 +71,13 @@ static func init(world: World, dir: String) -> void:
 		var mars := 0
 		for e in lst:
 			var c := _add(world, nat.id, str(e[0]), str(e[1]) == "m", int(e[2]), int(e[3]), int(e[4]), int(e[5]))
-			if e.size() > 6:
-				c.from_day = world.day_of(str(e[6]))
+			for k in range(6, e.size()):   # дата появления и/или список черт
+				if typeof(e[k]) == TYPE_ARRAY:
+					for t in e[k]:
+						if TRAITS.has(str(t)):
+							c.traits.append(str(t))
+				else:
+					c.from_day = world.day_of(str(e[k]))
 			if c.from_day <= world.day:
 				if c.marshal:
 					mars += 1
@@ -139,7 +158,34 @@ static func _better(a: World.Commander, b: World.Commander) -> bool:
 
 
 static func stats_text(c: World.Commander) -> String:
-	return "ур. %d · ат %d · об %d · пл %d · ман %d" % [c.level, c.atk, c.def, c.plan, c.man]
+	var t := "ур. %d · ат %d · об %d · пл %d · ман %d" % [c.level, c.atk, c.def, c.plan, c.man]
+	if not c.traits.is_empty():
+		t += " · " + traits_text(c)
+	return t
+
+
+static func traits_text(c: World.Commander) -> String:
+	var parts: Array = []
+	for id in c.traits:
+		parts.append(TRAITS[id][0])
+	return ", ".join(parts)
+
+
+## Что дают черты, коротко: «Танкист: танки и мотопехота атака +10 %, скорость +5 %».
+static func trait_help(id: String) -> String:
+	var t: Array = TRAITS[id]
+	var who := "все"
+	if not (t[1] as Array).is_empty():
+		var nm: Array = []
+		for c in t[1]:
+			nm.append(["пехота", "горные", "кавалерия", "артиллерия", "мотопехота", "танки"][int(c)])
+		who = " и ".join(nm)
+	var fx: Array = []
+	for k in 4:
+		var v: float = t[2 + k]
+		if v > 0.0:
+			fx.append("%s +%d %%" % [["атака", "оборона", "план", "скорость"][k], roundi(v * 100.0)])
+	return "%s (%s): %s" % [t[0], who, ", ".join(fx)]
 
 
 ## Бонус навыков в тексте: «атака +7,5 %, оборона +5 %…» (k — доля, у маршала MARSHAL_K).
@@ -415,6 +461,13 @@ static func refresh(world: World) -> void:
 			_entry(world, i, divs[i], player, mults)
 
 
+## Род войск дивизии сменился (переучивание) — пересчитать её множители.
+static func touch(world: World, d: World.Division) -> void:
+	if world.ld_ver != world.lead_ver or d.slot >= world.ld_gen.size():
+		return
+	_entry(world, d.slot, d, _players(world), {})
+
+
 static func _players(world: World) -> PackedByteArray:
 	var player := PackedByteArray()
 	player.resize(world.nation_count)
@@ -439,7 +492,11 @@ static func _entry(world: World, i: int, d: World.Division, player: PackedByteAr
 	elif d._lead >= 0 and d._lead < cmd.size() and player[o] == 0:
 		g = d._lead
 		m = cmd[g].boss
-	var key := (g + 1) * 65536 + m + 1
+	var cls := 0
+	var tp := world.d_tpl[i]
+	if tp >= 0 and tp < world.tpl_cls.size():
+		cls = world.tpl_cls[tp]
+	var key := ((g + 1) * 65536 + m + 1) * 8 + cls
 	var mv: Variant = mults.get(key)
 	if mv == null:
 		var gg := g
@@ -448,7 +505,7 @@ static func _entry(world: World, i: int, d: World.Division, player: PackedByteAr
 			gg = -1
 		if mm_ >= 0 and (cmd[mm_].owner != o or not available(world, cmd[mm_])):
 			mm_ = -1
-		mv = _mults(cmd, gg, mm_)
+		mv = _mults(cmd, gg, mm_, cls)
 		mults[key] = mv
 	var mm: Array = mv
 	world.ld_gen[i] = mm[4]
@@ -459,24 +516,33 @@ static func _entry(world: World, i: int, d: World.Division, player: PackedByteAr
 	world.ld_plan[i] = mm[3]
 
 
-static func _mults(cmd: Array, g: int, m: int) -> Array:
-	var a_ := 1.0
-	var d_ := 1.0
-	var s_ := 1.0
-	var p_ := 1.0
+static func _mults(cmd: Array, g: int, m: int, cls: int = 0) -> Array:
+	var r := [1.0, 1.0, 1.0, 1.0]
 	if g >= 0:
-		var c: World.Commander = cmd[g]
-		a_ *= 1.0 + ATK_K * c.atk
-		d_ *= 1.0 + DEF_K * c.def
-		s_ *= 1.0 + MAN_K * c.man
-		p_ *= 1.0 + PLAN_K * c.plan
+		_apply(r, cmd[g], cls, 1.0)
 	if m >= 0:
-		var c: World.Commander = cmd[m]
-		a_ *= 1.0 + ATK_K * c.atk * MARSHAL_K
-		d_ *= 1.0 + DEF_K * c.def * MARSHAL_K
-		s_ *= 1.0 + MAN_K * c.man * MARSHAL_K
-		p_ *= 1.0 + PLAN_K * c.plan * MARSHAL_K
-	return [a_, d_, s_, p_, g, m]
+		_apply(r, cmd[m], cls, MARSHAL_K)
+	return [r[0], r[1], r[2], r[3], g, m]
+
+
+## Множители командира c (доля k) для класса шаблона cls: [атака, оборона, скорость, план].
+static func _apply(r: Array, c: World.Commander, cls: int, k: float) -> void:
+	var a := ATK_K * c.atk
+	var d := DEF_K * c.def
+	var s := MAN_K * c.man
+	var p := PLAN_K * c.plan
+	for id in c.traits:
+		var t: Array = TRAITS[id]
+		var only: Array = t[1]
+		if only.is_empty() or only.has(cls):
+			a += float(t[2])
+			d += float(t[3])
+			p += float(t[4])
+			s += float(t[5])
+	r[0] *= 1.0 + a * k
+	r[1] *= 1.0 + d * k
+	r[2] *= 1.0 + s * k
+	r[3] *= 1.0 + p * k
 
 
 ## После Climate.daily: множители на действующие атаку, оборону, скорость; опыт за бои.
@@ -538,6 +604,14 @@ static func _gain(world: World, c: World.Commander, v: float) -> void:
 			1: c.def += 1
 			2: c.plan += 1
 			3: c.man += 1
+	if TRAIT_LEVELS.has(c.level):
+		var free: Array = []
+		for id in TRAITS:
+			if not c.traits.has(id):
+				free.append(id)
+		if not free.is_empty():
+			var rng2 := Parallel.rng(world.seed_value, world.day, 7300 + c.id)
+			c.traits.append(free[rng2.randi() % free.size()])
 	# новые навыки — только дивизиям этого командира
 	refresh(world)
 	var player := _players(world)
