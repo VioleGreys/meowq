@@ -182,6 +182,7 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 			Military.assign_free_factories(nat, Military.default_split(nat))
 	world.build_caches()
 	Forces.setup(world, dir)
+	Leaders.init(world, dir)   # генералы и маршалы (commanders.json + безымянные под число дивизий)
 	world.rebuild_prov_divs()
 	world.palette_dirty = true
 	return timings

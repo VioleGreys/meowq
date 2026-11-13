@@ -25,6 +25,7 @@ var days_per_sec := 0.0          # фактическая скорость, дл
 var selected_prov := -1
 var selected_divs: Array = []
 var selected_group := -1         # выбранная армия: касание карты задаёт ей цель
+var selected_front := -1         # выбранная группа армий (World.fronts): цель — всем её армиям
 var selected_fleet := -1         # выбранный флот: касание моря — куда идти
 var selected_wing := -1          # выбранное авиакрыло: касание карты — район задачи
 var pick_nation := -1
@@ -268,7 +269,9 @@ func _auto_screenshot_locked() -> void:
 			select_all()
 			create_group_from_selection()
 			if war_on >= 0:
-				world.groups[selected_group].enemy = war_on
+				for g in world.groups:
+					if g.alive and g.owner == me:
+						g.enemy = war_on
 		var war_day := int(_arg("warday")) if _arg("warday") != "" else 0
 		for i in days:
 			if i == war_day and war_on >= 0:
@@ -276,12 +279,14 @@ func _auto_screenshot_locked() -> void:
 				world.nations[war_on].pacts.erase(me)
 				world.nations[me].wargoals[war_on] = true
 				Diplomacy.declare_war(world, me, war_on)
-				if selected_group >= 0:
-					var g: World.ArmyGroup = world.groups[selected_group]
-					g.mode = "attack"
-					g.objective = world.nations[war_on].capital
+				for g in world.groups:
+					if g.alive and g.owner == me:
+						g.mode = "attack"
+						g.objective = world.nations[war_on].capital
 			sim.tick()
-		if selected_group >= 0:
+		if selected_front >= 0:
+			select_front(selected_front)
+		elif selected_group >= 0:
 			select_group(selected_group)
 		hud.on_tick()
 		if _arg("zoom") != "":
@@ -971,6 +976,21 @@ func _on_province_tapped_locked(p: int) -> void:
 			hud.toast("Слишком далеко от наших аэродромов")
 		hud.show_wing(w)
 		return
+	# выбрана группа армий -> касание задаёт цель всем её армиям
+	if selected_front >= 0:
+		var f: World.ArmyFront = world.fronts[selected_front]
+		if world.p_land[p] == 1:
+			var en := -1
+			for g in Leaders.armies_of_front(world, f):
+				en = g.enemy
+				break
+			if world.p_controller[p] != me and en < 0 and world.p_controller[p] >= 0 and world.is_at_war(me, world.p_controller[p]):
+				en = world.p_controller[p]
+			Leaders.front_order(world, f, "attack" if world.p_controller[p] != me else "hold", en, p)
+			hud.toast("%s: цель — %s" % [f.name, world.p_name[p]])
+			map_view.set_selected(p)
+			hud.show_front(f)
+		return
 	# выбрана армия -> касание задаёт направление наступления
 	if selected_group >= 0:
 		var g: World.ArmyGroup = world.groups[selected_group]
@@ -1033,6 +1053,7 @@ func _on_province_tapped_locked(p: int) -> void:
 
 func clear_selection() -> void:
 	selected_group = -1
+	selected_front = -1
 	selected_fleet = -1
 	selected_wing = -1
 	selected_divs.clear()
@@ -1043,6 +1064,7 @@ func clear_selection() -> void:
 
 func select_all() -> void:
 	selected_group = -1
+	selected_front = -1
 	selected_divs.clear()
 	for d in world.divisions_of(player()):
 		if not d.in_battle:
@@ -1054,16 +1076,69 @@ func select_all() -> void:
 
 # --- Армии -----------------------------------------------------------------
 
+## Армии по Leaders.ARMY_MAX дивизий; несколько армий — сразу в группы армий
+## по Leaders.FRONT_MAX. Генералы и маршалы — лучшие свободные.
 func create_group_from_selection() -> void:
 	if selected_divs.is_empty():
 		return
-	var g := sim.create_group(player(), selected_divs)
-	# по умолчанию — против ближайшего противника, иначе держать границу
-	for e in world.nations[player()].at_war:
-		g.enemy = e
+	var divs: Array = []
+	for d in selected_divs:
+		if d.group >= 0:
+			var old: World.ArmyGroup = world.groups[d.group]
+			if old.alive:
+				continue
+		divs.append(d)
+	if divs.is_empty():
+		hud.toast("Все выделенные дивизии уже в армиях")
+		return
+	var made: Array = []
+	for i in range(0, divs.size(), Leaders.ARMY_MAX):
+		var g := sim.create_group(player(), divs.slice(i, i + Leaders.ARMY_MAX))
+		# по умолчанию — против ближайшего противника, иначе держать границу
+		for e in world.nations[player()].at_war:
+			g.enemy = e
+			break
+		Leaders.auto_general(world, g)
+		made.append(g)
+	if made.size() >= 2:
+		for i in range(0, made.size(), Leaders.FRONT_MAX):
+			Leaders.create_front(world, player(), made.slice(i, i + Leaders.FRONT_MAX))
+		select_front(made[0].front)
+		hud.toast("Создано армий: %d (%d дивизий), групп армий: %d" % [made.size(), divs.size(), ceili(made.size() / float(Leaders.FRONT_MAX))])
+		return
+	select_group(made[0].id)
+	hud.toast("Создана %s: %d дивизий" % [made[0].name, divs.size()])
+
+
+## Выделенные дивизии — в армию (сколько влезет до Leaders.ARMY_MAX).
+func join_group(id: int) -> int:
+	var g: World.ArmyGroup = world.groups[id]
+	var room := Leaders.ARMY_MAX - group_divisions(id).size()
+	var n := 0
+	for d in selected_divs:
+		if n >= room:
+			break
+		if d.group != id:
+			d.group = id
+			n += 1
+	world.lead_ver += 1
+	return n
+
+
+func select_front(id: int) -> void:
+	var f: World.ArmyFront = world.fronts[id]
+	selected_group = -1
+	selected_front = id
+	selected_divs.clear()
+	for g in Leaders.armies_of_front(world, f):
+		selected_divs.append_array(group_divisions(g.id))
+	selected_prov = -1
+	var obj := -1
+	for g in Leaders.armies_of_front(world, f):
+		obj = g.objective
 		break
-	select_group(g.id)
-	hud.toast("Создана %s: %d дивизий" % [g.name, selected_divs.size()])
+	map_view.set_selected(obj)
+	hud.show_front(f)
 
 
 func select_fleet(id: int) -> void:
@@ -1080,6 +1155,7 @@ func select_wing(id: int) -> void:
 
 func select_group(id: int) -> void:
 	var g: World.ArmyGroup = world.groups[id]
+	selected_front = -1
 	selected_group = id
 	selected_divs.clear()
 	for d in world.divisions:
@@ -1197,7 +1273,7 @@ func _notification(what: int) -> void:
 			return
 		if hud.close_popup():
 			return
-		if not selected_divs.is_empty() or selected_group >= 0 or selected_fleet >= 0 or selected_wing >= 0:
+		if not selected_divs.is_empty() or selected_group >= 0 or selected_front >= 0 or selected_fleet >= 0 or selected_wing >= 0:
 			clear_selection()
 		elif state == "play":
 			hud.open_tab("menu")   # «назад» на пустом экране — меню партии

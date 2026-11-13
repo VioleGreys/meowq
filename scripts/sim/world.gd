@@ -218,7 +218,22 @@ class Division:
 	var w: World
 	var slot := -1
 	var id := 0
-	var group := -1                 # армия игрока (World.groups), -1 — нет
+	var _group := -1
+	var group: int:                 # армия игрока (World.groups), -1 — нет
+		get:
+			return _group
+		set(v):
+			if v != _group and w != null:
+				w.lead_ver += 1
+			_group = v     # кэш бонусов командиров (Leaders.refresh) — пересчитать
+	var _lead := -1
+	var lead: int:                  # генерал дивизии ИИ (World.commanders; у игрока — генерал армии)
+		get:
+			return _lead
+		set(v):
+			if v != _lead and w != null:
+				w.lead_ver += 1
+			_lead = v
 	var transit_total := 0
 	var transit_from := -1
 	var transit_target := -1
@@ -422,6 +437,38 @@ class ArmyGroup:
 	var objective := -1             # провинция-цель наступления
 	var alive := true
 	var front_pairs := PackedInt32Array()   # пары (наша провинция, чужая) для отрисовки фронта
+	var general := -1               # командующий армией (World.commanders), -1 — нет
+	var front := -1                 # группа армий (World.fronts), -1 — нет
+
+
+## Командир (Leaders): генерал ведёт армию до 24 дивизий, маршал — группу до 4 армий.
+class Commander:
+	extends RefCounted
+	var id := 0
+	var owner := 0
+	var name := ""
+	var marshal := false
+	var atk := 1                    # навыки 1…7: атака, оборона, планирование, манёвр
+	var def := 1
+	var plan := 1
+	var man := 1
+	var level := 1
+	var xp := 0.0
+	var from_day := 0               # с какого дня доступен (исторические — по дате)
+	var army := -1                  # армия игрока (генерал) или группа армий (маршал)
+	var boss := -1                  # маршал над генералом у ИИ (виртуальные группы)
+	var alive := true
+
+
+## Группа армий игрока: до 4 армий под одним маршалом, общий приказ.
+class ArmyFront:
+	extends RefCounted
+	var id := 0
+	var owner := 0
+	var name := ""
+	var color := Color.WHITE
+	var marshal := -1
+	var alive := true
 
 
 var seed_value := 0
@@ -552,6 +599,17 @@ var node_hub := PackedInt32Array()        # узел: главный город 
 var sup_args: Array = []                  # стороны, источники, столицы сегодняшней фазы снабжения
 var supply_dist: Array = []               # по странам: PackedInt32Array, переходов до узла снабжения (-1 — нет)
 var groups: Array = []                    # Array[ArmyGroup]
+var fronts: Array = []                    # Array[ArmyFront] — группы армий игрока
+var commanders: Array = []                # Array[Commander] (Leaders)
+# бонусы командиров по слотам дивизий (Leaders.refresh): генерал, маршал, множители
+var ld_ver := -1
+var lead_ver := 0
+var ld_gen := PackedInt32Array()
+var ld_mar := PackedInt32Array()
+var ld_atk := PackedFloat64Array()
+var ld_def := PackedFloat64Array()
+var ld_spd := PackedFloat64Array()
+var ld_plan := PackedFloat64Array()
 # Флот и авиация (этап 6)
 var fleets: Array = []                    # Array[Fleet]
 var wings: Array = []                     # Array[AirWing]
@@ -1441,6 +1499,15 @@ func compact_divisions() -> void:
 	d_hard = Native.gather_f64(d_hard, keep)
 	d_armor = Native.gather_f64(d_armor, keep)
 	d_pierce = Native.gather_f64(d_pierce, keep)
+	if ld_gen.size() == n and ld_plan.size() == n:
+		ld_gen = Native.gather_i32(ld_gen, keep)
+		ld_mar = Native.gather_i32(ld_mar, keep)
+		ld_atk = Native.gather_f64(ld_atk, keep)
+		ld_def = Native.gather_f64(ld_def, keep)
+		ld_spd = Native.gather_f64(ld_spd, keep)
+		ld_plan = Native.gather_f64(ld_plan, keep)
+	else:
+		ld_ver = -1
 	d_owner = Native.gather_i32(d_owner, keep)
 	d_prov = Native.gather_i32(d_prov, keep)
 	d_tpl = Native.gather_i32(d_tpl, keep)

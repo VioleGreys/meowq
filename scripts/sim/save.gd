@@ -26,9 +26,10 @@ const QUIT := "quit"             # сохранение при выходе/св
 # неизменяемые описания из файлов игры (деревья фокусов, события, области,
 # черты — 40 % объёма; после обновления игры партия берёт новые тексты и правки)
 const SKIP_WORLD := {"id_image": true, "height_image": true, "terrain_image": true, "spec_gid": true,
-	"focus_trees": true, "focus_index": true, "event_defs": true, "areas": true, "spirit_defs": true}
+	"focus_trees": true, "focus_index": true, "event_defs": true, "areas": true, "spirit_defs": true,
+	"lead_ver": true, "ld_ver": true}
 # у дивизии пишутся только собственные поля: остальное — обёртки над World.d_*
-const DIV_FIELDS := ["slot", "id", "group", "transit_total", "transit_from", "transit_target", "transfer", "_path"]
+const DIV_FIELDS := ["slot", "id", "group", "transit_total", "transit_from", "transit_target", "transfer", "_path", "lead"]
 
 var errors: Array = []           # что не удалось записать/прочитать (пусто — всё хорошо)
 var _world: World
@@ -40,7 +41,7 @@ var _props := {}                 # кэш: имя класса -> имена п�
 static func _classes() -> Dictionary:
 	return {"Nation": World.Nation, "Faction": World.Faction, "Division": World.Division,
 		"Fleet": World.Fleet, "InvasionPlan": World.InvasionPlan, "AirWing": World.AirWing,
-		"ArmyGroup": World.ArmyGroup}
+		"ArmyGroup": World.ArmyGroup, "Commander": World.Commander, "ArmyFront": World.ArmyFront}
 
 
 static func _script_vars(o: Object) -> PackedStringArray:
@@ -147,6 +148,12 @@ func decode(data: Dictionary, world: World, sim: Simulation) -> void:
 	if not world.nations.is_empty() and world.nations[0].stock.size() == 7:
 		Military.migrate_eq8(world)
 		Economy.migrate_units(world)
+	# сохранение до командиров: выдать стартовых; иначе кэш бонусов — как записан
+	# (поля дивизий при чтении сдвигают lead_ver)
+	if world.commanders.is_empty():
+		Leaders.init(world, MapLoader.DEFAULT_DIR)
+	elif world.ld_gen.size() == world.d_id.size():
+		world.ld_ver = world.lead_ver
 	# сохранение до рот поддержки: таблица tpl_sc
 	if world.tpl_sc.size() != world.templates.size() * Military.SC_K:
 		Military.build_tables(world)

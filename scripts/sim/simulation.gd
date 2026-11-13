@@ -112,6 +112,7 @@ func tick() -> void:
 	_timed("авиация", Forces.air_finish.bind(world, Parallel.rng(world.seed_value, world.day, 6001)))
 	var battles := {}
 	_timed("климат", Climate.daily.bind(world))
+	_timed("командиры", Leaders.daily.bind(world))   # бонусы генералов и маршалов поверх климата
 	_timed("сбор боёв", func(): battles.merge(_collect_battles()))
 	_timed("движение", _phase_movement.bind(battles))
 	_timed("бои", _phase_combat.bind(battles))
@@ -189,6 +190,7 @@ func _phase_economy() -> void:
 				ShipDesigns.ai_update(world, nat)
 				TankDesigns.ai_update(world, nat)
 				Military.ai_retrain(world, nat)   # устаревшие дивизии — в шаблоны с нынешними ротами
+				Leaders.ai_assign(world, nat)     # дивизии без генерала — в армии с местом или в новые
 		Prof.add("эк:наука-слоты", _pt)
 		_pt = Time.get_ticks_usec()
 		for tid in Tech.daily(world, nat):
@@ -1077,6 +1079,8 @@ func create_group(owner: int, divs: Array) -> World.ArmyGroup:
 
 
 func disband_group(g: World.ArmyGroup) -> void:
+	Leaders.set_general(world, g, -1)
+	g.front = -1
 	g.alive = false
 	g.front_pairs = PackedInt32Array()
 	for d in world.divisions:
@@ -1308,7 +1312,9 @@ func _phase_planning() -> void:
 			hostile[nat.id * nc + int(t)] = 1
 		for t in nat.wargoals:
 			hostile[nat.id * nc + int(t)] = 1
+	var old := world.d_plan.duplicate()
 	world.k_plan(hostile, PLAN_GAIN, PLAN_ACTIVE, PLAN_REAR)
+	Leaders.plan_bonus(world, old)
 
 
 func _phase_recovery() -> void:

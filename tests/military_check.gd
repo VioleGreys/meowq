@@ -296,6 +296,71 @@ func _init() -> void:
 	print("  за %d дней занято польских провинций: %d, Польша %s" % [w.day - 40, taken_max,
 		"капитулировала" if not w.pending_peace.is_empty() else "держится"])
 	check(taken_max >= 5, "наступление армии продвигается вглубь Польши")
+	_check_leaders()
 	if errors == 0:
 		print("Военная система: OK")
 	quit(1 if errors > 0 else 0)
+
+
+## Командиры: армии ИИ до 24 дивизий под закреплёнными генералами, маршал — до 4
+## армий; новая дивизия — в армию с местом; бонусы армии игрока.
+func _check_leaders() -> void:
+	print("Командиры:")
+	var r := fresh()
+	var w: World = r[0]
+	var sim: Simulation = r[1]
+	var SOV := w.nation_tags.find("SOV")
+	var cnt := {}
+	var subs := {}
+	var none := 0
+	for d in w.divisions_of(SOV):
+		if d.lead < 0:
+			none += 1
+		else:
+			cnt[d.lead] = int(cnt.get(d.lead, 0)) + 1
+	var over := 0
+	for g in cnt:
+		if int(cnt[g]) > Leaders.ARMY_MAX:
+			over += 1
+		var b: int = w.commanders[g].boss
+		if b >= 0:
+			subs[b] = int(subs.get(b, 0)) + 1
+	var over_m := 0
+	for m in subs:
+		if int(subs[m]) > Leaders.FRONT_MAX:
+			over_m += 1
+	print("  СССР: дивизий %d, армий %d, групп армий %d, без генерала %d" % [w.divisions_of(SOV).size(), cnt.size(), subs.size(), none])
+	check(none == 0 and over == 0 and over_m == 0, "у ИИ все дивизии в армиях до %d, у маршала до %d армий" % [Leaders.ARMY_MAX, Leaders.FRONT_MAX])
+	check(w.commanders[cnt.keys()[0]].name != "" and Leaders.of_nation(w, SOV, false).any(func(c): return c.name == "Георгий Жуков"), "исторические генералы из commanders.json")
+	var before := {}
+	for d in w.divisions_of(SOV):
+		before[d.id] = d.lead
+	var nd := w.spawn_division(SOV, w.nations[SOV].capital, Military.T_INF)
+	for i in 35:
+		sim.tick()
+	var moved := 0
+	for d in w.divisions_of(SOV):
+		if before.has(d.id) and int(before[d.id]) != d.lead:
+			moved += 1
+	check(moved == 0, "за месяц ИИ не переназначил генералов старых дивизий (сменилось %d)" % moved)
+	check(nd.lead >= 0, "новая дивизия ИИ сразу в армии (генерал %s)" % (w.commanders[nd.lead].name if nd.lead >= 0 else "нет"))
+	# армия игрока: генерал и маршал дают бонус к атаке
+	var GER := w.nation_tags.find("GER")
+	w.nations[GER].is_player = true
+	var divs: Array = w.divisions_of(GER).slice(0, 30)
+	var g1 := sim.create_group(GER, divs.slice(0, Leaders.ARMY_MAX))
+	var g2 := sim.create_group(GER, divs.slice(Leaders.ARMY_MAX))
+	Leaders.auto_general(w, g1)
+	Leaders.auto_general(w, g2)
+	var f := Leaders.create_front(w, GER, [g1, g2])
+	sim.tick()
+	var d0: World.Division = divs[0]
+	var c: World.Commander = w.commanders[g1.general]
+	var m: World.Commander = w.commanders[f.marshal]
+	var want := (1.0 + Leaders.ATK_K * c.atk) * (1.0 + Leaders.ATK_K * m.atk * Leaders.MARSHAL_K)
+	print("  %s: генерал %s, маршал %s, атака ×%.3f" % [g1.name, c.name, m.name, w.ld_atk[d0.slot]])
+	check(absf(w.ld_atk[d0.slot] - want) < 1e-9 and g1.general != g2.general, "бонус генерала и маршала у дивизии армии игрока")
+	Leaders.disband_front(w, f)
+	sim.disband_group(g1)
+	sim.tick()
+	check(w.ld_gen[d0.slot] < 0 and w.ld_atk[d0.slot] == 1.0, "вне армии — без бонуса")

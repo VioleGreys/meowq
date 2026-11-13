@@ -1334,6 +1334,7 @@ static func annex(world: World, who: int, target: int) -> void:
 		if d.alive and d.owner == target:
 			d.owner = who
 			d.group = -1
+			d.lead = -1
 			Military.refresh_division(world, d)
 	world.nations[who].manpower += nt.manpower
 	for k in Military.EQ_COUNT:
@@ -1388,6 +1389,7 @@ static func release(world: World, tag: String, provs: Array, overlord: int, take
 			if take_army:
 				d.owner = n
 				d.group = -1
+				d.lead = -1
 				Military.refresh_division(world, d)
 			else:
 				var cap: int = world.nations[old].capital

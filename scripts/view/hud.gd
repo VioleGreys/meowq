@@ -1170,6 +1170,10 @@ func on_tick() -> void:
 			show_fleet(w.fleets[game.selected_fleet])
 		elif game.selected_wing >= 0 and w.wings[game.selected_wing].alive:
 			show_wing(w.wings[game.selected_wing])
+		elif game.selected_front >= 0:
+			var f: World.ArmyFront = w.fronts[game.selected_front]
+			if f.alive:
+				_update_front_text(f)
 		elif game.selected_group >= 0:
 			var g: World.ArmyGroup = w.groups[game.selected_group]
 			if g.alive:
@@ -1302,6 +1306,7 @@ func show_selection() -> void:
 	_update_selection_text()
 	_clear(info_actions)
 	info_actions.add_child(_button("Создать армию", func(): game.create_group_from_selection()))
+	info_actions.add_child(_button("В армию…", func(): _open_join(game.selected_divs)))
 	info_actions.add_child(_button("Переучить", func(): _open_retrain(game.selected_divs)))
 	info_actions.add_child(_button("Стоп", func(): game.stop_selected(); toast("Войска остановлены")))
 	info_actions.add_child(_button("Снять выделение", func(): game.clear_selection()))
@@ -1334,6 +1339,32 @@ func show_group(g: World.ArmyGroup) -> void:
 		var i := opts.find(g.enemy)
 		g.enemy = opts[(i + 1) % opts.size()]
 		show_group(g)))
+	# генерал: по кругу — свободные (лучшие первыми) и «без генерала»
+	var gname: String = "нет" if g.general < 0 else w.commanders[g.general].name
+	info_actions.add_child(_button("Генерал: %s ▸" % gname, func():
+		var opts: Array = [-1]
+		if g.general >= 0:
+			opts.append(g.general)
+		for c in Leaders.free_of(w, g.owner, false):
+			opts.append(c.id)
+		var i := opts.find(g.general)
+		Leaders.set_general(w, g, opts[(i + 1) % opts.size()] if opts.size() > 1 else -1)
+		show_group(g)))
+	# группа армий: по кругу — нет, группы с местом, новая
+	var fname: String = "нет" if g.front < 0 else w.fronts[g.front].name
+	info_actions.add_child(_button("Группа армий: %s ▸" % fname, func():
+		var opts: Array = [-1]
+		for f in w.fronts:
+			if f.alive and f.owner == g.owner and (f.id == g.front or Leaders.armies_of_front(w, f).size() < Leaders.FRONT_MAX):
+				opts.append(f.id)
+		opts.append(-2)   # новая группа
+		var nx: int = opts[(opts.find(g.front) + 1) % opts.size()]
+		if nx == -2:
+			var f := Leaders.create_front(w, g.owner, [g])
+			toast("Создана %s" % f.name)
+		else:
+			Leaders.join_front(w, g, nx)
+		show_group(g)))
 	info_actions.add_child(_button("Переучить", func(): _open_retrain(game.group_divisions(g.id))))
 	info_actions.add_child(_button("Распустить", func():
 		game.sim.disband_group(g)
@@ -1341,6 +1372,85 @@ func show_group(g: World.ArmyGroup) -> void:
 	info_actions.add_child(_button("✕", func(): game.clear_selection(), Vector2(56, 56)))
 	info_panel.show()
 	_layout_info.call_deferred()
+
+
+## Панель группы армий: маршал, общий приказ всем армиям, состав.
+func show_front(f: World.ArmyFront) -> void:
+	_info_prov = -1
+	_update_front_text(f)
+	_clear(info_actions)
+	var w: World = game.world
+	var armies := Leaders.armies_of_front(w, f)
+	var mode := "hold"
+	var enemy := -1
+	for g in armies:
+		mode = g.mode
+		enemy = g.enemy
+		break
+	var hold := _button("Держать фронт", func():
+		Leaders.front_order(w, f, "hold", enemy, -1)
+		game.map_view.set_selected(-1)
+		show_front(f))
+	hold.disabled = mode == "hold"
+	info_actions.add_child(hold)
+	var atk := _button("Наступать", func():
+		Leaders.front_order(w, f, "attack", enemy, -1)
+		toast("Коснитесь провинции — цель наступления всей группы")
+		show_front(f))
+	atk.disabled = mode == "attack"
+	info_actions.add_child(atk)
+	var en: String = "все противники" if enemy < 0 else w.nations[enemy].name
+	info_actions.add_child(_button("Фронт: %s ▸" % en, func():
+		var opts: Array = game.enemy_options()
+		var i := opts.find(enemy)
+		var nx: int = opts[(i + 1) % opts.size()]
+		for g in Leaders.armies_of_front(w, f):
+			g.enemy = nx
+		show_front(f)))
+	var mname: String = "нет" if f.marshal < 0 else w.commanders[f.marshal].name
+	info_actions.add_child(_button("Маршал: %s ▸" % mname, func():
+		var opts: Array = [-1]
+		if f.marshal >= 0:
+			opts.append(f.marshal)
+		for c in Leaders.free_of(w, f.owner, true):
+			opts.append(c.id)
+		var i := opts.find(f.marshal)
+		Leaders.set_marshal(w, f, opts[(i + 1) % opts.size()] if opts.size() > 1 else -1)
+		show_front(f)))
+	for g in armies:
+		var gid: int = g.id
+		var b := _button("%s ▸" % g.name, func(): game.select_group(gid))
+		b.add_theme_color_override("font_color", g.color)
+		info_actions.add_child(b)
+	info_actions.add_child(_button("Распустить группу", func():
+		Leaders.disband_front(w, f)
+		game.clear_selection()))
+	info_actions.add_child(_button("✕", func(): game.clear_selection(), Vector2(56, 56)))
+	info_panel.show()
+	_layout_info.call_deferred()
+
+
+func _update_front_text(f: World.ArmyFront) -> void:
+	var w: World = game.world
+	var armies := Leaders.armies_of_front(w, f)
+	var nd := 0
+	var s := 0.0
+	var fights := 0
+	var names: Array = []
+	for g in armies:
+		var divs: Array = game.group_divisions(g.id)
+		nd += divs.size()
+		names.append("%s (%d)" % [g.name, divs.size()])
+		for d in divs:
+			s += d.strength
+			if d.in_battle:
+				fights += 1
+	var mtxt := "Маршала нет — назначьте: он даёт половину своих навыков всем дивизиям группы"
+	if f.marshal >= 0:
+		var c: World.Commander = w.commanders[f.marshal]
+		mtxt = "Маршал %s · %s\nВсем дивизиям: %s" % [c.name, Leaders.stats_text(c), Leaders.bonus_text(c, Leaders.MARSHAL_K)]
+	_info_text("%s · армий %d из %d\n%d %s · сила %d%% · в бою %d\n%s\n%s" % [f.name, armies.size(), Leaders.FRONT_MAX,
+		nd, _plural(nd, "дивизия", "дивизии", "дивизий"), s / maxi(1, nd), fights, mtxt, ", ".join(names)])
 
 
 func _update_group_text(g: World.ArmyGroup) -> void:
@@ -1367,9 +1477,16 @@ func _update_group_text(g: World.ArmyGroup) -> void:
 	var order := "держит фронт" if g.mode == "hold" else "наступает"
 	if g.mode == "attack" and g.objective >= 0:
 		order += " · цель: %s" % w.p_name[g.objective]
-	_info_text("%s · %d %s\n%s · сила %d%%\nСнабжение %d%% · план %d%% (+%d%% к атаке) · в бою %d" % [
-		g.name, divs.size(), _plural(divs.size(), "дивизия", "дивизии", "дивизий"), order[0].to_upper() + order.substr(1),
-		s / n, sup / n * 100.0, pl / n * 100.0, pl / n * Simulation.PLAN_MAX * 100.0, fights] + _sup_flags(bad, exh) + _clim_flags())
+	var gtxt := "\nГенерала нет — без бонусов к атаке, обороне, плану и скорости"
+	if g.general >= 0:
+		var c: World.Commander = w.commanders[g.general]
+		gtxt = "\nГенерал %s · %s · опыт %d/%d\n%s" % [c.name, Leaders.stats_text(c), int(c.xp), int(Leaders.XP_LEVEL * c.level), Leaders.bonus_text(c)]
+	if g.front >= 0 and w.fronts[g.front].alive:
+		var f: World.ArmyFront = w.fronts[g.front]
+		gtxt += "\n%s%s" % [f.name, (" · маршал %s" % w.commanders[f.marshal].name) if f.marshal >= 0 else " · без маршала"]
+	_info_text("%s · %d из %d %s\n%s · сила %d%%\nСнабжение %d%% · план %d%% (+%d%% к атаке) · в бою %d" % [
+		g.name, divs.size(), Leaders.ARMY_MAX, _plural(Leaders.ARMY_MAX, "дивизия", "дивизии", "дивизий"), order[0].to_upper() + order.substr(1),
+		s / n, sup / n * 100.0, pl / n * 100.0, pl / n * Simulation.PLAN_MAX * 100.0, fights] + gtxt + _sup_flags(bad, exh) + _clim_flags())
 
 
 var _clim_pen := 0      # дивизий выделения с климатическим штрафом (счётчик для _clim_flags)
@@ -1505,6 +1622,7 @@ func close_popup() -> bool:
 		popup_cover.hide()
 		_set_side_active("")
 		_retrain_divs = []
+		_join_divs = []
 		if game.state == "play":
 			log_box.show()
 		elif game.state == "menu":
@@ -2288,6 +2406,87 @@ func _open_retrain(divs: Array) -> void:
 	_rebuild_popup()
 
 
+func _army_button(w: World, g: World.ArmyGroup, indent: String) -> Button:
+	var cnt: int = game.group_divisions(g.id).size()
+	var gid: int = g.id
+	var b := _button("%s%s · %d/%d див. · %s · %s" % [indent, g.name, cnt, Leaders.ARMY_MAX,
+		w.commanders[g.general].name if g.general >= 0 else "без генерала",
+		"держит фронт" if g.mode == "hold" else "наступает"], func():
+		close_popup()
+		game.select_group(gid), Vector2(0, 48))
+	b.add_theme_color_override("font_color", g.color)
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.clip_text = true
+	return b
+
+
+## Командиры страны: навыки, назначение, наём за ПВ.
+func _build_commanders(w: World, n: World.Nation) -> void:
+	popup_body.add_child(_section("Командиры"))
+	popup_body.add_child(_small("Генерал даёт дивизиям своей армии бонусы навыков (атака и оборона +2,5 % за единицу, план +10 %, скорость +2 %), маршал — половину своих всем дивизиям группы. Опыт — за бои, с уровнем растёт случайный навык."))
+	for marshal in [true, false]:
+		var lst := Leaders.of_nation(w, n.id, marshal)
+		lst.sort_custom(Leaders._better)
+		for c in lst:
+			var where := "свободен"
+			if c.army >= 0:
+				where = w.fronts[c.army].name if marshal else w.groups[c.army].name
+			popup_body.add_child(_label("%s %s · %s" % ["Маршал" if marshal else "Генерал", c.name, where], 16))
+			popup_body.add_child(_small("   %s · опыт %d/%d" % [Leaders.stats_text(c), int(c.xp), int(Leaders.XP_LEVEL * c.level)]))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	for marshal in [false, true]:
+		var mm: bool = marshal
+		var cost: float = Leaders.COST_MAR if marshal else Leaders.COST_GEN
+		var b := _button("Нанять %s (%d ПВ)" % ["маршала" if marshal else "генерала", int(cost)], func():
+			var why := Leaders.hire(w, n, mm)
+			toast(why if why != "" else "Командир назначен")
+			_rebuild_popup(), Vector2(0, 48))
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.disabled = Politics.can_pay(w, n, cost) != ""
+		row.add_child(b)
+	popup_body.add_child(row)
+
+
+var _join_divs: Array = []
+
+
+func _open_join(divs: Array) -> void:
+	_join_divs = divs.duplicate()
+	if _join_divs.is_empty():
+		toast("Нет выделенных дивизий")
+		return
+	open_tab("army")
+	_rebuild_popup()
+
+
+## Окно «В армию»: выделенные дивизии — в армию с местом (до Leaders.ARMY_MAX).
+func _build_join(w: World, me: int) -> void:
+	popup_title.text = "В армию: %d %s" % [_join_divs.size(), _plural(_join_divs.size(), "дивизия", "дивизии", "дивизий")]
+	var any := false
+	for g in w.groups:
+		if not g.alive or g.owner != me:
+			continue
+		any = true
+		var cnt: int = game.group_divisions(g.id).size()
+		var gid: int = g.id
+		var b := _button("%s · %d/%d · %s" % [g.name, cnt, Leaders.ARMY_MAX, w.commanders[g.general].name if g.general >= 0 else "без генерала"], func():
+			var k: int = game.join_group(gid)
+			_join_divs = []
+			toast("В армию: %d %s%s" % [k, _plural(k, "дивизия", "дивизии", "дивизий"), "" if k == game.selected_divs.size() else " (больше не влезло)"])
+			close_popup()
+			game.select_group(gid), Vector2(0, 48))
+		b.add_theme_color_override("font_color", g.color)
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.disabled = cnt >= Leaders.ARMY_MAX
+		popup_body.add_child(b)
+	if not any:
+		popup_body.add_child(_small("Армий пока нет — создайте армию из выделенных дивизий."))
+	popup_body.add_child(_button("Отмена", func():
+		_join_divs = []
+		_rebuild_popup(), Vector2(0, 52)))
+
+
 ## Окно «Переучить»: выбранные дивизии — на другой шаблон (как в жанре).
 func _build_retrain(w: World, me: int) -> void:
 	var n: World.Nation = w.nations[me]
@@ -2393,24 +2592,35 @@ func _build_army(w: World, me: int) -> void:
 	if not _retrain_divs.is_empty():
 		_build_retrain(w, me)
 		return
+	if not _join_divs.is_empty():
+		_build_join(w, me)
+		return
 	popup_title.text = "Армия"
 	var n: World.Nation = w.nations[me]
 	_dynamic["army"] = _label("", 17)
 	popup_body.add_child(_dynamic["army"])
-	popup_body.add_child(_section("Армии"))
+	popup_body.add_child(_section("Армии (до %d дивизий) и группы армий (до %d армий)" % [Leaders.ARMY_MAX, Leaders.FRONT_MAX]))
 	var any := false
+	for f in w.fronts:
+		if not f.alive or f.owner != me:
+			continue
+		any = true
+		var fid: int = f.id
+		var bf := _button("%s · маршал: %s" % [f.name, w.commanders[f.marshal].name if f.marshal >= 0 else "нет"], func():
+			close_popup()
+			game.select_front(fid), Vector2(0, 48))
+		bf.add_theme_color_override("font_color", f.color)
+		bf.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		popup_body.add_child(bf)
+		for g in Leaders.armies_of_front(w, f):
+			popup_body.add_child(_army_button(w, g, "      "))
 	for g in w.groups:
-		if g.alive and g.owner == me:
+		if g.alive and g.owner == me and (g.front < 0 or not w.fronts[g.front].alive):
 			any = true
-			var cnt: int = game.group_divisions(g.id).size()
-			var gid: int = g.id
-			var b := _button("%s · %d див. · %s" % [g.name, cnt, "держит фронт" if g.mode == "hold" else "наступает"], func():
-				close_popup()
-				game.select_group(gid), Vector2(0, 48))
-			b.add_theme_color_override("font_color", g.color)
-			popup_body.add_child(b)
+			popup_body.add_child(_army_button(w, g, ""))
 	if not any:
-		popup_body.add_child(_small("Выделите дивизии на карте (или «Все войска») и нажмите «Создать армию». Армия сама держит фронт против выбранной страны или наступает к цели."))
+		popup_body.add_child(_small("Выделите дивизии на карте (или «Все войска») и нажмите «Создать армию»: до %d дивизий в армии, больше — несколько армий в группе армий. Армия сама держит фронт против выбранной страны или наступает к цели." % Leaders.ARMY_MAX))
+	_build_commanders(w, n)
 	popup_body.add_child(_section("Формирование дивизий"))
 	for t in Military.available_templates(w, n, true):
 		var tp: Dictionary = Military.tpl(w, t)
