@@ -102,8 +102,12 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	// фронт
 	OrderedSet fronts(pc), targets(pc);
 	PackedInt32Array fpairs;
+	// союзная провинция у нашего врага — тоже участок нашего фронта (как ai.gd)
+	std::vector<char> ally_front(pc, 0);
 	for (int p = 0; p < pc; p++) {
-		if (ctrl[p] != nid) continue;
+		const bool own_p = ctrl[p] == nid;
+		// союзная у нашего врага — участок с нуждой «угроза − дивизии союзников» (как ai.gd)
+		if (!own_p && !(at_war && ctrl[p] >= 0 && has_ally && ally[int64_t(nid) * nc + ctrl[p]] == 1)) continue;
 		for (int32_t k = a_start[p]; k < a_start[p + 1]; k++) {
 			const int32_t q = a_list[k];
 			if (land[q] == 0) continue;
@@ -114,11 +118,12 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			if (at_war) {
 				if (hostile && matches) {
 					fronts.add(p);
+					if (!own_p) ally_front[p] = 1;
 					if (!has_nohit || nohit[int64_t(nid) * nc + c] == 0) targets.add(q);
 					fpairs.push_back(p);
 					fpairs.push_back(q);
 				}
-			} else if (matches && (enemy >= 0 || mode == AUTO) && (!has_ally || ally[int64_t(nid) * nc + c] == 0)) {
+			} else if (own_p && matches && (enemy >= 0 || mode == AUTO) && (!has_ally || ally[int64_t(nid) * nc + c] == 0)) {
 				fronts.add(p);
 				fpairs.push_back(p);
 				fpairs.push_back(q);
@@ -389,7 +394,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			int32_t rear = -1;
 			for (int32_t k = a_start[pv]; k < a_start[pv + 1]; k++) {
 				const int32_t q = a_list[k];
-				if (land[q] == 1 && ctrl[q] == nid && !fronts.has[q]) {
+				if (land[q] == 1 && (ctrl[q] == nid || (ctrl[q] >= 0 && has_ally && ally[int64_t(nid) * nc + ctrl[q]] == 1)) && !fronts.has[q]) {
 					rear = q;
 					break;
 				}
@@ -415,7 +420,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		if ((dv_flags[i] & 4) == 0 && fronts.has[pv]) per_front[pv] += 1;
 	}
 	for (int32_t i : rotated) per_front[dv_prov[i]] -= 1;
-	std::vector<double> weight(pc, 0.0);
+	std::vector<double> weight(pc, 0.0), ally_need(pc, 0.0);
 	std::vector<char> axis_front(pc, 0);
 	double wsum = 0.0;
 	for (int32_t f : fronts.order) {
@@ -427,6 +432,16 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 				if (eo != nid && (!has_ally || ally[int64_t(nid) * nc + eo] == 0))
 					threat += (war[int64_t(nid) * nc + eo] == 1 || !at_war) ? 1.0 : 0.3;
 			}
+		}
+		if (ally_front[f]) {
+			int allyc = 0;
+			for (int32_t m = pd_start[f]; m < pd_start[f + 1]; m++) {
+				const int32_t o2 = dv_owner[pd_list[m]];
+				if (o2 != nid && has_ally && ally[int64_t(nid) * nc + o2] == 1) allyc++;
+			}
+			ally_need[f] = threat - double(allyc);
+			weight[f] = 0.0;
+			continue;
 		}
 		weight[f] = 1.0 + threat + vp[f] * 0.15;
 		if (has_axis) {
@@ -448,7 +463,12 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		if (pool < 0) pool = 0;
 	}
 	for (int32_t f : fronts.order) {
-		desired[f] = std::max(1, int(std::round(double(pool) * weight[f] / wsum)));
+		if (ally_front[f]) {
+			desired[f] = std::max(0, int(std::ceil(ally_need[f])));
+			if (has_cap) desired[f] = std::min(desired[f], capd(f));
+			continue;
+		}
+		desired[f] = wsum > 0.0 ? std::max(1, int(std::round(double(pool) * weight[f] / wsum))) : 1;
 		if (has_cap) desired[f] = std::min(desired[f], capd(f));
 		if (has_cap && axis_front[f]) desired[f] = capd(f);
 	}
@@ -459,7 +479,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	if (at_war) {
 		std::vector<int32_t> fpar(pc, -2), fdep(pc, 0), fq, touched;
 		for (int32_t f : fronts.order) {
-			if (per_front[f] > 0) continue;
+			if (per_front[f] > 0 || ally_front[f]) continue;
 			fq.clear();
 			fq.push_back(f);
 			fpar[f] = -1;
@@ -482,7 +502,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 				if (fdep[x] >= FILL_DEPTH) continue;
 				for (int32_t k = a_start[x]; k < a_start[x + 1]; k++) {
 					const int32_t y = a_list[k];
-					if (fpar[y] != -2 || land[y] == 0 || ctrl[y] != nid) continue;
+					if (fpar[y] != -2 || land[y] == 0 || (ctrl[y] != nid && (ctrl[y] < 0 || !has_ally || ally[int64_t(nid) * nc + ctrl[y]] == 0))) continue;
 					fpar[y] = x;
 					fdep[y] = fdep[x] + 1;
 					fq.push_back(y);
@@ -508,7 +528,9 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	// поиск пути к ближайшему участку (как Pathfinder.nearest_goal)
 	std::vector<char> goal(pc, 0);
 	std::vector<int32_t> parent(pc, -1), queue;
-	const uint8_t *war_row = war + int64_t(nid) * nc;
+	// можно войти: своя, вражеская, союзная (World.pass_table; как AIPlanner._nearest)
+	const PackedByteArray pass_a = tables.has("pass") ? PackedByteArray(tables["pass"]) : war_a;
+	const uint8_t *war_row = pass_a.ptr() + int64_t(nid) * nc;
 	for (int32_t i : idle) {
 		if (used[i]) continue;
 		if (double(dv_org[i]) < REGROUP_ORG) continue;   // перегруппировка — на фронт не идёт (как ai.gd)

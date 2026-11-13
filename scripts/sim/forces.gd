@@ -1261,8 +1261,10 @@ static func sea_transfer(world: World, divs: Array, target: int) -> String:
 ## любых своих тыловых портов (метрополия, Корея, Тайвань), пока дома остаётся
 ## больше (1 − доля) армии.
 const EXP_BATCH := 12
+const LAND_GROUP_GOAL := 12
+const LAND_READY_GOAL := 8
 const EXP_PORT := 4
-const EXP_MIN_ZONE := 6
+const EXP_MIN_ZONE := 3
 
 static func ai_transfers(world: World, n: int) -> void:
 	var nat: World.Nation = world.nations[n]
@@ -1279,7 +1281,9 @@ static func ai_transfers(world: World, n: int) -> void:
 	# заморские порты на фронте и сколько им не хватает
 	var dests: Array = []   # [нужно, порт]
 	for p in world.prov_count:
-		if ctrl[p] != n or home[p] == 1 or not is_port(world, p):
+		# экспедиция — и в союзные порты на фронте (французский Тунис для США, 1942 г.)
+		var dest_ok: bool = ctrl[p] == n or (exp_share > 0.0 and ctrl[p] >= 0 and world.ally[n * nc + ctrl[p]] == 1)
+		if not dest_ok or home[p] == 1 or not is_port(world, p):
 			continue
 		var enemies := 0
 		for k in range(a_start[p], a_start[p + 1]):
@@ -2318,16 +2322,19 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 		if d.alive and d.owner == n and d.prov == port and d.path.is_empty() and not d.in_battle \
 				and d.transit_days == 0 and d.org > d.max_org * 0.5:
 			ready.append(d)
+	# исторический десант (landing) — крупнее: до LAND_GROUP_GOAL дивизий, сбор от LAND_READY_GOAL
+	var max_group := LAND_GROUP_GOAL if goal >= 0 else 6
+	var min_ready := LAND_READY_GOAL if goal >= 0 else 3
 	# уже собравшиеся в порту ждут остальных — фронт их не забирает
 	for d in ready:
 		d.reserved_until = maxi(d.reserved_until, world.day + 20)
-	if ready.size() < 3:
+	if ready.size() < min_ready:
 		# собираем десант: ближайшие свободные дивизии не с фронта идут в порт
 		var on_way := 0
 		for d in world.divisions:
 			if d.alive and d.owner == n and d.reserved_until >= world.day and not d.path.is_empty():
 				on_way += 1
-		var need := 4 - ready.size() - on_way
+		var need := min_ready + 1 - ready.size() - on_way
 		if need <= 0:
 			return
 		var cands: Array = []
@@ -2348,7 +2355,7 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 				d.reserved_until = world.day + int(path.size() * 1.5 / maxf(0.05, d.spd)) + 20
 				need -= 1
 		return
-	var group := ready.slice(0, mini(6, ready.size()))
+	var group := ready.slice(0, mini(max_group, ready.size()))
 	if plan_invasion(world, group, best) == "":
 		nat.inv_target = -1
 		nat.inv_port = -1

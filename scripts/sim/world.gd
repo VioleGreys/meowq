@@ -602,6 +602,9 @@ var p_supply_base := PackedFloat32Array() # она же без поврежде�
 var p_bomb := PackedFloat32Array()        # повреждения от стратегических бомбёжек 0..1 (Forces)
 var bombed := {}                          # провинция -> true: есть повреждения (чинятся каждый день)
 var ally := PackedByteArray()             # nation_count^2: 1 — одна сторона (фракция/сюзерен)
+var passm := PackedByteArray()            # nation_count^2: 1 — можно войти (война или одна сторона), refresh_passm
+var _pm_war := PackedByteArray()
+var _pm_ally := PackedByteArray()
 var supply_regions := true               # снабжение по узлам районов (Supply), иначе — по удалённости от узлов
 var reg_adj_start := PackedInt32Array()   # соседство районов по суше (Supply._static)
 var reg_adj_list := PackedInt32Array()
@@ -925,7 +928,29 @@ func can_enter(nation: int, prov: int) -> bool:
 	if p_land[prov] == 0:
 		return false
 	var c := p_controller[prov]
-	return c == nation or is_at_war(nation, c)
+	# своя, вражеская или союзная (одна сторона: фракция, сюзерен) — проход и бой на союзной земле
+	return c == nation or is_at_war(nation, c) or (c >= 0 and ally.size() == nation_count * nation_count and ally[nation * nation_count + c] == 1)
+
+
+## Таблица «можно войти» (nc×nc): война или одна сторона. Пересобирается, когда
+## меняются войны или стороны (Simulation._refresh_sides, раз в день).
+func refresh_passm() -> void:
+	var n2 := nation_count * nation_count
+	if passm.size() == n2 and war == _pm_war and ally == _pm_ally:
+		return
+	_pm_war = war.duplicate()
+	_pm_ally = ally.duplicate()
+	var m := PackedByteArray()
+	m.resize(n2)
+	var has_ally := ally.size() == n2
+	for k in n2:
+		m[k] = 1 if war[k] == 1 or (has_ally and ally[k] == 1) else 0
+	passm = m
+
+
+## Можно войти: passm, если собрана, иначе только война (тесты без симуляции).
+func pass_table() -> PackedByteArray:
+	return passm if passm.size() == nation_count * nation_count else war
 
 
 func build_caches() -> void:
@@ -1735,12 +1760,13 @@ func k_supply(side_of: PackedInt32Array, dist: PackedInt32Array) -> void:
 func k_march() -> Array:
 	if Native.core != null:
 		var r: Array = Native.core.call("march", d_alive, d_transit, d_next, d_owner, d_prov, d_prog, _eff(d_spd_eff, d_spd), d_org,
-				d_morg, d_sup, p_land, p_controller, war, nation_count, p_move_mult)
+				d_morg, d_sup, p_land, p_controller, war, nation_count, p_move_mult, pass_table())
 		d_battle.fill(0)
 		d_prog = r[0]
 		d_next = r[1]
 		return [r[2], r[3], r[4]]
 	var spd_e := _eff(d_spd_eff, d_spd)
+	var pm := pass_table()
 	d_battle.fill(0)
 	var n := d_id.size()
 	var nc := nation_count
@@ -1768,7 +1794,7 @@ func k_march() -> Array:
 			continue
 		var o := d_owner[i]
 		var c := p_controller[t]
-		if p_land[t] == 0 or (c != o and (c < 0 or o < 0 or c == o or war[o * nc + c] == 0)):
+		if p_land[t] == 0 or (c != o and (c < 0 or o < 0 or c == o or pm[o * nc + c] == 0)):
 			cleared.append(i)
 			d_next[i] = -1
 			d_prog[i] = 0.0

@@ -214,8 +214,14 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var fronts := {}
 	var targets := {}
 	var fpairs := PackedInt32Array()
+	# союзная провинция у нашего врага — тоже участок нашего фронта (бой на союзной
+	# земле, как в жанре); дивизий туда — лишь сколько союзник сам не закрывает
+	# (угроза минус его дивизии на участке): Германия помогает Италии и на Балканах,
+	# а не подпирает всей массой Румынию (иначе СССР падал в 1942 г.)
+	var ally_front := {}
 	for p in prov_count:
-		if ctrl[p] != nid:
+		var own_p := ctrl[p] == nid
+		if not own_p and not (at_war and ctrl[p] >= 0 and ally.size() > 0 and ally[nid * nc + ctrl[p]] == 1):
 			continue
 		for k in range(a_start[p], a_start[p + 1]):
 			var q := a_list[k]
@@ -229,11 +235,13 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			if at_war:
 				if hostile and matches:
 					fronts[p] = true
+					if not own_p:
+						ally_front[p] = true
 					if nohit.is_empty() or nohit[nid * nc + c] == 0:
 						targets[q] = true
 					fpairs.append(p)
 					fpairs.append(q)
-			elif matches and (enemy >= 0 or mode == "auto") and (ally.size() == 0 or ally[nid * nc + c] == 0):
+			elif own_p and matches and (enemy >= 0 or mode == "auto") and (ally.size() == 0 or ally[nid * nc + c] == 0):
 				fronts[p] = true
 				fpairs.append(p)
 				fpairs.append(q)
@@ -468,7 +476,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			var rear := -1
 			for k in range(a_start[pv], a_start[pv + 1]):
 				var q := a_list[k]
-				if land[q] == 1 and ctrl[q] == nid and not fronts.has(q):
+				if land[q] == 1 and (ctrl[q] == nid or (ctrl[q] >= 0 and ally.size() > 0 and ally[nid * nc + ctrl[q]] == 1)) and not fronts.has(q):
 					rear = q
 					break
 			if rear < 0:
@@ -487,6 +495,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	for i in rotated:
 		per_front[dv_prov[i]] = int(per_front.get(dv_prov[i], 0)) - 1
 	var weight := {}
+	var ally_need := {}
 	var wsum := 0.0
 	var axis_front := {}   # к цели наступления: участки главного удара — до ёмкости снабжения
 	for f in fronts:
@@ -497,6 +506,16 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				var eo := dv_owner[pd_list[m]]
 				if eo != nid and (ally.size() == 0 or ally[nid * nc + eo] == 0):
 					threat += 1.0 if war[nid * nc + eo] == 1 or not at_war else 0.3
+		if ally_front.has(f):
+			# союзный участок — вне общего раздела армии: нужда = угроза − дивизии союзников
+			var allyc := 0
+			for m in range(pd_start[f], pd_start[f + 1]):
+				var o2 := dv_owner[pd_list[m]]
+				if o2 != nid and ally.size() > 0 and ally[nid * nc + o2] == 1:
+					allyc += 1
+			ally_need[f] = threat - float(allyc)
+			weight[f] = 0.0
+			continue
 		weight[f] = 1.0 + threat + vp[f] * 0.15   # крупные города держим плотнее
 		# участки у направления главного удара — плотнее (в пределах снабжения)
 		if not main_axis.is_empty():
@@ -516,7 +535,12 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			pool -= maxi(1, int(floor(supcap[f])))
 		pool = maxi(0, pool)
 	for f in fronts:
-		desired[f] = maxi(1, int(round(pool * weight[f] / wsum)))
+		if ally_front.has(f):
+			desired[f] = maxi(0, int(ceil(float(ally_need[f]))))
+			if has_cap:
+				desired[f] = mini(int(desired[f]), maxi(1, int(floor(supcap[f]))))
+			continue
+		desired[f] = maxi(1, int(round(pool * weight[f] / wsum))) if wsum > 0.0 else 1
 		# не больше, чем провинция прокормит (снабжение по узлам районов)
 		if has_cap:
 			desired[f] = mini(int(desired[f]), maxi(1, int(floor(supcap[f]))))
@@ -528,7 +552,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	# поиск по своей земле на FILL_DEPTH переходов (решение пользователя).
 	if at_war:
 		for f in fronts:
-			if int(per_front.get(f, 0)) > 0:
+			if int(per_front.get(f, 0)) > 0 or ally_front.has(f):
 				continue
 			var fpar := {f: -1}
 			var fdep := {f: 0}
@@ -554,7 +578,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 					continue
 				for k in range(a_start[x], a_start[x + 1]):
 					var y := a_list[k]
-					if fpar.has(y) or land[y] == 0 or ctrl[y] != nid:
+					if fpar.has(y) or land[y] == 0 or (ctrl[y] != nid and (ctrl[y] < 0 or ally.size() == 0 or ally[nid * nc + ctrl[y]] == 0)):
 						continue
 					fpar[y] = x
 					fdep[y] = int(fdep[x]) + 1
@@ -715,7 +739,7 @@ static func _power(world: World, nid: int) -> float:
 ## Таблицы мира для нативного планировщика (одни на всю пачку заданий ИИ).
 static func ai_tables(world: World) -> Dictionary:
 	return {"ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
-		"war": world.war, "ally": world.ally, "nc": world.nation_count, "def": world.p_def_mult, "vp": world.vp_ai(),
+		"war": world.war, "ally": world.ally, "pass": world.pass_table(), "nc": world.nation_count, "def": world.p_def_mult, "vp": world.vp_ai(),
 		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
 		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list, "supcap": world.p_supcap,
@@ -744,7 +768,7 @@ static func _nearest(t: Dictionary, nation: int, from: int, goal: Dictionary) ->
 		return PackedInt32Array()
 	var land: PackedByteArray = t["land"]
 	var ctrl: PackedInt32Array = t["ctrl"]
-	var war: PackedByteArray = t["war"]
+	var war: PackedByteArray = t.get("pass", t["war"])   # можно войти: своя, вражеская, союзная
 	var nc: int = t["nc"]
 	var a_start: PackedInt32Array = t["adj_start"]
 	var a_list: PackedInt32Array = t["adj_list"]

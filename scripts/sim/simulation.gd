@@ -310,6 +310,7 @@ func _refresh_sides() -> void:
 		key[a] = f if f >= 0 else 10000 + r
 	# матрица — только когда стороны сменились (союзы меняются редко)
 	if key == _sides_key and world.ally.size() == nc * nc:
+		world.refresh_passm()   # войны могли смениться
 		return
 	_sides_key = key
 	var ally := PackedByteArray()
@@ -318,6 +319,7 @@ func _refresh_sides() -> void:
 		for b in nc:
 			ally[a * nc + b] = 1 if key[a] == key[b] else 0
 	world.ally = ally
+	world.refresh_passm()
 
 
 # --- Снабжение: сеть каждой стороны считается в отдельной задаче -----------

@@ -126,8 +126,9 @@ Array MeowqCore::march(const PackedByteArray &alive, const PackedInt32Array &tra
 		const PackedInt32Array &owner, const PackedInt32Array &prov, const PackedFloat64Array &prog_in,
 		const PackedFloat64Array &spd, const PackedFloat64Array &org, const PackedFloat64Array &morg,
 		const PackedFloat64Array &sup, const PackedByteArray &land, const PackedInt32Array &ctrl,
-		const PackedByteArray &war, int nc, const PackedFloat32Array &move_mult) const {
+		const PackedByteArray &war, int nc, const PackedFloat32Array &move_mult, const PackedByteArray &passm) const {
 	PackedFloat64Array prog = prog_in;
+	const uint8_t *pm = passm.ptr();   // можно войти: своя, вражеская, союзная (World.pass_table)
 	PackedInt32Array next = next_in;
 	const int64_t n = alive.size();
 	const int pc = int(land.size());
@@ -151,7 +152,7 @@ Array MeowqCore::march(const PackedByteArray &alive, const PackedInt32Array &tra
 		if (t < 0 || tr[i] > 0) continue;
 		const int32_t o = ow[i];
 		const int32_t c = ct[t];
-		if (ld[t] == 0 || (c != o && (c < 0 || o < 0 || c == o || wr[int64_t(o) * nc + c] == 0))) {
+		if (ld[t] == 0 || (c != o && (c < 0 || o < 0 || c == o || pm[int64_t(o) * nc + c] == 0))) {
 			cleared.push_back(int32_t(i));
 			nx[i] = -1;
 			pg[i] = 0.0;

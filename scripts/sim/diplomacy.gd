@@ -188,7 +188,10 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 		for d in defenders.keys():
 			var add: Array = [root(world, d)]
 			add.append_array(puppets_of(world, root(world, d)))
-			add.append_array(faction_members(world, world.nations[root(world, d)].faction))
+			# члены фракции — кроме тех, у кого пакт с нападающим (СССР и Япония, 1941 г.)
+			for m in faction_members(world, world.nations[root(world, d)].faction):
+				if not world.nations[m].pacts.has(a):
+					add.append(m)
 			# гаранты — только за саму жертву (а не за всю её сторону: иначе
 			# британская гарантия Румынии 1939 г. ставила Британию за Германию)
 			if call_guarantors and d == b:
@@ -250,7 +253,8 @@ static func _joins_offensive(world: World, m: int, a: int, b: int) -> bool:
 ## Новый член стороны вступает во все войны лидера.
 static func _inherit_wars(world: World, n: int, leader: int) -> void:
 	for e in world.nations[leader].at_war.keys():
-		if e != n and not same_side(world, n, e):
+		# пакт о ненападении держит (СССР в коалиции союзников не воюет с Японией)
+		if e != n and not same_side(world, n, e) and not world.nations[n].pacts.has(e):
 			world.set_war(n, e)
 
 

@@ -21,7 +21,7 @@ static func paths_to(world: World, nation: int, to: int, sources: PackedInt32Arr
 		return res
 	var land := world.p_land
 	var ctrl := world.p_controller
-	var war := world.war
+	var war := world.pass_table()   # можно войти: своя, вражеская, союзная
 	var nc := world.nation_count
 	var a_start := world.adj_start
 	var a_list := world.adj_list
@@ -67,10 +67,10 @@ static func _bfs(world: World, nation: int, from: int, goal: Dictionary) -> Pack
 	var native: Object = Native.core
 	if native != null:
 		return native.call("path_bfs", world.adj_start, world.adj_list, world.p_land, world.p_controller,
-				world.war, world.nation_count, nation, from, PackedInt32Array(goal.keys()))
+				world.pass_table(), world.nation_count, nation, from, PackedInt32Array(goal.keys()))
 	var land := world.p_land
 	var ctrl := world.p_controller
-	var war := world.war
+	var war := world.pass_table()
 	var nc := world.nation_count
 	var a_start := world.adj_start
 	var a_list := world.adj_list

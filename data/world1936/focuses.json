@@ -329,11 +329,11 @@
       {"id": "eng_harris", "name": "Бомбардировочное командование Харриса", "desc": "Ночные налёты сотен бомбардировщиков на города рейха.", "days": 70, "x": 8, "y": 3, "requires": ["eng_bomber"], "available": {"date": "1942-02-22"},
        "effects": [{"t": "bonus", "key": "air_bomb", "v": 0.1}]},
       {"id": "eng_monty", "name": "Восьмая армия Монтгомери", "desc": "Новый командующий, новые танки и приказ не отступать.", "days": 35, "x": 4, "y": 7, "requires": ["eng_atlantic"], "available": {"date": "1942-08-13"},
-       "effects": [{"t": "bonus", "key": "attack", "v": 0.04}, {"t": "bonus", "key": "org", "v": 0.03}, {"t": "war_support", "v": 0.05}]},
+       "effects": [{"t": "bonus", "key": "attack", "v": 0.04}, {"t": "bonus", "key": "org", "v": 0.03}, {"t": "war_support", "v": 0.05}, {"t": "spirit_add", "id": "eng_expedition"}, {"t": "offensive", "target": "ITA", "name": "Эль-Аламейн", "route": ["Тобрук", "Бенгази", "Триполи"]}]},
       {"id": "eng_beveridge", "name": "Доклад Бевериджа", "desc": "Обещание социального государства после победы.", "days": 35, "x": 2, "y": 3, "requires": ["eng_tizard"], "available": {"date": "1942-12-01"},
        "effects": [{"t": "stability", "v": 0.08}, {"t": "bonus", "key": "industry", "v": 0.02}]},
       {"id": "eng_overlord", "name": "Операция «Оверлорд»", "desc": "Высадка в Нормандии: подполье Франции поднимается по сигналу Би-би-си.", "days": 70, "x": 4, "y": 8, "requires": ["eng_monty"], "available": {"date": "1944-06-06"},
-       "effects": [{"t": "bonus", "key": "attack", "v": 0.05}, {"t": "resist", "allies": true, "v": 15}]}
+       "effects": [{"t": "bonus", "key": "attack", "v": 0.05}, {"t": "resist", "allies": true, "v": 15}, {"t": "spirit_add", "id": "eng_second_front"}, {"t": "landing", "prov": "Кан"}, {"t": "offensive", "target": "GER", "name": "Оверлорд", "route": ["Кан", "Париж", "Брюссель", "Гамбург"]}]}
     ],
     "FRA": [
       {"id": "fra_plan", "name": "План перевооружения", "desc": "Четырнадцать миллиардов франков на армию за четыре года.", "days": 70, "x": 1, "y": 0,
@@ -441,17 +441,23 @@
       {"id": "usa_b17", "name": "Летающие крепости", "desc": "Тяжёлые бомбардировщики B-17.", "days": 70, "x": 8, "y": 1, "requires": ["usa_aaf"],
        "effects": [{"t": "bonus", "key": "air_bomb", "v": 0.1}, {"t": "bonus", "key": "research", "v": 0.02}]},
       {"id": "usa_lend_sov", "name": "Ленд-лиз для СССР", "desc": "Закон о ленд-лизе распространён на Советский Союз.", "days": 35, "x": 5, "y": 5, "requires": ["usa_embargo"], "available": {"date": "1941-11-07"},
-       "effects": [{"t": "aid", "target": "SOV"}]},
+       "effects": [{"t": "aid", "target": "SOV"}, {"t": "pact", "target": "SOV"}]},
       {"id": "usa_victory", "name": "Программа победы", "desc": "Шестьдесят тысяч самолётов в год: Детройт переходит на танки.", "days": 70, "x": 1, "y": 4, "requires": ["usa_war_prod"], "available": {"date": "1942-01-06"},
        "effects": [{"t": "factories", "mil": 6}, {"t": "bonus", "key": "industry", "v": 0.05}, {"t": "war_support", "v": 0.1}]},
       {"id": "usa_manhattan", "name": "Манхэттенский проект", "desc": "Секретные лаборатории Лос-Аламоса и Ок-Риджа.", "days": 70, "x": 2, "y": 2, "requires": ["usa_uranium"], "available": {"date": "1942-08-13"},
        "effects": [{"t": "bonus", "key": "research", "v": 0.05}]},
       {"id": "usa_torch", "name": "Операция «Факел»", "desc": "Высадка в Марокко и Алжире.", "days": 35, "x": 4, "y": 6, "requires": ["usa_united"], "available": {"date": "1942-11-08"},
-       "effects": [{"t": "bonus", "key": "attack", "v": 0.03}]},
+       "effects": [{"t": "bonus", "key": "attack", "v": 0.03}, {"t": "spirit_add", "id": "usa_expedition"}, {"t": "offensive", "target": "ITA", "name": "Тунис", "route": ["Триполи"]}]},
+      {"id": "usa_husky", "name": "Операция «Хаски»", "desc": "Самая большая морская высадка в истории на тот день: американская и британская армии на южном берегу Сицилии.", "days": 35, "x": 3, "y": 6, "available": {"date": "1943-07-10", "at_war_pair": ["USA", "ITA"]}, "requires": ["usa_torch"],
+       "effects": [{"t": "landing", "prov": "Палермо"}, {"t": "offensive", "target": "ITA", "name": "Сицилия", "route": ["Палермо", "Мессина"]}]},
+      {"id": "usa_avalanche", "name": "Операция «Аваланш»", "desc": "Десант в заливе Салерно — к Неаполю, а дальше вверх по сапогу к Риму.", "days": 35, "x": 3, "y": 7, "available": {"date": "1943-09-09", "at_war_pair": ["USA", "ITA"]}, "requires": ["usa_husky"],
+       "effects": [{"t": "landing", "prov": "Неаполь"}, {"t": "offensive", "target": "ITA", "name": "Италия", "route": ["Неаполь", "Рим", "Флоренция", "Милан"]}]},
       {"id": "usa_islands", "name": "Прыжки по островам", "desc": "Обходить укреплённые острова и брать нужные для аэродромов.", "days": 70, "x": 7, "y": 3, "requires": ["usa_marines"], "available": {"date": "1943-11-20"},
        "effects": [{"t": "bonus", "key": "attack", "v": 0.03}, {"t": "bonus", "key": "naval", "v": 0.03}]},
       {"id": "usa_normandy", "name": "Высадка в Нормандии", "desc": "Американские дивизии на пляжах «Юта» и «Омаха».", "days": 70, "x": 4, "y": 7, "requires": ["usa_torch"], "available": {"date": "1944-06-06"},
-       "effects": [{"t": "bonus", "key": "attack", "v": 0.04}, {"t": "resist", "allies": true, "v": 10}]}
+       "effects": [{"t": "bonus", "key": "attack", "v": 0.04}, {"t": "resist", "allies": true, "v": 10}, {"t": "landing", "prov": "Шербур-Октевиль"}, {"t": "offensive", "target": "GER", "name": "Кобра", "route": ["Шербур-Октевиль", "Париж", "Кёльн", "Эссен"]}]},
+      {"id": "usa_dragoon", "name": "Операция «Драгун»", "desc": "Вторая высадка во Франции — на Лазурном берегу, к Марселю и вверх по Роне.", "days": 35, "x": 4, "y": 8, "available": {"date": "1944-08-15", "at_war_pair": ["USA", "GER"]}, "requires": ["usa_normandy"],
+       "effects": [{"t": "landing", "prov": "Марсель"}]}
     ],
     "JAP": [
       {"id": "jap_zaibatsu", "name": "Заказы дзайбацу", "desc": "Мицуи, Мицубиси и Сумитомо получают военные заказы.", "days": 70, "x": 1, "y": 0,
