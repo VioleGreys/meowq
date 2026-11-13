@@ -531,7 +531,7 @@ var p_move_mult := PackedFloat32Array()  # копии констант мест�
 var p_def_mult := PackedFloat32Array()   # оборона провинции: местность + укрепления + зима (refresh_def_mult)
 var p_fort := PackedFloat32Array()       # укрепления провинции (forts.json): добавка к обороне
 const DEF_CAP := 1.5
-const RESERVE_HOUR := 0.02   # шанс резерва защитников в час попасть «в бой» (как в жанре; kernels.cpp)
+const RESERVE_CALL := 0.17   # шанс резерва защитников попасть «в бой» раз в 12 часов (решение пользователя; kernels.cpp)
 var _def_month := -1                     # месяц, для которого посчитана зимняя добавка   # константные Array/Dictionary скриптов из потоков не трогаем
 var n_attack := PackedFloat32Array()
 var n_defense := PackedFloat32Array()
@@ -1914,9 +1914,9 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 		var def_hard: float = sd[1]
 		var r1 := rng.randf_range(0.8, 1.2)
 		var r2 := rng.randf_range(0.8, 1.2)
-		# резерв защитников (не в линии) вызывается в бой с шансом RESERVE_HOUR в час;
+		# резерв защитников (не в линии) вызывается в бой с шансом RESERVE_CALL раз в 12 часов;
 		# не вызванный — не «в бою»: может уйти из провинции (решение пользователя)
-		var call := 1.0 - pow(1.0 - RESERVE_HOUR, 24.0)   # тик — сутки: 2 % в час ≈ 38,4 % в день
+		var call := 1.0 - pow(1.0 - RESERVE_CALL, 2.0)   # тик — сутки: 17 % дважды ≈ 31,1 % в день
 		for e in all_def:
 			if not defenders.has(e) and rng.randf() < call:
 				dl.append(e)

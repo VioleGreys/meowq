@@ -530,9 +530,9 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		const double def_hard = sd.hard;
 		const double r1 = double(rng->randf_range(0.8, 1.2));
 		const double r2 = double(rng->randf_range(0.8, 1.2));
-		// резерв защитников (не в линии) вызывается в бой с шансом 2 % в час;
+		// резерв защитников (не в линии) вызывается в бой с шансом 17 % раз в 12 часов;
 		// не вызванный — не «в бою»: может уйти из провинции
-		const double call = 1.0 - std::pow(1.0 - 0.02, 24.0);   // 2 % в час ≈ 38,4 % в день (World.RESERVE_HOUR)
+		const double call = 1.0 - std::pow(1.0 - 0.17, 2.0);   // 17 % раз в 12 часов ≈ 31,1 % в день (World.RESERVE_CALL)
 		for (int32_t e : all_def)
 			if (std::find(defenders.begin(), defenders.end(), e) == defenders.end() && double(rng->randf()) < call)
 				deltas.push_back({ e, 0.0, 0.0 });
