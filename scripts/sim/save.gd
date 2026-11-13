@@ -26,8 +26,7 @@ const QUIT := "quit"             # сохранение при выходе/св
 # неизменяемые описания из файлов игры (деревья фокусов, события, области,
 # черты — 40 % объёма; после обновления игры партия берёт новые тексты и правки)
 const SKIP_WORLD := {"id_image": true, "height_image": true, "terrain_image": true, "spec_gid": true,
-	"focus_trees": true, "focus_index": true, "event_defs": true, "areas": true, "spirit_defs": true,
-	"lead_ver": true, "ld_ver": true}
+	"focus_trees": true, "focus_index": true, "event_defs": true, "areas": true, "spirit_defs": true}
 # у дивизии пишутся только собственные поля: остальное — обёртки над World.d_*
 const DIV_FIELDS := ["slot", "id", "group", "transit_total", "transit_from", "transit_target", "transfer", "_path", "lead"]
 
@@ -152,6 +151,11 @@ func decode(data: Dictionary, world: World, sim: Simulation) -> void:
 	# (поля дивизий при чтении сдвигают lead_ver)
 	if world.commanders.is_empty():
 		Leaders.init(world, MapLoader.DEFAULT_DIR)
+	elif w.has("lead_ver") and w.has("ld_ver"):
+		# «кэш устарел» — как при записи: от этого зависит, дописывать ли новые
+		# дивизии ИИ в армии завтра или пересчитать всё
+		world.lead_ver = int(w["lead_ver"])
+		world.ld_ver = int(w["ld_ver"])
 	elif world.ld_gen.size() == world.d_id.size():
 		world.ld_ver = world.lead_ver
 	# сохранение до рот поддержки: таблица tpl_sc
