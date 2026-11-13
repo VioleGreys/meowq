@@ -504,7 +504,8 @@ static func _ai_wait(world: World, n: int) -> void:
 static func _is_key(fd: Dictionary) -> bool:
 	for e in fd.get("effects", []):
 		if e.get("t", "") in ["event", "war", "annex", "transfer", "release", "faction", "join_faction_of",
-				"pact", "break_pact", "guarantee", "peace", "civil_war", "later", "leader", "ideology", "rep", "concede"]:
+				"pact", "break_pact", "guarantee", "peace", "civil_war", "later", "leader", "ideology", "rep", "concede",
+				"offensive", "landing", "seize", "fort", "war_limit"]:
 			return true
 	return false
 
@@ -804,6 +805,27 @@ static func choose_option(world: World, id: String, option: int, rng: RandomNumb
 
 # --- Эффекты ---------------------------------------------------------------------
 
+## Провинция врага — под контроль страны n (эффект seize); дивизии врага в ней
+## отходят в соседнюю провинцию своей стороны (нет такой — остаются и дерутся).
+static func seize(world: World, n: int, p: int) -> void:
+	if p < 0 or world.p_land[p] == 0:
+		return
+	var c := world.p_controller[p]
+	if c < 0 or c == n or not world.is_at_war(n, c):
+		return
+	world.p_controller[p] = n
+	world.palette_dirty = true
+	for d in world.divs_in(p):
+		if not d.alive or d.owner == n or not world.is_at_war(n, d.owner):
+			continue
+		for q in world.p_adj[p]:
+			var qc := world.p_controller[q]
+			if world.p_land[q] == 1 and qc >= 0 and (qc == d.owner or Diplomacy.same_side(world, qc, d.owner)):
+				d.prov = q
+				d.path = PackedInt32Array()
+				d.progress = 0.0
+				break
+
 static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerator) -> void:
 	for e in effects:
 		# то, от чего зависят условия фокусов (войны, мир, страны, флаги, строй) —
@@ -922,6 +944,31 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 						if d.alive and d.owner == who and from.has(world.p_adm0[d.prov]):
 							d.path = PackedInt32Array()
 							d.prov = dst
+			"rail":
+				# переброска по железной дороге: доля share дивизий страны, стоящих
+				# не у фронта на землях "from" (коды Natural Earth; "lon" — [от, до]
+				# долготы), — по кругу к ближайшей своей суше у точек "to_ll"
+				# (второй стратегический эшелон РККА, май 1941 г.)
+				var pts: Array = []
+				for ll in e.get("to_ll", []):
+					var pt := nearest_held(world, who, Vector2(float(ll[0]), float(ll[1])))
+					if pt >= 0:
+						pts.append(pt)
+				var src: Array = e.get("from", [])
+				var lon_r: Array = e.get("lon", [-180.0, 180.0])
+				var cand: Array = []
+				for d in world.divisions:
+					if not d.alive or d.owner != who or d.transit_days > 0 or d.in_battle:
+						continue
+					var ll2: Vector2 = world.p_lonlat[d.prov]
+					if (src.is_empty() or src.has(world.p_adm0[d.prov])) and ll2.x >= float(lon_r[0]) and ll2.x <= float(lon_r[1]):
+						cand.append(d)
+				var k := int(floor(cand.size() * float(e.get("share", 0.5))))
+				for j in mini(k, cand.size()) if not pts.is_empty() else 0:
+					var d: World.Division = cand[j]
+					d.path = PackedInt32Array()
+					d.progress = 0.0
+					d.prov = pts[j % pts.size()]
 			"air_trans":
 				# транспортные самолёты (Airlift): {"n": число} — помощь из-за рубежа
 				if nat.air_trans < 0.0:
@@ -1084,6 +1131,36 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 					nat.offensive = [target, route, 0, String(e.get("name", ""))]
 			"offensive_end":
 				nat.offensive = []
+			"war_limit":
+				# рубеж операций ИИ: на землях adm0 фронт — только в рамках boxes
+				# ([запад, юг, восток, север]); add — добавить к прежним
+				var boxes: Array = []
+				if e.get("add", false) and not nat.war_limit.is_empty():
+					boxes = nat.war_limit[1].duplicate()
+				for b in e.get("boxes", []):
+					boxes.append([float(b[0]), float(b[1]), float(b[2]), float(b[3])])
+				nat.war_limit = [String(e.get("adm0", "")), boxes]
+			"war_limit_end":
+				nat.war_limit = []
+			"landing":
+				# цель высадки по истории (название провинции): ИИ готовит десант туда,
+				# пока её не возьмёт, не глядя на перевес армий
+				var lp := Array(world.p_name).find(String(e.get("prov", "")))
+				nat.landing_goal = lp
+			"seize":
+				# провинции врага (названия) сразу под наш контроль — войска, стоявшие
+				# в них по договору (японский гарнизон в Тяньцзине); вражеские
+				# дивизии отходят в соседнюю свою провинцию
+				for city in e.get("provs", []):
+					seize(world, who, Array(world.p_name).find(String(city)))
+			"fort":
+				# укрепления (названия провинций): добавка к обороне, v < 0 — снять
+				for city in e.get("provs", []):
+					var fp := Array(world.p_name).find(String(city))
+					if fp >= 0:
+						world.p_fort[fp] = maxf(0.0, world.p_fort[fp] + float(e.get("v", 0.5)))
+				world._def_month = -1
+				world.refresh_def_mult()
 			"spirit_add":
 				nat.spirits[String(e["id"])] = float(e.get("v", 1.0))
 				world.recalc_spirits(nat)
@@ -1641,7 +1718,9 @@ static func effects_text(world: World, effects: Array) -> String:
 	var bonus_names := Tech.BONUS_NAMES.duplicate()
 	bonus_names.merge({"research": "наука", "attack": "атака", "defense": "оборона", "speed": "скорость",
 		"occ_resist": "рост сопротивления на занятых нами землях", "occ_comply": "рост принятия на занятых нами землях",
-		"resistance": "сопротивление на наших занятых землях", "aid_eq": "помощь снаряжением из-за рубежа (заводов)"}, true)
+		"resistance": "сопротивление на наших занятых землях", "aid_eq": "помощь снаряжением из-за рубежа (заводов)",
+		"expedition": "доля армии метрополии на заморском фронте",
+		"cold_native": "привычка к холоду (уровень акклиматизации)"}, true)
 	for e in effects:
 		var tname := ""
 		if e.has("target"):
@@ -1671,6 +1750,8 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%s+%d дивизий" % [who, e.get("n", 1)])
 			"airlift":
 				parts.append("%sпереброска войск по воздуху" % who)
+			"rail":
+				parts.append("%sпереброска %d %% дивизий по железной дороге" % [who, roundi(100.0 * float(e.get("share", 0.5)))])
 			"manpower":
 				parts.append("+%dк призывников" % e["v"])
 			"event":
@@ -1772,6 +1853,16 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sплан наступления%s: %s" % [who, " «%s»" % e["name"] if e.has("name") else "", " → ".join(e.get("route", []))])
 			"offensive_end":
 				parts.append("%sплан наступления закончен" % who)
+			"war_limit":
+				parts.append("%sрубеж операций: %d район(ов)" % [who, e.get("boxes", []).size()])
+			"war_limit_end":
+				parts.append("%sрубеж операций снят" % who)
+			"landing":
+				parts.append("%sвысадка: %s" % [who, e.get("prov", "")])
+			"seize":
+				parts.append("%sпод нашим контролем: %s" % [who, ", ".join(e.get("provs", []))])
+			"fort":
+				parts.append("%s%s: %s" % [who, "укрепления" if float(e.get("v", 0.5)) > 0.0 else "укрепления сняты", ", ".join(e.get("provs", []))])
 			"spirit_add":
 				parts.append("%sчерта «%s»" % [who, world.spirit_defs.get(e["id"], {}).get("name", e["id"])])
 			"spirit_remove":

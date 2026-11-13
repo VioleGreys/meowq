@@ -77,7 +77,40 @@ static func nation_args(world: World, nid: int, mine: PackedInt32Array) -> Array
 	var obj := offensive_objective(world, nat)
 	if obj >= 0:
 		opts["objective"] = obj
+	var lim := war_limit_fronts(world, nat)
+	if not lim.is_empty():
+		opts["fronts"] = lim
 	return military_args(world, nid, mine, opts)
+
+
+## Рубеж операций (эффект war_limit: [код страны Natural Earth, рамки [запад,
+## юг, восток, север]]): фронт ИИ — все наши провинции, кроме взятых на этих
+## землях вне рамок (Ставка ограничивала японские операции в Китае районами:
+## 1937 г. — Северный Китай и низовья Янцзы, 1938-й — до Уханя и Кантон).
+## Цель атаки — у допустимого участка, так что за рамку фронт заходит не
+## дальше чем на провинцию. Пусто — ограничения нет.
+static func war_limit_fronts(world: World, nat: World.Nation) -> Dictionary:
+	if nat.war_limit.is_empty():
+		return {}
+	var code: String = nat.war_limit[0]
+	var boxes: Array = nat.war_limit[1]
+	var out := {}
+	var ctrl := world.p_controller
+	var land := world.p_land
+	for p in world.prov_count:
+		if ctrl[p] != nat.id or land[p] == 0:
+			continue
+		if world.p_adm0[p] == code:
+			var ll: Vector2 = world.p_lonlat[p]
+			var inside := false
+			for b in boxes:
+				if ll.x >= float(b[0]) and ll.y >= float(b[1]) and ll.x <= float(b[2]) and ll.y <= float(b[3]):
+					inside = true
+					break
+			if not inside:
+				continue
+		out[p] = true
+	return out
 
 
 ## Текущая веха плана наступления страны (-1 — плана нет или война с целью не идёт).
@@ -339,7 +372,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			var t: int = entry[1]
 			var need: float = entry[2] * ratio
 			# направление главного удара к цели наступления — сил с запасом (AXIS_COMMIT)
-			var commit := need * AXIS_COMMIT if objective >= 0 and main_axis.has(t) else need
+			var commit: float = need * AXIS_COMMIT if objective >= 0 and main_axis.has(t) else need
 			# осторожная страна не лезет в пустую провинцию-выступ (котёл)
 			if float(entry[2]) <= 0.0 and ratio >= 4.0 and int(entry[3]) < 2:
 				continue
@@ -349,11 +382,20 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				var q := a_list[k]
 				for m in range(pd_start[q], pd_start[q + 1]):
 					var i := pd_list[m]
+					# истощённые (снабжение < SUP_EXH) в атаку не идут (решение пользователя)
 					if dv_owner[i] == nid and in_group.has(i) and dv_flags[i] & 1 == 1 \
-							and not used.has(i) and dv_org[i] > 0.6:
+							and not used.has(i) and dv_org[i] > 0.6 and (not has_sup or dv_sup[i] >= SUP_EXH):
 						group.append(i)
 			if group.is_empty():
 				continue
+			# плохое снабжение группы (в среднем < SUP_BAD) — атака лишь с двойным перевесом
+			if has_sup:
+				var gs := 0.0
+				for i in group:
+					gs += dv_sup[i]
+				if gs / float(group.size()) < SUP_BAD:
+					need *= LOW_SUP_RATIO
+					commit = maxf(commit, need)
 			# сильнейшие первыми; берём ровно столько, сколько нужно (на пустую — одну)
 			group.sort_custom(func(a, b): return dv_power[a] > dv_power[b] or (dv_power[a] == dv_power[b] and a < b))
 			var chosen: Array = []
@@ -379,24 +421,16 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				for i in chosen:
 					left[dv_prov[i]] = int(left[dv_prov[i]]) + 1
 
-	# Ротация: измотанные дивизии (организация < 30 %) на передовой отходят на
-	# соседнюю тыловую провинцию, если на участке остаётся кто-то из наших.
+	# Перегруппировка: измотанные дивизии (организация < REGROUP_ORG) на передовой
+	# отходят на соседнюю тыловую провинцию — даже последняя на участке (решение
+	# пользователя) — и не идут на фронт, пока не восстановят организацию.
 	var rotated: Array = []
-	var ours_left := {}
 	if at_war:
 		for i in idle:
-			if used.has(i) or dv_org[i] >= 0.3:
+			if used.has(i) or dv_org[i] >= REGROUP_ORG:
 				continue
 			var pv := dv_prov[i]
 			if not fronts.has(pv):
-				continue
-			if not ours_left.has(pv):
-				var cnt := 0
-				for m in range(pd_start[pv], pd_start[pv + 1]):
-					if dv_owner[pd_list[m]] == nid:
-						cnt += 1
-				ours_left[pv] = cnt
-			if int(ours_left[pv]) <= 1:
 				continue
 			var rear := -1
 			for k in range(a_start[pv], a_start[pv + 1]):
@@ -407,7 +441,6 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			if rear < 0:
 				continue
 			used[i] = true
-			ours_left[pv] = int(ours_left[pv]) - 1
 			rotated.append(i)
 			orders.append([i, PackedInt32Array([rear])])
 
@@ -459,6 +492,8 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	for i in idle:
 		if used.has(i):
 			continue
+		if dv_org[i] < REGROUP_ORG:
+			continue   # перегруппировка — на фронт не идёт
 		var pv := dv_prov[i]
 		if fronts.has(pv) and int(per_front.get(pv, 0)) <= int(desired[pv]) + 1:
 			continue
@@ -534,6 +569,8 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 const SUP_BAD := 0.5     # как World.SUP_BAD / SUP_EXH (константы скрипта мира из потоков не читаем)
 const SUP_EXH := 0.25
 const CLIM_ATK := 0.25   # как Climate: атака × (1 − 0,25 × неакклиматизированность)
+const REGROUP_ORG := 0.3    # перегруппировка: ниже — с фронта в тыл и не на фронт (решение пользователя)
+const LOW_SUP_RATIO := 2.0  # перевес для атаки группой с плохим снабжением (решение пользователя)
 const SCORE_STR := 5.0  # сила обороны в очереди целей (оценка — в единицах боя, веса очереди — прежние)
 const AXIS_COMMIT := 2.0 # к цели наступления (план, группа с целью): на лучшие цели — вдвое больше нужного
 

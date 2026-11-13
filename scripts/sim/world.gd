@@ -109,6 +109,8 @@ class Nation:
 	var diplo := 0.0            # дипломатическая активность: гарантии, союзы, пакты, помощь, вступление за жертву
 	var inv_target := -1        # ИИ: цель готовящейся высадки
 	var inv_port := -1          # ИИ: порт посадки
+	var landing_goal := -1      # ИИ: цель высадки по истории (эффект landing), пока её не возьмём
+	var war_limit: Array = []   # ИИ: рубеж операций [код страны Natural Earth, долгота] (эффект war_limit)
 	var lines: Array = []       # производственные линии: [тип снаряжения, заводов, эффективность]
 	# распределение заводов (Military.plan_production): желаемые доли по типам,
 	# выпуск и склад с прошлого пересмотра, расход снаряжения в день (среднее)
@@ -528,6 +530,7 @@ var adj_list := PackedInt32Array()
 var p_move_mult := PackedFloat32Array()  # копии констант местности по провинциям:
 var p_def_mult := PackedFloat32Array()   # оборона провинции: местность + укрепления + зима (refresh_def_mult)
 var p_fort := PackedFloat32Array()       # укрепления провинции (forts.json): добавка к обороне
+const DEF_CAP := 1.5
 var _def_month := -1                     # месяц, для которого посчитана зимняя добавка   # константные Array/Dictionary скриптов из потоков не трогаем
 var n_attack := PackedFloat32Array()
 var n_defense := PackedFloat32Array()
@@ -830,7 +833,8 @@ func refresh_def_mult() -> void:
 				v += 0.25
 			elif mid and lat >= 48.0:
 				v += 0.12
-		p_def_mult[p] = v
+		# в бою атака × (1 − 0,6 × оборона): выше 1,5 множитель ушёл бы к нулю и в минус
+		p_def_mult[p] = minf(v, DEF_CAP)
 
 
 func day_of(date: String) -> int:

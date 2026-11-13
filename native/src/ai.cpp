@@ -80,7 +80,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	const bool has_clim = p_hot_a.size() == pc && p_cold_a.size() == pc && n_hot_a.size() > nid && n_cold_a.size() > nid;
 	const float *p_hot = p_hot_a.ptr(), *p_cold = p_cold_a.ptr();
 	const double *n_hot = n_hot_a.ptr(), *n_cold = n_cold_a.ptr();
-	const double SUP_BAD = 0.5, SUP_EXH = 0.25, CLIM_ATK = 0.25;
+	const double SUP_BAD = 0.5, SUP_EXH = 0.25, CLIM_ATK = 0.25, REGROUP_ORG = 0.3;
 	auto sup_mult = [&](double sv) { return sv >= SUP_BAD ? 1.0 : (sv >= SUP_EXH ? 0.75 : 0.5); };
 	const int64_t ndv = dv_owner_a.size();
 
@@ -267,9 +267,9 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		std::vector<int32_t> group, chosen;
 		for (const Entry &entry : target_list) {
 			const int32_t t = entry.t;
-			const double need = entry.es * ratio;
+			double need = entry.es * ratio;
 			// направление главного удара к цели наступления — сил с запасом (как ai.gd)
-			const double commit = (objective >= 0 && main_axis[t]) ? need * 2.0 : need;
+			double commit = (objective >= 0 && main_axis[t]) ? need * 2.0 : need;
 			// осторожная страна не лезет в пустую провинцию-выступ (котёл)
 			if (entry.es <= 0.0 && ratio >= 4.0 && entry.dirs < 2) continue;
 			const bool breach = objective >= 0 && entry.es <= 0.0 && main_axis[t];
@@ -278,11 +278,22 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 				const int32_t q = a_list[k];
 				for (int32_t m = pd_start[q]; m < pd_start[q + 1]; m++) {
 					const int32_t i = pd_list[m];
-					if (dv_owner[i] == nid && in_group[i] && (dv_flags[i] & 1) == 1 && !used[i] && double(dv_org[i]) > 0.6)
+					// истощённые (снабжение < SUP_EXH) в атаку не идут (как ai.gd)
+					if (dv_owner[i] == nid && in_group[i] && (dv_flags[i] & 1) == 1 && !used[i] && double(dv_org[i]) > 0.6
+							&& (!has_sup || dv_sup[i] >= SUP_EXH))
 						group.push_back(i);
 				}
 			}
 			if (group.empty()) continue;
+			// плохое снабжение группы (в среднем < SUP_BAD) — атака лишь с двойным перевесом (как ai.gd)
+			if (has_sup) {
+				double gs = 0.0;
+				for (int32_t i : group) gs += dv_sup[i];
+				if (gs / double(group.size()) < SUP_BAD) {
+					need *= 2.0;
+					commit = std::max(commit, need);
+				}
+			}
 			std::sort(group.begin(), group.end(), [dv_power](int32_t a, int32_t b) {
 				return dv_power[a] > dv_power[b] || (dv_power[a] == dv_power[b] && a < b);
 			});
@@ -314,22 +325,15 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		}
 	}
 
-	// ротация: измотанные дивизии (организация < 30 %) на передовой отходят на
-	// соседнюю тыловую провинцию, если на участке остаётся кто-то из наших
+	// перегруппировка: измотанные дивизии (организация < 30 %) на передовой отходят
+	// на соседнюю тыловую провинцию — даже последняя на участке (решение
+	// пользователя) — и не идут на фронт, пока не восстановят 30 % (как ai.gd)
 	std::vector<int32_t> rotated;
 	if (at_war) {
-		std::vector<int32_t> ours_left(pc, INT_MIN);
 		for (int32_t i : idle) {
-			if (used[i] || double(dv_org[i]) >= 0.3) continue;
+			if (used[i] || double(dv_org[i]) >= REGROUP_ORG) continue;
 			const int32_t pv = dv_prov[i];
 			if (!fronts.has[pv]) continue;
-			if (ours_left[pv] == INT_MIN) {
-				int cnt = 0;
-				for (int32_t m = pd_start[pv]; m < pd_start[pv + 1]; m++)
-					if (dv_owner[pd_list[m]] == nid) cnt++;
-				ours_left[pv] = cnt;
-			}
-			if (ours_left[pv] <= 1) continue;
 			int32_t rear = -1;
 			for (int32_t k = a_start[pv]; k < a_start[pv + 1]; k++) {
 				const int32_t q = a_list[k];
@@ -340,7 +344,6 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			}
 			if (rear < 0) continue;
 			used[i] = 1;
-			ours_left[pv] -= 1;
 			rotated.push_back(i);
 			Array o;
 			o.push_back(i);
@@ -403,6 +406,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	const uint8_t *war_row = war + int64_t(nid) * nc;
 	for (int32_t i : idle) {
 		if (used[i]) continue;
+		if (double(dv_org[i]) < REGROUP_ORG) continue;   // перегруппировка — на фронт не идёт (как ai.gd)
 		const int32_t pv = dv_prov[i];
 		if (fronts.has[pv] && per_front[pv] <= desired[pv] + 1) continue;
 		std::vector<int32_t> goals;

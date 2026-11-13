@@ -69,6 +69,7 @@ const TRUCK_RANGE := [0, 1, 2]
 const TRUCK_SHARE := [0.0, 0.5, 1.0]
 const TRUCK_USE := 0.05       # грузовиков в день на единицу подачи узла (при полной доле)
 const MAX_RANGE := HUB_RANGE + NODE_MAX / 2 + 2
+const MARCH_W := 0.25          # дивизия на марше по своему тылу (переброска по железной дороге) — четверть нагрузки
 ## Широкая колея (как было: СССР, Финляндия); у остальных — стандартная.
 const BROAD_GAUGE := ["SOV", "FIN"]
 
@@ -243,7 +244,7 @@ static func regions(world: World, side_of: PackedInt32Array, sources: Array, cap
 		fall.append(pow(FALLOFF, maxi(0, h - 1)))
 	var t := {"ps": f[0], "conn": f[3], "pocket": POCKET_LOCAL, "side_of": side_of, "ctrl": world.p_controller, "pcap": world.p_supply_cap,
 		"d_alive": world.d_alive, "d_prov": world.d_prov, "d_owner": world.d_owner,
-		"mot": Native.gather_i32(world.tpl_motor, world.d_tpl), "supw": Native.gather_f64(_tpl_supw(world), world.d_tpl), "local": LOCAL,
+		"mot": Native.gather_i32(world.tpl_motor, world.d_tpl), "supw": _march_w(world, side_of), "local": LOCAL,
 		"cand": f[5], "chop": f[6], "aux": f[11], "afac": f[12], "naux": AUX_N, "aux_per": AUX_PER, "nf": f[7], "nprov": f[8], "fall": fall, "budget": BUDGET_K, "kc": K_CAND, "nr": world.region_count}
 	world.p_supcap = f[4]   # для расстановки войск ИИ (AIPlanner: не скапливать сверх снабжения)
 	var r: Array = Native.core.call("supply_divs", t) if Native.core != null else divisions_gd(t)
@@ -287,6 +288,29 @@ static func _trucks(world: World) -> void:
 		else:
 			nat.stock[Military.EQ_TRUCK] = 0.0
 			nat.truck_ok = st / want
+
+
+## Нагрузка дивизий на снабжение: по шаблону (роты поддержки); идущие по
+## своему тылу (следующая провинция — своей стороны, не в бою) — × MARCH_W:
+## переброска идёт по железной дороге, а не со склада провинции. Без этого
+## подкрепления СССР осенью 1941 г. скапливались по 100+ дивизий в узловых
+## провинциях на пути к фронту (Касимов: 137 при ёмкости 15) — голодали,
+## теряли организацию и от этого шли ещё медленнее.
+static func _march_w(world: World, side_of: PackedInt32Array) -> PackedFloat64Array:
+	var w := Native.gather_f64(_tpl_supw(world), world.d_tpl)
+	var nxt := world.d_next
+	var own := world.d_owner
+	var alive := world.d_alive
+	var ctrl := world.p_controller
+	for i in nxt.size():
+		var t := nxt[i]
+		if t < 0 or alive[i] == 0 or own[i] < 0:
+			continue
+		var c := ctrl[t]
+		var s := side_of[own[i]]
+		if c >= 0 and s >= 0 and side_of[c] == s:
+			w[i] *= MARCH_W
+	return w
 
 
 ## Нагрузка шаблонов на снабжение (роты поддержки: Military.SC_K, 6-е значение).

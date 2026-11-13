@@ -1289,12 +1289,22 @@ func _share_score(side: Dictionary, loss: float) -> void:
 
 
 func _retreat(d: World.Division) -> void:
+	# куда отходить: своя или союзная провинция без врага; нет — своя или союзная,
+	# где идёт бой; среди равных — где наших меньше (не копить стопки: раньше шли
+	# туда, где наших больше, и при отступлении целые армии по 60–70 дивизий
+	# гибли разом — Коростень, Саранск, 1941 г.). Уничтожение — только если вокруг
+	# нет своих и союзных земель.
 	var best := -1
 	var best_score := -INF
 	for q in world.p_adj[d.prov]:  # главный поток — можно без CSR
-		if world.p_land[q] == 0 or world.p_controller[q] != d.owner or world.has_enemies(d.owner, q):
+		if world.p_land[q] == 0:
 			continue
-		var score := float(world.divs_count(q)) + float(q % 5) * 0.01
+		var c := world.p_controller[q]
+		if c < 0 or (c != d.owner and not Diplomacy.same_side(world, c, d.owner)):
+			continue
+		var score := -float(world.divs_count(q)) + float(q % 5) * 0.01
+		if world.has_enemies(d.owner, q):
+			score -= 10000.0
 		if score > best_score:
 			best_score = score
 			best = q

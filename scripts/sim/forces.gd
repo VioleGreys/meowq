@@ -1241,21 +1241,29 @@ static func sea_transfer(world: World, divs: Array, target: int) -> String:
 
 
 ## ИИ: подкрепления морем на заморские участки фронта (захваченные порты,
-## колонии), куда не дойти по суше от столицы.
+## колонии), куда не дойти по суше от столицы. Обычно — до 3 дивизий за раз из
+## домашних портов. С чертой `expedition` (доля армии на заморском фронте —
+## японские армии в Китае) — сколько нужно фронту, до EXP_BATCH за раз, из
+## любых своих тыловых портов (метрополия, Корея, Тайвань), пока дома остаётся
+## больше (1 − доля) армии.
+const EXP_BATCH := 12
+const EXP_PORT := 4
+const EXP_MIN_ZONE := 6
+
 static func ai_transfers(world: World, n: int) -> void:
 	var nat: World.Nation = world.nations[n]
 	if nat.at_war.is_empty():
 		return
+	var exp_share := clampf(nat.b("expedition"), 0.0, 0.95)
 	# провинции, связанные со столицей по суше
 	var home: PackedByteArray = own_reach(world, n, nat.capital)[0]
-	# заморский порт на фронте, где мало наших войск
-	var dest := -1
-	var dest_need := 0
 	var ctrl := world.p_controller
 	var a_start := world.adj_start
 	var a_list := world.adj_list
 	var war := world.war
 	var nc := world.nation_count
+	# заморские порты на фронте и сколько им не хватает
+	var dests: Array = []   # [нужно, порт]
 	for p in world.prov_count:
 		if ctrl[p] != n or home[p] == 1 or not is_port(world, p):
 			continue
@@ -1273,12 +1281,22 @@ static func ai_transfers(world: World, n: int) -> void:
 				mine += 1
 			h = world.d_nx[h]
 		var need := 3 + enemies - mine
-		if need > dest_need:
-			dest_need = need
-			dest = p
-	if dest < 0:
+		if exp_share > 0.0:
+			# экспедиция: участок у порта — до ёмкости снабжения, но не в малый
+			# плацдарм (меньше EXP_MIN_ZONE своих провинций по суше): там без пути
+			# отхода гибнет всё, что туда привезли (Нинбо, 1938 г.: 21 дивизия);
+			# союзные провинции считаются — туда можно отступить (Тяньцзинь у Маньчжоу-го)
+			var zn := _side_zone(world, n, p, EXP_MIN_ZONE)
+			if zn >= EXP_MIN_ZONE:
+				var cap := int(world.p_supcap[p]) if p < world.p_supcap.size() else 0
+				need = maxi(need, cap + enemies - mine)
+		if need > 0:
+			dests.append([need, p])
+	if dests.is_empty():
 		return
-	# свободные дивизии в домашних портах
+	dests.sort_custom(func(a, b): return a[0] > b[0] or (a[0] == b[0] and a[1] < b[1]))
+	# свободные дивизии в тыловых портах: дома, а с экспедицией — и в других своих
+	# землях без фронта, откуда до цели не дойти по суше
 	var by_port := {}
 	var own := world.d_owner
 	var dprov := world.d_prov
@@ -1289,21 +1307,93 @@ static func ai_transfers(world: World, n: int) -> void:
 	var resv := world.d_resv
 	var bt := world.d_battle
 	var day := world.day
+	var at_home := 0
+	var total := 0
 	for i in own.size():
-		if own[i] != n or alive[i] == 0 or home[dprov[i]] == 0 or nxt[i] >= 0 or tr[i] != 0 or inv[i] >= 0 \
-				or resv[i] >= day or bt[i] != 0 or not is_port(world, dprov[i]):
+		if own[i] != n or alive[i] == 0:
+			continue
+		total += 1
+		if home[dprov[i]] == 1:
+			at_home += 1
+		if nxt[i] >= 0 or tr[i] != 0 or inv[i] >= 0 or resv[i] >= day or bt[i] != 0 or not is_port(world, dprov[i]):
+			continue
+		if home[dprov[i]] == 0 and (exp_share <= 0.0 or ctrl[dprov[i]] != n):
 			continue
 		var d: World.Division = world.divisions[i]
 		if not _at_front(world, d):
 			if not by_port.has(d.prov):
 				by_port[d.prov] = []
 			by_port[d.prov].append(d)
-	for port in by_port:
-		var group: Array = by_port[port].slice(0, mini(dest_need, 3))
-		if sea_transfer(world, group, dest) == "":
-			if Diplomacy.is_major(world, n) or nat.is_player:
-				world.log_event("%s: переправа %d див. → %s" % [nat.name, group.size(), world.p_name[dest]])
-			return
+	if exp_share <= 0.0:
+		var dest: int = dests[0][1]
+		var dest_need: int = dests[0][0]
+		for port in by_port:
+			var group: Array = by_port[port].slice(0, mini(dest_need, 3))
+			if sea_transfer(world, group, dest) == "":
+				if Diplomacy.is_major(world, n) or nat.is_player:
+					world.log_event("%s: переправа %d див. → %s" % [nat.name, group.size(), world.p_name[dest]])
+				return
+		return
+	# экспедиция: дома держим (1 − доля) армии
+	var spare := at_home - int(ceil(float(total) * (1.0 - exp_share)))
+	var budget := mini(EXP_BATCH, spare)
+	if budget <= 0:
+		return
+	var ports := by_port.keys()
+	ports.sort()
+	var sent := 0
+	for dd in dests:
+		var dest: int = dd[1]
+		var need: int = dd[0]
+		# до цели по суше не дойти — иначе дивизии и так дойдут сами
+		var reach_d: PackedByteArray = own_reach(world, n, dest)[0]
+		for port in ports:
+			if need <= 0 or budget <= 0:
+				break
+			if reach_d[port] == 1:
+				continue
+			var lst: Array = by_port[port]
+			if lst.is_empty():
+				continue
+			var k := mini(mini(need, budget), EXP_PORT)
+			var group: Array = lst.slice(0, k)
+			if sea_transfer(world, group, dest) == "":
+				by_port[port] = lst.slice(k)
+				need -= k
+				budget -= k
+				sent += k
+		if budget <= 0:
+			break
+	if sent > 0 and (Diplomacy.is_major(world, n) or nat.is_player):
+		world.log_event("%s: переправа %d див. на заморский фронт" % [nat.name, sent])
+
+
+static func _own_divs(world: World, n: int, p: int) -> int:
+	var k := 0
+	var h := world.pl_head[p]
+	while h >= 0:
+		if world.d_owner[h] == n:
+			k += 1
+		h = world.d_nx[h]
+	return k
+
+
+## Сколько провинций своей стороны (свои и союзные) связано по суше с p — до limit.
+static func _side_zone(world: World, n: int, p: int, limit: int) -> int:
+	var seen := {p: true}
+	var queue: Array = [p]
+	var head := 0
+	while head < queue.size() and seen.size() < limit:
+		var x: int = queue[head]
+		head += 1
+		for q in world.p_adj[x]:
+			if seen.has(q) or world.p_land[q] == 0:
+				continue
+			var c := world.p_controller[q]
+			if c >= 0 and (c == n or Diplomacy.same_side(world, c, n)):
+				seen[q] = true
+				queue.append(q)
+	return seen.size()
 
 
 ## Подготовка высадки. Пустая строка — план создан; иначе причина.
@@ -2121,8 +2211,25 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 	# первый подходящий противник: против сильного флота десант обречён — такого
 	# пропускаем и смотрим следующего (Британия сильнее — значит, Норвегия)
 	var enemy := -1
+	# цель высадки по истории (эффект landing): взята нами или союзником — снята
+	var goal := nat.landing_goal
+	if goal >= 0:
+		var gc := world.p_controller[goal]
+		if gc < 0 or gc == n or Diplomacy.same_side(world, gc, n):
+			nat.landing_goal = -1
+			goal = -1
+		elif world.is_at_war(n, gc):
+			enemy = gc
+			if nat.inv_target != goal:
+				nat.inv_target = goal
+				nat.inv_port = -1
 	for e in nat.at_war.keys() + nat.wargoals.keys() + nat.planned_wars.keys():
+		if enemy >= 0:
+			break
 		if not world.nations[e].alive or reach.has(e) or nat.division_count <= world.nations[e].division_count * 1.5:
+			continue
+		# рубеж операций (war_limit): на этих землях — только исторические высадки (landing)
+		if not nat.war_limit.is_empty() and world.nations[e].capital >= 0 and world.p_adm0[world.nations[e].capital] == String(nat.war_limit[0]):
 			continue
 		var their_navy := 0.0
 		for f in world.fleets:
@@ -2157,7 +2264,9 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 			return
 	# цель и порт посадки выбираются один раз на операцию
 	var best := nat.inv_target
-	if best < 0 or world.p_controller[best] != enemy:
+	if goal >= 0:
+		best = goal
+	elif best < 0 or world.p_controller[best] != enemy:
 		best = -1
 		var best_score := INF
 		for p in world.prov_count:
@@ -2176,8 +2285,13 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 	if port < 0 or world.p_controller[port] != n:
 		port = -1
 		var port_d := INF
+		# порт посадки — в метрополии (связан со столицей по суше) или там, где уже
+		# стоят хотя бы 3 наших дивизии: иначе войскам до него не дойти (для Шанхая
+		# ближайшим своим портом был Порт-Артур — десант не собирался никогда)
+		var home_m: PackedByteArray = own_reach(world, n, nat.capital)[0]
 		for p in world.prov_count:
-			if world.p_controller[p] == n and world.p_owner[p] == n and is_port(world, p):
+			if world.p_controller[p] == n and world.p_owner[p] == n and is_port(world, p) \
+					and (home_m[p] == 1 or _own_divs(world, n, p) >= 3):
 				var dd := world.p_center[p].distance_squared_to(world.p_center[best])
 				if dd < port_d:
 					port_d = dd

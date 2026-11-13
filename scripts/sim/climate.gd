@@ -101,7 +101,9 @@ static func refresh_nations(world: World) -> void:
 	for n in nc:
 		var c := maxf(1.0, float(cnt[n]))
 		hot[n] = minf(NATIVE_MAX, hot[n] / c * NATIVE_K)
-		cold[n] = minf(NATIVE_MAX, cold[n] / c * NATIVE_K)
+		# черта cold_native — привычка к холоду сверх доли северных земель (СССР)
+		var cn: float = world.nations[n].b("cold_native") if n < world.nations.size() else 0.0
+		cold[n] = minf(NATIVE_MAX, cold[n] / c * NATIVE_K + cn)
 	world.n_hot = hot
 	world.n_cold = cold
 
