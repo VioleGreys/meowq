@@ -426,18 +426,7 @@ static func save_template(world: World, nid: int, name: String, bat: Array, edit
 		var nat: World.Nation = world.nations[nid]
 		for d in world.divisions:
 			if d.alive and d.tpl == edit:
-				var frac := 1.0
-				for k in EQ_LAND:
-					var have: float = d.eq * float(old["eq"][k])
-					if float(nt["eq"][k]) > 0.0:
-						frac = minf(frac, have / float(nt["eq"][k]))
-				for k in EQ_LAND:
-					nat.stock[k] += maxf(0.0, d.eq * float(old["eq"][k]) - frac * float(nt["eq"][k]))
-				var men_have: float = d.strength / 100.0 * float(old["men"])
-				var s := minf(100.0, 100.0 * men_have / float(nt["men"]))
-				nat.manpower += maxf(0.0, men_have - s / 100.0 * float(nt["men"]))
-				d.eq = frac
-				d.strength = maxf(1.0, s)
+				_convert(nat, d, old, nt)
 		world.templates[edit] = nt
 	else:
 		world.templates.append(nt)
@@ -448,6 +437,124 @@ static func save_template(world: World, nid: int, name: String, bat: Array, edit
 			refresh_division(world, d)
 			d.org = minf(d.org, d.max_org)
 	return edit
+
+
+## Снаряжение и люди дивизии d — в доли нового состава nt (было old): доля
+## снаряжения — по стоимости того, что у дивизии уже есть из нового состава
+## (одна доля на все типы); недостающее по типу берётся со склада, чего нет и
+## на складе — вычитается из доли по стоимости; излишек — на склад; люди сверх состава — в
+## призывников. Остальное придёт пополнением.
+static func _convert(nat: World.Nation, d: World.Division, old: Dictionary, nt: Dictionary) -> void:
+	var have := PackedFloat64Array()
+	var got := 0.0
+	var full := 0.0
+	for k in EQ_LAND:
+		var h: float = d.eq * float(old["eq"][k])
+		var nk: float = float(nt["eq"][k])
+		have.append(h)
+		got += minf(h, nk) * float(EQ_COST[k])
+		full += nk * float(EQ_COST[k])
+	var frac0 := got / full if full > 0.0 else 1.0
+	var frac := frac0
+	for it in 3:
+		# нехватка по типам, которую не покрыл склад, — вычесть её стоимость из доли
+		var miss := 0.0
+		for k in EQ_LAND:
+			miss += maxf(0.0, frac * float(nt["eq"][k]) - have[k] - maxf(0.0, nat.stock[k])) * float(EQ_COST[k])
+		frac = clampf(frac0 - (miss / full if full > 0.0 else 0.0), 0.0, 1.0)
+	for k in EQ_LAND:
+		nat.stock[k] = maxf(0.0, nat.stock[k] + have[k] - frac * float(nt["eq"][k]))
+	var men_have: float = d.strength / 100.0 * float(old["men"])
+	var s := minf(100.0, 100.0 * men_have / float(nt["men"]))
+	nat.manpower += maxf(0.0, men_have - s / 100.0 * float(nt["men"]))
+	d.eq = frac
+	d.strength = maxf(1.0, s)
+
+
+const RETRAIN_ORG := 0.5   # после переучивания организация — не выше половины (переформирование)
+
+
+## Почему дивизию d нельзя переучить в шаблон t ("" — можно).
+static func retrain_block(world: World, d: World.Division, t: int) -> String:
+	if not d.alive or t < 0 or t >= world.templates.size() or d.tpl == t:
+		return "тот же шаблон"
+	if d.in_battle:
+		return "дивизия в бою"
+	if d.transit_days > 0:
+		return "дивизия в море"
+	var miss := tech_missing(world.templates[t], world.nations[d.owner])
+	if miss != "":
+		return "нужна технология «%s»" % Tech.get_tech(miss).get("name", miss)
+	return ""
+
+
+## Переучить дивизию в шаблон t (как в жанре — смена шаблона на ходу): состав
+## пересчитывается (_convert), недостающее придёт пополнением со склада,
+## организация падает до RETRAIN_ORG. Только главный поток (world_lock).
+static func retrain(world: World, d: World.Division, t: int) -> bool:
+	if retrain_block(world, d, t) != "":
+		return false
+	var nat: World.Nation = world.nations[d.owner]
+	_convert(nat, d, world.templates[d.tpl], world.templates[t])
+	d.tpl = t
+	refresh_division(world, d)
+	d.org = minf(d.org, d.max_org * RETRAIN_ORG)
+	return true
+
+
+## База шаблона ИИ (без рот поддержки): общий шаблон «… с ротами» → его база.
+static func base_of(world: World, t: int) -> int:
+	var key := String(world.templates[t].get("key", ""))
+	var i := key.find(":")
+	return int(key.substr(0, i)) if i > 0 else t
+
+
+const AI_RETRAIN_SHARE := 0.1   # ИИ переучивает в месяц не больше этой доли дивизий
+const AI_RETRAIN_STOCK := 0.5   # …и только пока склад покрывает добавку снаряжения с запасом ×2
+
+
+## ИИ (раз в месяц): устаревшие дивизии — на общий шаблон той же базы с
+## нынешними ротами поддержки. Не в бою, сначала тыловые (не у границы),
+## пока на складе хватает снаряжения на добавку.
+static func ai_retrain(world: World, nat: World.Nation) -> int:
+	var sup := ai_support(world, nat)
+	if sup.is_empty():
+		return 0
+	var budget := maxi(1, int(nat.division_count * AI_RETRAIN_SHARE))
+	var done := 0
+	for d in world.divisions:
+		if done >= budget:
+			break
+		if not d.alive or d.owner != nat.id or d.in_battle or d.transit_days > 0:
+			continue
+		if not nat.at_war.is_empty() and _at_front(world, d):
+			continue   # на войне — только не стоящие у фронта (организация падает)
+		var old: Dictionary = world.templates[d.tpl]
+		if int(old["owner"]) >= 0:
+			continue   # свои шаблоны игрока ИИ не трогает
+		var t := with_support(world, base_of(world, d.tpl), sup)
+		if t == d.tpl:
+			continue
+		var nt: Dictionary = world.templates[t]
+		var ok := true
+		for k in EQ_LAND:
+			var add: float = float(nt["eq"][k]) - float(old["eq"][k]) * d.eq
+			if add > 0.0 and nat.stock[k] * AI_RETRAIN_STOCK < add:
+				ok = false
+				break
+		if ok and retrain(world, d, t):
+			done += 1
+	return done
+
+
+static func _at_front(world: World, d: World.Division) -> bool:
+	var p := d.prov
+	var nc := world.nation_count
+	for k in range(world.adj_start[p], world.adj_start[p + 1]):
+		var c := world.p_controller[world.adj_list[k]]
+		if c >= 0 and world.war[d.owner * nc + c] == 1:
+			return true
+	return false
 
 
 ## Скрыть свой шаблон из списка (дивизии на нём остаются).

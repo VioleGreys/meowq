@@ -204,6 +204,17 @@ func _init() -> void:
 	var ap0 := Military.armor_pierce(pnat, base_t["bat"], TankDesigns.FALLBACK)
 	var ap1 := Military.armor_pierce(pnat, at_t2["bat"], TankDesigns.FALLBACK, float(at_t2["fx"]["pierce"]))
 	check(ap1[1] > ap0[1] + 10.0, "противотанковая батарея поднимает бронебойность (%.1f → %.1f)" % [ap0[1], ap1[1]])
+	# переучивание: дивизия без рот → шаблон с ротами; люди и снаряжение пересчитаны, организация — половина
+	check(Military.retrain_block(w, d_b, b_i + 1).contains("технолог") or pnat.techs.has("rad2"), "без технологий рот переучить нельзя")
+	for r_ in sup_t["req"]:
+		pnat.techs[r_] = true
+	var men0 := pnat.manpower
+	var org_before := d_b.org
+	check(Military.retrain(w, d_b, b_i + 1) and d_b.tpl == b_i + 1, "дивизия переучена в шаблон с ротами")
+	check(d_b.strength < 100.0 and d_b.eq < 1.0 and d_b.org <= d_b.max_org * Military.RETRAIN_ORG + 1e-6 and org_before > d_b.org,
+		"после переучивания недокомплект (сила %d%%, снаряжение %d%%), организация %d%% — дойдёт пополнением" % [roundi(d_b.strength), roundi(d_b.eq * 100.0), roundi(100.0 * d_b.org / d_b.max_org)])
+	check(Military.retrain_block(w, d_b, b_i + 1) != "", "на тот же шаблон переучить нельзя")
+	check(Military.retrain(w, d_b, b_i) and pnat.manpower > men0 - 0.01, "обратно — лишние люди и снаряжение возвращаются (призывники %.1f → %.1f)" % [men0, pnat.manpower])
 
 	print("Окружение:")
 	r = fresh()

@@ -348,7 +348,15 @@ func _auto_screenshot_locked() -> void:
 				hud.tech_view._select(ta[1])
 		if _arg("peace") != "":
 			Peace.debug_start(world, nation_by_tag(_arg("peace")), me)
-		if _arg("tpl") != "":
+		if _arg("retrain") != "":
+			# переучивание: --retrain=1 — все дивизии игрока (свой шаблон с ротами — для списка)
+			var mine: Array = []
+			for d in world.divisions:
+				if d.alive and d.owner == me:
+					mine.append(d)
+			Military.save_template(world, me, "Пехотная с ротами", [9, 0, 0, 2, 0, 0, 0], -1, ["eng", "art", "med"])
+			hud._open_retrain(mine)
+		elif _arg("tpl") != "":
 			# конструктор шаблонов: --tpl=N (на основе шаблона N) или --tpl=new
 			hud.open_tab("army")
 			hud._open_tpl_editor(world, -1 if _arg("tpl") == "new" else int(_arg("tpl")), false)

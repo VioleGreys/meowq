@@ -1302,6 +1302,7 @@ func show_selection() -> void:
 	_update_selection_text()
 	_clear(info_actions)
 	info_actions.add_child(_button("Создать армию", func(): game.create_group_from_selection()))
+	info_actions.add_child(_button("Переучить", func(): _open_retrain(game.selected_divs)))
 	info_actions.add_child(_button("Стоп", func(): game.stop_selected(); toast("Войска остановлены")))
 	info_actions.add_child(_button("Снять выделение", func(): game.clear_selection()))
 	info_panel.show()
@@ -1333,6 +1334,7 @@ func show_group(g: World.ArmyGroup) -> void:
 		var i := opts.find(g.enemy)
 		g.enemy = opts[(i + 1) % opts.size()]
 		show_group(g)))
+	info_actions.add_child(_button("Переучить", func(): _open_retrain(game.group_divisions(g.id))))
 	info_actions.add_child(_button("Распустить", func():
 		game.sim.disband_group(g)
 		game.clear_selection()))
@@ -1502,6 +1504,7 @@ func close_popup() -> bool:
 		popup.hide()
 		popup_cover.hide()
 		_set_side_active("")
+		_retrain_divs = []
 		if game.state == "play":
 			log_box.show()
 		elif game.state == "menu":
@@ -2272,6 +2275,76 @@ func _build_tpl_editor(w: World, me: int) -> void:
 	popup_body.add_child(row2)
 
 
+# переучивание (смена шаблона дивизий): список дивизий, пусто — окно закрыто
+var _retrain_divs: Array = []
+
+
+func _open_retrain(divs: Array) -> void:
+	_retrain_divs = divs.duplicate()
+	if _retrain_divs.is_empty():
+		toast("Нет выделенных дивизий")
+		return
+	open_tab("army")
+	_rebuild_popup()
+
+
+## Окно «Переучить»: выбранные дивизии — на другой шаблон (как в жанре).
+func _build_retrain(w: World, me: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_title.text = "Переучить дивизии"
+	var alive: Array = []
+	var by := {}
+	for d in _retrain_divs:
+		if d.alive and d.owner == me:
+			alive.append(d)
+			var nm: String = Military.tpl(w, d.tpl)["name"]
+			by[nm] = int(by.get(nm, 0)) + 1
+	_retrain_divs = alive
+	var parts: Array = []
+	for nm in by:
+		parts.append("%s — %d" % [nm, by[nm]])
+	popup_body.add_child(_label("Дивизий: %d (%s)" % [alive.size(), ", ".join(parts)], 16))
+	popup_body.add_child(_small("Состав меняется сразу: лишнее снаряжение и люди возвращаются на склад, недостающее приходит пополнением (нужны склад и снабжение). Организация падает до %d%% — переформирование. Дивизии в бою и в море не переучиваются. Шаблон устарел — сделайте новый (роты поддержки, новые батальоны) или правьте свой: правка переучивает все его дивизии." % roundi(Military.RETRAIN_ORG * 100.0)))
+	popup_body.add_child(_section("Новый шаблон"))
+	for t in Military.available_templates(w, n):
+		var tp: Dictionary = Military.tpl(w, t)
+		# снаряжение, которого не хватит до полного состава
+		var need := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+		var cnt := 0
+		for d in alive:
+			if d.tpl == t:
+				continue
+			cnt += 1
+			var old: Dictionary = Military.tpl(w, d.tpl)
+			for k in Military.EQ_LAND:
+				need[k] += maxf(0.0, float(tp["eq"][k]) - float(old["eq"][k]) * d.eq)
+		var lack: Array = []
+		for k in Military.EQ_LAND:
+			if need[k] > n.stock[k] + 0.5:
+				lack.append(Military.EQ_SHORT[k])
+		var sup: Array = Military.template_support(tp)
+		var row := VBoxContainer.new()
+		var tt: int = t
+		var b := _button("%s%s" % [tp["name"], (" · роты: %d" % sup.size()) if not sup.is_empty() else ""], func():
+			var done := 0
+			for d in _retrain_divs:
+				if Military.retrain(w, d, tt):
+					done += 1
+			toast("Переучено дивизий: %d" % done)
+			_retrain_divs = []
+			_rebuild_popup(), Vector2(0, 48))
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.clip_text = true
+		b.disabled = cnt == 0
+		row.add_child(b)
+		row.add_child(_small(("на складе не хватит: %s — дойдёт пополнением позже" % ", ".join(lack)) if not lack.is_empty() else
+			("нужно со склада: %s" % _eq_text(need) if cnt > 0 else "все уже на этом шаблоне")))
+		popup_body.add_child(row)
+	popup_body.add_child(_button("Отмена", func():
+		_retrain_divs = []
+		_rebuild_popup(), Vector2(0, 52)))
+
+
 ## Роты поддержки в конструкторе шаблона: до SUPPORT_MAX, ширину не занимают.
 func _build_tpl_support(n: World.Nation) -> void:
 	popup_body.add_child(_section("Роты поддержки: %d из %d (ширину фронта не занимают)" % [_tpl_sup.size(), Military.SUPPORT_MAX]))
@@ -2316,6 +2389,9 @@ func _build_army(w: World, me: int) -> void:
 		return
 	if _tpl_edit != -2:
 		_build_tpl_editor(w, me)
+		return
+	if not _retrain_divs.is_empty():
+		_build_retrain(w, me)
 		return
 	popup_title.text = "Армия"
 	var n: World.Nation = w.nations[me]

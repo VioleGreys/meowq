@@ -188,6 +188,7 @@ func _phase_economy() -> void:
 				Designs.ai_update(world, nat)
 				ShipDesigns.ai_update(world, nat)
 				TankDesigns.ai_update(world, nat)
+				Military.ai_retrain(world, nat)   # устаревшие дивизии — в шаблоны с нынешними ротами
 		Prof.add("эк:наука-слоты", _pt)
 		_pt = Time.get_ticks_usec()
 		for tid in Tech.daily(world, nat):
