@@ -351,6 +351,16 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 							open += 1
 					if open == 0:
 						closing += 1
+			# помощь соседнему бою: враг в цели уже ведёт бой с нами (атакует наш участок
+			# или обороняется от нашей атаки) — удар туда важнее
+			var engaged := false
+			for k in range(pd_start[t], pd_start[t + 1]):
+				var e2 := pd_list[k]
+				if dv_owner[e2] != nid and war[nid * nc + dv_owner[e2]] == 1 and dv_flags[e2] & 2 != 0:
+					engaged = true
+					break
+			if engaged:
+				score -= SUPPORT_BONUS
 			if dirs > 1:
 				score -= float(dirs - 1) * 15.0
 			score -= float(closing) * 25.0
@@ -421,16 +431,39 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				for i in chosen:
 					left[dv_prov[i]] = int(left[dv_prov[i]]) + 1
 
-	# Перегруппировка: измотанные дивизии (организация < REGROUP_ORG) на передовой
-	# отходят на соседнюю тыловую провинцию — даже последняя на участке (решение
-	# пользователя) — и не идут на фронт, пока не восстановят организацию.
+	# Отход с передовой (решение пользователя; так же ai.cpp): организация <
+	# REGROUP_ORG (10 %) — в соседний тыл, даже последняя на участке, и на фронт не
+	# идёт, пока не восстановится; < ROTATE_ORG (30 %) — ротация, если на участке
+	# остаётся кто-то из наших (смена на марше восстанавливает организацию);
+	# резерв, ещё не вызванный в бой (не «в бою»), уходит из провинции, которую не
+	# удержать: атакующих сильнее обороны в ESCAPE_RATIO раз.
 	var rotated: Array = []
+	var ours_left := {}
+	var hopeless := {}
 	if at_war:
 		for i in idle:
-			if used.has(i) or dv_org[i] >= REGROUP_ORG:
+			if used.has(i):
 				continue
 			var pv := dv_prov[i]
 			if not fronts.has(pv):
+				continue
+			var o: float = dv_org[i]
+			if not ours_left.has(pv):
+				var cnt := 0
+				for m in range(pd_start[pv], pd_start[pv + 1]):
+					if dv_owner[pd_list[m]] == nid:
+						cnt += 1
+				ours_left[pv] = cnt
+			var go := false
+			if o < REGROUP_ORG:
+				go = true
+			elif o < ROTATE_ORG:
+				go = int(ours_left[pv]) > 1
+			else:
+				if not hopeless.has(pv):
+					hopeless[pv] = _hopeless(tb, nid, pv)
+				go = hopeless[pv]
+			if not go:
 				continue
 			var rear := -1
 			for k in range(a_start[pv], a_start[pv + 1]):
@@ -441,6 +474,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			if rear < 0:
 				continue
 			used[i] = true
+			ours_left[pv] = int(ours_left[pv]) - 1
 			rotated.append(i)
 			orders.append([i, PackedInt32Array([rear])])
 
@@ -569,10 +603,49 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 const SUP_BAD := 0.5     # как World.SUP_BAD / SUP_EXH (константы скрипта мира из потоков не читаем)
 const SUP_EXH := 0.25
 const CLIM_ATK := 0.25   # как Climate: атака × (1 − 0,25 × неакклиматизированность)
-const REGROUP_ORG := 0.3    # перегруппировка: ниже — с фронта в тыл и не на фронт (решение пользователя)
+const REGROUP_ORG := 0.1    # ниже — с фронта в тыл (даже последняя) и не на фронт (решение пользователя)
+const ROTATE_ORG := 0.3     # ниже — ротация, если на участке остаётся кто-то из наших
+const ESCAPE_RATIO := 3.0   # резерв уходит, если атакующих сильнее обороны во столько раз
+const SUPPORT_BONUS := 20.0 # цель, где враг уже ведёт бой с нами, — важнее
 const LOW_SUP_RATIO := 2.0  # перевес для атаки группой с плохим снабжением (решение пользователя)
 const SCORE_STR := 5.0  # сила обороны в очереди целей (оценка — в единицах боя, веса очереди — прежние)
 const AXIS_COMMIT := 2.0 # к цели наступления (план, группа с целью): на лучшие цели — вдвое больше нужного
+
+
+## Провинция, которую не удержать: наши в ней уже в бою, а сила атакующих (враги
+## в бою в соседних провинциях) больше обороны (с местностью) в ESCAPE_RATIO раз.
+static func _hopeless(tb: Dictionary, nid: int, pv: int) -> bool:
+	var pd_start: PackedInt32Array = tb["pd_start"]
+	var pd_list: PackedInt32Array = tb["pd_list"]
+	var dv_owner: PackedInt32Array = tb["dv_owner"]
+	var dv_flags: PackedInt32Array = tb["dv_flags"]
+	var dv_defw: PackedFloat32Array = tb["dv_defw"]
+	var dv_power: PackedFloat32Array = tb["dv_power"]
+	var a_start: PackedInt32Array = tb["adj_start"]
+	var a_list: PackedInt32Array = tb["adj_list"]
+	var war: PackedByteArray = tb["war"]
+	var def_tab: PackedFloat32Array = tb["def"]
+	var nc: int = tb["nc"]
+	var fighting := false
+	var ours := 0.0
+	for m in range(pd_start[pv], pd_start[pv + 1]):
+		var e := pd_list[m]
+		if dv_owner[e] != nid:
+			continue
+		if dv_flags[e] & 2 != 0:
+			fighting = true
+		ours += dv_defw[e]
+	var theirs := 0.0
+	if fighting:
+		for k in range(a_start[pv], a_start[pv + 1]):
+			var q := a_list[k]
+			for m in range(pd_start[q], pd_start[q + 1]):
+				var e := pd_list[m]
+				var eo := dv_owner[e]
+				if eo != nid and war[nid * nc + eo] == 1 and dv_flags[e] & 2 != 0:
+					theirs += dv_power[e]
+	var dm: float = 1.0 / maxf(0.1, 1.0 - 0.6 * def_tab[pv])
+	return fighting and theirs > ESCAPE_RATIO * ours * dm
 
 
 static func _sup_mult(sv: float) -> float:

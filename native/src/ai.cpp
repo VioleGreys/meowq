@@ -80,7 +80,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	const bool has_clim = p_hot_a.size() == pc && p_cold_a.size() == pc && n_hot_a.size() > nid && n_cold_a.size() > nid;
 	const float *p_hot = p_hot_a.ptr(), *p_cold = p_cold_a.ptr();
 	const double *n_hot = n_hot_a.ptr(), *n_cold = n_cold_a.ptr();
-	const double SUP_BAD = 0.5, SUP_EXH = 0.25, CLIM_ATK = 0.25, REGROUP_ORG = 0.3;
+	const double SUP_BAD = 0.5, SUP_EXH = 0.25, CLIM_ATK = 0.25, REGROUP_ORG = 0.1, ROTATE_ORG = 0.3, ESCAPE_RATIO = 3.0, SUPPORT_BONUS = 20.0;
 	auto sup_mult = [&](double sv) { return sv >= SUP_BAD ? 1.0 : (sv >= SUP_EXH ? 0.75 : 0.5); };
 	const int64_t ndv = dv_owner_a.size();
 
@@ -244,6 +244,14 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 					if (open == 0) closing++;
 				}
 			}
+			// помощь соседнему бою: враг в цели уже ведёт бой с нами (атакует наш участок
+			// или обороняется от нашей атаки) — удар туда важнее (как ai.gd)
+			bool engaged = false;
+			for (int32_t k = pd_start[t]; k < pd_start[t + 1] && !engaged; k++) {
+				const int32_t e = pd_list[k];
+				if (dv_owner[e] != nid && war[int64_t(nid) * nc + dv_owner[e]] == 1 && (dv_flags[e] & 2) != 0) engaged = true;
+			}
+			if (engaged) score -= SUPPORT_BONUS;
 			if (dirs > 1) score -= double(dirs - 1) * 15.0;
 			score -= double(closing) * 25.0;
 			// удар — со снабжённых участков
@@ -325,15 +333,58 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		}
 	}
 
-	// перегруппировка: измотанные дивизии (организация < 30 %) на передовой отходят
-	// на соседнюю тыловую провинцию — даже последняя на участке (решение
-	// пользователя) — и не идут на фронт, пока не восстановят 30 % (как ai.gd)
+	// отход с передовой (решение пользователя; как ai.gd):
+	// организация < REGROUP_ORG (10 %) — в соседний тыл, даже последняя на участке,
+	// и на фронт не идёт, пока не восстановится; < ROTATE_ORG (30 %) — ротация,
+	// если на участке остаётся кто-то из наших (смена на марше восстанавливает
+	// организацию); резерв, ещё не вызванный в бой (не «в бою»), уходит из
+	// провинции, которую не удержать: атакующих сильнее обороны в ESCAPE_RATIO раз
 	std::vector<int32_t> rotated;
 	if (at_war) {
+		std::vector<int32_t> ours_left(pc, INT_MIN);
+		std::vector<int8_t> hopeless(pc, -1);
+		auto is_hopeless = [&](int32_t pv) -> bool {
+			if (hopeless[pv] >= 0) return hopeless[pv] == 1;
+			bool fighting = false;
+			double ours = 0.0;
+			for (int32_t m = pd_start[pv]; m < pd_start[pv + 1]; m++) {
+				const int32_t e = pd_list[m];
+				if (dv_owner[e] != nid) continue;
+				if ((dv_flags[e] & 2) != 0) fighting = true;
+				ours += double(dv_defw[e]);
+			}
+			double theirs = 0.0;
+			if (fighting) {
+				for (int32_t k = a_start[pv]; k < a_start[pv + 1]; k++) {
+					const int32_t q = a_list[k];
+					for (int32_t m = pd_start[q]; m < pd_start[q + 1]; m++) {
+						const int32_t e = pd_list[m];
+						const int32_t eo = dv_owner[e];
+						if (eo != nid && war[int64_t(nid) * nc + eo] == 1 && (dv_flags[e] & 2) != 0) theirs += double(dv_power[e]);
+					}
+				}
+			}
+			const double dm = 1.0 / std::max(0.1, 1.0 - 0.6 * double(def_tab[pv]));
+			const bool h = fighting && theirs > ESCAPE_RATIO * ours * dm;
+			hopeless[pv] = h ? 1 : 0;
+			return h;
+		};
 		for (int32_t i : idle) {
-			if (used[i] || double(dv_org[i]) >= REGROUP_ORG) continue;
+			if (used[i]) continue;
 			const int32_t pv = dv_prov[i];
 			if (!fronts.has[pv]) continue;
+			const double o = double(dv_org[i]);
+			if (ours_left[pv] == INT_MIN) {
+				int cnt = 0;
+				for (int32_t m = pd_start[pv]; m < pd_start[pv + 1]; m++)
+					if (dv_owner[pd_list[m]] == nid) cnt++;
+				ours_left[pv] = cnt;
+			}
+			bool go = false;
+			if (o < REGROUP_ORG) go = true;
+			else if (o < ROTATE_ORG) go = ours_left[pv] > 1;
+			else go = is_hopeless(pv);
+			if (!go) continue;
 			int32_t rear = -1;
 			for (int32_t k = a_start[pv]; k < a_start[pv + 1]; k++) {
 				const int32_t q = a_list[k];
@@ -344,13 +395,14 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			}
 			if (rear < 0) continue;
 			used[i] = 1;
+			ours_left[pv] -= 1;
 			rotated.push_back(i);
-			Array o;
-			o.push_back(i);
+			Array o2;
+			o2.push_back(i);
 			PackedInt32Array path;
 			path.push_back(rear);
-			o.push_back(path);
-			orders.push_back(o);
+			o2.push_back(path);
+			orders.push_back(o2);
 		}
 	}
 

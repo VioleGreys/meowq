@@ -945,7 +945,7 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 							d.path = PackedInt32Array()
 							d.prov = dst
 			"rail":
-				# переброска по железной дороге: доля share дивизий страны, стоящих
+				# переброска по железной дороге (организация — до RAIL_ORG): доля share дивизий страны, стоящих
 				# не у фронта на землях "from" (коды Natural Earth; "lon" — [от, до]
 				# долготы), — по кругу к ближайшей своей суше у точек "to_ll"
 				# (второй стратегический эшелон РККА, май 1941 г.)
@@ -969,6 +969,8 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 					d.path = PackedInt32Array()
 					d.progress = 0.0
 					d.prov = pts[j % pts.size()]
+					# переброска эшелонами — дивизия прибывает неготовой к бою (решение пользователя)
+					d.org = minf(d.org, d.max_org * RAIL_ORG)
 			"air_trans":
 				# транспортные самолёты (Airlift): {"n": число} — помощь из-за рубежа
 				if nat.air_trans < 0.0:
@@ -1492,6 +1494,8 @@ static func release(world: World, tag: String, provs: Array, overlord: int, take
 	world.palette_dirty = true
 	return n
 
+
+const RAIL_ORG := 0.1          # переброска по железной дороге (эффект rail): организация прибывших — 10 %
 
 ## Гражданская война (как в жанре): страна одна, и взятая у другой стороны
 ## провинция, удержанная CIVIL_INTEGRATE дней, — её, с заводами и людьми (до

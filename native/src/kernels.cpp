@@ -464,7 +464,7 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		double org, str;
 	};
 	std::vector<Delta> deltas;
-	std::vector<int32_t> defenders, attackers, src;
+	std::vector<int32_t> defenders, attackers, src, all_def;
 	const int32_t *pr = prov.ptr();
 	const float *tw = tpl_width.ptr(), *fwp = fw.ptr();
 	const double *og = org_in.ptr();
@@ -517,7 +517,7 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 			if (std::find(src.begin(), src.end(), pr[i]) == src.end()) src.push_back(pr[i]);
 		const int dirs = std::min(int(src.size()), int(fwp[9]));
 		const double limit = double(fwp[terr]) + double(fwp[8]) * double(dirs - 1);
-		for (int32_t e : defenders) deltas.push_back({ e, 0.0, 0.0 });   // резерв — тоже в бою
+		all_def = defenders;   // резерв: в бою, только если выпал вызов (ниже, как World.k_combat)
 		for (int32_t e : attackers) deltas.push_back({ e, 0.0, 0.0 });
 		pick(attackers, aw, limit);
 		pick(defenders, dw, limit);
@@ -530,6 +530,12 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		const double def_hard = sd.hard;
 		const double r1 = double(rng->randf_range(0.8, 1.2));
 		const double r2 = double(rng->randf_range(0.8, 1.2));
+		// резерв защитников (не в линии) вызывается в бой с шансом 2 % в час;
+		// не вызванный — не «в бою»: может уйти из провинции
+		const double call = 1.0 - std::pow(1.0 - 0.02, 24.0);   // 2 % в час ≈ 38,4 % в день (World.RESERVE_HOUR)
+		for (int32_t e : all_def)
+			if (std::find(defenders.begin(), defenders.end(), e) == defenders.end() && double(rng->randf()) < call)
+				deltas.push_back({ e, 0.0, 0.0 });
 		const double wd = wsum(dw), wa = wsum(aw);
 		for (size_t j = 0; j < defenders.size(); j++) {
 			const double aa = scp[int64_t(tp[defenders[j]]) * 6 + 1];
