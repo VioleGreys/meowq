@@ -180,7 +180,8 @@ Array MeowqCore::snapshot(const PackedInt32Array &next, const PackedByteArray &b
 		const PackedInt32Array &resv, const PackedInt32Array &inv, const PackedFloat64Array &str,
 		const PackedFloat64Array &org, const PackedFloat64Array &morg, const PackedFloat64Array &atk,
 		const PackedFloat64Array &eq, const PackedFloat64Array &sup, const PackedInt32Array &prov,
-		int prov_count, int day) const {
+		int prov_count, int day, const PackedFloat64Array &def, const PackedFloat64Array &ent,
+		const PackedFloat64Array &plan, double plan_max) const {
 	const int64_t n = next.size();
 	PackedInt32Array flags, pd_start, pd_list;
 	PackedFloat32Array o_str, o_org, o_pow, o_defw;
@@ -195,6 +196,7 @@ Array MeowqCore::snapshot(const PackedInt32Array &next, const PackedByteArray &b
 	const int32_t *nx = next.ptr(), *tr = transit.ptr(), *rv = resv.ptr(), *iv = inv.ptr(), *pv = prov.ptr();
 	const uint8_t *bt = battle.ptr();
 	const double *st = str.ptr(), *og = org.ptr(), *mo = morg.ptr(), *at = atk.ptr(), *e = eq.ptr(), *su = sup.ptr();
+	const double *df = def.ptr(), *en = ent.ptr(), *pl0 = plan.ptr();
 	for (int p = 0; p <= prov_count; p++) ps[p] = 0;
 	for (int64_t i = 0; i < n; i++) {
 		int f = 0;
@@ -206,8 +208,10 @@ Array MeowqCore::snapshot(const PackedInt32Array &next, const PackedByteArray &b
 		fs[i] = float(s);
 		const double orgf = clampd(og[i] / maxd(1.0, mo[i]), 0.0, 1.0);
 		fo[i] = float(orgf);
-		fp[i] = float(s * (at[i] / 10.0) * (0.4 + 0.6 * e[i]) * sup_mult(su[i]));
-		fd[i] = float(s * orgf * (0.4 + 0.6 * e[i]));
+		// как в бою: атака × 0,5 и планирование; оборона с окопами и организацией (как world.gd)
+		const double eqf = (0.4 + 0.6 * e[i]) * sup_mult(su[i]);
+		fp[i] = float(s / 100.0 * at[i] * 0.5 * (1.0 + plan_max * pl0[i]) * eqf);
+		fd[i] = float(s / 100.0 * df[i] * (1.0 + 0.3 * en[i]) * orgf * eqf);
 		if (tr[i] <= 0) ps[pv[i] + 1]++;
 	}
 	for (int p = 0; p < prov_count; p++) ps[p + 1] += ps[p];

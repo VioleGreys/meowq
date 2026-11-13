@@ -560,8 +560,8 @@ var dv_prov := PackedInt32Array()
 var dv_flags := PackedInt32Array()      # 1 — свободна (без пути и боя, не в море, не в резерве), 2 — в бою
 var dv_str := PackedFloat32Array()
 var dv_org := PackedFloat32Array()      # доля организации 0..1
-var dv_power := PackedFloat32Array()    # атакующая сила с учётом силы, снаряжения, снабжения
-var dv_defw := PackedFloat32Array()     # «вес» защитника для оценки целей
+var dv_power := PackedFloat32Array()    # атакующая сила, как в бою: численность × атака × 0,5 × план × снаряжение × снабжение
+var dv_defw := PackedFloat32Array()     # сила защитника, как в бою: оборона × окопы × организация × снаряжение × снабжение
 var pd_start := PackedInt32Array()      # CSR: дивизии провинции p — pd_list[pd_start[p] .. pd_start[p+1])
 var pd_list := PackedInt32Array()                 # страна -> [день, районы в радиусе авиации]                     # страна -> Dictionary торговых зон (пересчёт раз в 30 дней)
 var cas_mult := PackedFloat32Array()      # region*nation_count + n: множитель боя от авиации
@@ -1672,9 +1672,11 @@ func k_snapshot() -> void:
 	dv_id = d_id
 	dv_owner = d_owner
 	dv_prov = d_prov
+	if d_plan.size() != d_id.size():
+		d_plan.resize(d_id.size())
 	if Native.core != null:
 		var r: Array = Native.core.call("snapshot", d_next, d_battle, d_transit, d_resv, d_inv, d_str, d_org, d_morg,
-				d_atk, d_eq, d_sup, d_prov, prov_count, day)
+				d_atk, d_eq, d_sup, d_prov, prov_count, day, d_def, d_ent, d_plan, Simulation.PLAN_MAX)
 		dv_flags = r[0]
 		dv_str = r[1]
 		dv_org = r[2]
@@ -1704,8 +1706,10 @@ func k_snapshot() -> void:
 		dv_str[i] = st
 		var orgf := clampf(d_org[i] / maxf(1.0, d_morg[i]), 0.0, 1.0)
 		dv_org[i] = orgf
-		dv_power[i] = st * (d_atk[i] / 10.0) * (0.4 + 0.6 * d_eq[i]) * sup_mult(d_sup[i])
-		dv_defw[i] = st * orgf * (0.4 + 0.6 * d_eq[i])
+		# как в бою (_side_power): атака × 0,5 и планирование; оборона с окопами и организацией
+		var eqf := (0.4 + 0.6 * d_eq[i]) * sup_mult(d_sup[i])
+		dv_power[i] = st / 100.0 * d_atk[i] * 0.5 * (1.0 + Simulation.PLAN_MAX * d_plan[i]) * eqf
+		dv_defw[i] = st / 100.0 * d_def[i] * (1.0 + 0.3 * d_ent[i]) * orgf * eqf
 		if d_transit[i] <= 0:
 			counts[d_prov[i] + 1] += 1
 	pd_start.resize(prov_count + 1)

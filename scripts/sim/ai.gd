@@ -61,12 +61,14 @@ static func target_divisions(nat: World.Nation) -> int:
 static func nation_args(world: World, nid: int, mine: PackedInt32Array) -> Array:
 	var nat: World.Nation = world.nations[nid]
 	# осторожность наступления по идеологии: демократии атакуют только с большим перевесом
-	var ratio := 1.3
+	# (перевес — настоящий, оценка сил как в бою; прежние 1,3 / 1,7 / 2,2 были под
+	# завышенную в 3–4 раза оценку атаки)
+	var ratio := 1.2
 	match nat.ideology:
 		"democracy":
-			ratio = 2.2
+			ratio = 1.8
 		"authoritarian":
-			ratio = 1.7
+			ratio = 1.4
 	# черты с ключом caution — наступать только при большем перевесе
 	ratio *= 1.0 + maxf(0.0, nat.b("caution"))
 	var opts := {"mode": "auto", "ratio": ratio}
@@ -281,13 +283,14 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 						if dv_sup[e] < SUP_EXH:
 							pocketed += 1
 					enemy_str += dv_defw[e] * es
-			var def_mult: float = 1.0 + def_tab[t]
+			# местность и укрепления — как в бою: атака × (1 − 0,6 × оборона провинции)
+			var def_mult: float = 1.0 / maxf(0.1, 1.0 - 0.6 * def_tab[t])
 			# климат: неакклиматизированные атакуют слабее — нужен больший перевес
 			var clim := 0.0
 			if has_clim:
 				clim = minf(1.0, p_hot[t] * (1.0 - minf(1.0, n_hot[nid])) + p_cold[t] * (1.0 - minf(1.0, n_cold[nid])))
 			var climf := 1.0 - CLIM_ATK * clim
-			var score: float = enemy_str * def_mult - vp[t] * 6.0 + rng.randf() * 20.0 + clim * 30.0 - float(pocketed) * 12.0
+			var score: float = enemy_str * def_mult * SCORE_STR - vp[t] * 6.0 + rng.randf() * 20.0 + clim * 30.0 - float(pocketed) * 12.0
 			if objective >= 0:
 				score += obj_dist[t] * 25.0
 			# охват: цель, которую можно атаковать с нескольких наших участков, важнее
@@ -340,6 +343,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			# осторожная страна не лезет в пустую провинцию-выступ (котёл)
 			if float(entry[2]) <= 0.0 and ratio >= 4.0 and int(entry[3]) < 2:
 				continue
+			var breach := objective >= 0 and float(entry[2]) <= 0.0 and main_axis.has(t)
 			var group: Array = []
 			for k in range(a_start[t], a_start[t + 1]):
 				var q := a_list[k]
@@ -358,8 +362,10 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				var pv := dv_prov[i]
 				if not left.has(pv):
 					left[pv] = pd_start[pv + 1] - pd_start[pv]
-				if int(left[pv]) <= 1:
-					continue   # последняя дивизия участок не бросает
+				# последняя дивизия участок не бросает — кроме прорыва: пустая провинция на
+				# направлении удара к цели наступления (участок заполнится в следующий раз)
+				if int(left[pv]) <= 1 and not (breach and int(left[pv]) == 1):
+					continue
 				chosen.append(i)
 				left[pv] = int(left[pv]) - 1
 				power += dv_power[i]
@@ -528,6 +534,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 const SUP_BAD := 0.5     # как World.SUP_BAD / SUP_EXH (константы скрипта мира из потоков не читаем)
 const SUP_EXH := 0.25
 const CLIM_ATK := 0.25   # как Climate: атака × (1 − 0,25 × неакклиматизированность)
+const SCORE_STR := 5.0  # сила обороны в очереди целей (оценка — в единицах боя, веса очереди — прежние)
 const AXIS_COMMIT := 2.0 # к цели наступления (план, группа с целью): на лучшие цели — вдвое больше нужного
 
 

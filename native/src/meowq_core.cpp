@@ -19,7 +19,7 @@ void MeowqCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("recovery", "alive", "transit", "sup", "org", "morg", "str", "eq", "ent", "next", "battle", "owner", "prov", "tpl", "ctrl", "ally", "nc", "stock", "manpower", "rbonus", "tpl_eq", "tpl_men", "pool"), &MeowqCore::recovery);
 	ClassDB::bind_method(D_METHOD("supply_apply", "alive", "sup", "prov", "tpl", "owner", "side_of", "dist", "caps", "prov_count", "t_mot"), &MeowqCore::supply_apply);
 	ClassDB::bind_method(D_METHOD("march", "alive", "transit", "next", "owner", "prov", "prog", "spd", "org", "morg", "sup", "land", "ctrl", "war", "nc", "move_mult"), &MeowqCore::march);
-	ClassDB::bind_method(D_METHOD("snapshot", "next", "battle", "transit", "resv", "inv", "str", "org", "morg", "atk", "eq", "sup", "prov", "prov_count", "day"), &MeowqCore::snapshot);
+	ClassDB::bind_method(D_METHOD("snapshot", "next", "battle", "transit", "resv", "inv", "str", "org", "morg", "atk", "eq", "sup", "prov", "prov_count", "day", "def", "ent", "plan", "plan_max"), &MeowqCore::snapshot);
 	ClassDB::bind_method(D_METHOD("plan_military", "tables", "nid", "divs", "mode", "enemy", "objective", "allowed", "ratio", "capital", "enemies", "rng"), &MeowqCore::plan_military);
 	ClassDB::bind_method(D_METHOD("counters", "head", "nx", "alive", "owner", "str", "org", "morg", "sup", "tpl"), &MeowqCore::counters);
 	ClassDB::bind_method(D_METHOD("label_regions", "ctrl", "land", "adj_start", "adj_list", "pixels", "centers", "caps"), &MeowqCore::label_regions);

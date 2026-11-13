@@ -214,13 +214,14 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 					enemy_str += double(dv_defw[e]) * es;
 				}
 			}
-			const double def_mult = 1.0 + double(def_tab[t]);
+			// местность и укрепления — как в бою (как ai.gd)
+			const double def_mult = 1.0 / std::max(0.1, 1.0 - 0.6 * double(def_tab[t]));
 			// климат: неакклиматизированные атакуют слабее — нужен больший перевес
 			double clim = 0.0;
 			if (has_clim)
 				clim = std::min(1.0, double(p_hot[t]) * (1.0 - std::min(1.0, n_hot[nid])) + double(p_cold[t]) * (1.0 - std::min(1.0, n_cold[nid])));
 			const double climf = 1.0 - CLIM_ATK * clim;
-			double score = enemy_str * def_mult - vp[t] * 6.0 + double(rng->randf()) * 20.0 + clim * 30.0 - double(pocketed) * 12.0;
+			double score = enemy_str * def_mult * 5.0 - vp[t] * 6.0 + double(rng->randf()) * 20.0 + clim * 30.0 - double(pocketed) * 12.0;
 			if (objective >= 0) score += obj_dist[t] * 25.0;
 			// охват: цель, которую можно атаковать с нескольких наших участков, важнее
 			int dirs = 0, hostile_n = 0, closing = 0, sup_n = 0;
@@ -271,6 +272,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			const double commit = (objective >= 0 && main_axis[t]) ? need * 2.0 : need;
 			// осторожная страна не лезет в пустую провинцию-выступ (котёл)
 			if (entry.es <= 0.0 && ratio >= 4.0 && entry.dirs < 2) continue;
+			const bool breach = objective >= 0 && entry.es <= 0.0 && main_axis[t];
 			group.clear();
 			for (int32_t k = a_start[t]; k < a_start[t + 1]; k++) {
 				const int32_t q = a_list[k];
@@ -289,7 +291,8 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			for (int32_t i : group) {
 				const int32_t pv = dv_prov[i];
 				if (left[pv] == INT_MIN) left[pv] = pd_start[pv + 1] - pd_start[pv];
-				if (left[pv] <= 1) continue;   // последняя дивизия участок не бросает
+				// последняя дивизия участок не бросает — кроме прорыва в пустую провинцию на направлении удара (как ai.gd)
+				if (left[pv] <= 1 && !(breach && left[pv] == 1)) continue;
 				chosen.push_back(i);
 				left[pv] -= 1;
 				power += double(dv_power[i]);
