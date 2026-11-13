@@ -51,7 +51,8 @@ public:
 			const PackedByteArray &battle, const PackedInt32Array &owner, const PackedInt32Array &prov,
 			const PackedInt32Array &tpl, const PackedInt32Array &ctrl, const PackedByteArray &ally, int nc,
 			const PackedFloat32Array &stock, const PackedFloat64Array &manpower, const PackedFloat64Array &rbonus,
-			const PackedFloat64Array &tpl_eq, const PackedFloat64Array &tpl_men, const PackedInt32Array &pool) const;
+			const PackedFloat64Array &tpl_eq, const PackedFloat64Array &tpl_men, const PackedInt32Array &pool,
+			const PackedFloat64Array &tpl_sc) const;
 	PackedFloat64Array supply_apply(const PackedByteArray &alive, const PackedFloat64Array &sup_in, const PackedInt32Array &prov, const PackedInt32Array &tpl,
 			const PackedInt32Array &owner, const PackedInt32Array &side_of, const PackedInt32Array &dist,
 			const PackedFloat32Array &caps, int prov_count, int t_mot) const;
@@ -108,7 +109,8 @@ public:
 			const PackedByteArray &war, int nc, const PackedFloat32Array &def_mult, const PackedByteArray &terrain,
 			const PackedInt32Array &region, const PackedFloat32Array &cas, const PackedFloat32Array &tmul,
 			const PackedInt32Array &prov, const PackedFloat32Array &tpl_width, const PackedFloat32Array &fw,
-			const PackedFloat64Array &armor, const PackedFloat64Array &pierce, double armor_cut) const;
+			const PackedFloat64Array &armor, const PackedFloat64Array &pierce, double armor_cut,
+			const PackedFloat64Array &tpl_sc) const;
 
 	PackedInt32Array income(const PackedInt32Array &ctrl, const PackedInt32Array &owner, const PackedInt32Array &civ,
 			const PackedInt32Array &mil, const PackedInt32Array &manpower, int nc) const;
@@ -131,7 +133,7 @@ public:
 			const PackedInt32Array &owner, const PackedInt32Array &ctrl, const PackedInt32Array &adj_start,
 			const PackedInt32Array &adj_list, const PackedByteArray &land, const PackedByteArray &hostile, int nc,
 			const PackedFloat64Array &plan_in, double gain, double active, double rear) const;
-	String version() const { return "meowq-core 41"; }
+	String version() const { return "meowq-core 42"; }
 	// Воздушный бой района i снимка t (Forces.air_begin): пачки по 100, обнаружение,
 	// день и ночь, превосходство; двойник — Forces.air_region_gd.
 	PackedFloat64Array air_region(const Dictionary &t, int i) const;

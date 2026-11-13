@@ -69,6 +69,7 @@ func _init() -> void:
 	print("Ширина фронта:")
 	r = fresh()
 	w = r[0]
+	sim = r[1]
 	var fp := -1
 	var fq := -1
 	for p in w.p_land.size():
@@ -176,6 +177,33 @@ func _init() -> void:
 			at_line = float(ln[2])
 	check(at_line > Military.EFF_START and at_line < cap, "переведённые заводы сохраняют часть эффективности (%d%%)" % roundi(at_line * 100.0))
 	pn.mil = mil0
+
+	print("Роты поддержки:")
+	var base_t := Military.make_template("Пехотная", "п", [9, 0, 0, 0, 0, 0, 0], POL)
+	var sup_t := Military.make_template("Пехотная с ротами", "п+р", [9, 0, 0, 0, 0, 0, 0], POL, ["eng", "art", "rec", "sig", "aa", "med"])
+	check(Military.template_support(sup_t).size() == Military.SUPPORT_MAX, "в шаблоне не больше %d рот (%d)" % [Military.SUPPORT_MAX, Military.template_support(sup_t).size()])
+	check(Military.template_width(sup_t) == Military.template_width(base_t), "роты не занимают ширину фронта (%.0f)" % Military.template_width(sup_t))
+	check(float(sup_t["men"]) > float(base_t["men"]) and float(sup_t["eq"][Military.EQ_INF]) > float(base_t["eq"][Military.EQ_INF]), "роты берут людей и снаряжение")
+	check((sup_t["req"] as Array).has("eng1"), "сапёрная рота требует технологию «Сапёрные роты»")
+	var b_i := w.templates.size()
+	w.templates.append(base_t)
+	w.templates.append(sup_t)
+	Military.build_tables(w)
+	var pnat: World.Nation = w.nations[POL]
+	var d_b := w.spawn_division(POL, pnat.capital, b_i)
+	var d_s := w.spawn_division(POL, pnat.capital, b_i + 1)
+	check(d_s.def > d_b.def * 1.05 and d_s.atk > d_b.atk and d_s.spd > d_b.spd, "сапёры, батарея и разведка: оборона %.1f→%.1f, атака %.1f→%.1f, скорость %.3f→%.3f" % [d_b.def, d_s.def, d_b.atk, d_s.atk, d_b.spd, d_s.spd])
+	check(w.tpl_sc[(b_i + 1) * Military.SC_K] == 1.5 and w.tpl_sc[(b_i + 1) * Military.SC_K + 1] == 0.5, "в таблице шаблонов: окопы ×1,5, защита от штурмовиков 50 %")
+	var was_player := pnat.is_player
+	pnat.is_player = true   # ИИ не двигает дивизии — окапываются стоящие
+	for i in 30:
+		sim.tick()
+	pnat.is_player = was_player
+	check(d_s.entrench > 1.0 and d_b.entrench <= 1.0, "с сапёрами окопы глубже (%d%% против %d%%)" % [roundi(d_s.entrench * 100.0), roundi(d_b.entrench * 100.0)])
+	var at_t2 := Military.make_template("П+птб", "п", [9, 0, 0, 0, 0, 0, 0], POL, ["at"])
+	var ap0 := Military.armor_pierce(pnat, base_t["bat"], TankDesigns.FALLBACK)
+	var ap1 := Military.armor_pierce(pnat, at_t2["bat"], TankDesigns.FALLBACK, float(at_t2["fx"]["pierce"]))
+	check(ap1[1] > ap0[1] + 10.0, "противотанковая батарея поднимает бронебойность (%.1f → %.1f)" % [ap0[1], ap1[1]])
 
 	print("Окружение:")
 	r = fresh()

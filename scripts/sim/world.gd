@@ -527,6 +527,7 @@ var tpl_eq := PackedFloat64Array()       # templates[t]["eq"][k] — шабло�
 var tpl_cls := PackedInt32Array()        # класс шаблона (Military.T_*) — значок и роль
 var tpl_motor := PackedInt32Array()      # 1 — моторизован (снабжение ×1,5)
 var tpl_width := PackedFloat32Array()    # ширина фронта шаблона (Military.template_width)
+var tpl_sc := PackedFloat64Array()       # роты поддержки шаблона: Military.SC_K значений (окопы, ПВО, пополнение, организация, снабжение)
 var tpl_men := PackedFloat64Array()
 var tpl_terrain := PackedFloat32Array()   # Military.TERRAIN_MULT построчно (шаблон*8 + местность)
 var p_coastal := PackedByteArray()
@@ -1543,7 +1544,7 @@ func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus:
 	if Native.core != null:
 		var r: Array = Native.core.call("recovery", d_alive, d_transit, d_sup, d_org, d_morg, d_str, d_eq, d_ent,
 				d_next, d_battle, d_owner, d_prov, d_tpl, p_controller, ally, nation_count, stock, manpower, rbonus,
-				tpl_eq, tpl_men, pool)
+				tpl_eq, tpl_men, pool, tpl_sc)
 		d_org = r[0]
 		d_str = r[1]
 		d_eq = r[2]
@@ -1563,10 +1564,14 @@ func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus:
 			if d_str[i] <= 5.0:
 				dead.append(i)
 			continue
-		d_ent[i] = minf(1.0, d_ent[i] + 0.05) if d_next[i] < 0 else 0.0
+		# роты поддержки (Military.SUPPORT, tpl_sc): сапёры — окопы быстрее и до 150 %
+		var t := d_tpl[i]
+		var sk := t * 6
+		var entk := tpl_sc[sk]
+		d_ent[i] = minf(entk, d_ent[i] + 0.05 * entk) if d_next[i] < 0 else 0.0
 		if d_battle[i] != 0:
 			continue
-		var rate := 0.06 if d_next[i] < 0 else 0.03
+		var rate := (0.06 if d_next[i] < 0 else 0.03) * tpl_sc[sk + 4]
 		# потолок организации — по снабжению (до 100 %); выше потолка — сползает к нему
 		var cap := d_morg[i] * minf(1.0, sup)
 		if d_org[i] > cap:
@@ -1581,10 +1586,9 @@ func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus:
 		var pl := pool[i]
 		if pl < 0 or sup < 0.3 or (d_eq[i] >= 1.0 and d_str[i] >= 100.0):
 			continue
-		var t := d_tpl[i]
 		var rr := 0.04 * (1.0 + rbonus[o]) * sup
 		if d_eq[i] < 1.0:
-			var want := minf(1.0 - d_eq[i], rr)
+			var want := minf(1.0 - d_eq[i], rr * tpl_sc[sk + 3])
 			for k in 8:
 				var e := tpl_eq[t * 8 + k]
 				if e > 0:
@@ -1594,7 +1598,7 @@ func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus:
 					stock[pl * 8 + k] -= tpl_eq[t * 8 + k] * want
 				d_eq[i] += want
 		if d_str[i] < 100.0:
-			var add := minf(100.0 - d_str[i], rr * 100.0)
+			var add := minf(100.0 - d_str[i], rr * tpl_sc[sk + 2] * 100.0)
 			var men := add / 100.0 * tpl_men[t]
 			if manpower[o] >= men:
 				manpower[o] -= men
@@ -1767,7 +1771,7 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 	if Native.core != null:
 		var r: Array = Native.core.call("combat", provs, att_start, att_list, seeds, d_str, d_org, d_eq, def, atk,
 				d_ent, d_land, d_sup, d_tpl, d_hard, d_owner, d_battle, pl_head, d_nx, war, nation_count, p_def_mult,
-				p_terrain, p_region, cas_mult, tpl_terrain, d_prov, tpl_width, fw, d_armor, d_pierce, ARMOR_CUT)
+				p_terrain, p_region, cas_mult, tpl_terrain, d_prov, tpl_width, fw, d_armor, d_pierce, ARMOR_CUT, tpl_sc)
 		d_org = r[0]
 		d_str = r[1]
 		d_eq = r[2]
@@ -1827,7 +1831,9 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 		# против брони цели, — ×ARMOR_CUT; без брони порядок счёта прежний
 		# истощённые (снабжение < SUP_EXH) теряют людей в 1,5 раза больше
 		for j in defenders.size():
-			var att_power := _pierced(pa, attackers, d_armor[defenders[j]]) * cas_a
+			# зенитная батарея (tpl_sc[1]) режет прибавку штурмовиков против дивизии
+			var aa := tpl_sc[d_tpl[defenders[j]] * 6 + 1]
+			var att_power := _pierced(pa, attackers, d_armor[defenders[j]]) * (cas_a if aa <= 0.0 else 1.0 + (cas_a - 1.0) * (1.0 - aa))
 			att_power *= r1 * (1.0 - terrain_def * 0.6)
 			att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard)
 			var to_def := att_power / wd
@@ -1835,7 +1841,8 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 			dl.append(to_def * dw[j] * 0.55)
 			dl.append(to_def * dw[j] * 0.12 * (EXH_LOSS if d_sup[defenders[j]] < SUP_EXH else 1.0))
 		for j in attackers.size():
-			var def_power := _pierced(pd, defenders, d_armor[attackers[j]]) * cas_d
+			var aa2 := tpl_sc[d_tpl[attackers[j]] * 6 + 1]
+			var def_power := _pierced(pd, defenders, d_armor[attackers[j]]) * (cas_d if aa2 <= 0.0 else 1.0 + (cas_d - 1.0) * (1.0 - aa2))
 			def_power *= r2
 			def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard)
 			var to_att := def_power / wa

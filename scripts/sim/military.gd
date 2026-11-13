@@ -71,6 +71,39 @@ const BATTALIONS := [
 	{"name": "Противотанковый", "width": 1, "short": "ПТО", "icon": "art", "men": 0.5, "eq": [10.0, 0.0, 0.0, 0.0, 12.0], "atk": 0.6, "def": 1.0, "org": 20.0, "spd": 1.0, "hard": 0.0, "days": 18, "req": "at1", "motor": false, "armor": 0.0, "pierce": 35.0,
 		"terr": [1.0, 0.9, 0.9, 0.7, 1.0, 1.0, 1.0, 0.8]},
 ]
+# Роты поддержки (как в жанре, решение пользователя, ноябрь 2026): до
+# SUPPORT_MAX на шаблон, ширину фронта не занимают; немного людей и снаряжения,
+# каждая — свой бонус дивизии; открываются технологиями (req).
+# fx: atk — прибавка к атаке; atk_m, def_m, spd_m, org_m — множители (+доля);
+# pierce — бронебойность (идёт в «лучший батальон»); terr — прибавка к
+# множителям местности; ent, aa, rec_men, rec_eq, org_rate, sup_w — в таблицу
+# шаблонов tpl_sc (ядра: окопы, ПВО, пополнение людей и техники, восстановление
+# организации, нагрузка на снабжение).
+const SUPPORT_MAX := 5
+const SC_K := 6   # tpl_sc на шаблон: [окопы ×, защита от штурмовиков, пополнение людей ×, техники ×, восстановление организации ×, нагрузка снабжения ×]
+const SUPPORT := [
+	{"id": "eng", "name": "Сапёрная рота", "short": "сап.", "req": "eng1", "men": 0.3, "eq": [30.0, 0.0, 0.0, 0.0, 0.0],
+		"fx": {"def_m": 0.06, "ent": 0.5, "terr": [0.0, 0.05, 0.05, 0.05, 0.1, 0.0, 0.0, 0.1]},
+		"desc": "Окапывается в полтора раза быстрее и глубже (до 150 %), оборона +6 %, лучше в лесу, горах, городах и болотах."},
+	{"id": "rec", "name": "Разведывательная рота", "short": "разв.", "req": "scout1", "men": 0.2, "eq": [30.0, 0.0, 0.0, 5.0, 0.0],
+		"fx": {"spd_m": 0.08, "atk_m": 0.05}, "desc": "Скорость +8 %, атака +5 %."},
+	{"id": "art", "name": "Артиллерийская батарея", "short": "батар.", "req": "art1", "men": 0.2, "eq": [10.0, 4.0, 0.0, 0.0, 0.0],
+		"fx": {"atk": 0.9}, "desc": "Атака +0,9 (треть артиллерийского батальона) — против пехоты."},
+	{"id": "at", "name": "Противотанковая батарея", "short": "птб.", "req": "at1", "men": 0.2, "eq": [10.0, 0.0, 0.0, 0.0, 4.0],
+		"fx": {"pierce": 35.0}, "desc": "Бронебойность пушки ПТО (35 / 60 / 90 по технологиям) — как у лучшего батальона дивизии."},
+	{"id": "aa", "name": "Зенитная батарея", "short": "зен.", "req": "aa1", "men": 0.2, "eq": [10.0, 3.0, 0.0, 0.0, 0.0],
+		"fx": {"aa": 0.5, "def_m": 0.02}, "desc": "Вдвое меньше прибавка вражеских штурмовиков в бою против дивизии, оборона +2 %."},
+	{"id": "med", "name": "Полевой госпиталь", "short": "госп.", "req": "med1", "men": 0.2, "eq": [10.0, 0.0, 0.0, 2.0, 0.0],
+		"fx": {"rec_men": 0.3}, "desc": "Пополнение людьми на 30 % быстрее."},
+	{"id": "mnt", "name": "Ремонтная рота", "short": "рем.", "req": "log1", "men": 0.2, "eq": [10.0, 0.0, 0.0, 4.0, 0.0],
+		"fx": {"rec_eq": 0.3}, "desc": "Пополнение техникой и оружием на 30 % быстрее."},
+	{"id": "sig", "name": "Рота связи", "short": "связь", "req": "rad2", "men": 0.2, "eq": [20.0, 0.0, 0.0, 2.0, 0.0],
+		"fx": {"org_rate": 0.3, "org_m": 0.05}, "desc": "Организация +5 %, восстанавливается на 30 % быстрее."},
+	{"id": "log", "name": "Тыловая рота", "short": "тыл", "req": "log2", "men": 0.2, "eq": [10.0, 0.0, 0.0, 10.0, 0.0],
+		"fx": {"sup_w": -0.2}, "desc": "Нагрузка дивизии на снабжение −20 %."},
+]
+# ИИ берёт роты в таком порядке (сколько открыто, до SUPPORT_MAX)
+const AI_SUPPORT_ORDER := ["eng", "art", "rec", "sig", "med", "aa", "mnt", "log", "at"]
 const AT2_PIERCE := 25.0   # «Тяжёлые пушки ПТО» (at2): бронебойность батальона ПТО +25 (60)
 const AT3_PIERCE := 55.0   # «Пушки ПТО большой мощности» (at3): +55 (90)
 const ARMOR_MAX_W := 0.4   # броня и бронебойность дивизии: 0,4 · лучший батальон + 0,6 · средний
@@ -104,7 +137,7 @@ static func bat_n(bat: Array, b: int) -> int:
 
 
 ## Собрать шаблон из состава bat (число батальонов каждого типа).
-static func make_template(name: String, short: String, bat_in: Array, owner: int = -1) -> Dictionary:
+static func make_template(name: String, short: String, bat_in: Array, owner: int = -1, sup_in: Array = []) -> Dictionary:
 	var bat := bat_in.duplicate()
 	while bat.size() < BAT_COUNT:
 		bat.append(0)
@@ -143,13 +176,57 @@ static func make_template(name: String, short: String, bat_in: Array, owner: int
 		if bt["req"] != "" and not req.has(bt["req"]):
 			req.append(bt["req"])
 		motor = motor and bool(bt["motor"])
+	# роты поддержки: люди и снаряжение, бонусы; ширины нет
+	var sup: Array = []
+	var fx := {"atk_m": 0.0, "def_m": 0.0, "spd_m": 0.0, "org_m": 0.0, "pierce": 0.0}
+	var sc := [1.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+	var tadd := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	var bat_men := men
+	for sid in sup_in:
+		var sp := support(String(sid))
+		if sp.is_empty() or sup.has(sp["id"]) or sup.size() >= SUPPORT_MAX:
+			continue
+		sup.append(sp["id"])
+		men += float(sp["men"])
+		for k in EQ_LAND:
+			eq[k] += float(sp["eq"][k])
+		if sp["req"] != "" and not req.has(sp["req"]):
+			req.append(sp["req"])
+		var f: Dictionary = sp["fx"]
+		atk += float(f.get("atk", 0.0))
+		for key in ["atk_m", "def_m", "spd_m", "org_m"]:
+			fx[key] = float(fx[key]) + float(f.get(key, 0.0))
+		fx["pierce"] = maxf(float(fx["pierce"]), float(f.get("pierce", 0.0)))
+		sc[0] += float(f.get("ent", 0.0))
+		sc[1] = maxf(float(sc[1]), float(f.get("aa", 0.0)))
+		sc[2] += float(f.get("rec_men", 0.0))
+		sc[3] += float(f.get("rec_eq", 0.0))
+		sc[4] += float(f.get("org_rate", 0.0))
+		sc[5] += float(f.get("sup_w", 0.0))
+		if f.has("terr"):
+			for k in 8:
+				tadd[k] += float(f["terr"][k])
+	bat_men = maxf(bat_men, 0.01)
 	men = maxf(men, 0.01)
 	for k in 8:
-		terr[k] = clampf(terr[k] / men, 0.3, 2.0)
+		terr[k] = clampf(terr[k] / bat_men + tadd[k], 0.3, 2.0)
 	return {"name": name, "short": short, "owner": owner, "bat": bat.duplicate(), "men": men, "eq": eq,
-		"atk": atk, "def": def, "org": org / men, "hard": hard / men, "spd": spd if total > 0 else 1.0,
+		"atk": atk, "def": def, "org": org / bat_men, "hard": hard / bat_men, "spd": spd if total > 0 else 1.0,
 		"days": days, "req": req, "motor": motor and total > 0, "terr": terr, "cls": _template_class(bat), "width": width,
-		"hidden": false}
+		"hidden": false, "sup": sup, "fx": fx, "sc": sc}
+
+
+## Рота поддержки по id (пусто — нет такой).
+static func support(id: String) -> Dictionary:
+	for sp in SUPPORT:
+		if sp["id"] == id:
+			return sp
+	return {}
+
+
+## Роты поддержки шаблона (у шаблонов из старых сохранений поля нет).
+static func template_support(t: Dictionary) -> Array:
+	return t.get("sup", [])
 
 
 ## Класс шаблона для значка и роли ИИ (номера общих шаблонов T_*).
@@ -250,13 +327,15 @@ static func refresh_division(world: World, d: World.Division) -> void:
 			if bat_n(bat, b) > 0:
 				s2 = minf(s2, float(BATTALIONS[b]["spd"]) * (float(td["speed"]) if b == B_TANK else 1.0))
 		spd = s2
-	d.atk = atk
-	d.def = def
-	d.max_org = t["org"] * (1.0 + nat.b("org"))
+	# роты поддержки: множители атаки, обороны, организации, скорости
+	var fx: Dictionary = t.get("fx", {})
+	d.atk = atk * (1.0 + float(fx.get("atk_m", 0.0)))
+	d.def = def * (1.0 + float(fx.get("def_m", 0.0)))
+	d.max_org = t["org"] * (1.0 + nat.b("org")) * (1.0 + float(fx.get("org_m", 0.0)))
 	var spd_bonus := nat.b("speed") if t["motor"] else nat.b("speed") * 0.3
-	d.spd = BASE_SPEED * spd * (1.0 + spd_bonus)
+	d.spd = BASE_SPEED * spd * (1.0 + spd_bonus) * (1.0 + float(fx.get("spd_m", 0.0)))
 	d.hard = t["hard"]
-	var ap := armor_pierce(nat, bat, td)
+	var ap := armor_pierce(nat, bat, td, float(fx.get("pierce", 0.0)))
 	d.armor = ap[0]
 	d.pierce = ap[1]
 
@@ -264,7 +343,7 @@ static func refresh_division(world: World, d: World.Division) -> void:
 ## Броня и бронебойность дивизии из состава bat (решение пользователя):
 ## 0,4 · лучший батальон + 0,6 · среднее по батальонам; танки — по проекту td,
 ## ПТО — +25 с «Тяжёлыми пушками ПТО». [броня, бронебойность]
-static func armor_pierce(nat: World.Nation, bat: Array, td: Dictionary) -> PackedFloat64Array:
+static func armor_pierce(nat: World.Nation, bat: Array, td: Dictionary, sup_pierce := 0.0) -> PackedFloat64Array:
 	var a_max := 0.0
 	var a_sum := 0.0
 	var p_max := 0.0
@@ -286,6 +365,9 @@ static func armor_pierce(nat: World.Nation, bat: Array, td: Dictionary) -> Packe
 		a_sum += c * ar
 		p_sum += c * pr
 		cnt += c
+	if sup_pierce > 0.0:
+		# противотанковая батарея — в лучший батальон (как пушка ПТО, с её поколениями)
+		p_max = maxf(p_max, sup_pierce + (AT3_PIERCE if nat.techs.has("at3") else (AT2_PIERCE if nat.techs.has("at2") else 0.0)))
 	return PackedFloat64Array([ARMOR_MAX_W * a_max + (1.0 - ARMOR_MAX_W) * a_sum / maxf(1.0, cnt),
 		ARMOR_MAX_W * p_max + (1.0 - ARMOR_MAX_W) * p_sum / maxf(1.0, cnt)])
 
@@ -311,7 +393,11 @@ static func build_tables(world: World) -> void:
 	world.tpl_cls = PackedInt32Array()
 	world.tpl_motor = PackedInt32Array()
 	world.tpl_width = PackedFloat32Array()
+	world.tpl_sc = PackedFloat64Array()
 	for t in world.templates:
+		var sc: Array = t.get("sc", [1.0, 0.0, 1.0, 1.0, 1.0, 1.0])
+		for k in SC_K:
+			world.tpl_sc.append(float(sc[k]))
 		world.tpl_width.append(template_width(t))
 		world.tpl_men.append(t["men"])
 		for k in EQ_COUNT:
@@ -325,14 +411,14 @@ static func build_tables(world: World) -> void:
 ## Новый шаблон страны (или правка своего). Правка меняет дивизии на ходу:
 ## снаряжение и люди пересчитываются в доли нового состава, излишек — на склад.
 ## Возвращает номер шаблона или -1. Только между world_lock/unlock.
-static func save_template(world: World, nid: int, name: String, bat: Array, edit: int = -1) -> int:
+static func save_template(world: World, nid: int, name: String, bat: Array, edit: int = -1, sup: Array = []) -> int:
 	var total := 0
 	for b in BAT_COUNT:
 		total += bat_n(bat, b)
 	if total <= 0 or total > MAX_BATTALIONS:
 		return -1
 	var short := name.substr(0, 6).to_lower() + "."
-	var nt := make_template(name, short, bat, nid)
+	var nt := make_template(name, short, bat, nid, sup)
 	if edit >= 0:
 		var old: Dictionary = world.templates[edit]
 		if int(old["owner"]) != nid:
@@ -585,11 +671,12 @@ static func plan_prep(world: World, nat: World.Nation, target_divs: int, prepare
 		return {}
 	# очередь шаблонов ИИ (как ai_template): номера по кругу
 	var avail := available_templates(world, nat)
-	var cycle := PackedInt32Array([T_INF, T_INF, T_ART, T_INF])
+	var sup := ai_support(world, nat)
+	var cycle := PackedInt32Array([with_support(world, T_INF, sup), with_support(world, T_INF, sup), with_support(world, T_ART, sup), with_support(world, T_INF, sup)])
 	if avail.has(T_MOT):
-		cycle.append(T_MOT)
+		cycle.append(with_support(world, T_MOT, sup))
 	if avail.has(T_ARM):
-		cycle.append(T_ARM)
+		cycle.append(with_support(world, T_ARM, sup))
 	return {"id": nat.id, "mil": float(nat.mil), "naval": nat.naval_share, "air": nat.air_share,
 		"use": nat.eq_use.duplicate(), "stock": PackedFloat64Array([nat.stock[0], nat.stock[1], nat.stock[2], nat.stock[3], nat.stock[4]]),
 		"target": target_divs, "training": nat.training.size(), "trained": nat.trained_count, "cycle": cycle,
@@ -876,7 +963,44 @@ static func ai_template(world: World, nat: World.Nation, k: int, mountainous: bo
 		cycle.append(T_ARM)
 	if mountainous and avail.has(T_MNT):
 		cycle.append(T_MNT)
-	return cycle[k % cycle.size()]
+	return with_support(world, cycle[k % cycle.size()], ai_support(world, nat))
+
+
+## Роты поддержки, которые ИИ добавляет в шаблоны: открытые технологиями, по
+## AI_SUPPORT_ORDER, до SUPPORT_MAX; противотанковая — только против танков.
+static func ai_support(world: World, nat: World.Nation) -> Array:
+	var res: Array = []
+	for id in AI_SUPPORT_ORDER:
+		if res.size() >= SUPPORT_MAX:
+			break
+		var sp := support(id)
+		if sp["req"] != "" and not nat.techs.has(sp["req"]):
+			continue
+		if id == "at" and _enemy_armor(world, nat) <= AT_NEED_ARMOR:
+			continue
+		res.append(id)
+	return res
+
+
+## Общий шаблон base с ротами sup (ИИ): заводится при первой надобности,
+## скрыт из списка игрока; без рот — сам base.
+static func with_support(world: World, base: int, sup: Array) -> int:
+	if sup.is_empty():
+		return base
+	var key := "%d:%s" % [base, ",".join(sup)]
+	for i in world.templates.size():
+		var t: Dictionary = world.templates[i]
+		if int(t["owner"]) < 0 and String(t.get("key", "")) == key:
+			return i
+	var b: Dictionary = world.templates[base]
+	var nt := make_template(String(b["name"]) + " с ротами", b["short"], b["bat"], -1, sup)
+	nt["key"] = key
+	nt["hidden"] = true
+	if b.has("key"):
+		nt["base_key"] = b["key"]
+	world.templates.append(nt)
+	build_tables(world)
+	return world.templates.size() - 1
 
 
 ## Боевая сила стороны: [сила, средняя бронированность]. Только поля дивизий и
@@ -926,7 +1050,7 @@ static func migrate_eq8(world: World) -> void:
 			world.dep_stock[p] = nd
 	for i in world.templates.size():
 		var t: Dictionary = world.templates[i]
-		var nt := make_template(t["name"], t["short"], t["bat"], int(t["owner"]))
+		var nt := make_template(t["name"], t["short"], t["bat"], int(t["owner"]), template_support(t))
 		nt["hidden"] = bool(t.get("hidden", false))
 		world.templates[i] = nt
 	build_tables(world)

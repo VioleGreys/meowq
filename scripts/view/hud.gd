@@ -2143,10 +2143,12 @@ func _eq_text(eq: Array) -> String:
 # конструктор шаблонов: -2 — закрыт, -1 — новый шаблон, иначе правка своего
 var _tpl_edit := -2
 var _tpl_bat: Array = []
+var _tpl_sup: Array = []   # роты поддержки (Military.SUPPORT, id)
 var _tpl_name := ""
 
 
 func _tpl_stats_text(tp: Dictionary) -> String:
+	var fx: Dictionary = tp.get("fx", {})   # роты поддержки — множители
 	var best := ""
 	var bv := 0.0
 	var worst := ""
@@ -2160,7 +2162,8 @@ func _tpl_stats_text(tp: Dictionary) -> String:
 			wv = v
 			worst = TERRAIN_SHORT[k]
 	return "атака %.1f · оборона %.1f · орг. %d · скорость ×%.1f · бронированность %d%% · ширина %d · %.1fк чел. · %d дн.\n%s\nместность: лучше всего — %s (×%.2f), хуже — %s (×%.2f)" % [
-		tp["atk"], tp["def"], tp["org"], tp["spd"], tp["hard"] * 100.0, Military.template_width(tp), tp["men"], tp["days"], _eq_text(tp["eq"]), best, bv, worst, wv]
+		tp["atk"] * (1.0 + float(fx.get("atk_m", 0.0))), tp["def"] * (1.0 + float(fx.get("def_m", 0.0))), tp["org"] * (1.0 + float(fx.get("org_m", 0.0))),
+		tp["spd"] * (1.0 + float(fx.get("spd_m", 0.0))), tp["hard"] * 100.0, Military.template_width(tp), tp["men"], tp["days"], _eq_text(tp["eq"]), best, bv, worst, wv]
 
 
 const TERRAIN_SHORT := ["равнины", "лес", "холмы", "горы", "город", "море", "пустыня", "болота"]
@@ -2171,6 +2174,7 @@ func _open_tpl_editor(w: World, t: int, own: bool) -> void:
 	_tpl_bat = (tp["bat"] as Array).duplicate() if t >= 0 else [9, 0, 0, 0, 0, 0, 0]
 	while _tpl_bat.size() < Military.BAT_COUNT:
 		_tpl_bat.append(0)   # составы из старых сохранений — без ПТО
+	_tpl_sup = Military.template_support(tp).duplicate() if t >= 0 else []
 	_tpl_name = tp["name"] if own else ((tp["name"] + " (нов.)") if t >= 0 else "Новая дивизия")
 	_tpl_edit = t if own else -1
 	_rebuild_popup()
@@ -2188,11 +2192,11 @@ func _build_tpl_editor(w: World, me: int) -> void:
 	var total := 0
 	for b in Military.BAT_COUNT:
 		total += int(_tpl_bat[b])
-	var tp := Military.make_template(_tpl_name, "", _tpl_bat, me)
+	var tp := Military.make_template(_tpl_name, "", _tpl_bat, me, _tpl_sup)
 	popup_body.add_child(_label(_tpl_stats_text(tp) if total > 0 else "Нет батальонов.", 15))
 	if total > 0:
 		var td := TankDesigns.of_nation(w, n)
-		var ap := Military.armor_pierce(n, _tpl_bat, td)
+		var ap := Military.armor_pierce(n, _tpl_bat, td, float(tp["fx"]["pierce"]))
 		popup_body.add_child(_label("Броня %.0f · бронебойность %.0f%s" % [ap[0], ap[1],
 			(" (танки — по проекту «%s»)" % td.get("name", "лёгкий танк")) if Military.bat_n(_tpl_bat, Military.B_TANK) > 0 else ""], 15))
 	popup_body.add_child(_section("Батальоны: %d из %d" % [total, Military.MAX_BATTALIONS]))
@@ -2227,6 +2231,7 @@ func _build_tpl_editor(w: World, me: int) -> void:
 		row.add_child(plus)
 		popup_body.add_child(row)
 	popup_body.add_child(_small("Атака, оборона, люди и снаряжение складываются; организация, бронированность и местность — средние; скорость — по самому медленному батальону. Броня и бронебойность дивизии — 0,4 от лучшего батальона + 0,6 от среднего; кого противник не пробивает, тот получает вдвое меньше урона."))
+	_build_tpl_support(n)
 	var miss := Military.tech_missing(tp, n)
 	if miss != "":
 		popup_body.add_child(_small("Пока нельзя готовить: нужна технология «%s»." % Tech.get_tech(miss).get("name", miss)))
@@ -2243,7 +2248,7 @@ func _build_tpl_editor(w: World, me: int) -> void:
 		var nm := _tpl_name.strip_edges()
 		if nm == "":
 			nm = "Дивизия"
-		if Military.save_template(w, me, nm, _tpl_bat, _tpl_edit) < 0:
+		if Military.save_template(w, me, nm, _tpl_bat, _tpl_edit, _tpl_sup) < 0:
 			toast("Нужен хотя бы один батальон")
 			return
 		toast("Шаблон «%s» сохранён" % nm)
@@ -2265,6 +2270,39 @@ func _build_tpl_editor(w: World, me: int) -> void:
 	cancel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row2.add_child(cancel)
 	popup_body.add_child(row2)
+
+
+## Роты поддержки в конструкторе шаблона: до SUPPORT_MAX, ширину не занимают.
+func _build_tpl_support(n: World.Nation) -> void:
+	popup_body.add_child(_section("Роты поддержки: %d из %d (ширину фронта не занимают)" % [_tpl_sup.size(), Military.SUPPORT_MAX]))
+	for sp in Military.SUPPORT:
+		var id: String = sp["id"]
+		var lock: String = sp["req"]
+		var locked := lock != "" and not n.techs.has(lock)
+		var have := _tpl_sup.has(id)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 4)
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 0)
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col.add_child(_label(("✓ " if have else "") + String(sp["name"]), 16))
+		var eq: Array = sp["eq"]
+		var full := eq.duplicate()
+		while full.size() < Military.EQ_COUNT:
+			full.append(0.0)
+		col.add_child(_small(("нужна технология «%s»" % Tech.get_tech(lock).get("name", lock)) if locked else
+			"%s · %d чел. · %s" % [sp["desc"], roundi(float(sp["men"]) * 1000.0), _eq_text(full)]))
+		row.add_child(col)
+		var b := _button("Убрать" if have else "Взять", func():
+			if _tpl_sup.has(id):
+				_tpl_sup.erase(id)
+			elif _tpl_sup.size() < Military.SUPPORT_MAX:
+				_tpl_sup.append(id)
+			_rebuild_popup(), Vector2(110, 44))
+		b.disabled = not have and (_tpl_sup.size() >= Military.SUPPORT_MAX)
+		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(b)
+		popup_body.add_child(row)
 
 
 func _bat_line(bt: Dictionary) -> String:

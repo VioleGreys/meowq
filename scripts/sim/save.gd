@@ -147,6 +147,9 @@ func decode(data: Dictionary, world: World, sim: Simulation) -> void:
 	if not world.nations.is_empty() and world.nations[0].stock.size() == 7:
 		Military.migrate_eq8(world)
 		Economy.migrate_units(world)
+	# сохранение до рот поддержки: таблица tpl_sc
+	if world.tpl_sc.size() != world.templates.size() * Military.SC_K:
+		Military.build_tables(world)
 	# сохранение до брони танков: броня и бронебойность дивизий — пересчитать
 	if world.d_armor.size() != world.d_id.size() or world.d_pierce.size() != world.d_id.size():
 		world.d_armor.resize(world.d_id.size())

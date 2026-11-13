@@ -23,8 +23,10 @@ Array MeowqCore::recovery(const PackedByteArray &alive, const PackedInt32Array &
 		const PackedByteArray &battle, const PackedInt32Array &owner, const PackedInt32Array &prov,
 		const PackedInt32Array &tpl, const PackedInt32Array &ctrl, const PackedByteArray &ally, int nc,
 		const PackedFloat32Array &stock_in, const PackedFloat64Array &manpower_in, const PackedFloat64Array &rbonus,
-		const PackedFloat64Array &tpl_eq, const PackedFloat64Array &tpl_men, const PackedInt32Array &pool) const {
+		const PackedFloat64Array &tpl_eq, const PackedFloat64Array &tpl_men, const PackedInt32Array &pool,
+		const PackedFloat64Array &tpl_sc) const {
 	const int32_t *pl_p = pool.ptr();
+	const double *sc = tpl_sc.ptr();
 	PackedFloat64Array org = org_in, str = str_in, eq = eq_in, ent = ent_in, manpower = manpower_in;
 	PackedFloat32Array stock = stock_in;
 	PackedInt32Array dead;
@@ -44,9 +46,12 @@ Array MeowqCore::recovery(const PackedByteArray &alive, const PackedInt32Array &
 			if (o_str[i] <= 5.0) dead.push_back(int32_t(i));
 			continue;
 		}
-		o_ent[i] = nx[i] < 0 ? mind(1.0, o_ent[i] + 0.05) : 0.0;
+		const int32_t t = tp[i];
+		const int64_t sk = int64_t(t) * 6;
+		const double entk = sc[sk];
+		o_ent[i] = nx[i] < 0 ? mind(entk, o_ent[i] + 0.05 * entk) : 0.0;
 		if (bt[i] != 0) continue;
-		const double rate = nx[i] < 0 ? 0.06 : 0.03;
+		const double rate = (nx[i] < 0 ? 0.06 : 0.03) * sc[sk + 4];
 		const double cap = mo[i] * mind(1.0, s);
 		if (o_org[i] > cap)
 			o_org[i] = maxd(cap, o_org[i] - mo[i] * ORG_DECAY);
@@ -57,10 +62,9 @@ Array MeowqCore::recovery(const PackedByteArray &alive, const PackedInt32Array &
 		if (c != o && ally_p[int64_t(o) * nc + c] != 1) continue;
 		const int32_t pl = pl_p[i];
 		if (pl < 0 || s < 0.3 || (o_eq[i] >= 1.0 && o_str[i] >= 100.0)) continue;
-		const int32_t t = tp[i];
 		const double rr = 0.04 * (1.0 + rb[o]) * s;
 		if (o_eq[i] < 1.0) {
-			double want = mind(1.0 - o_eq[i], rr);
+			double want = mind(1.0 - o_eq[i], rr * sc[sk + 3]);
 			for (int k = 0; k < 8; k++) {
 				const double e = te[t * 8 + k];
 				if (e > 0) want = mind(want, double(st[pl * 8 + k]) / e);
@@ -71,7 +75,7 @@ Array MeowqCore::recovery(const PackedByteArray &alive, const PackedInt32Array &
 			}
 		}
 		if (o_str[i] < 100.0) {
-			const double add = mind(100.0 - o_str[i], rr * 100.0);
+			const double add = mind(100.0 - o_str[i], rr * sc[sk + 2] * 100.0);
 			const double men = add / 100.0 * tm[t];
 			if (mp[o] >= men) {
 				mp[o] -= men;
@@ -436,7 +440,9 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		const PackedByteArray &war, int nc, const PackedFloat32Array &def_mult, const PackedByteArray &terrain,
 		const PackedInt32Array &region, const PackedFloat32Array &cas, const PackedFloat32Array &tmul,
 		const PackedInt32Array &prov, const PackedFloat32Array &tpl_width, const PackedFloat32Array &fw,
-		const PackedFloat64Array &armor, const PackedFloat64Array &pierce, double armor_cut) const {
+		const PackedFloat64Array &armor, const PackedFloat64Array &pierce, double armor_cut,
+		const PackedFloat64Array &tpl_sc) const {
+	const double *scp = tpl_sc.ptr();
 	PackedFloat64Array str = str_in, org = org_in, eq = eq_in;
 	const double *arm = armor.ptr(), *prc = pierce.ptr();
 	std::vector<double> pa, pd;
@@ -526,14 +532,16 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		const double r2 = double(rng->randf_range(0.8, 1.2));
 		const double wd = wsum(dw), wa = wsum(aw);
 		for (size_t j = 0; j < defenders.size(); j++) {
-			double att_power = pierced(pa, attackers, arm[defenders[j]]) * cas_a;
+			const double aa = scp[int64_t(tp[defenders[j]]) * 6 + 1];
+			double att_power = pierced(pa, attackers, arm[defenders[j]]) * (aa <= 0.0 ? cas_a : 1.0 + (cas_a - 1.0) * (1.0 - aa));
 			att_power *= r1 * (1.0 - terrain_def * 0.6);
 			att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard);
 			const double to_def = att_power / wd;
 			deltas.push_back({ defenders[j], to_def * dw[j] * 0.55, to_def * dw[j] * 0.12 * (su[defenders[j]] < SUP_EXH ? EXH_LOSS : 1.0) });
 		}
 		for (size_t j = 0; j < attackers.size(); j++) {
-			double def_power = pierced(pd, defenders, arm[attackers[j]]) * cas_d;
+			const double aa2 = scp[int64_t(tp[attackers[j]]) * 6 + 1];
+			double def_power = pierced(pd, defenders, arm[attackers[j]]) * (aa2 <= 0.0 ? cas_d : 1.0 + (cas_d - 1.0) * (1.0 - aa2));
 			def_power *= r2;
 			def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard);
 			const double to_att = def_power / wa;

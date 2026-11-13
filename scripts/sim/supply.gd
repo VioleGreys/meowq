@@ -243,7 +243,7 @@ static func regions(world: World, side_of: PackedInt32Array, sources: Array, cap
 		fall.append(pow(FALLOFF, maxi(0, h - 1)))
 	var t := {"ps": f[0], "conn": f[3], "pocket": POCKET_LOCAL, "side_of": side_of, "ctrl": world.p_controller, "pcap": world.p_supply_cap,
 		"d_alive": world.d_alive, "d_prov": world.d_prov, "d_owner": world.d_owner,
-		"mot": Native.gather_i32(world.tpl_motor, world.d_tpl), "local": LOCAL,
+		"mot": Native.gather_i32(world.tpl_motor, world.d_tpl), "supw": Native.gather_f64(_tpl_supw(world), world.d_tpl), "local": LOCAL,
 		"cand": f[5], "chop": f[6], "aux": f[11], "afac": f[12], "naux": AUX_N, "aux_per": AUX_PER, "nf": f[7], "nprov": f[8], "fall": fall, "budget": BUDGET_K, "kc": K_CAND, "nr": world.region_count}
 	world.p_supcap = f[4]   # для расстановки войск ИИ (AIPlanner: не скапливать сверх снабжения)
 	var r: Array = Native.core.call("supply_divs", t) if Native.core != null else divisions_gd(t)
@@ -287,6 +287,16 @@ static func _trucks(world: World) -> void:
 		else:
 			nat.stock[Military.EQ_TRUCK] = 0.0
 			nat.truck_ok = st / want
+
+
+## Нагрузка шаблонов на снабжение (роты поддержки: Military.SC_K, 6-е значение).
+static func _tpl_supw(world: World) -> PackedFloat64Array:
+	var out := PackedFloat64Array()
+	var nt := world.tpl_sc.size() / Military.SC_K
+	out.resize(nt)
+	for i in nt:
+		out[i] = world.tpl_sc[i * Military.SC_K + 5]
+	return out
 
 
 ## Упреждение (Spec): поле подачи на завтра — в фоне по сегодняшней территории.
@@ -677,6 +687,7 @@ static func divisions_gd(t: Dictionary) -> Array:
 	var d_prov: PackedInt32Array = t["d_prov"]
 	var d_owner: PackedInt32Array = t["d_owner"]
 	var mot: PackedInt32Array = t["mot"]
+	var supw: PackedFloat64Array = t["supw"]
 	var k_local: float = t["local"]
 	var cand: PackedInt32Array = t["cand"]
 	var chop: PackedInt32Array = t["chop"]
@@ -698,7 +709,7 @@ static func divisions_gd(t: Dictionary) -> Array:
 			var s := side_of[d_owner[i]]
 			var c := ctrl[d_prov[i]]
 			if s >= 0 and c >= 0 and side_of[c] == s:
-				dem[d_prov[i]] += 1.5 if mot[i] >= 1 else 1.0
+				dem[d_prov[i]] += (1.5 if mot[i] >= 1 else 1.0) * supw[i]   # тыловая рота — меньше
 	# местное снабжение и нужда сверх него
 	var have := PackedFloat64Array()
 	have.resize(pc)

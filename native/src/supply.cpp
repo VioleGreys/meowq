@@ -403,6 +403,8 @@ Array MeowqCore::supply_divs(const Dictionary &t) const {
 	const PackedFloat32Array pcap_a = t["pcap"];
 	const PackedByteArray alive_a = t["d_alive"];
 	const PackedInt32Array prov_a = t["d_prov"], owner_a = t["d_owner"], mot_a = t["mot"];
+	const PackedFloat64Array supw_a = t["supw"];
+	const double *supw = supw_a.ptr();
 	const double k_local = double(t["local"]);
 	const PackedInt32Array cand_a = t["cand"], chop_a = t["chop"], nprov_a = t["nprov"];
 	const PackedFloat64Array nf_a = t["nf"], fall_a = t["fall"], afac_a = t["afac"];
@@ -427,7 +429,7 @@ Array MeowqCore::supply_divs(const Dictionary &t) const {
 			const int s = side_of[owner[i]];
 			const int c = ctrl[prov[i]];
 			if (s >= 0 && c >= 0 && side_of[c] == s)
-				dem[prov[i]] += mot[i] >= 1 ? 1.5 : 1.0;
+				dem[prov[i]] += (mot[i] >= 1 ? 1.5 : 1.0) * supw[i];
 		}
 	std::vector<int32_t> plist;
 	for (int p = 0; p < pc; p++) {
