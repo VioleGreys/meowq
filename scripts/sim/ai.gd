@@ -193,6 +193,10 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var supcap: PackedFloat32Array = tb.get("supcap", PackedFloat32Array())
 	var nohit: PackedByteArray = tb.get("nohit", PackedByteArray())
 	var prov_count := land.size()
+	var atklim: PackedByteArray = tb.get("atklim", PackedByteArray())
+	var atk_base := nid * prov_count if atklim.size() == nc * prov_count else -1
+	var holdt: PackedByteArray = tb.get("hold", PackedByteArray())
+	var hold_base := nid * prov_count if holdt.size() == nc * prov_count else -1
 	var has_cap := supcap.size() == prov_count
 	# снабжение дивизий и климат (акклиматизация страны) — для выбора целей атаки
 	var dv_sup: PackedFloat64Array = tb.get("dv_sup", PackedFloat64Array())
@@ -237,7 +241,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 					fronts[p] = true
 					if not own_p:
 						ally_front[p] = true
-					if nohit.is_empty() or nohit[nid * nc + c] == 0:
+					if (nohit.is_empty() or nohit[nid * nc + c] == 0) and (atk_base < 0 or atklim[atk_base + q] == 0):
 						targets[q] = true
 					fpairs.append(p)
 					fpairs.append(q)
@@ -547,6 +551,9 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			# план наступления: участки главного удара заполняем до ёмкости снабжения
 			if axis_front.has(f):
 				desired[f] = maxi(1, int(floor(supcap[f])))
+		# гарнизон (эффект hold): не меньше заданного, и сверх ёмкости снабжения
+		if hold_base >= 0 and holdt[hold_base + f] > 0:
+			desired[f] = maxi(int(desired[f]), int(holdt[hold_base + f]))
 	# Пустой участок фронта (в том числе оставленный уходящей дивизией): туда идёт
 	# ближайшая свободная дивизия — из тыла или лишняя на участке сверх нужного;
 	# поиск по своей земле на FILL_DEPTH переходов (решение пользователя).
@@ -743,8 +750,69 @@ static func ai_tables(world: World) -> Dictionary:
 		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
 		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list, "supcap": world.p_supcap,
-		"nohit": no_attack_table(world), "dv_sup": world.d_sup, "p_hot": world.p_hot, "p_cold": world.p_cold,
+		"nohit": no_attack_table(world), "atklim": attack_limit_table(world), "hold": hold_table(world), "dv_sup": world.d_sup, "p_hot": world.p_hot, "p_cold": world.p_cold,
 		"n_hot": world.n_hot, "n_cold": world.n_cold}
+
+
+## Провинции, которые ИИ страны не атакует (эффект attack_limit: земли adm0 вне
+## рамок; и рубеж операций war_limit — чтобы не обойти его с соседней земли, как
+## Япония из Индокитая на Куньмин): nc×prov_count, 1 — не цель; пусто — запретов
+## нет. Фронт там держится.
+static func attack_limit_table(world: World) -> PackedByteArray:
+	var t := PackedByteArray()
+	var pc := world.prov_count
+	for nat in world.nations:
+		if nat.is_player or not nat.alive:
+			continue
+		var lims: Array = []
+		if not nat.attack_limit.is_empty():
+			lims.append(nat.attack_limit)
+		if not nat.war_limit.is_empty():
+			lims.append([[nat.war_limit[0]], nat.war_limit[1], []])
+		if not lims.is_empty() and t.is_empty():
+			t.resize(world.nation_count * pc)
+		for lim in lims:
+			_attack_limit_fill(world, t, nat.id, lim)
+	return t
+
+
+static func _attack_limit_fill(world: World, t: PackedByteArray, nid: int, lim: Array) -> void:
+	var pc := world.prov_count
+	var codes: Array = lim[0]
+	var boxes: Array = lim[1]
+	var excl: Array = lim[2] if lim.size() > 2 else []
+	var base: int = nid * pc
+	for p in pc:
+		if not codes.has(world.p_adm0[p]):
+			continue
+		var ll: Vector2 = world.p_lonlat[p]
+		var inside := boxes.is_empty()
+		for b in boxes:
+			if ll.x >= float(b[0]) and ll.y >= float(b[1]) and ll.x <= float(b[2]) and ll.y <= float(b[3]):
+				inside = true
+				break
+		# except — не атаковать и внутри рамок (Ленинград: блокада, а не штурм)
+		for b in excl:
+			if ll.x >= float(b[0]) and ll.y >= float(b[1]) and ll.x <= float(b[2]) and ll.y <= float(b[3]):
+				inside = false
+				break
+		if not inside:
+			t[base + p] = 1
+
+
+## Гарнизоны (Nation.hold): nc×prov_count — не меньше дивизий на участке фронта;
+## пусто — гарнизонов нет.
+static func hold_table(world: World) -> PackedByteArray:
+	var t := PackedByteArray()
+	var pc := world.prov_count
+	for nat in world.nations:
+		if nat.hold.is_empty() or nat.is_player or not nat.alive:
+			continue
+		if t.is_empty():
+			t.resize(world.nation_count * pc)
+		for hp in nat.hold:
+			t[nat.id * pc + int(hp)] = clampi(int(nat.hold[hp]), 0, 255)
+	return t
 
 
 ## Пары «воюем, но ИИ не наступает» (Nation.no_attack, только у ИИ): nc×nc;
@@ -768,7 +836,8 @@ static func _nearest(t: Dictionary, nation: int, from: int, goal: Dictionary) ->
 		return PackedInt32Array()
 	var land: PackedByteArray = t["land"]
 	var ctrl: PackedInt32Array = t["ctrl"]
-	var war: PackedByteArray = t.get("pass", t["war"])   # можно войти: своя, вражеская, союзная
+	var war: PackedByteArray = t.get("pass", t["war"])   # можно войти: своя, союзная (вражеская — ниже)
+	var hostile: PackedByteArray = t["war"]   # через вражескую — нет: переброска не захват (пустую Тулу брали в обход attack_limit)
 	var nc: int = t["nc"]
 	var a_start: PackedInt32Array = t["adj_start"]
 	var a_list: PackedInt32Array = t["adj_list"]
@@ -790,7 +859,7 @@ static func _nearest(t: Dictionary, nation: int, from: int, goal: Dictionary) ->
 			if parent[q] >= 0 or land[q] == 0:
 				continue
 			var c := ctrl[q]
-			if c != nation and (c < 0 or war[nation * nc + c] == 0):
+			if c != nation and (c < 0 or war[nation * nc + c] == 0 or hostile[nation * nc + c] == 1):
 				continue
 			parent[q] = p
 			queue.append(q)

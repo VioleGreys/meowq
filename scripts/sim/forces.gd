@@ -2300,7 +2300,9 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 	if best < 0:
 		return
 	var port := nat.inv_port
-	if port < 0 or world.p_controller[port] != n:
+	# гарнизон (Nation.hold) — не порт посадки: иначе десант увозил защитников
+	# блокадного Ленинграда в Никель
+	if port < 0 or world.p_controller[port] != n or nat.hold.has(port):
 		port = -1
 		var port_d := INF
 		# порт посадки — в метрополии (связан со столицей по суше) или там, где уже
@@ -2308,7 +2310,7 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 		# ближайшим своим портом был Порт-Артур — десант не собирался никогда)
 		var home_m: PackedByteArray = own_reach(world, n, nat.capital)[0]
 		for p in world.prov_count:
-			if world.p_controller[p] == n and world.p_owner[p] == n and is_port(world, p) \
+			if world.p_controller[p] == n and world.p_owner[p] == n and is_port(world, p) and not nat.hold.has(p) \
 					and (home_m[p] == 1 or _own_divs(world, n, p) >= 3):
 				var dd := world.p_center[p].distance_squared_to(world.p_center[best])
 				if dd < port_d:

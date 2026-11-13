@@ -114,7 +114,28 @@ static func check(world: World, n: int, cond: Dictionary, ahead: int = 0) -> Str
 		var b := tag_id(world, cond["at_war_pair"][1])
 		if a < 0 or b < 0 or not world.is_at_war(a, b):
 			return "нужна война: %s — %s" % [cond["at_war_pair"][0], cond["at_war_pair"][1]]
+	if cond.has("lost") and not _lost_ok(world, cond["lost"]):
+		return "пока %s держит свои земли" % cond["lost"].get("tag", "")
 	return ""
+
+
+## Условие «lost»: {"tag", "provs": [названия], "n": сколько (1)} — не меньше n
+## провинций из списка под контролем противника страны tag.
+static func _lost_ok(world: World, c: Dictionary) -> bool:
+	var t := tag_id(world, String(c.get("tag", "")))
+	if t < 0:
+		return false
+	var names := Array(world.p_name)
+	var need := int(c.get("n", 1))
+	var got := 0
+	for city in c.get("provs", []):
+		var p := names.find(String(city))
+		if p < 0:
+			continue
+		var ctl := world.p_controller[p]
+		if ctl >= 0 and ctl != t and world.is_at_war(ctl, t):
+			got += 1
+	return got >= need
 
 
 ## То же, что check(...) == "", без строк причин (те же условия по порядку).
@@ -152,6 +173,8 @@ static func check_ok(world: World, n: int, cond: Dictionary, ahead: int = 0) -> 
 		var b := tag_id(world, cond["at_war_pair"][1])
 		if a < 0 or b < 0 or not world.is_at_war(a, b):
 			return false
+	if cond.has("lost") and not _lost_ok(world, cond["lost"]):
+		return false
 	return true
 
 
@@ -504,8 +527,8 @@ static func _ai_wait(world: World, n: int) -> void:
 static func _is_key(fd: Dictionary) -> bool:
 	for e in fd.get("effects", []):
 		if e.get("t", "") in ["event", "war", "annex", "transfer", "release", "faction", "join_faction_of",
-				"pact", "break_pact", "guarantee", "peace", "civil_war", "later", "leader", "ideology", "rep", "concede",
-				"offensive", "landing", "seize", "fort", "war_limit"]:
+				"pact", "break_pact", "guarantee", "peace", "peace_all", "civil_war", "later", "leader", "ideology", "rep", "concede",
+				"offensive", "landing", "seize", "fort", "war_limit", "attack_limit", "hold", "hub"]:
 			return true
 	return false
 
@@ -1049,7 +1072,11 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 					annex(world, who, target)
 			"transfer":
 				var to := tag_id(world, e["to"]) if e.has("to") else who
-				transfer(world, area(world, e["area"]), to)
+				var tp := area(world, e["area"])
+				if e.get("held", false):
+					# только провинции, которые прежний владелец ещё удерживает
+					tp = tp.filter(func(q): return world.p_controller[q] == world.p_owner[q])
+				transfer(world, tp, to, String(e.get("units", "")))
 			"release":
 				release(world, e["tag"], area(world, e["area"]), tag_id(world, e.get("puppet_of", "")))
 			"civil_war":
@@ -1098,6 +1125,11 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 			"peace":
 				if target >= 0 and world.is_at_war(who, target):
 					make_white_peace(world, who, target)
+			"peace_all":
+				# белый мир со всеми противниками (выход из войны)
+				for en in nat.at_war.keys():
+					if world.is_at_war(who, int(en)):
+						make_white_peace(world, who, int(en))
 			"vichy":
 				pass   # обрабатывается при капитуляции (capitulation_hook)
 			"log":
@@ -1144,6 +1176,39 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				nat.war_limit = [String(e.get("adm0", "")), boxes]
 			"war_limit_end":
 				nat.war_limit = []
+			"attack_limit":
+				# цели наступления ИИ на землях adm0 — только в рамках boxes; фронт
+				# держится везде (группа армий «Центр» в обороне летом 1942 г.)
+				var ab: Array = []
+				for b in e.get("boxes", []):
+					ab.append([float(b[0]), float(b[1]), float(b[2]), float(b[3])])
+				var codes: Array = []
+				var a0 = e.get("adm0", [])
+				for c in (a0 if a0 is Array else [a0]):
+					codes.append(String(c))
+				var ex: Array = []
+				for b in e.get("except", []):
+					ex.append([float(b[0]), float(b[1]), float(b[2]), float(b[3])])
+				nat.attack_limit = [codes, ab, ex]
+			"attack_limit_end":
+				nat.attack_limit = []
+			"hold":
+				# гарнизон: ИИ держит на участке фронта не меньше n дивизий, сколько бы
+				# ни выходило по раздаче (Ленинград 1941–43 гг.); n = 0 — снять
+				for city in e.get("provs", []):
+					var hp := Array(world.p_name).find(String(city))
+					if hp >= 0:
+						if int(e.get("n", 0)) > 0:
+							nat.hold[hp] = int(e["n"])
+						else:
+							nat.hold.erase(hp)
+			"hub":
+				# временный узел снабжения в своей провинции (как плацдарм высадки):
+				# «Дорога жизни» по льду Ладоги в блокадный Ленинград
+				for city in e.get("provs", []):
+					var bp := Array(world.p_name).find(String(city))
+					if bp >= 0:
+						world.beachheads[bp] = world.day + int(e.get("days", 365))
 			"landing":
 				# цель высадки по истории (название провинции): ИИ готовит десант туда,
 				# пока её не возьмёт, не глядя на перевес армий
@@ -1371,15 +1436,28 @@ static func relocate(world: World, nid: int, share: float, from_lon: Vector2, to
 
 
 ## Передача провинций: войска прежнего владельца отходят к своей столице.
-static func transfer(world: World, provs: Array, to: int) -> void:
+## units: "" — к своей столице, "join" — переходят к новому владельцу (армия
+## Виши в Африке — к «Свободной Франции»), "disband" — распущены (армия перемирия).
+static func transfer(world: World, provs: Array, to: int, units: String = "") -> void:
 	if provs.is_empty() or to < 0:
 		return
 	var old: int = world.p_owner[provs[0]]
 	for p in provs:
 		world.p_owner[p] = to
 		world.p_controller[p] = to
+	# новая столица — до отхода войск, чтобы им было куда отходить
+	_fix_capital(world, old)
 	for d in world.divisions:
 		if d.alive and provs.has(d.prov) and d.owner != to:
+			if units == "join" and d.owner == old:
+				d.owner = to
+				d.group = -1
+				d.lead = -1
+				Military.refresh_division(world, d)
+				continue
+			if units == "disband" and d.owner == old:
+				d.alive = false
+				continue
 			var cap: int = world.nations[d.owner].capital
 			if world.nations[d.owner].alive and cap >= 0 and world.p_controller[cap] == d.owner:
 				_move(world, d, cap)
@@ -1589,10 +1667,15 @@ static func _fix_capital(world: World, n: int) -> void:
 	var nat: World.Nation = world.nations[n]
 	if world.p_owner[nat.capital] == n:
 		return
+	# лучше удерживаемая провинция с наибольшими очками, иначе любая своя
 	var best := -1
 	for p in world.prov_count:
-		if world.p_owner[p] == n and (best < 0 or world.p_vp[p] > world.p_vp[best]):
+		if world.p_owner[p] == n and world.p_controller[p] == n and (best < 0 or world.p_vp[p] > world.p_vp[best]):
 			best = p
+	if best < 0:
+		for p in world.prov_count:
+			if world.p_owner[p] == n and (best < 0 or world.p_vp[p] > world.p_vp[best]):
+				best = p
 	if best >= 0:
 		nat.capital = best
 	else:
@@ -1702,8 +1785,11 @@ static func _vichy(world: World, loser: int, winner: int, tag: String, free: Dic
 			world.p_controller[p] = loser
 		var v := release(world, tag, vfree, Diplomacy.root(world, winner))
 		if v >= 0:
-			# режим вне войны: снять и унаследованные от сюзерена войны (матрица тоже)
+			# режим вне войны: снять и унаследованные от сюзерена войны (матрица тоже);
+			# в новые войны сюзерена не вступает (иначе Виши воевал с 1941 г. и
+			# Британия забирала Северную Африку до «Факела»)
 			world.end_wars_of(v)
+			world.nations[v].war_neutral = true
 			# оставшийся флот — Виши
 			for f in world.fleets:
 				if f.alive and f.owner == loser:
@@ -1814,6 +1900,8 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("гражданская война" + ((", неразбериха раскола (атака, оборона, скорость −%d%%; порядок — по району раз в %d дн.)" % [roundi(100.0 * float(e["chaos"].get("v", 0.95))), int(e["chaos"].get("every", 90))]) if e.has("chaos") else ""))
 			"peace":
 				parts.append("мир с %s" % tname)
+			"peace_all":
+				parts.append("%sмир со всеми противниками" % who)
 			"later":
 				var inner := effects_text(world, e.get("effects", [])).trim_prefix("Эффекты: ")
 				parts.append("через %d дн.: %s" % [int(e.get("days", 1)), inner])
@@ -1862,6 +1950,14 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sрубеж операций: %d район(ов)" % [who, e.get("boxes", []).size()])
 			"war_limit_end":
 				parts.append("%sрубеж операций снят" % who)
+			"attack_limit":
+				parts.append("%sнаступление только на %d направлении(ях), в остальном — оборона" % [who, e.get("boxes", []).size()])
+			"attack_limit_end":
+				parts.append("%sограничение наступления снято" % who)
+			"hold":
+				parts.append("%sгарнизон: %s — не меньше %d дивизий" % [who, ", ".join(e.get("provs", [])), int(e.get("n", 0))])
+			"hub":
+				parts.append("%sснабжение %s — %d дн." % [who, ", ".join(e.get("provs", [])), int(e.get("days", 365))])
 			"landing":
 				parts.append("%sвысадка: %s" % [who, e.get("prov", "")])
 			"seize":

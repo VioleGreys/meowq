@@ -94,6 +94,27 @@ func _init() -> void:
 				check(not String(r[1]).contains("?"), "%s: непонятное условие %s" % [id, JSON.stringify(m.get("if", {}))])
 		if ev.has("chance"):
 			check(History.event_has_choice(ev), "%s: шанс у события без выбора" % id)
+	# черты: стартовые и из эффектов фокусов и событий — все есть в spirits.json
+	# (раздел "spirits"; черта вне раздела загрузчиком не читается)
+	for tag in data:
+		for sid in data[tag].get("spirits", []):
+			check(w.spirit_defs.has(sid), "%s: нет черты %s" % [tag, sid])
+	var eff_lists: Array = []
+	for tree in w.focus_trees.values():
+		for fd in tree:
+			eff_lists.append([String(fd["id"]), fd.get("effects", [])])
+	for id2 in w.event_defs:
+		for o in w.event_defs[id2].get("options", []):
+			eff_lists.append([String(id2), o.get("effects", [])])
+	while not eff_lists.is_empty():
+		var item: Array = eff_lists.pop_back()
+		for e in item[1]:
+			var t := String(e.get("t", ""))
+			if t in ["spirit_add", "spirit_timed", "spirit_remove", "spirit_scale"]:
+				check(w.spirit_defs.has(String(e.get("id", ""))), "%s: нет черты %s" % [item[0], e.get("id", "")])
+			for k in ["effects", "ok", "fail"]:
+				if e.has(k):
+					eff_lists.append([item[0], e[k]])
 	if errors == 0:
 		print("Данные 1936 г.: OK")
 	quit(1 if errors > 0 else 0)

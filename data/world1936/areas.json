@@ -26,5 +26,9 @@
   "vichy_spm": {"name": "Сен-Пьер и Микелон", "owner": "VIC", "adm0": ["SPM", "WLF"]},
   "vichy_levant": {"name": "Сирия и Ливан", "owner": "VIC", "adm0": ["SYR", "LBN"]},
   "vichy_madagascar": {"name": "Мадагаскар и Коморы", "owner": "VIC", "adm0": ["MDG", "COM", "ATF"]},
-  "vichy_africa": {"name": "Северная и Западная Африка", "owner": "VIC", "adm0": ["DZA", "MAR", "TUN", "SEN", "MRT", "MLI", "GIN", "CIV", "BFA", "NER", "BEN", "TGO", "DJI"]}
+  "vichy_africa": {"name": "Северная и Западная Африка", "owner": "VIC", "adm0": ["DZA", "MAR", "TUN", "SEN", "MRT", "MLI", "GIN", "CIV", "BFA", "NER", "BEN", "TGO", "DJI"]},
+  "ita_german_zone": {"owner": "ITA", "adm0": ["GRC", "SVN", "HRV", "ALB", "MNE"], "boxes": [[6.0, 41.6, 19.0, 47.5]]},
+  "vichy_torch": {"name": "Французская Северная и Западная Африка (без Туниса)", "owner": "VIC", "adm0": ["DZA", "MAR", "SEN", "MRT", "MLI", "GIN", "CIV", "BFA", "NER", "BEN", "TGO", "DJI"]},
+  "vichy_tunisia": {"name": "Тунис", "owner": "VIC", "adm0": ["TUN"]},
+  "vichy_home": {"name": "Южная Франция", "owner": "VIC", "adm0": ["FRA"]}
 }

@@ -170,7 +170,8 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 	na.wargoals.erase(b)
 	var attackers := {a: true}
 	for p in puppets_of(world, a):
-		attackers[p] = true
+		if not world.nations[p].war_neutral:
+			attackers[p] = true
 	var defenders := {b: true}
 	var calls := {}   # гаранты-игроки: событие с выбором
 	var rb := root(world, b)
@@ -187,7 +188,9 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 		changed = false
 		for d in defenders.keys():
 			var add: Array = [root(world, d)]
-			add.append_array(puppets_of(world, root(world, d)))
+			for pp in puppets_of(world, root(world, d)):
+				if not world.nations[pp].war_neutral or pp == b:
+					add.append(pp)
 			# члены фракции — кроме тех, у кого пакт с нападающим (СССР и Япония, 1941 г.)
 			for m in faction_members(world, world.nations[root(world, d)].faction):
 				if not world.nations[m].pacts.has(a):

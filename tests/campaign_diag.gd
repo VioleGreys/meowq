@@ -3,7 +3,9 @@ extends SceneTree
 ## капитуляции, фокусы сторон, раз в месяц — дивизии и доля своих очков победы.
 ##   --front=east  — Германия против СССР (с 1941 г.);
 ##   --front=china — Япония против Китая (с 1937 г.);
-##   --front=west  — Запад и Юг: Северная Африка, Италия, Франция (с 1940 г.).
+##   --front=west  — Запад и Юг: Северная Африка, Италия, Франция (с 1940 г.);
+##   --front=all   — все фронты разом в одной партии 1936–45 гг. (по умолчанию):
+##                   битвы и фокусы на разных фронтах влияют друг на друга.
 ##   godot --headless --path . --script res://tests/campaign_diag.gd -- --front=east [--until=1945-06-01 --seed=N --brief]
 
 const FRONTS := {
@@ -30,6 +32,16 @@ const FRONTS := {
 			["Шербур-Октевиль", "26.06.44"], ["Кан", "09.07.44"], ["Париж", "25.08.44"], ["Марсель", "28.08.44"], ["Лион", "03.09.44"],
 			["Брюссель", "03.09.44"], ["Кёльн", "06.03.45"], ["Эссен", "11.04.45"], ["Мюнхен", "30.04.45"], ["Гамбург", "03.05.45"], ["Берлин", "02.05.45"]],
 	},
+	"pacific": {
+		"from": "1941-06-01", "until": "1945-09-01",
+		"tags": ["JAP", "MAN", "USA", "ENG", "AST", "HOL", "PHI", "SOV"],
+		"focus": ["JAP", "USA"],
+		"cities": [["Гонконг", "25.12.41"], ["Манила", "02.01.42"], ["Куала-Лумпур", "11.01.42"], ["Сингапур", "15.02.42"],
+			["Палембанг", "16.02.42"], ["Батавия", "05.03.42"], ["Сурабая", "08.03.42"], ["Рангун", "08.03.42 → 03.05.45"],
+			["Мандалай", "01.05.42 → 20.03.45"], ["Порт-Морсби", "не пал"], ["Хониара", "07.42 → 02.43 (Гуадалканал)"],
+			["Таклобан", "20.10.44 (Лейте)"], ["Давао", "05.45"], ["Окинава", "04–06.45"], ["Наха", "27.05.45"],
+			["Харбин", "20.08.45"], ["Синьцзин", "20.08.45"], ["Мукден", "20.08.45"], ["Токио", "капитуляция 02.09.45"]],
+	},
 	"china": {
 		"from": "1937-06-01", "until": "1942-01-01",
 		"tags": ["JAP", "MAN", "CHI", "PRC", "SHX", "GXC", "YUN", "XSM", "SIK"],
@@ -46,11 +58,26 @@ const FRONTS := {
 
 func _init() -> void:
 	var args := OS.get_cmdline_user_args()
-	var front := "east"
+	var front := "all"
 	for a in args:
 		if a.begins_with("--front="):
 			front = a.split("=")[1]
-	var cfg: Dictionary = FRONTS[front]
+	var cfg: Dictionary
+	if front == "all":
+		cfg = {"from": "1936-01-01", "until": "1945-09-01", "tags": [], "focus": [], "cities": []}
+		for k in ["china", "west", "east", "pacific"]:
+			var f: Dictionary = FRONTS[k]
+			for t in f["tags"]:
+				if not t in cfg["tags"]:
+					cfg["tags"].append(t)
+			for t in f["focus"]:
+				if not t in cfg["focus"]:
+					cfg["focus"].append(t)
+			for c in f["cities"]:
+				if not c in cfg["cities"]:
+					cfg["cities"].append(c)
+	else:
+		cfg = FRONTS[front]
 	var w := World.new()
 	MapLoader.load_world(w)
 	var sim := Simulation.new(w)
@@ -89,7 +116,8 @@ func _init() -> void:
 		sim.tick()
 		var watching := w.day >= from_day
 		for e in w.events:
-			if watching and ("капитулирует" in e or "объявляет войну" in e or "план" in e or "переезжает" in e or "столиц" in e or "высадк" in e or "переправ" in e):
+			if watching and not ("переправа" in e) and ("капитулирует" in e or "объявляет войну" in e or "план" in e or "переезжает" in e or "столиц" in e or "высадк" in e or "переправ" in e \
+					or "Виши" in e or "вступает" in e or "Мир между" in e or "еремирие" in e or "Муссолини" in e or "передаёт" in e or "выходит" in e):
 				print("  %s — %s" % [w.date_short(), e])
 		w.events.clear()
 		for n2 in ftags:
