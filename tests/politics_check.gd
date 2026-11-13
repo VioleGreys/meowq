@@ -345,5 +345,92 @@ func _init() -> void:
 	Politics.ai_laws(w, np)
 	check(np.econ_law == 3 and np.conscr_law == 3, "Польша на войне: военная экономика и призыв всех годных (%d, %d)" % [np.econ_law, np.conscr_law])
 
+	# --- Опыт дивизий, черты за КР, способности командиров ----------------------
+	print("Опыт дивизий:")
+	var sim3 := fresh("GER")
+	var g3 := t("GER")
+	var ng: World.Nation = w.nations[g3]
+	sim3.tick()
+	var sl3 := -1
+	for d in w.divisions:
+		if d.alive and d.owner == g3:
+			sl3 = d.slot
+			break
+	check(w.d_xp[sl3] >= 0.1 and w.d_xp[sl3] <= Leaders.DIV_XP_NEW + 1e-9, "дивизия 1936 г. — около «Обученных»: %.3f (%s)" % [w.d_xp[sl3], Leaders.div_level(w.d_xp[sl3])])
+	check(Leaders.div_bonus(0.8) == 0.12 and Leaders.div_bonus(0.05) == -0.05 and Leaders.div_bonus(0.2) == 0.0, "ветераны +12 %, новобранцы −5 %")
+	w.d_xp[sl3] = 0.8
+	var st3 := w.d_str.duplicate()
+	st3[sl3] = 50.0
+	w.d_str[sl3] = 100.0
+	Leaders.dilute(w, st3)
+	check(absf(w.d_xp[sl3] - (0.8 * 50.0 + Leaders.DIV_XP_FRESH * 50.0) / 100.0) < 1e-9, "пополнение разбавляет опыт: %.3f" % w.d_xp[sl3])
+	# прибавка в бою — по поддержке войны и советнику
+	Climate.daily(w)
+	w.d_xp[sl3] = 0.2
+	w.d_battle[sl3] = 1
+	var ae3 := w.d_atk_eff[sl3]
+	Leaders.daily(w)
+	var g13 := w.d_xp[sl3] - 0.2
+	check(is_equal_approx(g13, Leaders.DIV_XP_DAY * (1.0 + ng.b("xp_div"))), "день боя: опыт +%.4f" % g13)
+	ng.command_power = 200.0
+	ng.pol_power = 200.0
+	Politics.hire(w, ng, "drill")
+	Climate.daily(w)
+	w.d_xp[sl3] = 0.8
+	ae3 = w.d_atk_eff[sl3]
+	Leaders.daily(w)
+	check(w.d_atk_eff[sl3] > ae3 * 1.11, "ветераны бьют сильнее: %.2f → %.2f" % [ae3, w.d_atk_eff[sl3]])
+	w.d_xp[sl3] = 0.2
+	Leaders.daily(w)
+	check(w.d_xp[sl3] - 0.2 > g13 * 1.2, "инспектор боевой подготовки ускоряет опыт: +%.4f" % (w.d_xp[sl3] - 0.2))
+	w.d_battle[sl3] = 0
+	w.d_xp[sl3] = 0.05
+	Climate.daily(w)
+	Leaders.daily(w)
+	check(is_equal_approx(w.d_xp[sl3], 0.05 + Leaders.DIV_XP_DRILL), "учения вне боя подтягивают новобранцев")
+
+	print("Черты за командный ресурс:")
+	var cm3: World.Commander = null
+	for cc in w.commanders:
+		if cc.owner == g3 and not cc.marshal:
+			cm3 = cc
+			break
+	cm3.traits.clear()
+	cm3.level = 2
+	cm3.xp = 0.0
+	ng.command_power = 100.0
+	cm3.trait_points = 0
+	check(Leaders.trait_block(w, cm3, "planner").begins_with("нет очка"), "без очка черту не взять")
+	Leaders._gain(w, cm3, Leaders.XP_LEVEL * 2.0 / (1.0 + ng.b("xp_lead")) + 0.01)
+	check(cm3.level == 3 and cm3.trait_points == 1 and cm3.traits.is_empty(), "3-й уровень — очко черты, сама черта не берётся")
+	check(Leaders.take_trait(w, cm3, "planner") == "" and cm3.traits.has("planner") and cm3.trait_points == 0, "черта «Штабист» взята")
+	check(is_equal_approx(ng.command_power, 100.0 - Leaders.TRAIT_COST), "черта стоит %d КР" % int(Leaders.TRAIT_COST))
+
+	print("Способности командиров:")
+	ng.command_power = 100.0
+	check(Leaders.use_ability(w, cm3, "assault") == "", "«Стремительная атака»")
+	check(is_equal_approx(ng.command_power, 80.0), "стоит 20 КР")
+	check(Leaders.ability_block(w, cm3, "desperate").begins_with("уже действует"), "одна способность за раз")
+	var act3 := Leaders.active_mults(w)
+	check(act3.has(cm3.id) and is_equal_approx(act3[cm3.id][0], 0.10), "атака +10 %")
+	w.day += 10
+	check(Leaders.cmd_ability(w, cm3.id) == "", "кончается через 10 дней")
+	check(Leaders.ability_block(w, cm3, "assault").begins_with("снова через"), "перезарядка")
+	check(Leaders.use_ability(w, cm3, "fast_plan") == "", "«Быстрое планирование»")
+	# план: дивизия генерала копит вдвое быстрее
+	var lp3 := w.ld_plan.duplicate()
+	var s23 := -1
+	for i in w.ld_gen.size():
+		if w.ld_gen[i] == cm3.id:
+			s23 = i
+			break
+	if s23 >= 0:
+		var old3 := w.d_plan.duplicate()
+		old3[s23] = 0.0
+		w.d_plan[s23] = 0.05
+		Leaders.plan_bonus(w, old3)
+		check(w.d_plan[s23] >= 0.1 * lp3[s23] * (1.0 + ng.b("plan_speed")) - 1e-9, "план копится вдвое быстрее: %.3f" % w.d_plan[s23])
+	w.day -= 10
+
 	print("Политика: %s" % ("OK" if errors == 0 else "ОШИБОК %d" % errors))
 	quit(1 if errors > 0 else 0)

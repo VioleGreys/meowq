@@ -44,7 +44,27 @@ const TRAITS := {
 	"planner": ["Штабист", [], 0.0, 0.0, 0.25, 0.0],
 	"swift": ["Стремительный", [], 0.0, 0.0, 0.0, 0.06],
 }
-const TRAIT_LEVELS := [3, 5]
+const TRAIT_LEVELS := [3, 5]     # на этих уровнях — очко черты (берётся за КР)
+const TRAIT_COST := 20.0         # взять черту, командный ресурс
+
+## Способности командиров (как в жанре, значения свои): за КР на несколько дней,
+## одна за раз, повтор той же — после перезарядки. Генерал — своей армии,
+## маршал — всей группе армий. [название, КР, дней, перезарядка, атака, оборона, скорость, план]
+const ABILITIES := {
+	"fast_plan": ["Быстрое планирование", 15.0, 14, 30, 0.0, 0.0, 0.0, 1.0],
+	"assault": ["Стремительная атака", 20.0, 10, 30, 0.10, -0.10, 0.05, 0.0],
+	"desperate": ["Отчаянная защита", 20.0, 10, 30, -0.20, 0.20, 0.0, 0.0],
+}
+const ABILITY_ORDER := ["fast_plan", "assault", "desperate"]
+
+## Опыт дивизий (0…1): растёт в боях, пополнение разбавляет его новобранцами.
+## Уровни: [порог, название, атака и оборона].
+const DIV_LEVELS := [[0.0, "Новобранцы", -0.05], [0.1, "Обученные", 0.0], [0.3, "Регулярные", 0.04],
+	[0.5, "Опытные", 0.08], [0.75, "Ветераны", 0.12]]
+const DIV_XP_NEW := 0.15         # новая дивизия после подготовки — «Обученные»
+const DIV_XP_DRILL := 0.002      # учения: вне боя опыт ниже DIV_XP_NEW подтягивается к нему за день
+const DIV_XP_FRESH := 0.05       # опыт пополнения (новобранцы)
+const DIV_XP_DAY := 0.006        # за день боя (× прибавка опыта: поддержка войны, советники)
 
 
 # --- Стартовые командиры ------------------------------------------------------
@@ -545,7 +565,8 @@ static func _apply(r: Array, c: World.Commander, cls: int, k: float) -> void:
 	r[3] *= 1.0 + p * k
 
 
-## После Climate.daily: множители на действующие атаку, оборону, скорость; опыт за бои.
+## После Climate.daily: множители на действующие атаку, оборону, скорость
+## (командиры, их способности, опыт дивизий); опыт за бои командирам и дивизиям.
 static func daily(world: World) -> void:
 	refresh(world)
 	var ae := world.d_atk_eff
@@ -554,6 +575,7 @@ static func daily(world: World) -> void:
 	var n := ae.size()
 	if de.size() != n or se.size() != n or world.ld_gen.size() < n:
 		return
+	_fit_xp(world)
 	var gen := world.ld_gen
 	var mar := world.ld_mar
 	var la := world.ld_atk
@@ -561,27 +583,269 @@ static func daily(world: World) -> void:
 	var ls := world.ld_spd
 	var bt := world.d_battle
 	var alive := world.d_alive
+	var own := world.d_owner
+	var dx := world.d_xp
+	var act := active_mults(world)
+	# прибавка опыта дивизий по странам: поддержка войны и советники
+	var gain := PackedFloat64Array()
+	gain.resize(world.nation_count)
+	for nat in world.nations:
+		gain[nat.id] = DIV_XP_DAY * maxf(0.0, 1.0 + nat.b("xp_div"))
 	var xp := {}
 	for s in n:
+		if alive[s] == 0:
+			continue
+		var x := dx[s]
+		var lv := div_bonus(x)
+		if bt[s] != 0:
+			dx[s] = minf(1.0, x + gain[own[s]])
+		elif x < DIV_XP_NEW:
+			dx[s] = minf(DIV_XP_NEW, x + DIV_XP_DRILL)
 		var g := gen[s]
 		var m := mar[s]
-		if (g < 0 and m < 0) or alive[s] == 0:
-			continue
-		ae[s] *= la[s]
-		de[s] *= ldf[s]
-		se[s] *= ls[s]
-		if bt[s] != 0:
-			if g >= 0:
-				xp[g] = float(xp.get(g, 0.0)) + 1.0 / ARMY_MAX
-			if m >= 0:
-				xp[m] = float(xp.get(m, 0.0)) + 1.0 / (ARMY_MAX * FRONT_MAX)
+		var ka := 1.0 + lv
+		var kd := 1.0 + lv
+		var ks := 1.0
+		if g >= 0 or m >= 0:
+			ka *= la[s]
+			kd *= ldf[s]
+			ks *= ls[s]
+			if not act.is_empty():
+				var ag: Variant = act.get(g) if g >= 0 else null
+				var am: Variant = act.get(m) if m >= 0 else null
+				if am != null and ag != null and cmd_ability(world, g) == cmd_ability(world, m):
+					am = null   # одна и та же способность генерала и маршала — один раз
+				for v in [ag, am]:
+					if v != null:
+						ka *= 1.0 + float(v[0])
+						kd *= 1.0 + float(v[1])
+						ks *= 1.0 + float(v[2])
+			if bt[s] != 0:
+				if g >= 0:
+					xp[g] = float(xp.get(g, 0.0)) + 1.0 / ARMY_MAX
+				if m >= 0:
+					xp[m] = float(xp.get(m, 0.0)) + 1.0 / (ARMY_MAX * FRONT_MAX)
+		if ka != 1.0:
+			ae[s] *= ka
+		if kd != 1.0:
+			de[s] *= kd
+		if ks != 1.0:
+			se[s] *= ks
 	world.d_atk_eff = ae
 	world.d_def_eff = de
 	world.d_spd_eff = se
+	world.d_xp = dx
 	var ids := xp.keys()
 	ids.sort()
 	for cid in ids:
 		_gain(world, world.commanders[cid], minf(1.0, xp[cid]))
+	if world.day % AI_ABILITY_DAYS == 0:
+		ai_abilities(world)
+
+
+## Массив опыта по числу дивизий (сохранения без него — всем «Обученные»).
+static func _fit_xp(world: World) -> void:
+	var n := world.d_id.size()
+	if world.d_xp.size() == n:
+		return
+	var dx := world.d_xp
+	var from := dx.size()
+	dx.resize(n)
+	for i in range(from, n):
+		dx[i] = DIV_XP_NEW
+	world.d_xp = dx
+
+
+## Прибавка к атаке и обороне от опыта дивизии.
+static func div_bonus(x: float) -> float:
+	if x >= 0.5:
+		return 0.12 if x >= 0.75 else 0.08
+	if x >= 0.1:
+		return 0.04 if x >= 0.3 else 0.0
+	return -0.05
+
+
+static func div_level(x: float) -> String:
+	var r := ""
+	for lv in DIV_LEVELS:
+		if x >= float(lv[0]):
+			r = lv[1]
+	return r
+
+
+## Пополнение разбавляет опыт: средний по людям, новые — DIV_XP_FRESH.
+static func dilute(world: World, old_str: PackedFloat64Array) -> void:
+	_fit_xp(world)
+	var st := world.d_str
+	var dx := world.d_xp
+	var n := mini(mini(st.size(), old_str.size()), dx.size())
+	for i in n:
+		var o := old_str[i]
+		var nw := st[i]
+		if nw > o and nw > 0.0:
+			dx[i] = (dx[i] * o + DIV_XP_FRESH * (nw - o)) / nw
+	world.d_xp = dx
+
+
+# --- Способности командиров ------------------------------------------------------
+
+const AI_ABILITY_DAYS := 5
+
+
+static func cmd_ability(world: World, cid: int) -> String:
+	var c: World.Commander = world.commanders[cid]
+	return c.ability if c.ability_until >= world.day else ""
+
+
+## Действующие способности: id командира -> [атака, оборона, скорость, план].
+static func active_mults(world: World) -> Dictionary:
+	var r := {}
+	for c in world.commanders:
+		if c.alive and c.ability != "" and c.ability_until >= world.day:
+			var a: Array = ABILITIES[c.ability]
+			r[c.id] = [a[4], a[5], a[6], a[7]]
+	return r
+
+
+static func ability_block(world: World, c: World.Commander, id: String) -> String:
+	if not ABILITIES.has(id):
+		return "нет такой способности"
+	if c.ability != "" and c.ability_until >= world.day:
+		return "уже действует «%s» (ещё %d дн.)" % [ABILITIES[c.ability][0], c.ability_until - world.day + 1]
+	var ready := int(c.ability_cd.get(id, -1))
+	if world.day < ready:
+		return "снова через %d дн." % (ready - world.day)
+	var cost: float = ABILITIES[id][1]
+	var nat: World.Nation = world.nations[c.owner]
+	if nat.command_power < cost:
+		return "нужно %d КР (есть %d)" % [int(cost), int(nat.command_power)]
+	return ""
+
+
+## Применить способность (платят все, и ИИ: иначе исторический ИИ держал бы их всегда).
+static func use_ability(world: World, c: World.Commander, id: String) -> String:
+	var why := ability_block(world, c, id)
+	if why != "":
+		return why
+	var a: Array = ABILITIES[id]
+	world.nations[c.owner].command_power -= float(a[1])
+	c.ability = id
+	c.ability_until = world.day + int(a[2]) - 1
+	c.ability_cd[id] = world.day + int(a[3])
+	if world.nations[c.owner].is_player:
+		world.log_event("%s: «%s» на %d дн." % [c.name, a[0], int(a[2])])
+	return ""
+
+
+static func ability_text(id: String) -> String:
+	var a: Array = ABILITIES[id]
+	var fx: Array = []
+	for k in 4:
+		var v: float = a[4 + k]
+		if v != 0.0:
+			fx.append("%s %+d %%" % [["атака", "оборона", "скорость", "планирование"][k], roundi(v * 100.0)])
+	return "%s: %s на %d дн., %d КР, повтор через %d дн." % [a[0], ", ".join(fx), int(a[2]), int(a[1]), int(a[3])]
+
+
+## ИИ: раз в AI_ABILITY_DAYS дней — по положению дивизий командира: много
+## наступающих в бою — «Стремительная атака», много обороняющихся — «Отчаянная
+## защита», войска стоят на войне без боёв и с малым планом — «Быстрое планирование».
+static func ai_abilities(world: World) -> void:
+	var gen := world.ld_gen
+	var mar := world.ld_mar
+	var bt := world.d_battle
+	var nx := world.d_next
+	var al := world.d_alive
+	var pl := world.d_plan
+	var n := mini(mini(gen.size(), bt.size()), al.size())
+	var cnt := {}   # командир -> [наступают в бою, обороняются в бою, ждут без плана]
+	for s in n:
+		if al[s] == 0:
+			continue
+		for c in [gen[s], mar[s]]:
+			if c < 0:
+				continue
+			if not cnt.has(c):
+				cnt[c] = [0, 0, 0]
+			var e: Array = cnt[c]
+			if bt[s] != 0:
+				e[0 if nx[s] >= 0 else 1] += 1
+			elif nx[s] < 0 and pl[s] < 0.5:
+				e[2] += 1
+	var ids := cnt.keys()
+	ids.sort()
+	for cid in ids:
+		var c: World.Commander = world.commanders[cid]
+		var nat: World.Nation = world.nations[c.owner]
+		if nat.is_player or not c.alive or nat.at_war.is_empty():
+			continue
+		var e: Array = cnt[cid]
+		var k := 2 if c.marshal else 1   # маршалу — порог выше (вся группа)
+		var want := ""
+		if e[0] >= 4 * k and e[0] >= e[1]:
+			want = "assault"
+		elif e[1] >= 4 * k and e[1] > e[0]:
+			want = "desperate"
+		elif e[2] >= 8 * k and e[0] + e[1] < 3:
+			want = "fast_plan"
+		if want != "" and nat.command_power >= float(ABILITIES[want][1]) + 10.0:
+			use_ability(world, c, want)
+
+
+# --- Черты за командный ресурс -------------------------------------------------
+
+static func trait_block(world: World, c: World.Commander, id: String) -> String:
+	if not TRAITS.has(id):
+		return "нет такой черты"
+	if c.traits.has(id):
+		return "уже есть"
+	if c.trait_points <= 0:
+		return "нет очка черты (даётся на %s уровне)" % " и ".join(TRAIT_LEVELS.map(func(l): return "%d-м" % l))
+	var nat: World.Nation = world.nations[c.owner]
+	if nat.command_power < TRAIT_COST:
+		return "нужно %d КР (есть %d)" % [int(TRAIT_COST), int(nat.command_power)]
+	return ""
+
+
+static func take_trait(world: World, c: World.Commander, id: String) -> String:
+	var why := trait_block(world, c, id)
+	if why != "":
+		return why
+	world.nations[c.owner].command_power -= TRAIT_COST
+	c.trait_points -= 1
+	c.traits.append(id)
+	_retouch(world, c)
+	if world.nations[c.owner].is_player:
+		world.log_event("%s: черта «%s»" % [c.name, TRAITS[id][0]])
+	return ""
+
+
+## ИИ: очки черт — в случайную черту, когда хватает КР (раз в месяц, Politics).
+static func ai_traits(world: World, nat: World.Nation) -> void:
+	for c in world.commanders:
+		if c.owner != nat.id or not c.alive or c.trait_points <= 0:
+			continue
+		var free: Array = []
+		for id in TRAITS:
+			if not c.traits.has(id):
+				free.append(id)
+		if free.is_empty() or nat.command_power < TRAIT_COST + 10.0:
+			continue
+		var rng := Parallel.rng(world.seed_value, world.day, 7300 + c.id)
+		take_trait(world, c, free[rng.randi() % free.size()])
+
+
+## Навыки или черты командира изменились — пересчитать кэш его дивизий.
+static func _retouch(world: World, c: World.Commander) -> void:
+	refresh(world)
+	var player := _players(world)
+	var mults := {}
+	var gen := world.ld_gen
+	var mar := world.ld_mar
+	var divs: Array = world.divisions
+	for s in mini(gen.size(), divs.size()):
+		if (gen[s] == c.id or mar[s] == c.id) and world.d_alive[s] == 1:
+			_entry(world, s, divs[s], player, mults)
 
 
 static func _gain(world: World, c: World.Commander, v: float) -> void:
@@ -605,26 +869,13 @@ static func _gain(world: World, c: World.Commander, v: float) -> void:
 			1: c.def += 1
 			2: c.plan += 1
 			3: c.man += 1
-	if TRAIT_LEVELS.has(c.level):
-		var free: Array = []
-		for id in TRAITS:
-			if not c.traits.has(id):
-				free.append(id)
-		if not free.is_empty():
-			var rng2 := Parallel.rng(world.seed_value, world.day, 7300 + c.id)
-			c.traits.append(free[rng2.randi() % free.size()])
+	if TRAIT_LEVELS.has(c.level) and c.traits.size() + c.trait_points < TRAITS.size():
+		c.trait_points += 1   # черту выбирают за командный ресурс (take_trait / ai_traits)
 	# новые навыки — только дивизиям этого командира
-	refresh(world)
-	var player := _players(world)
-	var mults := {}
-	var gen := world.ld_gen
-	var mar := world.ld_mar
-	var divs: Array = world.divisions
-	for s in mini(gen.size(), divs.size()):
-		if (gen[s] == c.id or mar[s] == c.id) and world.d_alive[s] == 1:
-			_entry(world, s, divs[s], player, mults)
+	_retouch(world, c)
 	if world.nations[c.owner].is_player:
-		world.log_event("%s: уровень %d (%s)" % [c.name, c.level, stats_text(c)])
+		world.log_event("%s: уровень %d (%s)%s" % [c.name, c.level, stats_text(c),
+			" — можно взять черту за %d КР" % int(TRAIT_COST) if c.trait_points > 0 else ""])
 
 
 ## После k_plan: прибавку плана за день — × бонус планирования командиров.
@@ -637,10 +888,20 @@ static func plan_bonus(world: World, old: PackedFloat64Array) -> void:
 	nk.resize(world.nation_count)
 	for nat in world.nations:
 		nk[nat.id] = maxf(0.0, 1.0 + nat.b("plan_speed"))
+	var act := active_mults(world)
+	var gen := world.ld_gen
+	var mar := world.ld_mar
 	var n := mini(mini(mini(pl.size(), old.size()), lp.size()), own.size())
 	for s in n:
 		if pl[s] > old[s]:
 			var k := nk[own[s]] * (lp[s] if lp[s] > 1.0 else 1.0)
+			if not act.is_empty():
+				# «Быстрое планирование» генерала или маршала (один раз, если у обоих)
+				var a := 0.0
+				for c in [gen[s], mar[s]]:
+					if c >= 0 and act.has(c):
+						a = maxf(a, float(act[c][3]))
+				k *= 1.0 + a
 			if k != 1.0:
 				pl[s] = minf(1.0, old[s] + (pl[s] - old[s]) * k)
 	world.d_plan = pl

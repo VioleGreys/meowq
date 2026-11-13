@@ -125,6 +125,7 @@ static func daily(world: World) -> void:
 		if not nat.is_player and (world.day + nat.id) % AI_LAW_DAYS == 0 and not nat.capitulated:
 			ai_laws(world, nat)
 			ai_advisors(world, nat)
+			Leaders.ai_traits(world, nat)
 
 
 ## ПВ в день: быстрее при высокой стабильности.
@@ -154,7 +155,7 @@ static func scale_mods(s: float, w: float) -> Dictionary:
 		# поддержка войны
 		"attack": wb, "defense": wb, "occ_suppress": wb,
 		"mil_build": wl, "plan_speed": wl,
-		"xp_land": wl, "xp_navy": wl, "xp_air": wl, "xp_lead": wl,
+		"xp_land": wl, "xp_navy": wl, "xp_air": wl, "xp_lead": wl, "xp_div": wl,
 		# обе низкие — ближе капитуляция
 		"surrender": maxf(0.0, 0.4 - s) * 0.25 + maxf(0.0, 0.4 - w) * 0.25,
 	}
@@ -571,6 +572,7 @@ const MIL_ADVISORS := {
 	"army_chief": {"name": "Начальник штаба армии", "desc": "прибавка опыта армии +20 %", "bonus": {"xp_land": 0.20}},
 	"navy_chief": {"name": "Начальник морского штаба", "desc": "прибавка опыта флота +20 %", "bonus": {"xp_navy": 0.20}},
 	"air_chief": {"name": "Начальник штаба авиации", "desc": "прибавка опыта авиации +20 %", "bonus": {"xp_air": 0.20}},
+	"drill": {"name": "Инспектор боевой подготовки", "desc": "прибавка опыта дивизий +25 %", "bonus": {"xp_div": 0.25}},
 	"mentor": {"name": "Наставник командного состава", "desc": "прибавка опыта генералов и маршалов +25 %", "bonus": {"xp_lead": 0.25}},
 	"staff": {"name": "Штабной планировщик", "desc": "скорость планирования +15 %", "bonus": {"plan_speed": 0.15}},
 	"infantry": {"name": "Инспектор пехоты", "desc": "атака и оборона пехоты +5 %", "bonus": {"inf_attack": 0.05, "inf_defense": 0.05}},
@@ -659,7 +661,7 @@ static func ai_advisors(world: World, nat: World.Nation) -> void:
 		pol.push_front("lawkeeper")
 	if nat.war_support < 0.4 and war:
 		pol.push_front("propagandist")
-	var mil: Array = ["army_chief", "staff", "mentor", "infantry", "rear", "artillery"]
+	var mil: Array = ["army_chief", "drill", "staff", "mentor", "infantry", "rear", "artillery"]
 	if nat.major:
 		mil.insert(2, "navy_chief")
 		mil.insert(3, "air_chief")

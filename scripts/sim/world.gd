@@ -337,6 +337,9 @@ class Division:
 			return w.d_transit[slot]
 		set(v):
 			w.ds_transit(slot, v)
+	var xp: float:  # опыт дивизии 0…1 (Leaders.DIV_LEVELS)
+		get:
+			return w.d_xp[slot] if slot < w.d_xp.size() else Leaders.DIV_XP_NEW
 	var plan: float:  # планирование 0…1 (атака × (1 + PLAN_MAX × план), Simulation.PLAN_*)
 		get:
 			return w.d_plan[slot]
@@ -461,6 +464,10 @@ class Commander:
 	var xp := 0.0
 	var from_day := 0               # с какого дня доступен (исторические — по дате)
 	var traits: Array = []          # черты (Leaders.TRAITS): бонусы по роду войск и др.
+	var trait_points := 0           # очки черт с уровней: черта берётся за командный ресурс (Leaders.take_trait)
+	var ability := ""               # способность (Leaders.ABILITIES): действует до ability_until включительно
+	var ability_until := -1
+	var ability_cd := {}            # способность -> день, с которого снова доступна
 	var army := -1                  # армия игрока (генерал) или группа армий (маршал)
 	var boss := -1                  # маршал над генералом у ИИ (виртуальные группы)
 	var alive := true
@@ -689,6 +696,7 @@ var d_tpl := PackedInt32Array()
 var d_transit := PackedInt32Array()
 var d_resv := PackedInt32Array()
 var d_plan := PackedFloat64Array()        # планирование наступления 0…1 (k_plan)
+var d_xp := PackedFloat64Array()          # опыт дивизии 0…1 (Leaders: бои, разбавление пополнением)
 var d_inv := PackedInt32Array()
 var d_next := PackedInt32Array()      # path[0] или -1
 var d_id := PackedInt32Array()
@@ -1457,6 +1465,8 @@ func _d_append() -> int:
 	d_plan.append(0.0)
 	d_inv.append(-1)
 	d_next.append(-1)
+	if d_xp.size() == d_id.size():
+		d_xp.append(Leaders.DIV_XP_NEW)
 	d_id.append(0)
 	d_alive.append(1)
 	d_battle.append(0)
@@ -1520,6 +1530,10 @@ func compact_divisions() -> void:
 	d_transit = Native.gather_i32(d_transit, keep)
 	d_resv = Native.gather_i32(d_resv, keep)
 	d_plan = Native.gather_f64(d_plan, keep)
+	if d_xp.size() == n:
+		d_xp = Native.gather_f64(d_xp, keep)
+	else:
+		d_xp = PackedFloat64Array()   # сохранение без опыта — у всех обычный (Leaders.daily)
 	d_inv = Native.gather_i32(d_inv, keep)
 	d_next = Native.gather_i32(d_next, keep)
 	d_id = Native.gather_i32(d_id, keep)
@@ -1565,6 +1579,7 @@ func clear_divisions() -> void:
 	d_transit = PackedInt32Array()
 	d_resv = PackedInt32Array()
 	d_plan = PackedFloat64Array()
+	d_xp = PackedFloat64Array()
 	d_inv = PackedInt32Array()
 	d_next = PackedInt32Array()
 	d_id = PackedInt32Array()

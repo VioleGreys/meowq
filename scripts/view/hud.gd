@@ -1401,6 +1401,7 @@ func show_group(g: World.ArmyGroup) -> void:
 		else:
 			Leaders.join_front(w, g, nx)
 		show_group(g)))
+	_ability_buttons(w, g.general, func(): show_group(g))
 	info_actions.add_child(_button("Переучить", func(): _open_retrain(game.group_divisions(g.id))))
 	info_actions.add_child(_button("Распустить", func():
 		game.sim.disband_group(g)
@@ -1408,6 +1409,31 @@ func show_group(g: World.ArmyGroup) -> void:
 	info_actions.add_child(_button("✕", func(): game.clear_selection(), Vector2(56, 56)))
 	info_panel.show()
 	_layout_info.call_deferred()
+
+
+## Кнопки способностей командира (Leaders.ABILITIES) в нижней карточке.
+func _ability_buttons(w: World, cid: int, back: Callable) -> void:
+	if cid < 0:
+		return
+	var c: World.Commander = w.commanders[cid]
+	for id in Leaders.ABILITY_ORDER:
+		var aid: String = id
+		var a: Array = Leaders.ABILITIES[id]
+		var why := Leaders.ability_block(w, c, aid)
+		var b := _button("%s (%d КР)" % [a[0], int(a[1])], func():
+			game.act(func(): Leaders.use_ability(w, c, aid))
+			game.hud_changed()
+			back.call())
+		b.disabled = why != ""
+		b.tooltip_text = Leaders.ability_text(aid) + ("" if why == "" else "\n" + why)
+		info_actions.add_child(b)
+
+
+func _ability_line(w: World, c: World.Commander) -> String:
+	var cur := Leaders.cmd_ability(w, c.id)
+	if cur == "":
+		return ""
+	return "\nДействует «%s» — ещё %d дн." % [Leaders.ABILITIES[cur][0], c.ability_until - w.day + 1]
 
 
 ## Панель группы армий: маршал, общий приказ всем армиям, состав.
@@ -1453,6 +1479,7 @@ func show_front(f: World.ArmyFront) -> void:
 		var i := opts.find(f.marshal)
 		Leaders.set_marshal(w, f, opts[(i + 1) % opts.size()] if opts.size() > 1 else -1)
 		show_front(f)))
+	_ability_buttons(w, f.marshal, func(): show_front(f))
 	for g in armies:
 		var gid: int = g.id
 		var b := _button("%s ▸" % g.name, func(): game.select_group(gid))
@@ -1484,7 +1511,7 @@ func _update_front_text(f: World.ArmyFront) -> void:
 	var mtxt := "Маршала нет — назначьте: он даёт половину своих навыков всем дивизиям группы"
 	if f.marshal >= 0:
 		var c: World.Commander = w.commanders[f.marshal]
-		mtxt = "Маршал %s · %s\nВсем дивизиям: %s" % [c.name, Leaders.stats_text(c), Leaders.bonus_text(c, Leaders.MARSHAL_K)]
+		mtxt = "Маршал %s · %s\nВсем дивизиям: %s%s" % [c.name, Leaders.stats_text(c), Leaders.bonus_text(c, Leaders.MARSHAL_K), _ability_line(w, c)]
 	_info_text("%s · армий %d из %d\n%d %s · сила %d%% · в бою %d\n%s\n%s" % [f.name, armies.size(), Leaders.FRONT_MAX,
 		nd, _plural(nd, "дивизия", "дивизии", "дивизий"), s / maxi(1, nd), fights, mtxt, ", ".join(names)])
 
@@ -1498,10 +1525,12 @@ func _update_group_text(g: World.ArmyGroup) -> void:
 	var pl := 0.0
 	var bad := 0
 	var exh := 0
+	var dxp := 0.0
 	for d in divs:
 		s += d.strength
 		sup += d.supply
 		pl += d.plan
+		dxp += d.xp
 		if d.in_battle:
 			fights += 1
 		if d.supply < World.SUP_EXH:
@@ -1516,13 +1545,19 @@ func _update_group_text(g: World.ArmyGroup) -> void:
 	var gtxt := "\nГенерала нет — без бонусов к атаке, обороне, плану и скорости"
 	if g.general >= 0:
 		var c: World.Commander = w.commanders[g.general]
-		gtxt = "\nГенерал %s · %s · опыт %d/%d\n%s" % [c.name, Leaders.stats_text(c), int(c.xp), int(Leaders.XP_LEVEL * c.level), Leaders.bonus_text(c)]
+		gtxt = "\nГенерал %s · %s · опыт %d/%d\n%s%s" % [c.name, Leaders.stats_text(c), int(c.xp), int(Leaders.XP_LEVEL * c.level), Leaders.bonus_text(c), _ability_line(w, c)]
 	if g.front >= 0 and w.fronts[g.front].alive:
 		var f: World.ArmyFront = w.fronts[g.front]
 		gtxt += "\n%s%s" % [f.name, (" · маршал %s" % w.commanders[f.marshal].name) if f.marshal >= 0 else " · без маршала"]
-	_info_text("%s · %d из %d %s\n%s · сила %d%%\nСнабжение %d%% · план %d%% (+%d%% к атаке) · в бою %d" % [
+	_info_text("%s · %d из %d %s\n%s · сила %d%% · опыт: %s\nСнабжение %d%% · план %d%% (+%d%% к атаке) · в бою %d" % [
 		g.name, divs.size(), Leaders.ARMY_MAX, _plural(Leaders.ARMY_MAX, "дивизия", "дивизии", "дивизий"), order[0].to_upper() + order.substr(1),
-		s / n, sup / n * 100.0, pl / n * 100.0, pl / n * Simulation.PLAN_MAX * 100.0, fights] + gtxt + _sup_flags(bad, exh) + _clim_flags())
+		s / n, _xp_text(dxp / n), sup / n * 100.0, pl / n * 100.0, pl / n * Simulation.PLAN_MAX * 100.0, fights] + gtxt + _sup_flags(bad, exh) + _clim_flags())
+
+
+## Опыт дивизий: уровень, доля и прибавка к атаке и обороне.
+func _xp_text(x: float) -> String:
+	var b := Leaders.div_bonus(x)
+	return "%s %d%%%s" % [Leaders.div_level(x).to_lower(), roundi(x * 100.0), (" (%+d%%)" % roundi(b * 100.0)) if b != 0.0 else ""]
 
 
 var _clim_pen := 0      # дивизий выделения с климатическим штрафом (счётчик для _clim_flags)
@@ -1573,9 +1608,11 @@ func _update_selection_text() -> void:
 	var pl := 0.0
 	var bad := 0
 	var exh := 0
+	var dxp := 0.0
 	for d in sel:
 		s += d.strength
 		pl += d.plan
+		dxp += d.xp
 		o += d.org / maxf(1.0, d.max_org)
 		if d.supply < World.SUP_EXH:
 			exh += 1
@@ -1586,8 +1623,8 @@ func _update_selection_text() -> void:
 			moving += 1
 		if d.in_battle:
 			fighting += 1
-	_info_text("Выбрано: %d %s\nСила %d%% · организация %d%% · план %d%% · в пути %d · в бою %d%s\nПлан копится, пока войска стоят у фронта (до +%d%% к атаке), и тает в наступлении. Коснитесь провинции, чтобы отправить войска." % [
-		sel.size(), _plural(sel.size(), "дивизия", "дивизии", "дивизий"), s / sel.size(), o / sel.size() * 100.0, pl / sel.size() * 100.0, moving, fighting,
+	_info_text("Выбрано: %d %s · опыт: %s\nСила %d%% · организация %d%% · план %d%% · в пути %d · в бою %d%s\nПлан копится, пока войска стоят у фронта (до +%d%% к атаке), и тает в наступлении. Коснитесь провинции, чтобы отправить войска." % [
+		sel.size(), _plural(sel.size(), "дивизия", "дивизии", "дивизий"), _xp_text(dxp / sel.size()), s / sel.size(), o / sel.size() * 100.0, pl / sel.size() * 100.0, moving, fighting,
 		_sup_flags(bad, exh) + _clim_flags(), roundi(Simulation.PLAN_MAX * 100.0)])
 
 
@@ -1890,8 +1927,8 @@ func _build_politics(w: World, me: int) -> void:
 		int(Politics.COST_LAW), int(Politics.COST_POL_ADV), int(Politics.COST_GUARANTEE), int(Politics.COST_JUSTIFY),
 		int(Politics.COST_TRADE_LAW), int(Politics.COST_OCC_LAW), int(Politics.COST_DECISION)]))
 	popup_body.add_child(_label("Командный ресурс: %d (+%.2f в день, не больше %d)" % [int(n.command_power), Politics.cp_rate(n), int(Politics.CP_CAP)], 17))
-	popup_body.add_child(_small("Тратится на генералов (%d), маршалов (%d) и военных советников (%d). Быстрее копится при высокой поддержке войны." % [
-		int(Leaders.COST_GEN), int(Leaders.COST_MAR), int(Politics.COST_MIL_ADV)]))
+	popup_body.add_child(_small("Тратится на генералов (%d), маршалов (%d), военных советников (%d), черты командиров (%d) и их способности (15–20). Быстрее копится при высокой поддержке войны." % [
+		int(Leaders.COST_GEN), int(Leaders.COST_MAR), int(Politics.COST_MIL_ADV), int(Leaders.TRAIT_COST)]))
 	for row in [["Стабильность", n.stability, Politics.target_stability(w, n)], ["Поддержка войны", n.war_support, Politics.target_war_support(w, n)]]:
 		popup_body.add_child(_label("%s: %d%% (стремится к %d%%)" % [row[0], roundi(float(row[1]) * 100.0), roundi(float(row[2]) * 100.0)], 17))
 		var bar := ProgressBar.new()
@@ -1908,7 +1945,7 @@ func _build_politics(w: World, me: int) -> void:
 	stab.append("ПВ ×%.2f" % (0.5 + n.stability))
 	popup_body.add_child(_small("Стабильность: " + ", ".join(stab) + "."))
 	var ws: Array = []
-	for k in ["attack", "defense", "mil_build", "plan_speed", "xp_land", "xp_lead", "occ_suppress"]:
+	for k in ["attack", "defense", "mil_build", "plan_speed", "xp_land", "xp_div", "xp_lead", "occ_suppress"]:
 		var v: float = pb.get(k, 0.0)
 		ws.append("%s %+d%%" % [BONUS_NAMES.get(k, k), roundi(v * 100.0)])
 	ws.append("КР ×%.2f" % (0.5 + n.war_support))
@@ -1957,7 +1994,7 @@ func _build_politics(w: World, me: int) -> void:
 const BONUS_NAMES := {"cons_goods": "товары народного потребления", "war_support": "поддержка войны", "manpower": "призыв",
 	"industry": "выпуск заводов", "construction": "стройка", "occ_comply": "принятие на чужих землях",
 	"attack": "атака", "defense": "оборона", "mil_build": "стройка военных заводов", "plan_speed": "планирование",
-	"xp_land": "прибавка опыта", "xp_lead": "опыт командиров", "occ_suppress": "подавление сопротивления"}
+	"xp_land": "опыт армии", "xp_div": "опыт дивизий", "xp_lead": "опыт командиров", "occ_suppress": "подавление сопротивления"}
 
 
 ## Советники: политические — за ПВ, военные — за КР, по Politics.ADVISOR_SLOTS мест.
@@ -2575,7 +2612,8 @@ func _army_button(w: World, g: World.ArmyGroup, indent: String) -> Button:
 ## Командиры страны: навыки, назначение, наём за ПВ.
 func _build_commanders(w: World, n: World.Nation) -> void:
 	popup_body.add_child(_section("Командиры"))
-	popup_body.add_child(_small("Генерал даёт дивизиям своей армии бонусы навыков (атака и оборона +2,5 % за единицу, план +10 %, скорость +2 %), маршал — половину своих всем дивизиям группы. Опыт — за бои, с уровнем растёт случайный навык, на 3-м и 5-м уровне — новая черта (бонус роду войск или всем)."))
+	popup_body.add_child(_small("Генерал даёт дивизиям своей армии бонусы навыков (атака и оборона +2,5 %% за единицу, план +10 %%, скорость +2 %%), маршал — половину своих всем дивизиям группы. Опыт — за бои, с уровнем растёт случайный навык, на 3-м и 5-м уровне — очко черты: черту выбираете сами за %d КР (командный ресурс: %d). Способности (в карточке армии и группы армий): %s" % [
+		int(Leaders.TRAIT_COST), int(n.command_power), "; ".join(Leaders.ABILITY_ORDER.map(func(id): return Leaders.ability_text(id)))]))
 	for marshal in [true, false]:
 		var lst := Leaders.of_nation(w, n.id, marshal)
 		lst.sort_custom(Leaders._better)
@@ -2587,6 +2625,22 @@ func _build_commanders(w: World, n: World.Nation) -> void:
 			popup_body.add_child(_small("   %s · опыт %d/%d" % [Leaders.stats_text(c), int(c.xp), int(Leaders.XP_LEVEL * c.level)]))
 			for tid in c.traits:
 				popup_body.add_child(_small("   ▸ " + Leaders.trait_help(tid)))
+			if c.trait_points > 0:
+				popup_body.add_child(_small("   Очков черт: %d — выберите черту (%d КР):" % [c.trait_points, int(Leaders.TRAIT_COST)]))
+				for tid in Leaders.TRAITS:
+					if c.traits.has(tid):
+						continue
+					var tt: String = tid
+					var cc: World.Commander = c
+					var why := Leaders.trait_block(w, cc, tt)
+					var tb := _button(Leaders.trait_help(tt), func():
+						game.act(func(): Leaders.take_trait(w, cc, tt))
+						game.hud_changed()
+						_rebuild_popup(), Vector2(0, 42))
+					tb.disabled = why != ""
+					tb.clip_text = true
+					tb.add_theme_font_size_override("font_size", 14)
+					popup_body.add_child(tb)
 	var row := VBoxContainer.new()
 	for marshal in [false, true]:
 		var mm: bool = marshal

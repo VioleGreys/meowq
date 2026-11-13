@@ -1350,7 +1350,9 @@ func _phase_recovery() -> void:
 			stock[nat.id * 8 + k] = st[k]
 		manpower[nat.id] = nat.manpower
 		rbonus[nat.id] = nat.b("reinforce")
+	var str_before := world.d_str.duplicate()
 	var r := world.k_recovery(stock, manpower, rbonus, pr[0])
+	Leaders.dilute(world, str_before)   # пополнение разбавляет опыт дивизий
 	stock = r[0]
 	manpower = r[1]
 	for j in dep.size():
