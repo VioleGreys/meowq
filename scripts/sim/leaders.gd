@@ -25,8 +25,8 @@ const DEF_K := 0.025       # оборона +2,5 %
 const PLAN_K := 0.10       # скорость планирования +10 %
 const MAN_K := 0.02        # скорость движения +2 %
 const MARSHAL_K := 0.5     # доля навыков маршала для всех дивизий группы
-const COST_GEN := 25.0     # наём генерала, ПВ
-const COST_MAR := 50.0     # наём маршала
+const COST_GEN := 10.0     # наём генерала, командный ресурс (КР, Politics)
+const COST_MAR := 25.0     # наём маршала, КР
 const XP_LEVEL := 30.0     # опыт на следующий уровень × уровень (день боя всей армии — 1)
 const LEVEL_MAX := 5
 const STAT_MAX := 7
@@ -297,9 +297,9 @@ static func front_order(world: World, f: World.ArmyFront, mode: String, enemy: i
 		g.objective = objective
 
 
-## Наём за ПВ. Пусто — нанят, иначе причина.
+## Наём за командный ресурс. Пусто — нанят, иначе причина.
 static func hire(world: World, nat: World.Nation, marshal: bool) -> String:
-	var why := Politics.spend(world, nat, COST_MAR if marshal else COST_GEN)
+	var why := Politics.spend_cp(world, nat, COST_MAR if marshal else COST_GEN)
 	if why != "":
 		return why
 	var c := _add_generic(world, nat.id, marshal)
@@ -378,7 +378,7 @@ static func _new_general(world: World, nat: World.Nation, cnt: Dictionary) -> in
 	for c in of_nation(world, nat.id, false):
 		if not cnt.has(c.id):
 			free.append(c)
-	if free.is_empty() and Politics.can_pay(world, nat, COST_GEN + 50.0) == "" and hire(world, nat, false) == "":
+	if free.is_empty() and Politics.can_pay_cp(world, nat, COST_GEN + 20.0) == "" and hire(world, nat, false) == "":
 		free.append(world.commanders[world.commanders.size() - 1])
 	if free.is_empty():
 		return -1
@@ -402,7 +402,7 @@ static func _attach(world: World, nat: World.Nation, c: World.Commander, cnt: Di
 		for m in of_nation(world, nat.id, true):
 			if not subs.has(m.id):
 				free.append(m)
-		if free.is_empty() and cnt.size() >= 2 and Politics.can_pay(world, nat, COST_MAR + 50.0) == "" and hire(world, nat, true) == "":
+		if free.is_empty() and cnt.size() >= 2 and Politics.can_pay_cp(world, nat, COST_MAR + 20.0) == "" and hire(world, nat, true) == "":
 			free.append(world.commanders[world.commanders.size() - 1])
 		if free.is_empty():
 			return
@@ -587,7 +587,8 @@ static func daily(world: World) -> void:
 static func _gain(world: World, c: World.Commander, v: float) -> void:
 	if c.level >= LEVEL_MAX:
 		return
-	c.xp += v
+	# прибавка опыта: поддержка войны и военные советники (Politics)
+	c.xp += v * maxf(0.0, 1.0 + world.nations[c.owner].b("xp_lead"))
 	var need := XP_LEVEL * c.level
 	if c.xp < need:
 		return
@@ -630,8 +631,16 @@ static func _gain(world: World, c: World.Commander, v: float) -> void:
 static func plan_bonus(world: World, old: PackedFloat64Array) -> void:
 	var pl := world.d_plan
 	var lp := world.ld_plan
-	var n := mini(mini(pl.size(), old.size()), lp.size())
+	var own := world.d_owner
+	# скорость планирования страны: поддержка войны и советники (Politics)
+	var nk := PackedFloat64Array()
+	nk.resize(world.nation_count)
+	for nat in world.nations:
+		nk[nat.id] = maxf(0.0, 1.0 + nat.b("plan_speed"))
+	var n := mini(mini(mini(pl.size(), old.size()), lp.size()), own.size())
 	for s in n:
-		if lp[s] > 1.0 and pl[s] > old[s]:
-			pl[s] = minf(1.0, pl[s] + (pl[s] - old[s]) * (lp[s] - 1.0))
+		if pl[s] > old[s]:
+			var k := nk[own[s]] * (lp[s] if lp[s] > 1.0 else 1.0)
+			if k != 1.0:
+				pl[s] = minf(1.0, old[s] + (pl[s] - old[s]) * k)
 	world.d_plan = pl

@@ -147,6 +147,11 @@ class Nation:
 	var war_support := -1.0     # поддержка войны 0..1
 	var pol_bonus := {}         # бонусы от шкал (Politics._refresh_mods)
 	var pol_cd := {}            # решение -> день последнего
+	var econ_law := -1          # закон об экономике (Politics.ECON_LAWS; −1 — ещё не задан)
+	var conscr_law := -1        # закон о призыве (Politics.CONSCR_LAWS)
+	var command_power := -1.0   # командный ресурс (Politics; −1 — ещё не задан)
+	var advisors := {}          # нанятые советники: id (Politics.POL_ADVISORS / MIL_ADVISORS) -> день найма
+	var adv_bonus := {}         # бонусы законов и советников (Politics.recalc_laws)
 	var spirit_until := {}      # временные черты: id -> день окончания
 	var defending := false      # ведёт оборонительную войну (поддержка войны выше)
 	var guar_hist := {}         # исторические гарантии (старт, фокусы, события): срабатывают сами
@@ -198,7 +203,7 @@ class Nation:
 	var volunteer_acc := 0.0    # накопленные дробные дивизии добровольцев (черты с volunteers)
 
 	func b(key: String) -> float:
-		return float(bonus.get(key, 0.0)) + float(spirit_bonus.get(key, 0.0)) + float(pol_bonus.get(key, 0.0))
+		return float(bonus.get(key, 0.0)) + float(spirit_bonus.get(key, 0.0)) + float(pol_bonus.get(key, 0.0)) + float(adv_bonus.get(key, 0.0))
 
 
 class Faction:

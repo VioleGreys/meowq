@@ -272,5 +272,78 @@ func _init() -> void:
 	check(ban.begins_with("«Позор нации»"), "новые гарантии запрещены: %s" % ban)
 	check(w.nations[eng].guar_ban_until - w.day >= 1090, "запрет на 3 года")
 
+	# --- Законы, влияние шкал, советники (ноябрь 2026) --------------------------
+	print("Законы об экономике и призыве:")
+	var _sim2 := fresh("FRA")
+	var fr2 := t("FRA")
+	var nf: World.Nation = w.nations[fr2]
+	check(nf.econ_law == 0 and nf.conscr_law == 2, "Франция 1936 г.: гражданская экономика, всеобщая воинская обязанность")
+	check(w.nations[t("GER")].econ_law == 2 and w.nations[t("ENG")].conscr_law == 0, "Германия — частичная мобилизация, Британия — добровольцы")
+	var cg0 := Politics.consumer_factories(nf)
+	check(absf(Politics.consumer_share(nf) - (0.30 + float(nf.pol_bonus.get("cons_goods", 0.0)))) < 1e-6, "товары народного потребления: 30 %% и поправка стабильности (%.2f)" % Politics.consumer_share(nf))
+	nf.war_support = 0.2
+	check(Politics.law_block(w, nf, "econ", 2).begins_with("нужна поддержка войны 30"), "частичная мобилизация требует 30 % поддержки войны")
+	check(Politics.law_block(w, nf, "econ", 4) == "только во время войны", "тотальная мобилизация — только на войне")
+	nf.war_support = 0.55
+	nf.pol_power = 100.0
+	check(Politics.set_law(w, nf, "econ", 3) == "", "военная экономика при 55 % поддержки войны")
+	check(nf.pol_power == 50.0, "закон стоит 50 ПВ")
+	check(Politics.consumer_factories(nf) < cg0, "товаров народного потребления меньше: %.1f → %.1f" % [cg0, Politics.consumer_factories(nf)])
+	var mp0 := nf.b("manpower")
+	nf.pol_power = 100.0
+	check(Politics.set_law(w, nf, "conscr", 3) == "", "призыв всех годных")
+	check(absf(nf.b("manpower") - mp0 - 0.3) < 1e-6 and nf.b("conscription") >= 0.3, "приток людей +30 %, потолок армии выше")
+
+	print("Влияние шкал:")
+	var lo := Politics.scale_mods(0.0, 0.0)
+	var hi := Politics.scale_mods(1.0, 1.0)
+	check(is_equal_approx(hi["attack"], 0.2) and is_equal_approx(hi["defense"], 0.2) and is_equal_approx(hi["occ_suppress"], 0.2), "поддержка войны 100 %: атака, оборона, подавление +20 %")
+	check(is_equal_approx(lo["attack"], -0.1), "поддержка войны 0 %: атака −10 %")
+	check(hi["mil_build"] > 0.0 and hi["plan_speed"] > 0.0 and hi["xp_land"] > 0.0 and hi["xp_lead"] > 0.0, "поддержка войны: военные заводы, планирование, опыт")
+	check(lo["cons_goods"] > 0.0 and hi["cons_goods"] < 0.0, "стабильность меняет товары народного потребления")
+	check(lo["construction"] < 0.0 and lo["industry"] < 0.0 and lo["manpower"] < 0.0 and lo["occ_comply"] < 0.0 and lo["war_support"] < 0.0,
+		"низкая стабильность: стройка, выпуск, призыв, принятие, поддержка войны ниже")
+	var mid := Politics.scale_mods(0.5, 0.5)
+	var zero := true
+	for k in mid:
+		zero = zero and (float(mid[k]) == 0.0 or k == "surrender")
+	check(zero, "на 50 % обе шкалы без влияния")
+	nf.war_support = 1.0
+	nf.stability = 0.5
+	Politics.daily(w)
+	check(Politics.cp_rate(nf) > Politics.CP_DAY, "КР копится быстрее при высокой поддержке войны: %.2f" % Politics.cp_rate(nf))
+
+	print("Советники:")
+	nf.pol_power = 500.0
+	nf.command_power = 200.0
+	var xp_before := nf.b("xp_land")
+	check(Politics.hire(w, nf, "army_chief") == "", "нанят начальник штаба армии")
+	check(is_equal_approx(nf.b("xp_land") - xp_before, 0.2), "прибавка опыта армии +20 %")
+	check(nf.command_power == 150.0, "военный советник — 50 КР")
+	nf.xp[0] = 0.0
+	Doctrine.gain(nf, 0, 1.0)
+	check(is_equal_approx(nf.xp[0], 1.0 + nf.b("xp_land")), "опыт за бой умножен: %.2f" % nf.xp[0])
+	nf.xp[0] = 0.0
+	Doctrine.gain(nf, 0, 0.0)
+	check(nf.xp[0] == 0.0, "без боёв советник опыта не даёт")
+	for id in ["industrialist", "organizer", "lawkeeper"]:
+		Politics.hire(w, nf, id)
+	check(Politics.advisors_of(nf, false).size() == 3, "три политических советника")
+	check(Politics.hire_block(w, nf, "propagandist").begins_with("все 3"), "четвёртого места нет")
+	var st0 := nf.b("stability")
+	Politics.dismiss(w, nf, "lawkeeper")
+	check(is_equal_approx(st0 - nf.b("stability"), 0.05), "отпущенный советник снимает бонус")
+	check(Politics.hire(w, nf, "propagandist") == "", "место освободилось")
+
+	print("ИИ: законы на войне:")
+	_sim2 = fresh()
+	var pl := t("POL")
+	var np: World.Nation = w.nations[pl]
+	w.historical = true
+	np.war_support = 0.6
+	w.set_war(t("GER"), pl)
+	Politics.ai_laws(w, np)
+	check(np.econ_law == 3 and np.conscr_law == 3, "Польша на войне: военная экономика и призыв всех годных (%d, %d)" % [np.econ_law, np.conscr_law])
+
 	print("Политика: %s" % ("OK" if errors == 0 else "ОШИБОК %d" % errors))
 	quit(1 if errors > 0 else 0)

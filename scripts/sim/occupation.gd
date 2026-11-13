@@ -158,7 +158,7 @@ static func step(world: World) -> void:
 		var nc_: World.Nation = world.nations[k / 4096]
 		var no_: World.Nation = world.nations[k % 4096]
 		var rk := maxf(0.0, 1.0 + nc_.b("occ_resist") + no_.b("resistance"))
-		var dr := RESIST_GAIN * float(law["resist"]) * rk * (1.0 - cover) * (1.0 - 0.7 * cm / 100.0) - RESIST_SUPPRESS * cover
+		var dr := RESIST_GAIN * float(law["resist"]) * rk * (1.0 - cover) * (1.0 - 0.7 * cm / 100.0) - RESIST_SUPPRESS * cover * maxf(0.0, 1.0 + nc_.b("occ_suppress"))
 		r = clampf(r + dr * STEP, 0.0, 100.0)
 		var lc: float = law["comply"]
 		var dc := COMPLY_GAIN * lc * ((1.0 - r / 100.0) if lc > 0.0 else 1.0)

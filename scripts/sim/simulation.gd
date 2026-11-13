@@ -5,7 +5,7 @@ extends RefCounted
 ## от числа ядер, а сама работа распределяется по WorkerThreadPool.
 
 const FACTORY_COST := 60.0
-const BUILD_RATE := 0.05      # очков стройки в день на гражданскую фабрику
+const BUILD_RATE := 0.07      # очков стройки в день на свободную гражданскую фабрику (до товаров народного потребления — 0,05)
 const MAX_FACTORIES := 12
 const AI_PERIOD := 3
 # Планирование наступления (как в жанре): стоящая на фронте или у будущего фронта
@@ -201,9 +201,11 @@ func _phase_economy() -> void:
 		# закупки ресурсов оплачиваются гражданскими заводами, продажи их приносят
 		Prof.add("эк:наука-день", _pt)
 		_pt = Time.get_ticks_usec()
-		var civ_free := maxf(0.0, float(nat.civ) - nat.trade_civ + nat.trade_civ_in)
 		# заказы узлов снабжения берут до половины очков стройки (Supply.build)
-		nat.build_progress += Supply.build(world, nat, civ_free * BUILD_RATE * (1.0 + nat.b("construction")))
+		var bp := Supply.build(world, nat, build_points(nat))
+		if nat.build_mode == "mil":
+			bp *= maxf(0.0, 1.0 + nat.b("mil_build"))   # стройка военных заводов: закон, поддержка войны
+		nat.build_progress += bp
 		if nat.build_progress >= FACTORY_COST:
 			var bt := Puppets.build_target(world, nat)
 			if (bt >= 0 and Puppets.build_in(world, nat, bt)) or _place_factory(i, nat.build_mode):
@@ -226,6 +228,17 @@ func _phase_economy() -> void:
 				still.append([int(entry[0]) - 1, int(entry[1])])
 		nat.training = still
 		Prof.add("эк:подготовка", _pt)
+
+
+## Гражданских фабрик на стройку: без товаров народного потребления (закон об
+## экономике, стабильность) и оплаты закупок, с выручкой от продаж.
+static func free_civ(nat: World.Nation) -> float:
+	return maxf(0.0, float(nat.civ) - Politics.consumer_factories(nat) - nat.trade_civ + nat.trade_civ_in)
+
+
+## Очков стройки в день (до доли узлов снабжения и множителя военных заводов).
+static func build_points(nat: World.Nation) -> float:
+	return free_civ(nat) * BUILD_RATE * maxf(0.0, 1.0 + nat.b("construction"))
 
 
 func _place_factory(nid: int, mode: String) -> bool:

@@ -1112,9 +1112,9 @@ static func top_snapshot(w: World, me: int, sim: Simulation) -> Dictionary:
 				focus_idle = 1
 				break
 	return {"alerts": {"research": free, "focus": focus_idle}, "flag": n.flag, "name": n.name.to_upper(), "date": w.date_string(),
-		"res": "Винт. %d  Ору. %d  Танки %d  Груз. %d  ПТО %d  Люди %dк  Див. %d  ПВ %d  Стаб. %d%%  Война %d%%" % [
+		"res": "Винт. %d  Ору. %d  Танки %d  Груз. %d  ПТО %d  Люди %dк  Див. %d  ПВ %d  КР %d  Стаб. %d%%  Война %d%%" % [
 			n.stock[0], n.stock[1], n.stock[2], n.stock[3], n.stock[4], n.manpower, n.division_count,
-			int(n.pol_power), roundi(n.stability * 100.0), roundi(n.war_support * 100.0)],
+			int(n.pol_power), int(n.command_power), roundi(n.stability * 100.0), roundi(n.war_support * 100.0)],
 		"phases": sim.phase_usec.duplicate() if sim != null else {}, "tick": sim.last_tick_usec if sim != null else 0}
 
 
@@ -1777,8 +1777,36 @@ func _relation(w: World, me: int, o: int) -> String:
 	return ", ".join(parts) if not parts.is_empty() else "мир"
 
 
+# вкладка «Дипломатия»: страница мира (страны, фракции), политики (шкалы, законы) или советников
+var _dip_page := "world"
+
+
+func _dip_pages() -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	for pg in [["world", "Мир"], ["politics", "Политика"], ["advisors", "Советники"]]:
+		var id: String = pg[0]
+		var b := _button(pg[1], func():
+			_dip_page = id
+			_rebuild_popup(), Vector2(0, 46))
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.disabled = _dip_page == id
+		b.add_theme_font_size_override("font_size", 15)
+		row.add_child(b)
+	popup_body.add_child(row)
+
+
 func _build_diplomacy(w: World, me: int) -> void:
 	popup_title.text = "Дипломатия"
+	_dip_pages()
+	if _dip_page == "politics":
+		popup_title.text = "Внутренняя политика"
+		_build_politics(w, me)
+		return
+	if _dip_page == "advisors":
+		popup_title.text = "Советники"
+		_build_advisors(w, me)
+		return
 	var n: World.Nation = w.nations[me]
 	_dynamic["tension"] = _label("", 18)
 	popup_body.add_child(_dynamic["tension"])
@@ -1797,7 +1825,8 @@ func _build_diplomacy(w: World, me: int) -> void:
 			popup_body.add_child(_small(tt))
 	_dynamic["justify"] = _label("", 17, Color(0.95, 0.8, 0.5))
 	popup_body.add_child(_dynamic["justify"])
-	_build_politics(w, me)
+	popup_body.add_child(_small("Политическая власть %d · стабильность %d%% · поддержка войны %d%% — законы, решения и советники на страницах «Политика» и «Советники»." % [
+		int(n.pol_power), roundi(n.stability * 100.0), roundi(n.war_support * 100.0)]))
 	# своя фракция
 	var fname := Diplomacy.faction_name(w, me)
 	if n.exile:
@@ -1852,14 +1881,17 @@ func _build_diplomacy(w: World, me: int) -> void:
 		popup_body.add_child(row)
 
 
-## Внутренняя политика: политическая власть, стабильность, поддержка войны и решения.
+## Внутренняя политика: политическая власть, командный ресурс, шкалы и их
+## влияние, законы об экономике и призыве, решения.
 func _build_politics(w: World, me: int) -> void:
 	var n: World.Nation = w.nations[me]
-	popup_body.add_child(_section("Внутренняя политика"))
-	popup_body.add_child(_label("Политическая власть: %d (+%.1f в день)" % [int(n.pol_power),
-		Politics.PP_DAY * (0.5 + n.stability) * maxf(0.0, 1.0 + n.b("pol_power"))], 17))
-	popup_body.add_child(_small("Тратится на гарантии (%d), претензии (%d), смену торгового курса (%d) и законов на чужих землях (%d), решения (%d)." % [
-		int(Politics.COST_GUARANTEE), int(Politics.COST_JUSTIFY), int(Politics.COST_TRADE_LAW), int(Politics.COST_OCC_LAW), int(Politics.COST_DECISION)]))
+	popup_body.add_child(_label("Политическая власть: %d (+%.2f в день)" % [int(n.pol_power), Politics.pp_rate(n)], 17))
+	popup_body.add_child(_small("Тратится на законы (%d), советников (%d), гарантии (%d), претензии (%d), торговый курс (%d), законы на чужих землях (%d), решения (%d). Быстрее копится при высокой стабильности." % [
+		int(Politics.COST_LAW), int(Politics.COST_POL_ADV), int(Politics.COST_GUARANTEE), int(Politics.COST_JUSTIFY),
+		int(Politics.COST_TRADE_LAW), int(Politics.COST_OCC_LAW), int(Politics.COST_DECISION)]))
+	popup_body.add_child(_label("Командный ресурс: %d (+%.2f в день, не больше %d)" % [int(n.command_power), Politics.cp_rate(n), int(Politics.CP_CAP)], 17))
+	popup_body.add_child(_small("Тратится на генералов (%d), маршалов (%d) и военных советников (%d). Быстрее копится при высокой поддержке войны." % [
+		int(Leaders.COST_GEN), int(Leaders.COST_MAR), int(Politics.COST_MIL_ADV)]))
 	for row in [["Стабильность", n.stability, Politics.target_stability(w, n)], ["Поддержка войны", n.war_support, Politics.target_war_support(w, n)]]:
 		popup_body.add_child(_label("%s: %d%% (стремится к %d%%)" % [row[0], roundi(float(row[1]) * 100.0), roundi(float(row[2]) * 100.0)], 17))
 		var bar := ProgressBar.new()
@@ -1868,18 +1900,101 @@ func _build_politics(w: World, me: int) -> void:
 		bar.max_value = 100
 		bar.value = float(row[1]) * 100.0
 		popup_body.add_child(bar)
-	var eff: Array = []
-	for k in ["industry", "manpower", "surrender"]:
-		var v: float = n.pol_bonus.get(k, 0.0)
-		if absf(v) >= 0.005:
-			eff.append("%s %+d%%" % [{"industry": "промышленность", "manpower": "призыв", "surrender": "порог капитуляции"}[k], roundi(v * 100.0)])
-	popup_body.add_child(_small("Стабильность ниже 50 %% режет промышленность, поддержка войны меняет призыв; обе ниже 40 %% приближают капитуляцию. Сейчас: %s." % (", ".join(eff) if not eff.is_empty() else "без влияния")))
+	var pb: Dictionary = n.pol_bonus
+	var stab: Array = []
+	for k in ["cons_goods", "war_support", "manpower", "industry", "construction", "occ_comply"]:
+		var v: float = pb.get(k, 0.0)
+		stab.append("%s %+d%%" % [BONUS_NAMES.get(k, k), roundi(v * 100.0)])
+	stab.append("ПВ ×%.2f" % (0.5 + n.stability))
+	popup_body.add_child(_small("Стабильность: " + ", ".join(stab) + "."))
+	var ws: Array = []
+	for k in ["attack", "defense", "mil_build", "plan_speed", "xp_land", "xp_lead", "occ_suppress"]:
+		var v: float = pb.get(k, 0.0)
+		ws.append("%s %+d%%" % [BONUS_NAMES.get(k, k), roundi(v * 100.0)])
+	ws.append("КР ×%.2f" % (0.5 + n.war_support))
+	popup_body.add_child(_small("Поддержка войны: " + ", ".join(ws) + ". Обе шкалы ниже 40 %% приближают капитуляцию (сейчас %+d%%)." % roundi(float(pb.get("surrender", 0.0)) * 100.0)))
+	for kind in ["econ", "conscr"]:
+		var kk: String = kind
+		var cur := Politics.law_index(n, kind)
+		popup_body.add_child(_section("Экономика" if kind == "econ" else "Призыв"))
+		if kind == "econ":
+			popup_body.add_child(_small("Товары народного потребления: %d%% всех фабрик — %.1f гражданских из %d; стройке остаётся %.1f." % [
+				roundi(Politics.consumer_share(n) * 100.0), Politics.consumer_factories(n), n.civ, Simulation.free_civ(n)]))
+		else:
+			popup_body.add_child(_small("Приток людей: %.1fк в день, в резерве %dк." % [n.daily_manpower, int(n.manpower)]))
+		var laws := Politics.laws_of(kind)
+		for i in laws.size():
+			var lw: Dictionary = laws[i]
+			var li: int = i
+			var req := ""
+			if bool(lw.get("war", false)):
+				req = "на войне, поддержка войны %d %%" % roundi(float(lw["ws"]) * 100.0)
+			elif float(lw["ws"]) > 0.0:
+				req = "поддержка войны %d %%" % roundi(float(lw["ws"]) * 100.0)
+				if lw.has("war_ws"):
+					req += " (на войне %d %%)" % roundi(float(lw["war_ws"]) * 100.0)
+			if i == cur:
+				popup_body.add_child(_label("▸ %s — действует" % lw["name"], 16, Color(0.95, 0.8, 0.5)))
+			else:
+				var why := Politics.law_block(w, n, kind, i)
+				var b := _button(String(lw["name"]), func():
+					game.act(func(): Politics.set_law(w, n, kk, li))
+					game.hud_changed()
+					_rebuild_popup(), Vector2(0, 46))
+				b.disabled = why != ""
+				b.add_theme_font_size_override("font_size", 16)
+				popup_body.add_child(b)
+			popup_body.add_child(_small("   " + String(lw["desc"]) + (("; требуется: " + req) if req != "" else "") + ("" if i == cur else " · %d ПВ" % int(Politics.COST_LAW))))
+	popup_body.add_child(_section("Решения"))
 	for id in Politics.DECISIONS:
 		var d: Dictionary = Politics.DECISIONS[id]
 		var did: String = id
 		_action("%s (%d ПВ)" % [d["name"], int(Politics.COST_DECISION)], Politics.decision_block(w, n, did), func():
 			Politics.take_decision(w, n, did))
 		popup_body.add_child(_small("   " + String(d["desc"]) + ", раз в %d дней" % Politics.DECISION_CD))
+
+
+const BONUS_NAMES := {"cons_goods": "товары народного потребления", "war_support": "поддержка войны", "manpower": "призыв",
+	"industry": "выпуск заводов", "construction": "стройка", "occ_comply": "принятие на чужих землях",
+	"attack": "атака", "defense": "оборона", "mil_build": "стройка военных заводов", "plan_speed": "планирование",
+	"xp_land": "прибавка опыта", "xp_lead": "опыт командиров", "occ_suppress": "подавление сопротивления"}
+
+
+## Советники: политические — за ПВ, военные — за КР, по Politics.ADVISOR_SLOTS мест.
+func _build_advisors(w: World, me: int) -> void:
+	var n: World.Nation = w.nations[me]
+	popup_body.add_child(_small("Политическая власть %d · командный ресурс %d. Отпустить советника можно в любой момент, затраты не возвращаются. Военные советники сами опыта не дают — только ускоряют его прибавку в боях." % [
+		int(n.pol_power), int(n.command_power)]))
+	for military in [false, true]:
+		var mil: bool = military
+		var mine := Politics.advisors_of(n, mil)
+		popup_body.add_child(_section("%s советники: %d из %d" % ["Военные" if mil else "Политические", mine.size(), Politics.ADVISOR_SLOTS]))
+		var pool: Dictionary = Politics.MIL_ADVISORS if mil else Politics.POL_ADVISORS
+		for id in pool:
+			var aid: String = id
+			var a: Dictionary = pool[id]
+			if n.advisors.has(aid):
+				var row := HBoxContainer.new()
+				row.add_theme_constant_override("separation", 6)
+				var l := _label("▸ %s — %s" % [a["name"], a["desc"]], 16, Color(0.95, 0.8, 0.5))
+				l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				row.add_child(l)
+				row.add_child(_button("Отпустить", func():
+					game.act(func(): Politics.dismiss(w, n, aid))
+					game.hud_changed()
+					_rebuild_popup(), Vector2(0, 42)))
+				popup_body.add_child(row)
+				continue
+			var why := Politics.hire_block(w, n, aid)
+			var b := _button(String(a["name"]), func():
+				game.act(func(): Politics.hire(w, n, aid))
+				game.hud_changed()
+				_rebuild_popup(), Vector2(0, 44))
+			b.disabled = why != ""
+			b.add_theme_font_size_override("font_size", 16)
+			popup_body.add_child(b)
+			popup_body.add_child(_small("   %s · %d %s" % [a["desc"], int(Politics.COST_MIL_ADV if mil else Politics.COST_POL_ADV), "КР" if mil else "ПВ"]))
 
 
 func _build_nation_card(w: World, me: int, oid: int) -> void:
@@ -2476,12 +2591,12 @@ func _build_commanders(w: World, n: World.Nation) -> void:
 	for marshal in [false, true]:
 		var mm: bool = marshal
 		var cost: float = Leaders.COST_MAR if marshal else Leaders.COST_GEN
-		var b := _button("Нанять %s (%d ПВ)" % ["маршала" if marshal else "генерала", int(cost)], func():
+		var b := _button("Нанять %s (%d КР)" % ["маршала" if marshal else "генерала", int(cost)], func():
 			var why := Leaders.hire(w, n, mm)
 			toast(why if why != "" else "Командир назначен")
 			_rebuild_popup(), Vector2(0, 48))
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.disabled = Politics.can_pay(w, n, cost) != ""
+		b.disabled = Politics.can_pay_cp(w, n, cost) != ""
 		row.add_child(b)
 	popup_body.add_child(row)
 
@@ -3989,6 +4104,8 @@ func _update_popup_dynamic() -> void:
 	var n: World.Nation = w.nations[game.player()]
 	match popup_tab:
 		"diplomacy":
+			if not _dynamic.has("tension"):
+				return   # страницы «Политика» и «Советники»
 			_dynamic["tension"].text = "Мировая напряжённость: %d%%" % w.tension
 			_dynamic["tbar"].value = w.tension
 			if n.justify_target >= 0:
@@ -4017,9 +4134,10 @@ func _update_popup_dynamic() -> void:
 			var used := Military.assigned_factories(n)
 			_dynamic["prod"].text = "Военных заводов: %d · на линиях: %d · свободно: %d" % [n.mil, used, n.mil - used]
 		"build":
-			var rate := n.civ * Simulation.BUILD_RATE * (1.0 + n.b("construction"))
-			_dynamic["build"].text = "Фабрики: %d гражданских, %d военных\nСледующая: %s, %d%% (+%.1f/день)" % [
-				n.civ, n.mil, "гражданская" if n.build_mode == "civ" else "военная",
+			var rate := Simulation.build_points(n) * (maxf(0.0, 1.0 + n.b("mil_build")) if n.build_mode == "mil" else 1.0)
+			_dynamic["build"].text = "Фабрики: %d гражданских, %d военных\nНа товары народного потребления: %.1f (%d%% всех фабрик), на стройку свободно: %.1f\nСледующая: %s, %d%% (+%.1f/день)" % [
+				n.civ, n.mil, Politics.consumer_factories(n), roundi(Politics.consumer_share(n) * 100.0), Simulation.free_civ(n),
+				"гражданская" if n.build_mode == "civ" else "военная",
 				n.build_progress / Simulation.FACTORY_COST * 100.0, rate]
 			_dynamic["bar"].max_value = Simulation.FACTORY_COST
 			_dynamic["bar"].value = n.build_progress

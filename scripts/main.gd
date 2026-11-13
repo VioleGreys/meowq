@@ -320,6 +320,13 @@ func _auto_screenshot_locked() -> void:
 					world.p_controller[p] = me
 			Peace.capitulate(world, occ_t, me)
 			Occupation.step(world)
+		if _arg("dippage") != "":
+			hud._dip_page = _arg("dippage")   # world / politics / advisors
+		if _arg("hire") != "":
+			for aid in _arg("hire").split(","):   # скриншоты: нанять советников
+				world.nations[me].pol_power = maxf(world.nations[me].pol_power, Politics.COST_POL_ADV)
+				world.nations[me].command_power = maxf(world.nations[me].command_power, Politics.COST_MIL_ADV)
+				Politics.hire(world, world.nations[me], aid)
 		if _arg("prodpage") != "":
 			hud._prod_page = _arg("prodpage")   # factories / trade / lands
 		if _arg("occ") != "":

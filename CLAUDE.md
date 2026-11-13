@@ -35,8 +35,8 @@
 - `peace.md` — конец войны: капитуляция в оккупацию, вклад, мирные переговоры,
   сопротивление и законы на чужих землях, свобода марионеток (`peace.gd`,
   `occupation.gd`, `puppets.gd`).
-- `politics.md` — политическая власть, стабильность, поддержка войны, гарантии
-  (перевес, событие «вступиться или нет»), баффы сторон войны (`politics.gd`).
+- `politics.md` — политическая власть, командный ресурс, стабильность, поддержка войны и их
+  влияние, законы об экономике и призыве, советники, гарантии, баффы сторон войны (`politics.gd`).
 - `economy.md` — ресурсы, торговля, договоры, блокада (`economy.gd`).
 - `supply.md` — снабжение по узлам районов: нагрузка, улучшение, присоединение, грузовики (`supply.gd`); пункты снабжения, склады за морем, проливы (`depots.gd`); Испания (раскол, неразбериха, гражданская война как одна страна).
 - `science.md` — наука: слоты исследований, дерево технологий, бонусы родов
@@ -119,7 +119,7 @@
 - Сборка APK и C++ — `docs/notes/build.md`.
 - Скриншот без человека: `godot --path . -- --screenshot=out.png --nation=GER --days=120`
   (доп. флаги: `--zoom=1.6 --select --tab=army --pick=1 --mapmode=4 --card=AUS --peace=AUS`;
-  наука: `--tech=inf:mot2`, доктрины: `--tech=doc:l_mob1`; армия и война: `--group --war=POL --warday=30`; переучивание: `--retrain=1`; фокусы и события: `--focus`, `--event=munich`; переговоры: `--peace=POL`; чужие земли: `--occupy=POL --prodpage=lands [--occ=POL]`; флот: `--tab=navy --sel=fleet|wing --center=NOR`; конструктор самолёта: `--plane=fig|bmb|new|N`; танка: `--tank=new|cur|N`; корабля: `--ship=new|N|ss|cr|cv|bb|dd`; прокрутка окна: `--scroll=N`).
+  наука: `--tech=inf:mot2`, доктрины: `--tech=doc:l_mob1`; армия и война: `--group --war=POL --warday=30`; переучивание: `--retrain=1`; фокусы и события: `--focus`, `--event=munich`; переговоры: `--peace=POL`; политика и советники: `--tab=diplomacy --dippage=politics|advisors [--hire=army_chief,...]`; чужие земли: `--occupy=POL --prodpage=lands [--occ=POL]`; флот: `--tab=navy --sel=fleet|wing --center=NOR`; конструктор самолёта: `--plane=fig|bmb|new|N`; танка: `--tank=new|cur|N`; корабля: `--ship=new|N|ss|cr|cv|bb|dd`; прокрутка окна: `--scroll=N`).
   В облачном контейнере: `xvfb-run -a godot --rendering-driver opengl3 ...`.
 После изменений: парсинг без ошибок, sim_bench проходит, скриншот посмотреть.
 

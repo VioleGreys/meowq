@@ -199,9 +199,13 @@ static func buy(nat, id: String) -> bool:
 
 
 ## Начислить опыт роду сил (главный поток).
+## Прибавку ускоряют поддержка войны и военные советники (Politics: xp_land / xp_navy / xp_air).
+const XP_KEYS := ["xp_land", "xp_navy", "xp_air"]
+
+
 static func gain(nat, b: int, amount: float) -> void:
 	if amount > 0.0:
-		nat.xp[b] = minf(XP_MAX, nat.xp[b] + amount)
+		nat.xp[b] = minf(XP_MAX, nat.xp[b] + amount * maxf(0.0, 1.0 + nat.b(XP_KEYS[b])))
 
 
 ## Следующая ступень школы, которую ИИ берёт в роде сил.

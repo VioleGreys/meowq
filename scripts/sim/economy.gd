@@ -799,7 +799,7 @@ static func _budget(world: World, n: int) -> float:
 	var nat: World.Nation = world.nations[n]
 	if nat.is_player and not nat.trade_auto:
 		return 0.0
-	return float(nat.civ) * AI_CIV_SHARE - nat.trade_civ
+	return (float(nat.civ) - Politics.consumer_factories(nat)) * AI_CIV_SHARE - nat.trade_civ
 
 
 ## День внешней экономики: добыча и потребность, сроки поставок, рейтинг
