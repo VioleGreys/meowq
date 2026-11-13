@@ -531,6 +531,8 @@ var p_move_mult := PackedFloat32Array()  # копии констант мест�
 var p_def_mult := PackedFloat32Array()   # оборона провинции: местность + укрепления + зима (refresh_def_mult)
 var p_fort := PackedFloat32Array()       # укрепления провинции (forts.json): добавка к обороне
 const DEF_CAP := 1.5
+const LAND_COORD := 0.1      # координация сухопутных войск без бонусов (доля урона по одной цели)
+const COORD_MAX := 0.9
 const RESERVE_CALL := 0.17   # шанс резерва защитников попасть «в бой» раз в 12 часов (решение пользователя; kernels.cpp)
 var _def_month := -1                     # месяц, для которого посчитана зимняя добавка   # константные Array/Dictionary скриптов из потоков не трогаем
 var n_attack := PackedFloat32Array()
@@ -1857,6 +1859,12 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 		atk = atk.duplicate()
 		for i in att_list:
 			atk[i] = atk[i] * (1.0 + plan_max * d_plan[i])
+	# координация стран (как в жанре): доля урона стороны — по одной цели
+	var coord := PackedFloat64Array()
+	coord.resize(nation_count)
+	for n in nations:
+		if n.id < nation_count:
+			coord[n.id] = clampf(LAND_COORD + n.b("coord"), 0.0, COORD_MAX)
 	# ширина фронта: 8 значений по местности, затем прибавка за направление и их предел
 	var fw := PackedFloat32Array(FRONT_WIDTH)
 	fw.append(FRONT_FLANK)
@@ -1864,7 +1872,7 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 	if Native.core != null:
 		var r: Array = Native.core.call("combat", provs, att_start, att_list, seeds, d_str, d_org, d_eq, def, atk,
 				d_ent, d_land, d_sup, d_tpl, d_hard, d_owner, d_battle, pl_head, d_nx, war, nation_count, p_def_mult,
-				p_terrain, p_region, cas_mult, tpl_terrain, d_prov, tpl_width, fw, d_armor, d_pierce, ARMOR_CUT, tpl_sc)
+				p_terrain, p_region, cas_mult, tpl_terrain, d_prov, tpl_width, fw, d_armor, d_pierce, ARMOR_CUT, tpl_sc, coord)
 		d_org = r[0]
 		d_str = r[1]
 		d_eq = r[2]
@@ -1924,6 +1932,14 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 				dl.append(0.0)
 		var wd := _wsum(dw)
 		var wa := _wsum(aw)
+		# координация (как в жанре: дивизия бьёт цель сосредоточения или случайную):
+		# доля урона стороны, равная её координации, — по одной цели в линии
+		# (самой измотанной: меньше организации, при равенстве — первой по порядку
+		# линии), остальное — по всем по долям ширины
+		var ca: float = coord[att_owner]
+		var cd: float = coord[d_owner[defenders[0]]]
+		var fd := _focus(defenders)
+		var fa := _focus(attackers)
 		# урон — по доле в линии (не влезшая целиком дивизия получает меньше);
 		# броня (решение пользователя): вклад дивизии, чьей бронебойности не хватает
 		# против брони цели, — ×ARMOR_CUT; без брони порядок счёта прежний
@@ -1934,19 +1950,19 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 			var att_power := _pierced(pa, attackers, d_armor[defenders[j]]) * (cas_a if aa <= 0.0 else 1.0 + (cas_a - 1.0) * (1.0 - aa))
 			att_power *= r1 * (1.0 - terrain_def * 0.6)
 			att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard)
-			var to_def := att_power / wd
+			var sh: float = (1.0 - ca) * dw[j] / wd + (ca if j == fd else 0.0)
 			dl.append(defenders[j])
-			dl.append(to_def * dw[j] * 0.55)
-			dl.append(to_def * dw[j] * 0.12 * (EXH_LOSS if d_sup[defenders[j]] < SUP_EXH else 1.0))
+			dl.append(att_power * sh * 0.55)
+			dl.append(att_power * sh * 0.12 * (EXH_LOSS if d_sup[defenders[j]] < SUP_EXH else 1.0))
 		for j in attackers.size():
 			var aa2 := tpl_sc[d_tpl[attackers[j]] * 6 + 1]
 			var def_power := _pierced(pd, defenders, d_armor[attackers[j]]) * (cas_d if aa2 <= 0.0 else 1.0 + (cas_d - 1.0) * (1.0 - aa2))
 			def_power *= r2
 			def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard)
-			var to_att := def_power / wa
+			var sh2: float = (1.0 - cd) * aw[j] / wa + (cd if j == fa else 0.0)
 			dl.append(attackers[j])
-			dl.append(to_att * aw[j] * 0.5)
-			dl.append(to_att * aw[j] * 0.10 * (EXH_LOSS if d_sup[attackers[j]] < SUP_EXH else 1.0))
+			dl.append(def_power * sh2 * 0.5)
+			dl.append(def_power * sh2 * 0.10 * (EXH_LOSS if d_sup[attackers[j]] < SUP_EXH else 1.0))
 		all_deltas.append(dl)
 	for dl: PackedFloat64Array in all_deltas:
 		for j in range(0, dl.size(), 3):
@@ -2022,6 +2038,15 @@ func front_pick(slots: PackedInt32Array, limit: float, weights: PackedFloat64Arr
 				weights.append((limit - used) / w)
 			break
 	return out
+
+
+## Цель сосредоточения в линии: меньше организации, при равенстве — первая.
+func _focus(line: PackedInt32Array) -> int:
+	var best := 0
+	for j in range(1, line.size()):
+		if d_org[line[j]] < d_org[line[best]]:
+			best = j
+	return best
 
 
 static func _wsum(w: PackedFloat64Array) -> float:

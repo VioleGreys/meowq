@@ -441,8 +441,9 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		const PackedInt32Array &region, const PackedFloat32Array &cas, const PackedFloat32Array &tmul,
 		const PackedInt32Array &prov, const PackedFloat32Array &tpl_width, const PackedFloat32Array &fw,
 		const PackedFloat64Array &armor, const PackedFloat64Array &pierce, double armor_cut,
-		const PackedFloat64Array &tpl_sc) const {
+		const PackedFloat64Array &tpl_sc, const PackedFloat64Array &coord) const {
 	const double *scp = tpl_sc.ptr();
+	const double *crd = coord.ptr();
 	PackedFloat64Array str = str_in, org = org_in, eq = eq_in;
 	const double *arm = armor.ptr(), *prc = pierce.ptr();
 	std::vector<double> pa, pd;
@@ -537,21 +538,30 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 			if (std::find(defenders.begin(), defenders.end(), e) == defenders.end() && double(rng->randf()) < call)
 				deltas.push_back({ e, 0.0, 0.0 });
 		const double wd = wsum(dw), wa = wsum(aw);
+		// координация (как World.k_combat): доля урона — по самой измотанной в линии
+		const double ca = crd[att_owner], cd = crd[ow[defenders[0]]];
+		auto focus = [&](const std::vector<int32_t> &line) {
+			size_t best = 0;
+			for (size_t j = 1; j < line.size(); j++)
+				if (og[line[j]] < og[line[best]]) best = j;
+			return best;
+		};
+		const size_t fd = focus(defenders), fa = focus(attackers);
 		for (size_t j = 0; j < defenders.size(); j++) {
 			const double aa = scp[int64_t(tp[defenders[j]]) * 6 + 1];
 			double att_power = pierced(pa, attackers, arm[defenders[j]]) * (aa <= 0.0 ? cas_a : 1.0 + (cas_a - 1.0) * (1.0 - aa));
 			att_power *= r1 * (1.0 - terrain_def * 0.6);
 			att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard);
-			const double to_def = att_power / wd;
-			deltas.push_back({ defenders[j], to_def * dw[j] * 0.55, to_def * dw[j] * 0.12 * (su[defenders[j]] < SUP_EXH ? EXH_LOSS : 1.0) });
+			const double sh = (1.0 - ca) * dw[j] / wd + (j == fd ? ca : 0.0);
+			deltas.push_back({ defenders[j], att_power * sh * 0.55, att_power * sh * 0.12 * (su[defenders[j]] < SUP_EXH ? EXH_LOSS : 1.0) });
 		}
 		for (size_t j = 0; j < attackers.size(); j++) {
 			const double aa2 = scp[int64_t(tp[attackers[j]]) * 6 + 1];
 			double def_power = pierced(pd, defenders, arm[attackers[j]]) * (aa2 <= 0.0 ? cas_d : 1.0 + (cas_d - 1.0) * (1.0 - aa2));
 			def_power *= r2;
 			def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard);
-			const double to_att = def_power / wa;
-			deltas.push_back({ attackers[j], to_att * aw[j] * 0.5, to_att * aw[j] * 0.10 * (su[attackers[j]] < SUP_EXH ? EXH_LOSS : 1.0) });
+			const double sh2 = (1.0 - cd) * aw[j] / wa + (j == fa ? cd : 0.0);
+			deltas.push_back({ attackers[j], def_power * sh2 * 0.5, def_power * sh2 * 0.10 * (su[attackers[j]] < SUP_EXH ? EXH_LOSS : 1.0) });
 		}
 	}
 	double *o = org.ptrw(), *s = str.ptrw(), *q = eq.ptrw();

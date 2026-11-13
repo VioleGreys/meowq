@@ -28,7 +28,7 @@ void MeowqCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("sea_path", "adj_start", "adj_list", "land", "from", "to"), &MeowqCore::sea_path);
 	ClassDB::bind_method(D_METHOD("own_reach", "adj_start", "adj_list", "land", "ctrl", "n", "start", "nation_count"), &MeowqCore::own_reach);
 	ClassDB::bind_method(D_METHOD("place_factory", "owner", "ctrl", "civ", "mil", "pop", "terrain", "nid", "max_factories", "t_urban"), &MeowqCore::place_factory);
-	ClassDB::bind_method(D_METHOD("combat", "provs", "att_start", "att_list", "seeds", "str", "org", "eq", "def", "atk", "ent", "landing", "sup", "tpl", "hard", "owner", "battle", "pl_head", "d_nx", "war", "nc", "def_mult", "terrain", "region", "cas", "tmul", "prov", "tpl_width", "fw", "armor", "pierce", "armor_cut", "tpl_sc"), &MeowqCore::combat);
+	ClassDB::bind_method(D_METHOD("combat", "provs", "att_start", "att_list", "seeds", "str", "org", "eq", "def", "atk", "ent", "landing", "sup", "tpl", "hard", "owner", "battle", "pl_head", "d_nx", "war", "nc", "def_mult", "terrain", "region", "cas", "tmul", "prov", "tpl_width", "fw", "armor", "pierce", "armor_cut", "tpl_sc", "coord"), &MeowqCore::combat);
 	ClassDB::bind_method(D_METHOD("income", "ctrl", "owner", "civ", "mil", "manpower", "nc"), &MeowqCore::income);
 	ClassDB::bind_method(D_METHOD("front_regions", "ctrl", "adj_start", "adj_list", "war", "nc", "region", "n"), &MeowqCore::front_regions);
 	ClassDB::bind_method(D_METHOD("ports_open", "ports", "adj_start", "adj_list", "land", "zone_has_fleet"), &MeowqCore::ports_open);

@@ -1724,7 +1724,8 @@ static func effects_text(world: World, effects: Array) -> String:
 		"occ_resist": "рост сопротивления на занятых нами землях", "occ_comply": "рост принятия на занятых нами землях",
 		"resistance": "сопротивление на наших занятых землях", "aid_eq": "помощь снаряжением из-за рубежа (заводов)",
 		"expedition": "доля армии метрополии на заморском фронте",
-		"cold_native": "привычка к холоду (уровень акклиматизации)"}, true)
+		"cold_native": "привычка к холоду (уровень акклиматизации)",
+		"coord": "координация войск", "naval_coord": "координация флота"}, true)
 	for e in effects:
 		var tname := ""
 		if e.has("target"):

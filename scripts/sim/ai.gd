@@ -523,6 +523,54 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			# план наступления: участки главного удара заполняем до ёмкости снабжения
 			if axis_front.has(f):
 				desired[f] = maxi(1, int(floor(supcap[f])))
+	# Пустой участок фронта (в том числе оставленный уходящей дивизией): туда идёт
+	# ближайшая свободная дивизия — из тыла или лишняя на участке сверх нужного;
+	# поиск по своей земле на FILL_DEPTH переходов (решение пользователя).
+	if at_war:
+		for f in fronts:
+			if int(per_front.get(f, 0)) > 0:
+				continue
+			var fpar := {f: -1}
+			var fdep := {f: 0}
+			var fq: Array = [f]
+			var head := 0
+			var found := -1
+			var fdiv := -1
+			while head < fq.size():
+				var x: int = fq[head]
+				head += 1
+				if x != f:
+					var spare: bool = not fronts.has(x) or int(per_front.get(x, 0)) > maxi(1, int(desired[x]))
+					if spare:
+						for m in range(pd_start[x], pd_start[x + 1]):
+							var i := pd_list[m]
+							if dv_owner[i] == nid and in_group.has(i) and dv_flags[i] & 1 == 1 and not used.has(i) and dv_org[i] >= REGROUP_ORG:
+								fdiv = i
+								break
+					if fdiv >= 0:
+						found = x
+						break
+				if int(fdep[x]) >= FILL_DEPTH:
+					continue
+				for k in range(a_start[x], a_start[x + 1]):
+					var y := a_list[k]
+					if fpar.has(y) or land[y] == 0 or ctrl[y] != nid:
+						continue
+					fpar[y] = x
+					fdep[y] = int(fdep[x]) + 1
+					fq.append(y)
+			if fdiv < 0:
+				continue
+			var path := PackedInt32Array()
+			var cur: int = fpar[found]
+			while cur != -1:
+				path.append(cur)
+				cur = fpar[cur]
+			used[fdiv] = true
+			orders.append([fdiv, path])
+			per_front[f] = 1
+			if fronts.has(found):
+				per_front[found] = int(per_front.get(found, 0)) - 1
 	for i in idle:
 		if used.has(i):
 			continue
@@ -606,6 +654,7 @@ const CLIM_ATK := 0.25   # как Climate: атака × (1 − 0,25 × неак
 const REGROUP_ORG := 0.1    # ниже — с фронта в тыл (даже последняя) и не на фронт (решение пользователя)
 const ROTATE_ORG := 0.3     # ниже — ротация, если на участке остаётся кто-то из наших
 const ESCAPE_RATIO := 3.0   # резерв уходит, если атакующих сильнее обороны во столько раз
+const FILL_DEPTH := 6        # пустой участок фронта: свободную дивизию ищем на столько переходов
 const SUPPORT_BONUS := 20.0 # цель, где враг уже ведёт бой с нами, — важнее
 const LOW_SUP_RATIO := 2.0  # перевес для атаки группой с плохим снабжением (решение пользователя)
 const SCORE_STR := 5.0  # сила обороны в очереди целей (оценка — в единицах боя, веса очереди — прежние)

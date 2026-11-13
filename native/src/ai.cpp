@@ -81,6 +81,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	const float *p_hot = p_hot_a.ptr(), *p_cold = p_cold_a.ptr();
 	const double *n_hot = n_hot_a.ptr(), *n_cold = n_cold_a.ptr();
 	const double SUP_BAD = 0.5, SUP_EXH = 0.25, CLIM_ATK = 0.25, REGROUP_ORG = 0.1, ROTATE_ORG = 0.3, ESCAPE_RATIO = 3.0, SUPPORT_BONUS = 20.0;
+	const int FILL_DEPTH = 6;
 	auto sup_mult = [&](double sv) { return sv >= SUP_BAD ? 1.0 : (sv >= SUP_EXH ? 0.75 : 0.5); };
 	const int64_t ndv = dv_owner_a.size();
 
@@ -450,6 +451,58 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		desired[f] = std::max(1, int(std::round(double(pool) * weight[f] / wsum)));
 		if (has_cap) desired[f] = std::min(desired[f], capd(f));
 		if (has_cap && axis_front[f]) desired[f] = capd(f);
+	}
+
+	// пустой участок фронта (в том числе оставленный уходящей дивизией): туда идёт
+	// ближайшая свободная дивизия — из тыла или лишняя на участке сверх нужного;
+	// поиск по своей земле на FILL_DEPTH переходов (решение пользователя; как ai.gd)
+	if (at_war) {
+		std::vector<int32_t> fpar(pc, -2), fdep(pc, 0), fq, touched;
+		for (int32_t f : fronts.order) {
+			if (per_front[f] > 0) continue;
+			fq.clear();
+			fq.push_back(f);
+			fpar[f] = -1;
+			touched.push_back(f);
+			int32_t found = -1, fdiv = -1;
+			for (size_t head = 0; head < fq.size(); head++) {
+				const int32_t x = fq[head];
+				if (x != f) {
+					const bool spare = !fronts.has[x] || per_front[x] > std::max(1, desired[x]);
+					if (spare)
+						for (int32_t m = pd_start[x]; m < pd_start[x + 1]; m++) {
+							const int32_t i = pd_list[m];
+							if (dv_owner[i] == nid && in_group[i] && (dv_flags[i] & 1) == 1 && !used[i] && double(dv_org[i]) >= REGROUP_ORG) {
+								fdiv = i;
+								break;
+							}
+						}
+					if (fdiv >= 0) { found = x; break; }
+				}
+				if (fdep[x] >= FILL_DEPTH) continue;
+				for (int32_t k = a_start[x]; k < a_start[x + 1]; k++) {
+					const int32_t y = a_list[k];
+					if (fpar[y] != -2 || land[y] == 0 || ctrl[y] != nid) continue;
+					fpar[y] = x;
+					fdep[y] = fdep[x] + 1;
+					fq.push_back(y);
+					touched.push_back(y);
+				}
+			}
+			if (fdiv >= 0) {
+				PackedInt32Array path;
+				for (int32_t cur = fpar[found]; cur != -1; cur = fpar[cur]) path.push_back(cur);
+				used[fdiv] = 1;
+				Array o3;
+				o3.push_back(fdiv);
+				o3.push_back(path);
+				orders.push_back(o3);
+				per_front[f] = 1;
+				if (fronts.has[found]) per_front[found] -= 1;
+			}
+			for (int32_t t : touched) { fpar[t] = -2; fdep[t] = 0; }
+			touched.clear();
+		}
 	}
 
 	// поиск пути к ближайшему участку (как Pathfinder.nearest_goal)

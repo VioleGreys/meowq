@@ -7,6 +7,7 @@ extends RefCounted
 
 # категории кораблей (решение пользователя): подлодки, крейсеры (все надводные
 # боевые корабли), авианосцы; проекты — ShipDesigns
+const NAVAL_COORD := 0.1   # координация флота без бонусов (доля огня по самым ценным целям)
 const SHIP_SS := 0
 const SHIP_CR := 1
 const SHIP_CV := 2
@@ -581,9 +582,15 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 		var db_s: float = (float(sa[1]) + float(sa[2]) * NAVY_AA / (NAVY_AA + float(sb[4]))) * NAVY_DMG * rb
 		var da_u: float = (float(sb[3]) * NAVY_ASW + float(sb[1]) * NAVY_SUB_GUN) * NAVY_DMG * ra * (1.0 - float(sa[5]))
 		var db_u: float = (float(sa[3]) * NAVY_ASW + float(sa[1]) * NAVY_SUB_GUN) * NAVY_DMG * rb * (1.0 - float(sb[5]))
-		_take_losses(world, side_a, da_s, rng, 0)
+		# координация (как в жанре): доля огня стороны — по самым ценным кораблям
+		# противника в обход очереди эскорта (сосредоточение огня), остальное — по очереди
+		var cb := naval_coord(world, side_b[0].owner)
+		var ca := naval_coord(world, a.owner)
+		_take_losses(world, side_a, da_s * cb, rng, 0, true)
+		_take_losses(world, side_a, da_s * (1.0 - cb), rng, 0)
 		_take_losses(world, side_a, da_u, rng, 1)
-		_take_losses(world, side_b, db_s, rng, 0)
+		_take_losses(world, side_b, db_s * ca, rng, 0, true)
+		_take_losses(world, side_b, db_s * (1.0 - ca), rng, 0)
 		_take_losses(world, side_b, db_u, rng, 1)
 		var da := da_s + da_u
 		var db := db_s + db_u
@@ -650,13 +657,20 @@ static func _side_fire(side: Array) -> Array:
 	return [pw, gun, air, asw, aa, st / subs if subs > 0 else 0.0]
 
 
+## Координация флота страны: доля огня, сосредоточенная на самых ценных целях.
+static func naval_coord(world: World, n: int) -> float:
+	return clampf(NAVAL_COORD + world.nations[n].b("naval_coord"), 0.0, World.COORD_MAX)
+
+
 ## Потери стороны: урон dmg «съедает» корабли по живучести — сначала эскорты
-## и подлодки, потом крейсеры, линкоры и авианосцы (очередь корпуса).
+## и подлодки, потом крейсеры, линкоры и авианосцы (очередь корпуса); focus —
+## наоборот, с самых ценных (сосредоточение огня).
 ## target: 0 — надводные, 1 — подлодки, -1 — все.
-static func _take_losses(world: World, side: Array, dmg: float, rng: RandomNumberGenerator, target := -1) -> void:
+static func _take_losses(world: World, side: Array, dmg: float, rng: RandomNumberGenerator, target := -1, focus := false) -> void:
 	while dmg > 0.0:
 		var hit := false
-		for level in 4:
+		for li in 4:
+			var level := 3 - li if focus else li   # сосредоточение огня — с конца очереди (линкоры, авианосцы)
 			for f in side:
 				if not f.alive:
 					continue
