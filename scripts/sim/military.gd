@@ -510,12 +510,13 @@ static func base_of(world: World, t: int) -> int:
 
 
 const AI_RETRAIN_SHARE := 0.1   # ИИ переучивает в месяц не больше этой доли дивизий
-const AI_RETRAIN_STOCK := 0.5   # …и только пока склад покрывает добавку снаряжения с запасом ×2
 
 
-## ИИ (раз в месяц): устаревшие дивизии — на общий шаблон той же базы с
-## нынешними ротами поддержки. Не в бою, сначала тыловые (не у границы),
-## пока на складе хватает снаряжения на добавку.
+## ИИ (раз в месяц, вместе с проектами): устаревшие дивизии — на общий шаблон
+## той же базы с нынешними ротами поддержки (их снаряжение страна выпускает —
+## ai_support). Не в бою, на войне — не у фронта. Склада не хватает — дивизия
+## всё равно переучивается, с недокомплектом на стоимость недостающего
+## (решение пользователя); дальше — пополнением.
 static func ai_retrain(world: World, nat: World.Nation) -> int:
 	var sup := ai_support(world, nat)
 	if sup.is_empty():
@@ -535,14 +536,7 @@ static func ai_retrain(world: World, nat: World.Nation) -> int:
 		var t := with_support(world, base_of(world, d.tpl), sup)
 		if t == d.tpl:
 			continue
-		var nt: Dictionary = world.templates[t]
-		var ok := true
-		for k in EQ_LAND:
-			var add: float = float(nt["eq"][k]) - float(old["eq"][k]) * d.eq
-			if add > 0.0 and nat.stock[k] * AI_RETRAIN_STOCK < add:
-				ok = false
-				break
-		if ok and retrain(world, d, t):
+		if retrain(world, d, t):
 			done += 1
 	return done
 
@@ -1073,8 +1067,10 @@ static func ai_template(world: World, nat: World.Nation, k: int, mountainous: bo
 	return with_support(world, cycle[k % cycle.size()], ai_support(world, nat))
 
 
-## Роты поддержки, которые ИИ добавляет в шаблоны: открытые технологиями, по
-## AI_SUPPORT_ORDER, до SUPPORT_MAX; противотанковая — только против танков.
+## Роты поддержки, которые ИИ добавляет в шаблоны: открытые технологиями и
+## такие, чьё снаряжение страна выпускает (на каждый нужный тип — линия с
+## заводами; решение пользователя), по AI_SUPPORT_ORDER, до SUPPORT_MAX;
+## противотанковая — только против танков.
 static func ai_support(world: World, nat: World.Nation) -> Array:
 	var res: Array = []
 	for id in AI_SUPPORT_ORDER:
@@ -1083,10 +1079,27 @@ static func ai_support(world: World, nat: World.Nation) -> Array:
 		var sp := support(id)
 		if sp["req"] != "" and not nat.techs.has(sp["req"]):
 			continue
+		if not _produces(nat, sp["eq"]):
+			continue
 		if id == "at" and _enemy_armor(world, nat) <= AT_NEED_ARMOR:
 			continue
 		res.append(id)
 	return res
+
+
+## Выпускает ли страна все типы снаряжения eq (на каждый — линия с заводами).
+static func _produces(nat: World.Nation, eq: Array) -> bool:
+	for k in eq.size():
+		if float(eq[k]) <= 0.0:
+			continue
+		var ok := false
+		for line in nat.lines:
+			if int(line[0]) == k and int(line[1]) > 0:
+				ok = true
+				break
+		if not ok:
+			return false
+	return true
 
 
 ## Общий шаблон base с ротами sup (ИИ): заводится при первой надобности,

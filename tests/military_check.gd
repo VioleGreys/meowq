@@ -216,6 +216,15 @@ func _init() -> void:
 	check(Military.retrain_block(w, d_b, b_i + 1) != "", "на тот же шаблон переучить нельзя")
 	check(Military.retrain(w, d_b, b_i) and pnat.manpower > men0 - 0.01, "обратно — лишние люди и снаряжение возвращаются (призывники %.1f → %.1f)" % [men0, pnat.manpower])
 
+	# ИИ берёт роту, только если выпускает её снаряжение (решение пользователя)
+	var lines0: Array = pnat.lines.duplicate(true)
+	pnat.lines = [[Military.EQ_INF, 5, 0.5]]
+	var s1 := Military.ai_support(w, pnat)
+	pnat.lines = [[Military.EQ_INF, 5, 0.5], [Military.EQ_ART, 2, 0.5], [Military.EQ_TRUCK, 2, 0.5]]
+	var s2 := Military.ai_support(w, pnat)
+	pnat.lines = lines0
+	check(s1.has("eng") and not s1.has("art") and not s1.has("med") and s2.has("art") and s2.has("rec") and s2.size() > s1.size(),
+		"ИИ берёт роты только под выпускаемое снаряжение (только винтовки: %s; + орудия и грузовики: %s)" % [s1, s2])
 	print("Окружение:")
 	r = fresh()
 	w = r[0]
