@@ -192,8 +192,9 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 				if not world.nations[pp].war_neutral or pp == b:
 					add.append(pp)
 			# члены фракции — кроме тех, у кого пакт с нападающим (СССР и Япония, 1941 г.)
+			# и кроме блока со своими войнами (Япония — не в европейской войне Германии)
 			for m in faction_members(world, world.nations[root(world, d)].faction):
-				if not world.nations[m].pacts.has(a):
+				if not world.nations[m].pacts.has(a) and (not world.nations[m].own_wars or m == b):
 					add.append(m)
 			# гаранты — только за саму жертву (а не за всю её сторону: иначе
 			# британская гарантия Румынии 1939 г. ставила Британию за Германию)
@@ -246,7 +247,7 @@ static func _hostile_to_any(world: World, x: int, side: Dictionary) -> bool:
 
 static func _joins_offensive(world: World, m: int, a: int, b: int) -> bool:
 	var nm: World.Nation = world.nations[m]
-	if nm.is_player or nm.pacts.has(b) or world.historical:
+	if nm.is_player or nm.pacts.has(b) or world.historical or nm.own_wars:
 		return false   # в исторической игре союзники вступают в войны по фокусам и событиям
 	if nm.ideology == "democracy":
 		return world.tension >= 60.0
@@ -295,7 +296,7 @@ static func create_faction(world: World, n: int, name: String = "") -> int:
 	return f.id
 
 
-static func join_faction(world: World, n: int, f: int) -> void:
+static func join_faction(world: World, n: int, f: int, own_wars := false) -> void:
 	var nat: World.Nation = world.nations[n]
 	if f < 0 or nat.faction == f:
 		return
@@ -304,7 +305,9 @@ static func join_faction(world: World, n: int, f: int) -> void:
 	nat.justify_target = -1
 	Relations.add_diplo(world, n, 6.0)
 	Relations.add_diplo(world, world.factions[f].leader, 3.0)
-	_inherit_wars(world, n, world.factions[f].leader)
+	nat.own_wars = own_wars
+	if not own_wars:
+		_inherit_wars(world, n, world.factions[f].leader)
 	world.log_event("%s вступает во фракцию «%s»" % [nat.name, world.factions[f].name])
 	world.palette_dirty = true
 

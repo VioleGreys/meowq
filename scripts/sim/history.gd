@@ -528,7 +528,7 @@ static func _is_key(fd: Dictionary) -> bool:
 	for e in fd.get("effects", []):
 		if e.get("t", "") in ["event", "war", "annex", "transfer", "release", "faction", "join_faction_of",
 				"pact", "break_pact", "guarantee", "peace", "peace_all", "civil_war", "later", "leader", "ideology", "rep", "concede",
-				"offensive", "landing", "seize", "fort", "war_limit", "attack_limit", "hold", "hub"]:
+				"offensive", "landing", "landing_area", "seize", "fort", "war_limit", "attack_limit", "hold", "hub"]:
 			return true
 	return false
 
@@ -1066,7 +1066,7 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 					if nat.faction != f:
 						if nat.faction >= 0:
 							Diplomacy.leave_faction(world, who)
-						Diplomacy.join_faction(world, who, f)
+						Diplomacy.join_faction(world, who, f, bool(e.get("own_wars", false)))
 			"annex":
 				if target >= 0 and world.nations[target].alive:
 					annex(world, who, target)
@@ -1192,6 +1192,13 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				nat.attack_limit = [codes, ab, ex]
 			"attack_limit_end":
 				nat.attack_limit = []
+			"landing_area":
+				# обычные (не исторические) высадки ИИ — только в рамках boxes: Япония
+				# высаживалась в Европе и Западной Африке на самый слабый берег Британии
+				var la: Array = []
+				for b in e.get("boxes", []):
+					la.append([float(b[0]), float(b[1]), float(b[2]), float(b[3])])
+				nat.landing_area = la
 			"hold":
 				# гарнизон: ИИ держит на участке фронта не меньше n дивизий, сколько бы
 				# ни выходило по раздаче (Ленинград 1941–43 гг.); n = 0 — снять
@@ -1809,7 +1816,7 @@ static func effects_text(world: World, effects: Array) -> String:
 	bonus_names.merge({"research": "наука", "attack": "атака", "defense": "оборона", "speed": "скорость",
 		"occ_resist": "рост сопротивления на занятых нами землях", "occ_comply": "рост принятия на занятых нами землях",
 		"resistance": "сопротивление на наших занятых землях", "aid_eq": "помощь снаряжением из-за рубежа (заводов)",
-		"expedition": "доля армии метрополии на заморском фронте",
+		"expedition": "доля армии метрополии на заморском фронте", "army_cap": "численность армии",
 		"cold_native": "привычка к холоду (уровень акклиматизации)",
 		"coord": "координация войск", "naval_coord": "координация флота"}, true)
 	for e in effects:
@@ -1860,7 +1867,7 @@ static func effects_text(world: World, effects: Array) -> String:
 			"faction":
 				parts.append("фракция «%s»" % e["name"])
 			"join_faction_of":
-				parts.append("союз с %s" % tname)
+				parts.append("%sсоюз с %s%s" % [who, tname, " (без общих войн)" if e.get("own_wars", false) else ""])
 			"annex":
 				parts.append("%sприсоединение: %s" % [who, tname])
 			"transfer":
@@ -1954,6 +1961,8 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sнаступление только на %d направлении(ях), в остальном — оборона" % [who, e.get("boxes", []).size()])
 			"attack_limit_end":
 				parts.append("%sограничение наступления снято" % who)
+			"landing_area":
+				parts.append("%sвысадки — только в своём районе войны" % who)
 			"hold":
 				parts.append("%sгарнизон: %s — не меньше %d дивизий" % [who, ", ".join(e.get("provs", [])), int(e.get("n", 0))])
 			"hub":

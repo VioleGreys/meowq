@@ -171,6 +171,10 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		fronts.add(capital);
 		for (int p = 0; p < pc; p++)
 			if (ctrl[p] == nid && coastal[p] == 1 && vp[p] >= 5 && owners[p] == nid) fronts.add(p);
+		// гарнизон (эффект hold) — участок и вдали от фронта
+		if (hold_base >= 0)
+			for (int p = 0; p < pc; p++)
+				if (ctrl[p] == nid && holdt[hold_base + p] > 0) fronts.add(p);
 	}
 
 	std::vector<int32_t> idle;
@@ -397,7 +401,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			bool go = false;
 			if (o < REGROUP_ORG) go = true;
 			else if (o < ROTATE_ORG) go = ours_left[pv] > 1;
-			else go = is_hopeless(pv);
+			else if (hold_base < 0 || holdt[hold_base + pv] == 0) go = is_hopeless(pv);   // гарнизон не отходит
 			if (!go) continue;
 			int32_t rear = -1;
 			for (int32_t k = a_start[pv]; k < a_start[pv + 1]; k++) {
@@ -611,7 +615,8 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		for (int32_t i : idle) {
 			if (used[i]) continue;
 			const int32_t pv = dv_prov[i];
-			const int cap_pv = capd(pv);
+			int cap_pv = capd(pv);
+			if (fronts.has[pv] && hold_base >= 0) cap_pv = std::max(cap_pv, int(holdt[hold_base + pv]));   // гарнизон — сверх снабжения
 			// фронт — по счёту участка; тыл — по числу наших дивизий в провинции
 			if ((fronts.has[pv] && per_front[pv] <= cap_pv) || (!fronts.has[pv] && (!reserve.has[pv] || rcount[pv] <= cap_pv))) continue;
 			if (n_goals == 0) break;

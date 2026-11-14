@@ -79,7 +79,7 @@
       {"id": "ger_britain", "name": "Воздушная битва за Англию", "desc": "Добиться господства в воздухе над Ла-Маншем перед возможной высадкой.", "days": 70, "x": 3, "y": 11, "requires": ["ger_west"], "available": {"date": "1940-08-13"},
        "effects": [{"t": "bonus", "key": "air_fighter", "v": 0.08}, {"t": "bonus", "key": "reinforce", "v": -0.1}, {"t": "tension", "v": 2}]},
       {"id": "ger_tripartite", "name": "Тройственный пакт", "desc": "Германия, Италия и Япония делят мир на сферы и обещают друг другу помощь.", "days": 35, "x": 5, "y": 11, "requires": ["ger_west"], "available": {"date": "1940-09-27"},
-       "effects": [{"t": "join_faction_of", "who": "JAP", "target": "GER"}, {"t": "tension", "v": 2}]},
+       "effects": [{"t": "join_faction_of", "who": "JAP", "target": "GER", "own_wars": true}, {"t": "tension", "v": 2}]},
       {"id": "ger_balkans", "name": "Балканская кампания", "desc": "После переворота в Белграде разгромить Югославию и прийти на помощь Италии в Греции.", "days": 35, "x": 4, "y": 12, "requires": ["ger_tripartite"], "available": {"alive": "YUG", "date": "1941-04-06"},
        "effects": [{"t": "war", "target": "YUG"}, {"t": "war", "target": "GRE"}, {"t": "spirit_add", "who": "YUG", "id": "yug_april"}, {"t": "org_hit", "who": "YUG", "v": 0.5}, {"t": "offensive", "target": "YUG", "name": "Апрельская война", "route": ["Белград", "Крагуевац"]}]},
       {"id": "ger_east", "name": "Поход на Восток", "desc": "Разорвать договор с СССР и начать войну на уничтожение.", "days": 70, "x": 4, "y": 13, "requires": ["ger_tripartite"], "available": {"alive": "SOV", "date": "1941-06-22"},
@@ -187,11 +187,11 @@
       {"id": "sov_uranus", "name": "Операция «Уран»", "desc": "Удар по румынским армиям на флангах 6-й армии: кольцо вокруг Сталинграда замыкается у Калача.", "days": 35, "x": 3, "y": 9, "available": {"date": "1942-11-19", "at_war_pair": ["GER", "SOV"]}, "requires": ["sov_siberian"],
        "effects": [{"t": "spirit_remove", "id": "sov_purge"}, {"t": "spirit_add", "id": "sov_learned"}, {"t": "offensive", "target": "GER", "name": "Уран", "route": ["Михайловка", "Ростовская область", "Ростов-на-Дону"]}]},
       {"id": "sov_kursk", "name": "Курская дуга", "desc": "Выдержать удар в глубоко эшелонированной обороне — и сразу перейти в наступление на Орёл и Харьков, к Днепру.", "days": 35, "x": 3, "y": 10, "available": {"date": "1943-07-12", "at_war_pair": ["GER", "SOV"]}, "requires": ["sov_uranus"],
-       "effects": [{"t": "spirit_add", "id": "sov_tank_armies"}, {"t": "fort", "provs": ["Курск"], "v": 0.8}, {"t": "offensive", "target": "GER", "name": "Кутузов — Румянцев", "route": ["Орёл", "Харьков", "Киев 1"]}]},
+       "effects": [{"t": "attack_limit", "adm0": ["RUS", "UKR", "BLR", "LTU", "LVA", "EST", "POL", "ROU", "MDA", "HUN", "SVK", "CZE", "DEU", "AUT", "BGR", "SRB", "HRV", "SVN", "BIH", "MNE", "MKD", "GRC", "ALB", "NOR"], "boxes": [[30.4, 40, 60, 72], [30.8, 59.3, 33.5, 60.5]]}, {"t": "spirit_add", "id": "sov_tank_armies"}, {"t": "fort", "provs": ["Курск"], "v": 0.8}, {"t": "offensive", "target": "GER", "name": "Кутузов — Румянцев", "route": ["Орёл", "Харьков", "Киев 1"]}]},
       {"id": "sov_bagration", "name": "Операция «Багратион»", "desc": "Четыре фронта бьют по группе армий «Центр» в Белоруссии: Витебск, Бобруйск, котёл под Минском.", "days": 35, "x": 3, "y": 11, "available": {"date": "1944-06-23", "at_war_pair": ["GER", "SOV"]}, "requires": ["sov_kursk"],
-       "effects": [{"t": "spirit_add", "id": "sov_deep_ops"}, {"t": "offensive", "target": "GER", "name": "Багратион", "route": ["Витебск", "Минск", "Брест"]}]},
+       "effects": [{"t": "attack_limit_end"}, {"t": "spirit_add", "id": "sov_deep_ops"}, {"t": "offensive", "target": "GER", "name": "Багратион", "route": ["Витебск", "Минск", "Брест"]}]},
       {"id": "sov_vistula", "name": "Висло-Одерская операция", "desc": "С плацдармов на Висле — к Одеру. До Берлина остаётся семьдесят километров.", "days": 35, "x": 3, "y": 12, "available": {"date": "1945-01-12", "at_war_pair": ["GER", "SOV"]}, "requires": ["sov_bagration"],
-       "effects": [{"t": "offensive", "target": "GER", "name": "На Берлин", "route": ["Варшава", "Познань", "Берлин"]}]}
+       "effects": [{"t": "attack_limit_end"}, {"t": "offensive", "target": "GER", "name": "На Берлин", "route": ["Варшава", "Познань", "Берлин"]}]}
     ],
     "ITA": [
       {"id": "ita_autarky", "name": "Автаркия", "desc": "Жить без импорта: своё зерно, своя сталь, заменители сырья.", "days": 70, "x": 1, "y": 0,
@@ -489,7 +489,7 @@
       {"id": "jap_tojo", "name": "Кабинет Тодзио", "desc": "Генерал Тодзио — премьер и военный министр.", "days": 35, "x": 4, "y": 3, "requires_any": ["jap_china", "jap_peace_china"], "available": {"date": "1941-10-18"},
        "effects": [{"t": "leader", "name": "Хидэки Тодзио"}, {"t": "bonus", "key": "attack", "v": 0.03}]},
       {"id": "jap_pearl", "name": "Удар по Пёрл-Харбору", "desc": "Авианосцы Ямамото идут на Гавайи: война с США, Британией и Голландией.", "days": 35, "x": 4, "y": 4, "requires": ["jap_tojo"], "available": {"date": "1941-12-07"}, "exclusive": ["jap_north"],
-       "effects": [{"t": "war", "target": "USA"}, {"t": "war", "target": "ENG"}, {"t": "war", "target": "HOL"}, {"t": "war_support", "v": 0.1}, {"t": "landing", "prov": "Манила"}, {"t": "attack_limit", "who": "USA", "adm0": ["CHN", "MNG", "KOR", "TWN"], "boxes": [[0.0, 0.0, 0.0, 0.0]]}, {"t": "attack_limit", "who": "ENG", "adm0": ["CHN", "MNG", "KOR", "TWN"], "boxes": [[0.0, 0.0, 0.0, 0.0]]}]},
+       "effects": [{"t": "landing_area", "who": "USA", "boxes": [[-30.0, 25.0, 45.0, 72.0], [100.0, -12.0, 180.0, 30.0], [129.5, 30.0, 180.0, 46.0]]}, {"t": "war", "target": "USA"}, {"t": "war", "target": "ENG"}, {"t": "war", "target": "HOL"}, {"t": "war_support", "v": 0.1}, {"t": "landing", "prov": "Манила"}, {"t": "attack_limit", "who": "USA", "adm0": ["CHN", "MNG", "KOR", "TWN"], "boxes": [[0.0, 0.0, 0.0, 0.0]]}, {"t": "attack_limit", "who": "ENG", "adm0": ["CHN", "MNG", "KOR", "TWN"], "boxes": [[0.0, 0.0, 0.0, 0.0]]}]},
       {"id": "jap_north", "name": "Северный путь", "desc": "Германия у Москвы: ударить по СССР с востока.", "days": 35, "x": 5, "y": 4, "requires": ["jap_tojo"], "available": {"at_war_pair": ["GER", "SOV"]}, "exclusive": ["jap_pearl"],
        "effects": [{"t": "war", "target": "SOV"}]},
       {"id": "jap_navy", "name": "Флот открытого моря", "desc": "Выйти из морских договоров и строить без ограничений.", "days": 70, "x": 6, "y": 0,

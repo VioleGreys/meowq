@@ -1263,6 +1263,8 @@ static func sea_transfer(world: World, divs: Array, target: int) -> String:
 const EXP_BATCH := 12
 const LAND_GROUP_GOAL := 12
 const LAND_READY_GOAL := 8
+const LAND_PREP_GOAL := 20   # подготовка исторической высадки (дн.): спланирована до войны
+const GOAL_NEAR := 2         # берег в стольких переходах от цели — тоже место исторической высадки
 const EXP_PORT := 4
 const EXP_MIN_ZONE := 3
 
@@ -1415,7 +1417,8 @@ static func _side_zone(world: World, n: int, p: int, limit: int) -> int:
 
 
 ## Подготовка высадки. Пустая строка — план создан; иначе причина.
-static func plan_invasion(world: World, divs: Array, target: int) -> String:
+## max_days > 0 — подготовка не дольше (историческая операция спланирована заранее).
+static func plan_invasion(world: World, divs: Array, target: int, max_days := 0) -> String:
 	if divs.is_empty():
 		return "нет дивизий"
 	var n: int = divs[0].owner
@@ -1440,6 +1443,8 @@ static func plan_invasion(world: World, divs: Array, target: int) -> String:
 	plan.port = port
 	plan.target = target
 	plan.total = clampi(30 + divs.size() * 3 + dist * 2, 30, 60)
+	if max_days > 0:
+		plan.total = mini(plan.total, max_days)
 	plan.days_left = plan.total
 	for d in divs:
 		if d.inv_plan >= 0:
@@ -2238,13 +2243,23 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 			goal = -1
 		elif world.is_at_war(n, gc):
 			enemy = gc
-			if nat.inv_target != goal:
-				nat.inv_target = goal
+			# место высадки — сама цель или слабо прикрытый берег рядом с ней
+			# (Лингаен у Манилы); выбранное держим, пока оно у того же противника
+			if nat.inv_target < 0 or world.p_controller[nat.inv_target] != gc or not _goal_near(world, goal).has(nat.inv_target):
+				nat.inv_target = _goal_landing(world, goal, gc)
 				nat.inv_port = -1
+	# район обычных высадок (эффект landing_area): противники с берегом в нём
+	var in_area := {}
+	if not nat.landing_area.is_empty():
+		for p in world.prov_count:
+			if world.p_coastal[p] == 1 and world.p_controller[p] >= 0 and _in_area(nat.landing_area, world.p_lonlat[p]):
+				in_area[world.p_controller[p]] = true
 	for e in nat.at_war.keys() + nat.wargoals.keys() + nat.planned_wars.keys():
 		if enemy >= 0:
 			break
 		if not world.nations[e].alive or reach.has(e) or nat.division_count <= world.nations[e].division_count * 1.5:
+			continue
+		if not nat.landing_area.is_empty() and not in_area.has(e):
 			continue
 		# рубеж операций (war_limit): на этих землях — только исторические высадки (landing)
 		if not nat.war_limit.is_empty() and world.nations[e].capital >= 0 and world.p_adm0[world.nations[e].capital] == String(nat.war_limit[0]):
@@ -2283,12 +2298,14 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 	# цель и порт посадки выбираются один раз на операцию
 	var best := nat.inv_target
 	if goal >= 0:
-		best = goal
-	elif best < 0 or world.p_controller[best] != enemy:
+		pass
+	elif best < 0 or world.p_controller[best] != enemy or (not nat.landing_area.is_empty() and not _in_area(nat.landing_area, world.p_lonlat[best])):
 		best = -1
 		var best_score := INF
 		for p in world.prov_count:
 			if world.p_controller[p] != enemy or world.p_coastal[p] == 0:
+				continue
+			if not nat.landing_area.is_empty() and not _in_area(nat.landing_area, world.p_lonlat[p]):
 				continue
 			# порты в приоритете: без порта плацдарм останется без снабжения
 			var score: float = world.divs_count(p) * 25.0 - world.vp_ai()[p] * 2.0 - (8.0 if world.p_vp[p] >= 3 else 0.0) + rng.randf()
@@ -2300,18 +2317,28 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 	if best < 0:
 		return
 	var port := nat.inv_port
+	# исторический десант (landing) — крупнее: до LAND_GROUP_GOAL дивизий, сбор от LAND_READY_GOAL
+	var max_group := LAND_GROUP_GOAL if goal >= 0 else 6
+	var min_ready := LAND_READY_GOAL if goal >= 0 else 3
+	# порт посадки — в метрополии (связан со столицей по суше) или там, где уже
+	# стоит весь десант: иначе войскам до него не дойти (для Шанхая ближайшим
+	# своим портом был Порт-Артур — десант не собирался никогда; Япония с 1938 г.
+	# держала порт Такао на Тайване — на остров не дойти, и высадки на Манилу не было)
+	var home_m := PackedByteArray()
+	if port >= 0 and world.p_controller[port] == n and not nat.hold.has(port) and _own_divs(world, n, port) < min_ready:
+		home_m = own_reach(world, n, nat.capital)[0]
+		if home_m[port] == 0:
+			port = -1
 	# гарнизон (Nation.hold) — не порт посадки: иначе десант увозил защитников
 	# блокадного Ленинграда в Никель
 	if port < 0 or world.p_controller[port] != n or nat.hold.has(port):
 		port = -1
 		var port_d := INF
-		# порт посадки — в метрополии (связан со столицей по суше) или там, где уже
-		# стоят хотя бы 3 наших дивизии: иначе войскам до него не дойти (для Шанхая
-		# ближайшим своим портом был Порт-Артур — десант не собирался никогда)
-		var home_m: PackedByteArray = own_reach(world, n, nat.capital)[0]
+		if home_m.is_empty():
+			home_m = own_reach(world, n, nat.capital)[0]
 		for p in world.prov_count:
 			if world.p_controller[p] == n and world.p_owner[p] == n and is_port(world, p) and not nat.hold.has(p) \
-					and (home_m[p] == 1 or _own_divs(world, n, p) >= 3):
+					and (home_m[p] == 1 or _own_divs(world, n, p) >= min_ready):
 				var dd := world.p_center[p].distance_squared_to(world.p_center[best])
 				if dd < port_d:
 					port_d = dd
@@ -2324,9 +2351,6 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 		if d.alive and d.owner == n and d.prov == port and d.path.is_empty() and not d.in_battle \
 				and d.transit_days == 0 and d.org > d.max_org * 0.5:
 			ready.append(d)
-	# исторический десант (landing) — крупнее: до LAND_GROUP_GOAL дивизий, сбор от LAND_READY_GOAL
-	var max_group := LAND_GROUP_GOAL if goal >= 0 else 6
-	var min_ready := LAND_READY_GOAL if goal >= 0 else 3
 	# уже собравшиеся в порту ждут остальных — фронт их не забирает
 	for d in ready:
 		d.reserved_until = maxi(d.reserved_until, world.day + 20)
@@ -2358,9 +2382,57 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 				need -= 1
 		return
 	var group := ready.slice(0, mini(max_group, ready.size()))
-	if plan_invasion(world, group, best) == "":
+	# историческая операция спланирована заранее — подготовка короче
+	if plan_invasion(world, group, best, LAND_PREP_GOAL if goal >= 0 else 0) == "":
 		nat.inv_target = -1
 		nat.inv_port = -1
+
+
+static func _in_area(boxes: Array, ll: Vector2) -> bool:
+	for b in boxes:
+		if ll.x >= float(b[0]) and ll.y >= float(b[1]) and ll.x <= float(b[2]) and ll.y <= float(b[3]):
+			return true
+	return false
+
+
+## Берег у цели исторической высадки: сама цель и прибрежные провинции того же
+## владельца в пределах GOAL_NEAR переходов по суше.
+static func _goal_near(world: World, goal: int) -> Dictionary:
+	var c := world.p_controller[goal]
+	var dist := {goal: 0}
+	var q: Array = [goal]
+	var h := 0
+	while h < q.size():
+		var x: int = q[h]
+		h += 1
+		if int(dist[x]) >= GOAL_NEAR:
+			continue
+		for y in world.p_adj[x]:
+			if world.p_land[y] == 1 and not dist.has(y) and world.p_controller[y] == c:
+				dist[y] = int(dist[x]) + 1
+				q.append(y)
+	var out := {}
+	for x in dist:
+		if world.p_coastal[x] == 1:
+			out[x] = true
+	return out
+
+
+## Место исторической высадки: из берега у цели — где меньше всего войск
+## (ровно — ближе к цели, потом сама цель).
+static func _goal_landing(world: World, goal: int, enemy: int) -> int:
+	var best := goal
+	var best_s := INF
+	var near := _goal_near(world, goal).keys()
+	near.sort()
+	for p in near:
+		if world.p_controller[p] != enemy:
+			continue
+		var s: float = world.divs_count(p) * 10.0 + world.p_center[p].distance_to(world.p_center[goal]) * 0.001 - (0.5 if p == goal else 0.0)
+		if s < best_s:
+			best_s = s
+			best = p
+	return best
 
 
 static func _at_front(world: World, d: World.Division) -> bool:

@@ -7,6 +7,8 @@ extends SceneTree
 ##   --front=all   — все фронты разом в одной партии 1936–45 гг. (по умолчанию):
 ##                   битвы и фокусы на разных фронтах влияют друг на друга.
 ##   godot --headless --path . --script res://tests/campaign_diag.gd -- --front=east [--until=1945-06-01 --seed=N --brief]
+##   --save=1941-07-01:a,1941-11-25:b — записать партию на эти даты (и идти дальше);
+##   --load=имя — начать с сохранения (опыты с поздними событиями без разгона с 1936 г.).
 
 const FRONTS := {
 	"east": {
@@ -91,6 +93,18 @@ func _init() -> void:
 			from = a.split("=")[1]
 		if a.begins_with("--seed="):
 			w.seed_value = int(a.split("=")[1])
+	var saves := {}
+	for a in args:
+		if a.begins_with("--save="):
+			for one in a.split("=")[1].split(","):
+				var sv: PackedStringArray = one.split(":")
+				saves[w.day_of(sv[0])] = sv[1]
+		if a.begins_with("--load="):
+			var r: Dictionary = SaveGame.load_into(a.split("=")[1], w, sim)
+			if r["err"] != "":
+				print("сохранение не загружено: ", r["err"])
+				quit(1)
+				return
 	var end_day := w.day_of(until)
 	var from_day := w.day_of(from)
 	var names := Array(w.p_name)
@@ -114,6 +128,9 @@ func _init() -> void:
 		if not w.pending_peace.is_empty():
 			sim.resolve_peace("auto")
 		sim.tick()
+		if saves.has(w.day):
+			var se := SaveGame.write(saves[w.day], w, sim, {"nation": "SWE"})
+			print("  записано %s: %s" % [saves[w.day], se if se != "" else "ок"])
 		var watching := w.day >= from_day
 		for e in w.events:
 			if watching and not ("переправа" in e) and ("капитулирует" in e or "объявляет войну" in e or "план" in e or "переезжает" in e or "столиц" in e or "высадк" in e or "переправ" in e \

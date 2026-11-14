@@ -54,7 +54,9 @@ static func plan_economy(world: World, nid: int, rng: RandomNumberGenerator, min
 static func target_divisions(nat: World.Nation) -> int:
 	var cap := (4.0 + nat.population * 1.3) * (1.0 + nat.b("conscription"))
 	var t := int(minf(6.0 + nat.mil * 2.5 + nat.civ * 0.3, cap) * (1.4 if not nat.at_war.is_empty() else 1.0))
-	return maxi(t, mini(nat.prep_divs, int(cap * 1.5)))
+	# черта army_cap — доля обычной армии (США: «ставка на 90 дивизий» — промышленность
+	# на флот, авиацию и ленд-лиз; иначе к 1944 г. 310 дивизий и Берлин в июле)
+	return int(maxi(t, mini(nat.prep_divs, int(cap * 1.5))) * maxf(0.1, 1.0 + nat.b("army_cap")))
 
 
 ## Аргументы военного плана всех дивизий страны ИИ (главный поток).
@@ -84,7 +86,7 @@ static func nation_args(world: World, nid: int, mine: PackedInt32Array) -> Array
 
 
 ## Рубеж операций (эффект war_limit: [код страны Natural Earth, рамки [запад,
-## юг, восток, север]]): фронт ИИ — все наши провинции, кроме взятых на этих
+## юг, восток, север]]): фронт ИИ — все наши и союзные провинции, кроме взятых на этих
 ## землях вне рамок (Ставка ограничивала японские операции в Китае районами:
 ## 1937 г. — Северный Китай и низовья Янцзы, 1938-й — до Уханя и Кантон).
 ## Цель атаки — у допустимого участка, так что за рамку фронт заходит не
@@ -98,7 +100,8 @@ static func war_limit_fronts(world: World, nat: World.Nation) -> Dictionary:
 	var ctrl := world.p_controller
 	var land := world.p_land
 	for p in world.prov_count:
-		if ctrl[p] != nat.id or land[p] == 0:
+		# и союзная земля: японские войска в Таиланде идут на Малайю и Бирму
+		if land[p] == 0 or ctrl[p] < 0 or (ctrl[p] != nat.id and not Diplomacy.same_side(world, ctrl[p], nat.id)):
 			continue
 		if world.p_adm0[p] == code:
 			var ll: Vector2 = world.p_lonlat[p]
@@ -279,6 +282,12 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		for p in prov_count:
 			if ctrl[p] == nid and coastal[p] == 1 and vp[p] >= 5 and owners[p] == nid:
 				fronts[p] = true
+		# гарнизон (эффект hold) — участок и вдали от фронта: войска стягиваются
+		# заранее (Ленинград с июля 1941 г., а не когда немцы уже у города)
+		if hold_base >= 0:
+			for p in prov_count:
+				if ctrl[p] == nid and holdt[hold_base + p] > 0:
+					fronts[p] = true
 
 	var idle := PackedInt32Array()
 	var in_group := {}
@@ -471,7 +480,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				go = true
 			elif o < ROTATE_ORG:
 				go = int(ours_left[pv]) > 1
-			else:
+			elif hold_base < 0 or holdt[hold_base + pv] == 0:   # гарнизон не отходит
 				if not hopeless.has(pv):
 					hopeless[pv] = _hopeless(tb, nid, pv)
 				go = hopeless[pv]
@@ -655,6 +664,8 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				continue
 			var pv := dv_prov[i]
 			var cap_pv := maxi(1, int(floor(supcap[pv])))
+			if fronts.has(pv) and hold_base >= 0:
+				cap_pv = maxi(cap_pv, int(holdt[hold_base + pv]))   # гарнизон — сверх снабжения
 			# фронт — по счёту участка; тыл — по числу наших дивизий в провинции
 			if (fronts.has(pv) and int(per_front.get(pv, 0)) <= cap_pv) or (not fronts.has(pv) and (not reserve.has(pv) or int(rcount[pv]) <= cap_pv)):
 				continue

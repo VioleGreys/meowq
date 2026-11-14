@@ -2177,6 +2177,7 @@
    "techs": []
   },
   "PHI": {
+   "spirits": ["phi_reserve"],
    "full_name": "Филиппинское Содружество",
    "ideology": "democracy",
    "leader": "Мануэль Кесон",
