@@ -756,16 +756,25 @@ static func _count_overseas(world: World) -> void:
 	var prov := world.d_prov
 	var owner := world.d_owner
 	var land := world.p_land
+	var capn := PackedInt32Array()
+	capn.resize(nc)
+	var home := PackedInt32Array()
+	home.resize(nc)
+	for nat in world.nations:
+		capn[nat.id] = nat.capital
+		home[nat.id] = nat.dep_home
+	var comp := world.p_comp
+	var has_comp := comp.size() == world.prov_count
 	for i in alive.size():
 		if alive[i] == 0:
 			continue
 		var o := owner[i]
 		var p := prov[i]
-		if o < 0 or p < 0 or land[p] == 0 or world.nations[o].capital < 0:
+		if o < 0 or p < 0 or land[p] == 0 or capn[o] < 0:
 			continue
 		var far: bool
-		if world.p_comp.size() == world.prov_count:
-			far = Depots.overseas(world, o, p)
+		if has_comp:
+			far = home[o] < 0 or comp[p] != home[o]   # = Depots.overseas
 		else:
 			if hl[o] == null:
 				hl[o] = home_land(world, o)

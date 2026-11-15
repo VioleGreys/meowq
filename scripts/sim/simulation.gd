@@ -1326,25 +1326,46 @@ func _phase_combat(battles: Dictionary) -> void:
 			att_list.append(a.slot)
 		att_start.append(att_list.size())
 		seeds.append(hash([world.seed_value, world.day, p]))   # как Parallel.rng
-	# численность до боя — для вклада в победу (Peace.SCORE_KILL)
-	var pre := {}
+	# численность до боя — для вклада в победу (Peace.SCORE_KILL); дивизии
+	# провинции — по списку слотов (World.pl_head/d_nx, = divs_in), по массивам
+	var nd := world.d_alive.size()
+	var pre := PackedFloat64Array()
+	pre.resize(nd)
+	var has_pre := PackedByteArray()
+	has_pre.resize(nd)
+	var dstr := world.d_str
+	var dal := world.d_alive
+	var plh := world.pl_head
+	var dnx := world.d_nx
 	for p in provs:
 		for a in battles[p]:
-			pre[a.slot] = a.strength
-		for e in world.divs_in(p):
-			if e.alive:
-				pre[e.slot] = e.strength
+			pre[a.slot] = dstr[a.slot]
+			has_pre[a.slot] = 1
+		var h := plh[p]
+		while h >= 0:
+			if dal[h] == 1:
+				pre[h] = dstr[h]
+				has_pre[h] = 1
+			h = dnx[h]
 	world.k_combat(pv, att_start, att_list, seeds, PLAN_MAX)
-	_combat_score(provs, battles, pre)
+	_combat_score(provs, battles, pre, has_pre)
 	# боевой опыт армии: дивизии-участники сражений за день (Doctrine)
+	var nc := world.nation_count
+	var war := world.war
+	var dow := world.d_owner
+	dal = world.d_alive
 	var engaged := PackedInt32Array()
 	engaged.resize(world.nations.size())
 	for p in provs:
 		var ao: int = battles[p][0].owner
 		engaged[ao] += battles[p].size()
-		for e in world.divs_in(p):
-			if e.alive and world.is_at_war(ao, e.owner):
-				engaged[e.owner] += 1
+		var h := plh[p]
+		while h >= 0:
+			var eo := dow[h]
+			# = is_at_war(ao, eo)
+			if dal[h] == 1 and eo >= 0 and eo != ao and war[ao * nc + eo] == 1:
+				engaged[eo] += 1
+			h = dnx[h]
 	for n in engaged.size():
 		if engaged[n] > 0:
 			Doctrine.gain(world.nations[n], 0, minf(Doctrine.LAND_CAP, Doctrine.LAND_PER_DIV * engaged[n]))
@@ -1358,28 +1379,41 @@ func _phase_combat(battles: Dictionary) -> void:
 				if a.strength <= 5.0:
 					_destroy(a, "разбита")
 		var att_owner: int = battles[p][0].owner
-		for e in world.divs_in(p):
-			if not e.alive or not world.is_at_war(att_owner, e.owner):
-				continue
-			if e.org <= 0.5 or e.strength <= 5.0:
-				_retreat(e)
+		var rt: Array = []
+		var h := world.pl_head[p]
+		var dorg := world.d_org
+		while h >= 0:
+			var eo := world.d_owner[h]
+			if world.d_alive[h] == 1 and eo >= 0 and eo != att_owner and world.war[att_owner * nc + eo] == 1 \
+					and (dorg[h] <= 0.5 or world.d_str[h] <= 5.0):
+				rt.append(world.divisions[h])
+			h = world.d_nx[h]
+		for e in rt:
+			_retreat(e)
 
 
 ## Вклад в победу: потери стороны делятся между дивизиями противника в бою.
-func _combat_score(provs: Array, battles: Dictionary, pre: Dictionary) -> void:
+func _combat_score(provs: Array, battles: Dictionary, pre: PackedFloat64Array, has_pre: PackedByteArray) -> void:
+	var dstr := world.d_str
+	var dow := world.d_owner
+	var plh := world.pl_head
+	var dnx := world.d_nx
 	for p in provs:
 		var ao: int = battles[p][0].owner
 		var att := {}
 		var a_loss := 0.0
 		for a in battles[p]:
-			a_loss += maxf(0.0, float(pre[a.slot]) - a.strength)
+			a_loss += maxf(0.0, pre[a.slot] - dstr[a.slot])
 			att[a.owner] = int(att.get(a.owner, 0)) + 1
 		var dfn := {}
 		var d_loss := 0.0
-		for e in world.divs_in(p):
-			if pre.has(e.slot) and not att.has(e.owner) and world.is_at_war(ao, e.owner):
-				d_loss += maxf(0.0, float(pre[e.slot]) - e.strength)
-				dfn[e.owner] = int(dfn.get(e.owner, 0)) + 1
+		var h := plh[p]
+		while h >= 0:
+			var eo := dow[h]
+			if has_pre[h] == 1 and not att.has(eo) and world.is_at_war(ao, eo):
+				d_loss += maxf(0.0, pre[h] - dstr[h])
+				dfn[eo] = int(dfn.get(eo, 0)) + 1
+			h = dnx[h]
 		_share_score(att, d_loss)
 		_share_score(dfn, a_loss)
 
@@ -1569,17 +1603,29 @@ func _cap_colonies() -> void:
 	var ctrl := world.p_controller
 	var owner := world.p_owner
 	var total := {}   # владелец * 4096 + территория → [всего, держит]
+	# сторона страны (= Diplomacy.same_side): фракция сюзерена или сам сюзерен —
+	# по свежим данным, один раз на страну
+	var skey := PackedInt32Array()
+	skey.resize(nc)
+	var warring := PackedByteArray()
+	warring.resize(nc)
+	for a in nc:
+		var r := Diplomacy.root(world, a)
+		var f: int = world.nations[r].faction
+		skey[a] = f if f >= 0 else 10000 + r
+		warring[a] = 0 if world.nations[a].at_war.is_empty() else 1
+	var pvp := world.p_vp
 	for p in _col_provs:
 		var o := owner[p]
-		if o < 0 or world.nations[o].at_war.is_empty():
+		if o < 0 or warring[o] == 0:
 			continue
 		var key := o * 4096 + _col_group[p]
-		var v := world.p_vp[p]
+		var v := pvp[p]
 		if not total.has(key):
 			total[key] = [0, 0]
 		total[key][0] += v
 		var c := ctrl[p]
-		if c == o or (c >= 0 and Diplomacy.same_side(world, c, o)):
+		if c == o or (c >= 0 and skey[c] == skey[o]):
 			total[key][1] += v
 	var keys := total.keys()
 	keys.sort()

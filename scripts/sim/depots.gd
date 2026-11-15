@@ -156,12 +156,25 @@ static func _colscore(world: World, p: int) -> int:
 
 
 ## Пункты, куда ходят конвои снабжения: порты и столицы колоний на побережье.
+static var _sea_extra := PackedInt32Array()
+static var _sea_cc := PackedByteArray()
+static var _sea_of := 0
+
+
 static func sea_points(world: World) -> PackedInt32Array:
 	var res := world.port_list.duplicate()
 	var cc := _colcap(world)
-	for p in world.prov_count:
-		if cc[p] == 1 and world.p_coastal[p] == 1 and world.p_port[p] == 0:
-			res.append(p)
+	# столицы колоний на побережье без порта — постоянны (столицы колоний и
+	# порты не меняются): список один раз на карту
+	if _sea_of != world.get_instance_id() or _sea_cc != cc:
+		var ex := PackedInt32Array()
+		for p in world.prov_count:
+			if cc[p] == 1 and world.p_coastal[p] == 1 and world.p_port[p] == 0:
+				ex.append(p)
+		_sea_extra = ex
+		_sea_cc = cc.duplicate()
+		_sea_of = world.get_instance_id()
+	res.append_array(_sea_extra)
 	return res
 
 
