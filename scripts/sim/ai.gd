@@ -505,7 +505,9 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				risk = 1.3
 			# нужная сила: укрепления — корнем (квадратичный закон: каждая новая атакующая
 			# дивизия добавляет и урон, и запас организации), иначе крепость не берут никогда
-			var need_mult := sqrt(def_mult) if tb.has("lanch") else def_mult
+			var need_mult := def_mult
+			if tb.has("lanch") and def_mult > FORT_LIN:
+				need_mult = FORT_LIN * sqrt(def_mult / FORT_LIN)
 			target_list.append([score, t, enemy_str * need_mult * risk / climf, dirs])
 		# порядок однозначный (при равенстве — номер провинции): так же сортирует C++
 		target_list.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
@@ -866,6 +868,7 @@ const SCORE_STR := 5.0  # сила обороны в очереди целей (
 const CAP_GARRISON := 6  # крупный город у фронта: гарнизон не меньше (решение пользователя)
 const CAP_VP := 50       # «крупный» — очки победы столичные (Москва, Берлин, Рим, Нанкин)
 const CAP_NEAR := 2      # «у фронта» — враг в стольких переходах по суше
+const FORT_LIN := 2.5    # оценка силы на цель: множитель обороны до 2,5 — как есть, сверх — корнем (крепости)
 const STORM_NEED := 0.1  # штурм осаждённого города в его срок: атака при силе > 1/10 нужной (решение пользователя: «время от времени пытаются взять»)
 const AXIS_COMMIT := 2.0 # к цели наступления (план, группа с целью): на лучшие цели — вдвое больше нужного
 
