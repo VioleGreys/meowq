@@ -391,6 +391,10 @@ static func ai_pick(world: World, w: int) -> Array:
 		var share := float(mine) / float(provs.size())
 		var core := Claims.share(world, w, provs)
 		var v := float(c["u_cost"][u]) * (share * 1.5 + (0.5 if adj else 0.0) + 0.2)
+		# чужая национальная земля, у которой есть хозяин (живой не проигравший,
+		# преемник или бывшая страна), — ему после мира (_return_cores), а не нам:
+		# Англия брала Париж, который держала
+		v *= 1.0 - 0.9 * _foreign_core(world, provs, w, c["losers"])
 		if demo and not colony and core < 0.5:
 			v *= 0.4
 		v *= 1.0 + core   # национальную землю берут охотно
@@ -514,6 +518,21 @@ static func finish(world: World) -> void:
 	world.col_done.clear()
 	world.palette_dirty = true
 	world.rebuild_prov_divs()
+
+
+## Доля провинций участка — национальная земля другой страны, которой её вернут
+## после мира (_return_cores): живой не проигравшей, преемника, бывшей страны.
+static func _foreign_core(world: World, provs: PackedInt32Array, w: int, losers: Array) -> float:
+	var k := 0
+	for p in provs:
+		if Claims.is_core(world, w, p):
+			continue
+		for x in Claims.claimants(world, p):
+			if x == w or losers.has(x) or (not world.nations[x].alive and world.nations[x].dormant):
+				continue
+			k += 1
+			break
+	return float(k) / float(maxi(1, provs.size()))
 
 
 ## Неразобранная чужая национальная земля проигравших — хозяевам по порядку:

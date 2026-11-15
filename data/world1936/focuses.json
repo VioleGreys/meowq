@@ -455,7 +455,7 @@
       {"id": "usa_islands", "name": "Прыжки по островам", "desc": "Обходить укреплённые острова и брать нужные для аэродромов.", "days": 70, "x": 7, "y": 3, "requires": ["usa_marines"], "available": {"date": "1943-11-20"},
        "effects": [{"t": "bonus", "key": "attack", "v": 0.03}, {"t": "bonus", "key": "naval", "v": 0.03}]},
       {"id": "usa_normandy", "name": "Высадка в Нормандии", "desc": "Американские дивизии на пляжах «Юта» и «Омаха».", "days": 70, "x": 4, "y": 7, "requires": ["usa_torch"], "available": {"date": "1944-06-06"},
-       "effects": [{"t": "bonus", "key": "attack", "v": 0.04}, {"t": "resist", "allies": true, "v": 10}, {"t": "landing", "prov": "Шербур-Октевиль"}, {"t": "offensive", "target": "GER", "name": "Кобра", "route": ["Шербур-Октевиль", "Париж", "Кёльн", "Эссен"]}]},
+       "effects": [{"t": "bonus", "key": "attack", "v": 0.04}, {"t": "resist", "allies": true, "v": 10}, {"t": "landing", "prov": "Шербур-Октевиль"}, {"t": "offensive", "target": "GER", "name": "Кобра", "route": ["Шербур-Октевиль", "Париж", "Кёльн", "Эссен"], "axes": [{"name": "Италия", "route": ["Рим", "Флоренция", "Милан"], "weight": 40}]}]},
       {"id": "usa_dragoon", "name": "Операция «Драгун»", "desc": "Вторая высадка во Франции — на Лазурном берегу, к Марселю и вверх по Роне.", "days": 35, "x": 4, "y": 8, "available": {"date": "1944-08-15", "at_war_pair": ["USA", "GER"]}, "requires": ["usa_normandy"],
        "effects": [{"t": "landing", "prov": "Марсель"}]}
     ],

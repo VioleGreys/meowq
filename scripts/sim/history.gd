@@ -1308,6 +1308,38 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				if nd > 0:
 					world.rebuild_prov_divs()
 					world.log_event("%s: разоружено %d дивизий за пределами страны" % [nat.name, nd])
+			"withdraw":
+				# отход без боя (Рим — открытый город, 04.06.1944): дивизии страны из
+				# провинций (названия) — в ближайшую свою провинцию, связанную по суше
+				# со столицей; провинция остаётся пустой. Окружённый крупный город сам
+				# себе источник снабжения — иначе котёл стоял год
+				var wp := PackedInt32Array()
+				for city in e.get("provs", []):
+					var cp := Array(world.p_name).find(String(city))
+					if cp >= 0:
+						wp.append(cp)
+				if nat.capital >= 0 and not wp.is_empty():
+					var reach: PackedByteArray = Forces.own_reach(world, who, nat.capital)[0]
+					var nd := 0
+					for sp in wp:
+						var dest := -1
+						var best_d := INF
+						for q in world.prov_count:
+							if reach[q] == 1 and world.p_controller[q] == who and world.p_land[q] == 1 and not wp.has(q):
+								var dd := world.p_lonlat[q].distance_squared_to(world.p_lonlat[sp])
+								if dd < best_d:
+									best_d = dd
+									dest = q
+						for d in world.divs_in(sp):
+							if d.alive and d.owner == who:
+								if dest >= 0:
+									_move(world, d, dest)
+								else:
+									d.alive = false
+								nd += 1
+					if nd > 0:
+						world.rebuild_prov_divs()
+						world.log_event("%s: %d дивизий отходят без боя" % [nat.name, nd])
 			"desert":
 				# армия разбегается (Маньчжоу-го в августе 1945 г.): распущена доля v
 				# дивизий страны — каждая k-я по порядку, без случайности
@@ -2073,6 +2105,8 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sчерта «%s» ×%s" % [who, world.spirit_defs.get(e["id"], {}).get("name", e["id"]), str(e.get("v", 0.5))])
 			"disband_abroad":
 				parts.append("%sвойска за пределами страны разоружены" % who)
+			"withdraw":
+				parts.append("%sвойска отходят без боя: %s" % [who, ", ".join(e.get("provs", []))])
 			"desert":
 				parts.append("%sраспущено %d %% дивизий" % [who, roundi(100 * float(e.get("v", 0.5)))])
 			"org_hit":
