@@ -134,7 +134,7 @@ func _init() -> void:
 		var watching := w.day >= from_day
 		for e in w.events:
 			if watching and not ("переправа" in e) and ("капитулирует" in e or "объявляет войну" in e or "план" in e or "переезжает" in e or "столиц" in e or "высадк" in e or "переправ" in e \
-					or "Виши" in e or "вступает" in e or "Мир между" in e or "еремирие" in e or "Муссолини" in e or "передаёт" in e or "выходит" in e):
+					or "Виши" in e or "вступает" in e or "Мир между" in e or "еремирие" in e or "Муссолини" in e or "передаёт" in e or "выходит" in e or "штурм" in e):
 				print("  %s — %s" % [w.date_short(), e])
 		w.events.clear()
 		for n2 in ftags:
