@@ -324,7 +324,9 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 				score += double(hostile_n - 2) * 15.0;
 				risk = 1.3;
 			}
-			target_list.push_back({ score, t, enemy_str * def_mult * risk / climf, dirs });
+			// нужная сила: укрепления — корнем (квадратичный закон; как ai.gd)
+			const double need_mult = tables.has("lanch") ? std::sqrt(def_mult) : def_mult;
+			target_list.push_back({ score, t, enemy_str * need_mult * risk / climf, dirs });
 		}
 		std::sort(target_list.begin(), target_list.end(), [](const Entry &a, const Entry &b) {
 			return a.score < b.score || (a.score == b.score && a.t < b.t);

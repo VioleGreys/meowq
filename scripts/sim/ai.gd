@@ -503,7 +503,10 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			if dirs == 1 and hostile_n >= 3:
 				score += float(hostile_n - 2) * 15.0
 				risk = 1.3
-			target_list.append([score, t, enemy_str * def_mult * risk / climf, dirs])
+			# нужная сила: укрепления — корнем (квадратичный закон: каждая новая атакующая
+			# дивизия добавляет и урон, и запас организации), иначе крепость не берут никогда
+			var need_mult := sqrt(def_mult) if tb.has("lanch") else def_mult
+			target_list.append([score, t, enemy_str * need_mult * risk / climf, dirs])
 		# порядок однозначный (при равенстве — номер провинции): так же сортирует C++
 		target_list.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
 		if n_ax == 0:
@@ -932,6 +935,8 @@ static func ai_tables(world: World) -> Dictionary:
 	var dbg := {}
 	if OS.get_cmdline_user_args().has("--no-hprio"):
 		dbg["hprio_off"] = 1
+	if OS.get_cmdline_user_args().has("--lanch"):
+		dbg["lanch"] = 1
 	return dbg.merged({"ax_start": axt[0], "ax_list": axt[1], "st_start": axt[2], "st_list": axt[3], "besieged": besieged_table(world), "ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
 		"war": world.war, "ally": world.ally, "pass": world.pass_table(), "nc": world.nation_count, "def": world.p_def_mult, "vp": world.vp_ai(),
 		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
