@@ -1628,6 +1628,14 @@ static func _own_divs(world: World, n: int, p: int) -> int:
 	return k
 
 
+## Провинция выходит к морю (есть соседняя морская зона).
+static func _on_sea(world: World, p: int) -> bool:
+	for q in world.p_adj[p]:
+		if world.p_land[q] == 0:
+			return true
+	return false
+
+
 ## Дивизий страны n в провинции p, готовых к посадке (как ready в ai_invasion:
 ## организация выше половины, не в бою). Порт вне метрополии выбирается по ним:
 ## американский гарнизон в отрезанном филиппинском кармане (организация 43 %)
@@ -2577,13 +2585,15 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 			port = -1
 	# гарнизон (Nation.hold) — не порт посадки: иначе десант увозил защитников
 	# блокадного Ленинграда в Никель
-	if port < 0 or not _port_ok(world, n, port, goal >= 0) or nat.hold.has(port):
+	# узел снабжения без моря (эффект hub — тоже «порт» для снабжения) — не порт
+	# посадки: десант на Окинаву стоял в Шицзячжуане (Китай) без морского пути
+	if port < 0 or not _port_ok(world, n, port, goal >= 0) or nat.hold.has(port) or not _on_sea(world, port):
 		port = -1
 		var port_d := INF
 		if home_m.is_empty():
 			home_m = own_reach(world, n, nat.capital)[0]
 		for p in world.prov_count:
-			if not is_port(world, p) or nat.hold.has(p):
+			if not is_port(world, p) or nat.hold.has(p) or not _on_sea(world, p):
 				continue
 			var mine: bool = world.p_controller[p] == n and world.p_owner[p] == n
 			if (mine and (home_m[p] == 1 or _ready_divs(world, n, p) >= min_ready)) \
