@@ -104,6 +104,16 @@ public:
 	Array blockade(const Dictionary &t) const;
 	Array overseas_slots(const PackedByteArray &alive, const PackedInt32Array &prov, const PackedInt32Array &owner,
 			const PackedInt32Array &comp, const PackedInt32Array &home, int nc) const;
+	PackedInt32Array breakout_bfs(const PackedInt32Array &comp, const PackedInt32Array &ctrl,
+			const PackedByteArray &land, const PackedInt32Array &adj_start, const PackedInt32Array &adj_list,
+			int c, int nid, int home, int steps) const;
+	Array exp_scan(const PackedInt32Array &comp, const PackedByteArray &land, const PackedInt32Array &ctrl,
+			const PackedFloat32Array &supcap, const PackedInt32Array &adj_start, const PackedInt32Array &adj_list,
+			const PackedByteArray &war, const PackedByteArray &ally, const PackedInt32Array &pl_head,
+			const PackedInt32Array &d_nx, const PackedInt32Array &d_owner, const PackedByteArray &is_port, int n, int nc) const;
+	int raid_region(const PackedInt32Array &ctrl, const PackedByteArray &war, const PackedByteArray &land,
+			const PackedInt32Array &region, const PackedInt32Array &civ, const PackedInt32Array &mil,
+			const PackedInt32Array &vpa, const PackedByteArray &reach, int n, int nc) const;
 	PackedInt32Array owner_slots(const PackedByteArray &alive, const PackedInt32Array &owner, int n) const;
 	PackedInt32Array land_components(const PackedInt32Array &ctrl, const PackedByteArray &land, const PackedByteArray &ally,
 			const PackedInt32Array &adj_start, const PackedInt32Array &adj_list, const PackedByteArray &waste, int nc) const;

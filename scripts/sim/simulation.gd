@@ -831,7 +831,15 @@ func _breakouts(nat: World.Nation, mine: PackedInt32Array) -> Array:
 	var land := world.p_land
 	var a_start := world.adj_start
 	var a_list := world.adj_list
+	var native_bk := Native.core != null and Native.core.has_method("breakout_bfs")
 	for c in cs.slice(0, 3):
+		if native_bk:
+			# C++ — MeowqCore.breakout_bfs, тот же обход
+			var rb: PackedInt32Array = Native.core.call("breakout_bfs", comp, world.p_controller, land, a_start, a_list,
+					int(c), nat.id, home, BREAKOUT_STEPS)
+			if rb[0] >= 0:
+				res.append([c, rb[0], rb[1]])
+			continue
 		# обход по суше от провинций котла до первой провинции основной зоны
 		var dist := {}
 		var origin := {}

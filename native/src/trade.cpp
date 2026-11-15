@@ -281,3 +281,144 @@ Array MeowqCore::overseas_slots(const PackedByteArray &alive, const PackedInt32A
 	r.push_back(total);
 	return r;
 }
+
+
+// Прорыв из котла (Simulation._breakouts, двойник на GDScript): обход по суше
+// от своих провинций участка c (по возрастанию номера) до первой провинции
+// участка home не дальше steps переходов. → [найденная (−1 — нет), откуда].
+PackedInt32Array MeowqCore::breakout_bfs(const PackedInt32Array &comp, const PackedInt32Array &ctrl,
+		const PackedByteArray &land, const PackedInt32Array &adj_start, const PackedInt32Array &adj_list,
+		int c, int nid, int home, int steps) const {
+	const int pc = int(land.size());
+	const int32_t *cm = comp.ptr(), *ct = ctrl.ptr(), *as = adj_start.ptr(), *al = adj_list.ptr();
+	const uint8_t *ld = land.ptr();
+	std::vector<int32_t> dist(pc, -1), origin(pc, -1), q;
+	for (int p = 0; p < pc; p++) {
+		if (cm[p] == c && ct[p] == nid) {
+			dist[p] = 0;
+			origin[p] = p;
+			q.push_back(p);
+		}
+	}
+	int found = -1;
+	for (size_t h = 0; h < q.size() && found < 0; h++) {
+		const int32_t p = q[h];
+		if (dist[p] >= steps) continue;
+		for (int32_t k = as[p]; k < as[p + 1]; k++) {
+			const int32_t y = al[k];
+			if (ld[y] == 0 || dist[y] >= 0) continue;
+			dist[y] = dist[p] + 1;
+			origin[y] = origin[p];
+			if (cm[y] == home) {
+				found = y;
+				break;
+			}
+			q.push_back(y);
+		}
+	}
+	PackedInt32Array r;
+	r.push_back(found);
+	r.push_back(found >= 0 ? origin[found] : -1);
+	return r;
+}
+
+
+// Участки стороны страны n для экспедиций (Forces._exp_transfers, двойник на
+// GDScript): по номеру участка — провинций, у фронта, вражеских дивизий у
+// фронта (каждая вражеская провинция — один раз), ёмкость снабжения (сумма в
+// double по возрастанию p, как в GDScript); порты стороны — [участок, у
+// фронта, ёмкость, порт] по возрастанию p. → [size, front, foes, cap, порты i32, порты f64].
+Array MeowqCore::exp_scan(const PackedInt32Array &comp, const PackedByteArray &land, const PackedInt32Array &ctrl,
+		const PackedFloat32Array &supcap, const PackedInt32Array &adj_start, const PackedInt32Array &adj_list,
+		const PackedByteArray &war, const PackedByteArray &ally, const PackedInt32Array &pl_head,
+		const PackedInt32Array &d_nx, const PackedInt32Array &d_owner, const PackedByteArray &is_port, int n, int nc) const {
+	const int pc = int(land.size());
+	const int32_t *cm = comp.ptr(), *ct = ctrl.ptr(), *as = adj_start.ptr(), *al = adj_list.ptr();
+	const int32_t *plh = pl_head.ptr(), *dnx = d_nx.ptr(), *dow = d_owner.ptr();
+	const uint8_t *ld = land.ptr(), *wr = war.ptr(), *alw = ally.ptr(), *isp = is_port.ptr();
+	const float *sc = supcap.ptr();
+	const int nsup = int(supcap.size());
+	int ncomp = 0;
+	for (int p = 0; p < pc; p++) if (cm[p] + 1 > ncomp) ncomp = cm[p] + 1;
+	PackedInt32Array a_size, a_front, a_foes, pi;
+	PackedFloat64Array a_cap, pf;
+	a_size.resize(ncomp); a_front.resize(ncomp); a_foes.resize(ncomp); a_cap.resize(ncomp);
+	int32_t *sz = a_size.ptrw(), *fr = a_front.ptrw(), *fo = a_foes.ptrw();
+	double *cp = a_cap.ptrw();
+	for (int i = 0; i < ncomp; i++) { sz[i] = 0; fr[i] = 0; fo[i] = 0; cp[i] = 0.0; }
+	std::vector<uint8_t> seen(pc, 0);
+	const int64_t base = int64_t(n) * nc;
+	for (int p = 0; p < pc; p++) {
+		const int c = cm[p];
+		if (c < 0 || ld[p] == 0) continue;
+		const int o = ct[p];
+		if (o < 0 || (o != n && alw[base + o] != 1)) continue;
+		sz[c]++;
+		const double s = p < nsup ? double(sc[p]) : 0.0;
+		cp[c] += s;
+		int f = 0;
+		for (int32_t k = as[p]; k < as[p + 1]; k++) {
+			const int32_t q = al[k];
+			const int e = ct[q];
+			if (e >= 0 && e != n && wr[base + e] == 1) {
+				f = 1;
+				if (!seen[q]) {
+					seen[q] = 1;
+					for (int32_t h = plh[q]; h >= 0; h = dnx[h]) {
+						const int x = dow[h];
+						if (x >= 0 && x != n && wr[base + x] == 1) fo[c]++;
+					}
+				}
+			}
+		}
+		fr[c] += f;
+		if (isp[p] == 1) {
+			pi.push_back(c);
+			pi.push_back(f);
+			pi.push_back(p);
+			pf.push_back(s);
+		}
+	}
+	Array r;
+	r.push_back(a_size);
+	r.push_back(a_front);
+	r.push_back(a_foes);
+	r.push_back(a_cap);
+	r.push_back(pi);
+	r.push_back(pf);
+	return r;
+}
+
+
+// Цель стратегических налётов (Forces._raid_region, двойник на GDScript):
+// район в досягаемости с наибольшей ценностью вражеской суши (заводы и очки
+// победы, сумма в double по возрастанию p); при равенстве — меньший; −1 — нет.
+int MeowqCore::raid_region(const PackedInt32Array &ctrl, const PackedByteArray &war, const PackedByteArray &land,
+		const PackedInt32Array &region, const PackedInt32Array &civ, const PackedInt32Array &mil,
+		const PackedInt32Array &vpa, const PackedByteArray &reach, int n, int nc) const {
+	const int pc = int(land.size());
+	const int nr = int(reach.size());
+	const int32_t *ct = ctrl.ptr(), *rg = region.ptr(), *cv = civ.ptr(), *ml = mil.ptr(), *vp = vpa.ptr();
+	const uint8_t *wr = war.ptr(), *ld = land.ptr(), *rc = reach.ptr();
+	std::vector<double> value(nr, 0.0);
+	std::vector<uint8_t> has(nr, 0);
+	const int64_t base = int64_t(n) * nc;
+	for (int p = 0; p < pc; p++) {
+		const int c = ct[p];
+		if (c < 0 || wr[base + c] == 0 || ld[p] == 0) continue;
+		const int r = rg[p];
+		if (r < 0 || r >= nr || rc[r] == 0) continue;
+		value[r] = value[r] + double(cv[p]) + double(ml[p]) * 1.5 + double(vp[p]) * 0.5;
+		has[r] = 1;
+	}
+	int best = -1;
+	double best_v = 0.0;
+	for (int r = 0; r < nr; r++) {
+		if (!has[r]) continue;
+		if (value[r] > best_v || (value[r] == best_v && r < best)) {
+			best_v = value[r];
+			best = r;
+		}
+	}
+	return best;
+}

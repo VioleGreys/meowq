@@ -1453,9 +1453,6 @@ static func _exp_transfers(world: World, n: int) -> void:
 	var pcn := world.prov_count
 	if world.p_port.size() != pcn:
 		refresh_ports(world)
-	var pport := world.p_port
-	var bh := world.beachheads
-	var has_bh := not bh.is_empty()
 	var day := world.day
 	var land := world.p_land
 	var supc := world.p_supcap
@@ -1464,10 +1461,12 @@ static func _exp_transfers(world: World, n: int) -> void:
 	var dnx := world.d_nx
 	var own := world.d_owner
 	var base := n * nc
+	var native_x := Native.core != null and Native.core.has_method("exp_scan")
 	var ncomp := 0
-	for p in pcn:
-		if comp[p] >= ncomp:
-			ncomp = comp[p] + 1
+	if not native_x:
+		for p in pcn:
+			if comp[p] >= ncomp:
+				ncomp = comp[p] + 1
 	var a_size := PackedInt32Array()
 	a_size.resize(ncomp)
 	var a_front := PackedInt32Array()
@@ -1480,10 +1479,24 @@ static func _exp_transfers(world: World, n: int) -> void:
 	foe_seen.resize(pcn)
 	var is_p := PackedByteArray()   # порт (с плацдармами) — для дивизий ниже
 	is_p.resize(pcn)
-	for p in pcn:
-		if pport[p] == 1 or (has_bh and bh.has(p) and int(bh[p]) >= day):
-			is_p[p] = 1
-	for p in pcn:
+	for p in port_cands(world):   # = pport[p] == 1 или действующий плацдарм
+		is_p[p] = 1
+	if native_x:
+		# C++ — MeowqCore.exp_scan, тот же проход
+		var xr: Array = Native.core.call("exp_scan", comp, land, ctrl, supc, a_start, a_list, war, ally, plh, dnx, own, is_p, n, nc)
+		a_size = xr[0]
+		a_front = xr[1]
+		a_foes = xr[2]
+		a_cap = xr[3]
+		ncomp = a_size.size()
+		var xpi: PackedInt32Array = xr[4]
+		var xpf: PackedFloat64Array = xr[5]
+		for j in xpf.size():
+			var xc := xpi[j * 3]
+			if not ports.has(xc):
+				ports[xc] = []
+			ports[xc].append([xpi[j * 3 + 1], xpf[j], xpi[j * 3 + 2]])
+	for p in (0 if native_x else pcn):
 		var c: int = comp[p]
 		if c < 0 or land[p] == 0:
 			continue
@@ -2537,6 +2550,14 @@ static func _raid_region(world: World, n: int) -> int:
 	var mil := world.p_mil
 	var vpa := world.vp_ai()
 	var base := n * nc
+	if Native.core != null and Native.core.has_method("raid_region"):
+		# C++ — MeowqCore.raid_region, тот же подсчёт
+		var rm := PackedByteArray()
+		rm.resize(world.region_count)
+		for r in reach:
+			if int(r) >= 0 and int(r) < rm.size():
+				rm[int(r)] = 1
+		return Native.core.call("raid_region", ctrl, war, land, preg, civ, mil, vpa, rm, n, nc)
 	for p in world.prov_count:
 		var c := ctrl[p]
 		if c < 0 or war[base + c] == 0 or land[p] == 0:
