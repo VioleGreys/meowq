@@ -93,7 +93,8 @@ static func capitulate(world: World, loser: int, winner: int) -> void:
 
 # --- Конец войны -------------------------------------------------------------
 
-## Раз в день: не кончилась ли какая-то война (сдались все главные страны стороны).
+## Раз в день: не кончилась ли какая-то война (сдались все великие державы стороны,
+## а без них — все главные страны).
 static func check_end(world: World) -> void:
 	if not world.conference.is_empty():
 		return
@@ -127,6 +128,17 @@ static func check_end(world: World) -> void:
 
 
 static func _defeated(world: World, side: Array) -> bool:
+	# есть великие державы — сторона проиграла, когда сдались они все: Болгария,
+	# Финляндия, Сиам после капитуляции Японии не держат мир месяцами
+	var majors := 0
+	for n in side:
+		var nm: World.Nation = world.nations[n]
+		if nm.major and nm.overlord < 0:
+			majors += 1
+			if not nm.capitulated:
+				return false
+	if majors > 0:
+		return true
 	var main := 0
 	for n in side:
 		var nat: World.Nation = world.nations[n]
