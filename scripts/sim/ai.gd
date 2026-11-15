@@ -503,10 +503,11 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			if dirs == 1 and hostile_n >= 3:
 				score += float(hostile_n - 2) * 15.0
 				risk = 1.3
-			# нужная сила: укрепления — корнем (квадратичный закон: каждая новая атакующая
-			# дивизия добавляет и урон, и запас организации), иначе крепость не берут никогда
+			# нужная сила: множитель обороны сверх FORT_LIN (крепости) — корнем
+			# (квадратичный закон: каждая новая атакующая дивизия добавляет и урон, и
+			# запас организации; линейно — крепость не брали никогда: Рим, Ленинград)
 			var need_mult := def_mult
-			if tb.has("lanch") and def_mult > FORT_LIN:
+			if def_mult > FORT_LIN:
 				need_mult = FORT_LIN * sqrt(def_mult / FORT_LIN)
 			target_list.append([score, t, enemy_str * need_mult * risk / climf, dirs])
 		# порядок однозначный (при равенстве — номер провинции): так же сортирует C++
@@ -760,17 +761,6 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			per_front[f] = 1
 			if fronts.has(found):
 				per_front[found] = int(per_front.get(found, 0)) - 1
-	# участки-гарнизоны (hold) рядом с врагом, по порядку провинций
-	var hold_prio: Array = []
-	if at_war and hold_base >= 0 and not tb.has("hprio_off"):
-		for f in prov_count:
-			if not fronts.has(f) or holdt[hold_base + f] == 0 or ally_front.has(f):
-				continue
-			for k in range(a_start[f], a_start[f + 1]):
-				var q := a_list[k]
-				if land[q] == 1 and ctrl[q] >= 0 and ctrl[q] != nid and war[nid * nc + ctrl[q]] == 1:
-					hold_prio.append(f)
-					break
 	for i in idle:
 		if used.has(i):
 			continue
@@ -780,15 +770,10 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		if fronts.has(pv) and int(per_front.get(pv, 0)) <= int(desired[pv]) + 1:
 			continue
 		var goal := {}
-		# гарнизон (hold) у врага не добран — сначала к нему (решение пользователя:
-		# важные города держать), потом участки удара плана наступления
-		for f in hold_prio:
+		# план наступления: пока участки удара не заполнены — только к ним
+		for f in axis_front:
 			if int(per_front.get(f, 0)) < int(desired[f]) and f != pv:
 				goal[f] = true
-		if goal.is_empty():
-			for f in axis_front:
-				if int(per_front.get(f, 0)) < int(desired[f]) and f != pv:
-					goal[f] = true
 		if goal.is_empty():
 			for f in fronts:
 				if int(per_front.get(f, 0)) < int(desired[f]) and f != pv:
@@ -935,18 +920,13 @@ static func _power(world: World, nid: int) -> float:
 ## Таблицы мира для нативного планировщика (одни на всю пачку заданий ИИ).
 static func ai_tables(world: World) -> Dictionary:
 	var axt := axes_tables(world)
-	var dbg := {}
-	if OS.get_cmdline_user_args().has("--no-hprio"):
-		dbg["hprio_off"] = 1
-	if OS.get_cmdline_user_args().has("--lanch"):
-		dbg["lanch"] = 1
-	return dbg.merged({"ax_start": axt[0], "ax_list": axt[1], "st_start": axt[2], "st_list": axt[3], "besieged": besieged_table(world), "ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
+	return {"ax_start": axt[0], "ax_list": axt[1], "st_start": axt[2], "st_list": axt[3], "besieged": besieged_table(world), "ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
 		"war": world.war, "ally": world.ally, "pass": world.pass_table(), "nc": world.nation_count, "def": world.p_def_mult, "vp": world.vp_ai(),
 		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
 		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list, "supcap": world.p_supcap,
 		"nohit": no_attack_table(world), "atklim": attack_limit_table(world), "hold": hold_table(world), "dv_sup": world.d_sup, "p_hot": world.p_hot, "p_cold": world.p_cold,
-		"n_hot": world.n_hot, "n_cold": world.n_cold})
+		"n_hot": world.n_hot, "n_cold": world.n_cold}
 
 
 ## Провинции, которые ИИ страны не атакует (эффект attack_limit: земли adm0 вне
