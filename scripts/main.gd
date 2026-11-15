@@ -1018,8 +1018,13 @@ func _on_province_tapped_locked(p: int) -> void:
 				break
 			if world.p_controller[p] != me and en < 0 and world.p_controller[p] >= 0 and world.is_at_war(me, world.p_controller[p]):
 				en = world.p_controller[p]
-			Leaders.front_order(world, f, "attack" if world.p_controller[p] != me else "hold", en, p)
-			hud.toast("%s: цель — %s" % [f.name, world.p_name[p]])
+			# цель — только направление главного удара; в атаку — кнопкой «Наступать»
+			var fmode := "hold"
+			for g in Leaders.armies_of_front(world, f):
+				fmode = g.mode
+				break
+			Leaders.front_order(world, f, fmode, en, p)
+			hud.toast("%s: направление удара — %s%s" % [f.name, world.p_name[p], "" if fmode == "attack" else " (в атаку — «Наступать»)"])
 			map_view.set_selected(p)
 			hud.show_front(f)
 		return
@@ -1027,12 +1032,12 @@ func _on_province_tapped_locked(p: int) -> void:
 	if selected_group >= 0:
 		var g: World.ArmyGroup = world.groups[selected_group]
 		if world.p_land[p] == 1:
+			# цель — только направление главного удара; в атаку — кнопкой «Наступать»
 			g.objective = p
-			if world.p_controller[p] != me:
-				g.mode = "attack"
+			if world.p_controller[p] != me and g.front_sel.is_empty():
 				if g.enemy < 0 and world.p_controller[p] >= 0 and world.is_at_war(me, world.p_controller[p]):
 					g.enemy = world.p_controller[p]
-			hud.toast("%s: цель — %s" % [g.name, world.p_name[p]])
+			hud.toast("%s: направление удара — %s%s" % [g.name, world.p_name[p], "" if g.mode == "attack" else " (в атаку — «Наступать»)"])
 			map_view.set_selected(p)
 			hud.show_group(g)
 		return
@@ -1147,6 +1152,20 @@ func stop_front_edit() -> void:
 		select_group(g)
 	elif f >= 0 and world.fronts[f].alive:
 		select_front(f)
+
+
+## Готово и в атаку: армия (или все армии группы) наступает со своего участка.
+func front_edit_attack() -> void:
+	var g := front_edit
+	var f := front_edit_f
+	act(func():
+		if g >= 0:
+			world.groups[g].mode = "attack"
+		elif f >= 0:
+			for a in Leaders.armies_of_front(world, world.fronts[f]):
+				a.mode = "attack")
+	stop_front_edit()
+	hud.toast("Наступление со своего участка")
 
 
 ## Очистить выделение: армия (или группа) снова держит весь фронт с противником.

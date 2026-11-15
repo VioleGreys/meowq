@@ -1364,9 +1364,11 @@ func show_group(g: World.ArmyGroup) -> void:
 		show_group(g))
 	hold.disabled = g.mode == "hold"
 	info_actions.add_child(hold)
-	var atk := _button("Наступать", func():
-		g.mode = "attack"
-		toast("Коснитесь провинции — цель наступления")
+	var atk := _button("⚔ Наступать", func():
+		# как в жанре: армия идёт в атаку со своего участка сразу; касание
+		# вражеской провинции лишь задаёт направление главного удара
+		game.act(func(): g.mode = "attack")
+		toast("%s наступает со своего участка" % g.name)
 		show_group(g))
 	atk.disabled = g.mode == "attack"
 	info_actions.add_child(atk)
@@ -1420,10 +1422,11 @@ func show_group(g: World.ArmyGroup) -> void:
 ## Правка участка фронта кистью (как в жанре): армия или группа армий.
 func show_front_edit(name: String, n: int) -> void:
 	_info_prov = -1
-	_info_text("%s — участок фронта\nВедите пальцем по границе с противником: выделяются провинции соприкосновения — свои и чужие. Касание — одна провинция (точечная атака). Мазок с выделенной провинции стирает. Карту двигайте двумя пальцами.\n%s" % [
+	_info_text("%s — участок фронта\nВедите пальцем по границе с противником: выделенный контур — где встанет армия (провинции соприкосновения — свои и чужие). Касание — одна провинция, хоть на одну для точечного удара. Мазок с выделенной провинции стирает. Карту двигайте двумя пальцами. В атаку — кнопкой «⚔ Наступать».\n%s" % [
 		name, "Выделено: весь фронт (ничего не выбрано)" if n == 0 else "Выделено провинций: %d" % n])
 	_clear(info_actions)
 	info_actions.add_child(_button("Готово", func(): game.stop_front_edit()))
+	info_actions.add_child(_button("⚔ Наступать", func(): game.front_edit_attack()))
 	var clr := _button("Весь фронт", func(): game.clear_front_sel())
 	clr.disabled = n == 0
 	info_actions.add_child(clr)
@@ -1475,9 +1478,11 @@ func show_front(f: World.ArmyFront) -> void:
 		show_front(f))
 	hold.disabled = mode == "hold"
 	info_actions.add_child(hold)
-	var atk := _button("Наступать", func():
-		Leaders.front_order(w, f, "attack", enemy, -1)
-		toast("Коснитесь провинции — цель наступления всей группы")
+	var atk := _button("⚔ Наступать", func():
+		game.act(func():
+			for g in Leaders.armies_of_front(w, f):
+				g.mode = "attack")
+		toast("%s наступает со своих участков" % f.name)
 		show_front(f))
 	atk.disabled = mode == "attack"
 	info_actions.add_child(atk)
