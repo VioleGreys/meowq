@@ -208,6 +208,7 @@ Array MeowqCore::snapshot(const PackedInt32Array &next, const PackedByteArray &b
 		if (nx[i] < 0 && bt[i] == 0 && tr[i] <= 0 && rv[i] < day && iv[i] < 0) f |= 1;
 		if (bt[i] != 0) f |= 2;
 		if (tr[i] > 0) f |= 4;
+		if (nx[i] >= 0) f |= 8;
 		fl[i] = f;
 		const double s = st[i];
 		fs[i] = float(s);

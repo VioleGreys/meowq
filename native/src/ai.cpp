@@ -202,6 +202,15 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		}
 	}
 	const int n_ax = int(ax_prov.size());
+	// штурм осаждённого города (st_start / st_list) — только общий план (как ai.gd)
+	std::vector<uint8_t> storm(pc, 0);
+	{
+		const PackedInt32Array st_start_a = tables.has("st_start") ? PackedInt32Array(tables["st_start"]) : PackedInt32Array();
+		if (mode == AUTO && st_start_a.size() == nc + 1) {
+			const PackedInt32Array st_list_a = tables["st_list"];
+			for (int32_t k = st_start_a[nid]; k < st_start_a[nid + 1]; k++) storm[st_list_a[k]] = 1;
+		}
+	}
 	// расстояние до цели каждого направления (по суше)
 	std::vector<int32_t> obj_dist;
 	if (n_ax > 0) {
@@ -373,15 +382,27 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			double power = 0.0;
 			for (int32_t i : group) {
 				const int32_t pv = dv_prov[i];
-				if (left[pv] == INT_MIN) left[pv] = pd_start[pv + 1] - pd_start[pv];
+				if (left[pv] == INT_MIN) {
+					left[pv] = pd_start[pv + 1] - pd_start[pv];
+					// у гарнизона (hold) — только наши, что остаются (как ai.gd)
+					if (hold_base >= 0 && holdt[hold_base + pv] > 1) {
+						int stay = 0;
+						for (int32_t m = pd_start[pv]; m < pd_start[pv + 1]; m++)
+							if (dv_owner[pd_list[m]] == nid && (dv_flags[pd_list[m]] & 8) == 0) stay++;
+						left[pv] = stay;
+					}
+				}
 				// последняя дивизия участок не бросает — кроме прорыва в пустую провинцию на направлении удара (как ai.gd)
-				if (left[pv] <= 1 && !(breach && left[pv] == 1)) continue;
+				// гарнизон (эффект hold) идёт в атаку только излишком сверх заданного
+				const int keep = hold_base >= 0 ? std::max(1, int(holdt[hold_base + pv])) : 1;
+				if (left[pv] <= keep && !(breach && keep == 1 && left[pv] == 1)) continue;
 				chosen.push_back(i);
 				left[pv] -= 1;
 				power += double(dv_power[i]);
 				if (power > commit && (entry.es <= 0.0 || chosen.size() >= 2)) break;
 			}
-			if (power > need && !chosen.empty()) {
+			// штурм осаждённого города — с долей нужного перевеса (STORM_NEED 0,1)
+			if (power > (storm[t] ? need * 0.1 : need) && !chosen.empty()) {
 				for (int32_t i : chosen) {
 					used[i] = 1;
 					Array o;
@@ -445,8 +466,10 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 				ours_left[pv] = cnt;
 			}
 			bool go = false;
-			if (o < REGROUP_ORG) go = true;
-			else if (o < ROTATE_ORG) go = ours_left[pv] > 1;
+			// гарнизон (эффект hold) не уходит из провинции меньше заданного
+			const int hn = hold_base >= 0 ? int(holdt[hold_base + pv]) : 0;
+			if (o < REGROUP_ORG) go = hn == 0 || ours_left[pv] > hn;
+			else if (o < ROTATE_ORG) go = ours_left[pv] > std::max(1, hn);
 			else if (hold_base < 0 || holdt[hold_base + pv] == 0) go = is_hopeless(pv);   // гарнизон не отходит
 			if (!go) continue;
 			int32_t rear = -1;

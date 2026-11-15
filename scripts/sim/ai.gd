@@ -152,15 +152,26 @@ static func siege_assault(world: World, nat: World.Nation, sp: int) -> bool:
 ## Второстепенные направления удара стран ИИ (CSR по странам): ax_start (nc + 1),
 ## ax_list — пары «провинция-цель, вес в %»: текущие вехи второстепенных
 ## направлений плана и осаждённые города в срок штурма. Только при идущем плане.
+## st_start (nc + 1) / st_list — осаждённые города в срок штурма (с планом и без):
+## их штурмуют тем, что собрано у города, без полного перевеса (STORM_NEED).
 static func axes_tables(world: World) -> Array:
 	var start := PackedInt32Array()
 	var lst := PackedInt32Array()
+	var st_start := PackedInt32Array()
+	var st_list := PackedInt32Array()
 	start.resize(world.nation_count + 1)
+	st_start.resize(world.nation_count + 1)
 	var n := 0
 	for nid in world.nation_count:
 		start[nid] = n
+		st_start[nid] = st_list.size()
 		var nat: World.Nation = world.nations[nid]
-		if nat.is_player or not nat.alive or offensive_objective(world, nat) < 0:
+		if nat.is_player or not nat.alive:
+			continue
+		for sp in nat.siege:
+			if siege_assault(world, nat, sp):
+				st_list.append(sp)
+		if offensive_objective(world, nat) < 0:
 			continue
 		if nat.offensive.size() > 4:
 			for ax in nat.offensive[4]:
@@ -176,7 +187,8 @@ static func axes_tables(world: World) -> Array:
 				lst.append(int(nat.siege[sp][3]))
 				n += 1
 	start[world.nation_count] = n
-	return [start, lst]
+	st_start[world.nation_count] = st_list.size()
+	return [start, lst, st_start, st_list]
 
 
 ## Аргументы plan_job из opts (главный поток): всё, что план читает у страны.
@@ -364,6 +376,13 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				ax_prov.append(ax_list[2 * k])
 				ax_w.append(ax_list[2 * k + 1])
 	var n_ax := ax_prov.size()
+	# штурм осаждённого города (st_start / st_list) — только общий план страны
+	var storm := {}
+	var st_start: PackedInt32Array = tb.get("st_start", PackedInt32Array())
+	if mode_i == 0 and st_start.size() == nc + 1:
+		var st_list: PackedInt32Array = tb["st_list"]
+		for k in range(st_start[nid], st_start[nid + 1]):
+			storm[st_list[k]] = true
 	# расстояние до цели каждого направления (по суше, без учёта владельца)
 	var obj_dist := PackedInt32Array()
 	if n_ax > 0:
@@ -525,16 +544,29 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				var pv := dv_prov[i]
 				if not left.has(pv):
 					left[pv] = pd_start[pv + 1] - pd_start[pv]
+					# у гарнизона (hold) — только наши, что остаются: атакующие из провинции
+					# числятся в ней, пока идёт бой (иначе вылазка набирается день за днём)
+					if hold_base >= 0 and holdt[hold_base + pv] > 1:
+						var stay := 0
+						for m in range(pd_start[pv], pd_start[pv + 1]):
+							if dv_owner[pd_list[m]] == nid and dv_flags[pd_list[m]] & 8 == 0:
+								stay += 1
+						left[pv] = stay
 				# последняя дивизия участок не бросает — кроме прорыва: пустая провинция на
-				# направлении удара к цели наступления (участок заполнится в следующий раз)
-				if int(left[pv]) <= 1 and not (breach and int(left[pv]) == 1):
+				# направлении удара к цели наступления (участок заполнится в следующий раз);
+				# гарнизон (эффект hold) идёт в атаку только излишком сверх заданного
+				var keep := 1
+				if hold_base >= 0:
+					keep = maxi(1, int(holdt[hold_base + pv]))
+				if int(left[pv]) <= keep and not (breach and keep == 1 and int(left[pv]) == 1):
 					continue
 				chosen.append(i)
 				left[pv] = int(left[pv]) - 1
 				power += dv_power[i]
 				if power > commit and (entry[2] <= 0.0 or chosen.size() >= 2):
 					break
-			if power > need and not chosen.is_empty():
+			# штурм осаждённого города — тем, что собрано, с долей нужного перевеса
+			if power > (need * STORM_NEED if storm.has(t) else need) and not chosen.is_empty():
 				for i in chosen:
 					used[i] = true
 					orders.append([i, PackedInt32Array([t])])
@@ -566,10 +598,14 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 						cnt += 1
 				ours_left[pv] = cnt
 			var go := false
+			# гарнизон (эффект hold) не уходит из провинции меньше заданного
+			var hn := 0
+			if hold_base >= 0:
+				hn = int(holdt[hold_base + pv])
 			if o < REGROUP_ORG:
-				go = true
+				go = hn == 0 or int(ours_left[pv]) > hn
 			elif o < ROTATE_ORG:
-				go = int(ours_left[pv]) > 1
+				go = int(ours_left[pv]) > maxi(1, hn)
 			elif hold_base < 0 or holdt[hold_base + pv] == 0:   # гарнизон не отходит
 				if not hopeless.has(pv):
 					hopeless[pv] = _hopeless(tb, nid, pv)
@@ -792,6 +828,7 @@ const FILL_DEPTH := 6        # пустой участок фронта: сво�
 const SUPPORT_BONUS := 20.0 # цель, где враг уже ведёт бой с нами, — важнее
 const LOW_SUP_RATIO := 2.0  # перевес для атаки группой с плохим снабжением (решение пользователя)
 const SCORE_STR := 5.0  # сила обороны в очереди целей (оценка — в единицах боя, веса очереди — прежние)
+const STORM_NEED := 0.1  # штурм осаждённого города в его срок: атака при силе > 1/10 нужной (решение пользователя: «время от времени пытаются взять»)
 const AXIS_COMMIT := 2.0 # к цели наступления (план, группа с целью): на лучшие цели — вдвое больше нужного
 
 
@@ -857,7 +894,7 @@ static func _power(world: World, nid: int) -> float:
 ## Таблицы мира для нативного планировщика (одни на всю пачку заданий ИИ).
 static func ai_tables(world: World) -> Dictionary:
 	var axt := axes_tables(world)
-	return {"ax_start": axt[0], "ax_list": axt[1], "ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
+	return {"ax_start": axt[0], "ax_list": axt[1], "st_start": axt[2], "st_list": axt[3], "ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
 		"war": world.war, "ally": world.ally, "pass": world.pass_table(), "nc": world.nation_count, "def": world.p_def_mult, "vp": world.vp_ai(),
 		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
@@ -881,11 +918,17 @@ static func attack_limit_table(world: World) -> PackedByteArray:
 			lims.append(nat.attack_limit)
 		if not nat.war_limit.is_empty():
 			lims.append([[nat.war_limit[0]], nat.war_limit[1], []])
-		# осада: город вне срока штурма — не цель (кольцо держат, но не лезут)
+		# осада: город вне срока штурма — не цель (кольцо держат, но не лезут);
+		# в срок штурма — цель и поверх рамки операций (зимой 1941–42 гг. и при
+		# «Блау» рамка Германии — только юг России)
 		var closed: Array = []
+		var opened: Array = []
 		for sp in nat.siege:
-			if siege_on(world, nat, sp) and not siege_assault(world, nat, sp):
-				closed.append(sp)
+			if siege_on(world, nat, sp):
+				if siege_assault(world, nat, sp):
+					opened.append(sp)
+				else:
+					closed.append(sp)
 		if not nat.defend_lands.is_empty():
 			lims.append([nat.defend_lands, [[0.0, 0.0, 0.0, 0.0]], []])
 		if (not lims.is_empty() or not closed.is_empty()) and t.is_empty():
@@ -894,6 +937,9 @@ static func attack_limit_table(world: World) -> PackedByteArray:
 			_attack_limit_fill(world, t, nat.id, lim)
 		for sp in closed:
 			t[nat.id * pc + int(sp)] = 1
+		if not t.is_empty():
+			for sp in opened:
+				t[nat.id * pc + int(sp)] = 0
 	return t
 
 

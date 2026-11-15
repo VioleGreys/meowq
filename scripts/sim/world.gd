@@ -662,7 +662,7 @@ var air_range_cache := {}
 var dv_id := PackedInt32Array()
 var dv_owner := PackedInt32Array()
 var dv_prov := PackedInt32Array()
-var dv_flags := PackedInt32Array()      # 1 — свободна (без пути и боя, не в море, не в резерве), 2 — в бою
+var dv_flags := PackedInt32Array()      # 1 — свободна (без пути и боя, не в море, не в резерве), 2 — в бою, 4 — в море, 8 — есть путь (идёт или атакует)
 var dv_str := PackedFloat32Array()
 var dv_org := PackedFloat32Array()      # доля организации 0..1
 var dv_power := PackedFloat32Array()    # атакующая сила, как в бою: численность × атака × план × снаряжение × снабжение
@@ -1858,6 +1858,8 @@ func k_snapshot() -> void:
 			f |= 2
 		if d_transit[i] > 0:
 			f |= 4
+		if d_next[i] >= 0:
+			f |= 8
 		dv_flags[i] = f
 		var st := d_str[i]
 		dv_str[i] = st
