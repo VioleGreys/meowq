@@ -859,6 +859,10 @@ static func seize(world: World, n: int, p: int) -> void:
 				d.progress = 0.0
 				break
 
+## Эффекты, которые чужой фокус или событие (who ≠ страна, чьё оно) не навязывает игроку
+const COERCE := {"war": true, "pact": true, "guarantee": true, "drop_guarantee": true, "aid": true,
+	"embargo": true, "join_faction_of": true, "org_hit": true, "rail": true}
+
 static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerator) -> void:
 	for e in effects:
 		# то, от чего зависят условия фокусов (войны, мир, страны, флаги, строй) —
@@ -874,6 +878,11 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 		if e.get("target", "") == "@overlord":
 			target = world.nations[who].overlord
 		var nat: World.Nation = world.nations[who]
+		# исторические рамки — только для ИИ (history.md): эффект с "ai_only"
+		# (штраф по дате, внезапный удар) и принуждение чужой страны (вступить в
+		# блок, объявить войну, перебросить войска, помочь) страну игрока не трогают
+		if nat.is_player and (e.get("ai_only", false) or (who != n and e["t"] in COERCE)):
+			continue
 		match e["t"]:
 			"resist", "comply":
 				# сдвиг шкал на своих занятых землях (target — чьих; allies —
@@ -1934,6 +1943,7 @@ static func effects_text(world: World, effects: Array) -> String:
 		"cold_native": "привычка к холоду (уровень акклиматизации)",
 		"coord": "координация войск", "naval_coord": "координация флота"}, true)
 	for e in effects:
+		var np := parts.size()
 		var tname := ""
 		if e.has("target"):
 			var t := tag_id(world, e["target"])
@@ -2121,4 +2131,6 @@ static func effects_text(world: World, effects: Array) -> String:
 				var ok_t := effects_text(world, e.get("ok", [])).trim_prefix("Эффекты: ")
 				var fail_t := effects_text(world, e.get("fail", [])).trim_prefix("Эффекты: ")
 				parts.append("%s — шанс %d %%: %s; иначе: %s" % [e.get("name", "бросок"), pct, ok_t if ok_t != "" else "—", fail_t if fail_t != "" else "—"])
+		if e.get("ai_only", false) and parts.size() > np:
+			parts[-1] += " (не у игрока)"
 	return "Эффекты: " + ", ".join(parts) if not parts.is_empty() else ""
