@@ -1342,7 +1342,10 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 						world.log_event("%s: %d дивизий отходят без боя" % [nat.name, nd])
 			"desert":
 				# армия разбегается (Маньчжоу-го в августе 1945 г.): распущена доля v
-				# дивизий страны — каждая k-я по порядку, без случайности
+				# дивизий страны — каждая k-я по порядку, без случайности. Историческая
+				# рамка — только для ИИ: армию игрока чужой фокус не распускает
+				if nat.is_player:
+					continue
 				var share := clampf(float(e.get("v", 0.5)), 0.0, 1.0)
 				var nd := 0
 				var acc := 0.0
@@ -2108,7 +2111,7 @@ static func effects_text(world: World, effects: Array) -> String:
 			"withdraw":
 				parts.append("%sвойска отходят без боя: %s" % [who, ", ".join(e.get("provs", []))])
 			"desert":
-				parts.append("%sраспущено %d %% дивизий" % [who, roundi(100 * float(e.get("v", 0.5)))])
+				parts.append("%sраспущено %d %% дивизий (не у игрока)" % [who, roundi(100 * float(e.get("v", 0.5)))])
 			"org_hit":
 				parts.append("%sорганизация дивизий −%d %%" % [who, roundi(100 * float(e.get("v", 0.5)))])
 			"trade":
