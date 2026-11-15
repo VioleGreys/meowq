@@ -755,6 +755,17 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			per_front[f] = 1
 			if fronts.has(found):
 				per_front[found] = int(per_front.get(found, 0)) - 1
+	# участки-гарнизоны (hold) рядом с врагом, по порядку провинций
+	var hold_prio: Array = []
+	if at_war and hold_base >= 0:
+		for f in prov_count:
+			if not fronts.has(f) or holdt[hold_base + f] == 0 or ally_front.has(f):
+				continue
+			for k in range(a_start[f], a_start[f + 1]):
+				var q := a_list[k]
+				if land[q] == 1 and ctrl[q] >= 0 and ctrl[q] != nid and war[nid * nc + ctrl[q]] == 1:
+					hold_prio.append(f)
+					break
 	for i in idle:
 		if used.has(i):
 			continue
@@ -764,10 +775,15 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		if fronts.has(pv) and int(per_front.get(pv, 0)) <= int(desired[pv]) + 1:
 			continue
 		var goal := {}
-		# план наступления: пока участки удара не заполнены — только к ним
-		for f in axis_front:
+		# гарнизон (hold) у врага не добран — сначала к нему (решение пользователя:
+		# важные города держать), потом участки удара плана наступления
+		for f in hold_prio:
 			if int(per_front.get(f, 0)) < int(desired[f]) and f != pv:
 				goal[f] = true
+		if goal.is_empty():
+			for f in axis_front:
+				if int(per_front.get(f, 0)) < int(desired[f]) and f != pv:
+					goal[f] = true
 		if goal.is_empty():
 			for f in fronts:
 				if int(per_front.get(f, 0)) < int(desired[f]) and f != pv:
@@ -844,6 +860,9 @@ const FILL_DEPTH := 6        # пустой участок фронта: сво�
 const SUPPORT_BONUS := 20.0 # цель, где враг уже ведёт бой с нами, — важнее
 const LOW_SUP_RATIO := 2.0  # перевес для атаки группой с плохим снабжением (решение пользователя)
 const SCORE_STR := 5.0  # сила обороны в очереди целей (оценка — в единицах боя, веса очереди — прежние)
+const CAP_GARRISON := 6  # крупный город у фронта: гарнизон не меньше (решение пользователя)
+const CAP_VP := 50       # «крупный» — очки победы столичные (Москва, Берлин, Рим, Нанкин)
+const CAP_NEAR := 2      # «у фронта» — враг в стольких переходах по суше
 const STORM_NEED := 0.1  # штурм осаждённого города в его срок: атака при силе > 1/10 нужной (решение пользователя: «время от времени пытаются взять»)
 const AXIS_COMMIT := 2.0 # к цели наступления (план, группа с целью): на лучшие цели — вдвое больше нужного
 
@@ -988,13 +1007,28 @@ static func _attack_limit_fill(world: World, t: PackedByteArray, nid: int, lim: 
 static func hold_table(world: World) -> PackedByteArray:
 	var t := PackedByteArray()
 	var pc := world.prov_count
+	var big: Array = []
+	for p in pc:
+		if world.p_vp[p] >= CAP_VP and world.p_land[p] == 1:
+			big.append(p)
 	for nat in world.nations:
-		if (nat.hold.is_empty() and nat.siege.is_empty()) or nat.is_player or not nat.alive:
+		if nat.is_player or not nat.alive:
+			continue
+		# крупный город (очки победы столичные, CAP_VP) у фронта — враг в CAP_NEAR
+		# переходах по суше — гарнизон не меньше CAP_GARRISON (решение пользователя:
+		# важные города, как Москва, держать на крайний случай; столица могла переехать)
+		var caps: Array = []
+		for c in big:
+			if world.p_controller[c] == nat.id and _enemy_near(world, nat.id, c, CAP_NEAR):
+				caps.append(c)
+		if nat.hold.is_empty() and nat.siege.is_empty() and caps.is_empty():
 			continue
 		if t.is_empty():
 			t.resize(world.nation_count * pc)
+		for c in caps:
+			t[nat.id * pc + int(c)] = CAP_GARRISON
 		for hp in nat.hold:
-			t[nat.id * pc + int(hp)] = clampi(int(nat.hold[hp]), 0, 255)
+			t[nat.id * pc + int(hp)] = maxi(t[nat.id * pc + int(hp)], clampi(int(nat.hold[hp]), 0, 255))
 		# осада: на каждом нашем участке у города — не меньше n дивизий (кольцо)
 		for sp in nat.siege:
 			if not siege_on(world, nat, sp):
@@ -1005,6 +1039,28 @@ static func hold_table(world: World) -> PackedByteArray:
 				if world.p_land[q] == 1 and world.p_controller[q] == nat.id:
 					t[nat.id * pc + q] = maxi(t[nat.id * pc + q], sn)
 	return t
+
+
+## Враг (страна, с которой воюем) — в depth переходах по суше от провинции p.
+static func _enemy_near(world: World, nid: int, p: int, depth: int) -> bool:
+	var nc := world.nation_count
+	var seen := {p: 0}
+	var q: Array = [p]
+	var head := 0
+	while head < q.size():
+		var x: int = q[head]
+		head += 1
+		var c := world.p_controller[x]
+		if c >= 0 and c != nid and world.war[nid * nc + c] == 1:
+			return true
+		if int(seen[x]) >= depth:
+			continue
+		for k in range(world.adj_start[x], world.adj_start[x + 1]):
+			var y := world.adj_list[k]
+			if world.p_land[y] == 1 and not seen.has(y):
+				seen[y] = int(seen[x]) + 1
+				q.append(y)
+	return false
 
 
 ## Пары «воюем, но ИИ не наступает» (Nation.no_attack, только у ИИ): nc×nc;

@@ -621,15 +621,32 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	// можно пройти: своя и союзная, вражеская — нет (переброска, не наступление; как AIPlanner._nearest)
 	const PackedByteArray pass_a = tables.has("pass") ? PackedByteArray(tables["pass"]) : war_a;
 	const uint8_t *war_row = pass_a.ptr() + int64_t(nid) * nc;
+	// участки-гарнизоны (hold) рядом с врагом, по порядку провинций (как ai.gd hold_prio)
+	std::vector<int32_t> hold_prio;
+	if (at_war && hold_base >= 0) {
+		for (int32_t f = 0; f < pc; f++) {
+			if (!fronts.has[f] || holdt[hold_base + f] == 0 || ally_front[f]) continue;
+			for (int32_t k = a_start[f]; k < a_start[f + 1]; k++) {
+				const int32_t q = a_list[k];
+				if (land[q] == 1 && ctrl[q] >= 0 && ctrl[q] != nid && war[int64_t(nid) * nc + ctrl[q]] == 1) {
+					hold_prio.push_back(f);
+					break;
+				}
+			}
+		}
+	}
 	for (int32_t i : idle) {
 		if (used[i]) continue;
 		if (double(dv_org[i]) < REGROUP_ORG) continue;   // перегруппировка — на фронт не идёт (как ai.gd)
 		const int32_t pv = dv_prov[i];
 		if (fronts.has[pv] && per_front[pv] <= desired[pv] + 1) continue;
 		std::vector<int32_t> goals;
-		// план наступления: пока участки удара не заполнены — только к ним (как ai.gd)
-		for (int32_t f : fronts.order)
-			if (axis_front[f] && per_front[f] < desired[f] && f != pv) goals.push_back(f);
+		// гарнизон у врага не добран — сначала к нему, потом участки удара (как ai.gd)
+		for (int32_t f : hold_prio)
+			if (per_front[f] < desired[f] && f != pv) goals.push_back(f);
+		if (goals.empty())
+			for (int32_t f : fronts.order)
+				if (axis_front[f] && per_front[f] < desired[f] && f != pv) goals.push_back(f);
 		if (goals.empty())
 			for (int32_t f : fronts.order)
 				if (per_front[f] < desired[f] && f != pv) goals.push_back(f);
