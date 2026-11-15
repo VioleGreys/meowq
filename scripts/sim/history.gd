@@ -1308,6 +1308,23 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				if nd > 0:
 					world.rebuild_prov_divs()
 					world.log_event("%s: разоружено %d дивизий за пределами страны" % [nat.name, nd])
+			"desert":
+				# армия разбегается (Маньчжоу-го в августе 1945 г.): распущена доля v
+				# дивизий страны — каждая k-я по порядку, без случайности
+				var share := clampf(float(e.get("v", 0.5)), 0.0, 1.0)
+				var nd := 0
+				var acc := 0.0
+				for d in world.divisions:
+					if not d.alive or d.owner != who:
+						continue
+					acc += share
+					if acc >= 1.0:
+						acc -= 1.0
+						d.alive = false
+						nd += 1
+				if nd > 0:
+					world.rebuild_prov_divs()
+					world.log_event("%s: армия разбегается — распущено %d дивизий" % [nat.name, nd])
 			"org_hit":
 				# внезапный удар: дивизии страны теряют часть организации
 				for d in world.divisions:
@@ -2056,6 +2073,8 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sчерта «%s» ×%s" % [who, world.spirit_defs.get(e["id"], {}).get("name", e["id"]), str(e.get("v", 0.5))])
 			"disband_abroad":
 				parts.append("%sвойска за пределами страны разоружены" % who)
+			"desert":
+				parts.append("%sраспущено %d %% дивизий" % [who, roundi(100 * float(e.get("v", 0.5)))])
 			"org_hit":
 				parts.append("%sорганизация дивизий −%d %%" % [who, roundi(100 * float(e.get("v", 0.5)))])
 			"trade":

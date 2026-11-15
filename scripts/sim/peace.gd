@@ -29,6 +29,9 @@ const FREE_K := 0.3          # освобождение
 const AI_MIN_RATIO := 0.5    # ИИ берёт, только если ценность/цена не ниже
 const OTHER_ANNEX := 1.5     # участок, занятый другим победителем, — дороже при аннексии
 const OTHER_REST := 3.0      # …и при марионетке или освобождении страны
+# преемник исчезнувшей страны при возврате её национальной земли после мира:
+# Францию 1940 г. продолжает «Свободная Франция» (иначе Париж оставался Германии)
+const SUCCESSOR := {"FRA": "FFR"}
 
 
 static func add_score(world: World, n: int, v: float) -> void:
@@ -448,6 +451,7 @@ static func finish(world: World) -> void:
 	for w in winners:
 		if got.has(w):
 			world.log_event("Мир: %s присоединяет %d уч. земель проигравших" % [world.nations[w].name, got[w]])
+	_return_cores(world, c)
 	# войны проигравших кончаются
 	for l in losers:
 		world.end_wars_of(l)
@@ -510,6 +514,63 @@ static func finish(world: World) -> void:
 	world.col_done.clear()
 	world.palette_dirty = true
 	world.rebuild_prov_divs()
+
+
+## Неразобранная чужая национальная земля проигравших — хозяевам по порядку:
+## победителю (за исчезнувшую страну — её преемнику, SUCCESSOR); бывшая страна
+## восстанавливается (Австрия, Чехословакия со Словакией); другой живой; спящей.
+## Своя национальная земля проигравшего (и спорная, как Страсбург) остаётся ему.
+static func _return_cores(world: World, c: Dictionary) -> void:
+	var losers: Array = c["losers"]
+	var winners: Array = c["winners"]
+	var taken: PackedInt32Array = c["u_taken"]
+	var give := {}    # страна → провинции
+	var from_of := {}
+	for u in taken.size():
+		if taken[u] >= 0:
+			continue
+		var from := int(c["u_owner"][u])
+		for p in c["u_provs"][u]:
+			if Claims.is_core(world, from, p):
+				continue
+			var best := -1
+			var best_k := 99
+			for x in Claims.claimants(world, p):
+				if losers.has(x):
+					continue
+				var t: int = x
+				if not world.nations[x].alive:
+					var st: String = SUCCESSOR.get(world.nation_tags[x], "")
+					var sx := world.nation_tags.find(st) if st != "" else -1
+					if sx >= 0 and world.nations[sx].alive and not losers.has(sx):
+						t = sx
+				# победитель; восстановить бывшую страну; другой живой (Венгрия на
+				# Словакию — нет); спящая, которой ещё не было
+				var k := 3 if world.nations[t].dormant else 1
+				if world.nations[t].alive:
+					k = 0 if winners.has(Diplomacy.root(world, t)) else 2
+				if k < best_k or (k == best_k and world.p_controller[p] == t):
+					best_k = k
+					best = t
+			if best < 0:
+				continue
+			if not give.has(best):
+				give[best] = []
+				from_of[best] = from
+			give[best].append(p)
+	var keys: Array = give.keys()
+	keys.sort()
+	for t in keys:
+		var provs: Array = give[t]
+		var nt: World.Nation = world.nations[t]
+		if nt.alive:
+			for p in provs:
+				world.p_owner[p] = t
+				world.p_controller[p] = t
+			Occupation.on_annex(world, PackedInt32Array(provs), t, int(from_of[t]))
+			world.log_event("Мир: %s возвращает свою землю (%d пров.)" % [nt.name, provs.size()])
+		elif History.release(world, world.nation_tags[t], provs, -1) >= 0:
+			world.log_event("Мир: %s восстановлена" % nt.name)
 
 
 static func _fix_capital(world: World, n: int) -> void:

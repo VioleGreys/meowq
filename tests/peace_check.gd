@@ -297,5 +297,41 @@ func _init() -> void:
 	Occupation.step(w)
 	check(cp0 >= 0 and w.p_yield[cp0] == 1.0, "отдача национальной земли — 100 %%")
 
+	# неразобранная чужая национальная земля проигравшего — хозяевам: исчезнувшая
+	# Чехословакия восстанавливается, живой Польше — её земля
+	fresh()
+	ger = t("GER")
+	pol = t("POL")
+	eng = t("ENG")
+	var cze := t("CZE")
+	var cz_p: Array = provs_of(cze).filter(func(p): return not Claims.is_core(w, ger, p))
+	for p in cz_p:
+		w.p_owner[p] = ger
+		w.p_controller[p] = ger
+	w.nations[cze].alive = false
+	var pl_p: Array = provs_of(pol).filter(func(p): return not Claims.is_core(w, ger, p)).slice(0, 5)
+	for p in pl_p:
+		w.p_owner[p] = ger
+		w.p_controller[p] = ger
+	var own_p: int = provs_of(ger)[0]
+	while Claims.is_core(w, pol, own_p) or Claims.is_core(w, cze, own_p):
+		own_p += 1
+	war(ger, eng)
+	Peace.capitulate(w, ger, eng)
+	w.nations[eng].is_player = true
+	Peace.start(w, [eng], [ger])
+	Peace.act(w, eng, "done")
+	var cz_ok := 0
+	for p in cz_p:
+		if w.p_owner[p] == cze:
+			cz_ok += 1
+	var pl_ok := 0
+	for p in pl_p:
+		if w.p_owner[p] == pol:
+			pl_ok += 1
+	check(w.nations[cze].alive and cz_ok == cz_p.size(), "после мира Чехословакия восстановлена (%d из %d пров.)" % [cz_ok, cz_p.size()])
+	check(pl_ok == pl_p.size(), "Польше возвращена её земля (%d из %d пров.)" % [pl_ok, pl_p.size()])
+	check(w.p_owner[own_p] == ger, "своя земля проигравшего остаётся ему")
+
 	print("ОШИБОК: %d" % errors if errors > 0 else "Мир: OK")
 	quit(1 if errors > 0 else 0)
