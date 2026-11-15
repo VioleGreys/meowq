@@ -466,10 +466,8 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 				ours_left[pv] = cnt;
 			}
 			bool go = false;
-			// гарнизон (эффект hold) не уходит из провинции меньше заданного
-			const int hn = hold_base >= 0 ? int(holdt[hold_base + pv]) : 0;
-			if (o < REGROUP_ORG) go = hn == 0 || ours_left[pv] > hn;
-			else if (o < ROTATE_ORG) go = ours_left[pv] > std::max(1, hn);
+			if (o < REGROUP_ORG) go = true;
+			else if (o < ROTATE_ORG) go = ours_left[pv] > 1;
 			else if (hold_base < 0 || holdt[hold_base + pv] == 0) go = is_hopeless(pv);   // гарнизон не отходит
 			if (!go) continue;
 			int32_t rear = -1;

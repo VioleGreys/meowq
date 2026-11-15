@@ -598,14 +598,10 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 						cnt += 1
 				ours_left[pv] = cnt
 			var go := false
-			# гарнизон (эффект hold) не уходит из провинции меньше заданного
-			var hn := 0
-			if hold_base >= 0:
-				hn = int(holdt[hold_base + pv])
 			if o < REGROUP_ORG:
-				go = hn == 0 or int(ours_left[pv]) > hn
+				go = true
 			elif o < ROTATE_ORG:
-				go = int(ours_left[pv]) > maxi(1, hn)
+				go = int(ours_left[pv]) > 1
 			elif hold_base < 0 or holdt[hold_base + pv] == 0:   # гарнизон не отходит
 				if not hopeless.has(pv):
 					hopeless[pv] = _hopeless(tb, nid, pv)
