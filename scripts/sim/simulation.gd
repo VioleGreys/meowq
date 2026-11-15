@@ -712,9 +712,13 @@ func _phase_ai() -> void:
 			for slot in by_nation[pn]:
 				if world.d_prov[slot] >= 0 and world.p_comp[world.d_prov[slot]] == int(job["comp"]):
 					part.append(slot)
+			var _pk := Time.get_ticks_usec()
 			job["args"] = AIPlanner.military_args(world, pn, part, {"mode": "attack", "objective": int(job["objective"]), "ratio": BREAKOUT_RATIO})
+			Prof.add("ии:котлы", _pk)
 		elif job.has("relief_of"):
+			var _pk := Time.get_ticks_usec()
 			job["args"] = AIPlanner.military_args(world, int(job["relief_of"]), job["part"], {"mode": "attack", "objective": int(job["objective"]), "ratio": RELIEF_RATIO})
+			Prof.add("ии:деблокада", _pk)
 		elif job.has("group"):
 			var _pg := Time.get_ticks_usec()
 			var idx := PackedInt32Array()
@@ -730,7 +734,9 @@ func _phase_ai() -> void:
 			var _pe := Time.get_ticks_usec()
 			var eco: Dictionary = AIPlanner.plan_economy(world, nid, rng, mine.size())
 			Prof.add("ии:экономика", _pe)
+			_pe = Time.get_ticks_usec()
 			_ai_train(nat, int(eco["train"]))
+			Prof.add("ии:призыв", _pe)
 			nat.build_mode = eco["build"]
 			# выбор науки — в главном потоке: таблицы Tech общие для всех
 			_pe = Time.get_ticks_usec()
@@ -1084,8 +1090,18 @@ func _ai_train(nat: World.Nation, count: int) -> void:
 			if ter[p] == World.T_MOUNTAIN and own[p] >= 0:
 				_mountain[own[p]] = 1
 	var mountainous := _mountain[nat.id] == 1
+	# = Military.ai_template на каждого: цикл и роты — один раз, шаблон с ротами —
+	# при первой нужде (новые шаблоны появляются в том же порядке)
+	var ctx := Military.ai_cycle(world, nat, mountainous)
+	var cycle: Array = ctx[0]
+	var sup: Array = ctx[1]
+	var memo := {}
 	for k in count:
-		var t := Military.ai_template(world, nat, nat.trained_count, mountainous)
+		var base: int = cycle[nat.trained_count % cycle.size()]
+		var t: int = memo.get(base, -1)
+		if t < 0:
+			t = Military.with_support(world, base, sup)
+			memo[base] = t
 		if Military.start_training(world, nat, t) or (t != Military.T_INF and Military.start_training(world, nat, Military.T_INF)):
 			nat.trained_count += 1
 		else:

@@ -1053,9 +1053,22 @@ static func _enemy_armor(world: World, nat: World.Nation) -> float:
 	if _ea_day != world.day:
 		_ea_day = world.day
 		_ea = {}
-		for d in world.divisions:
-			if d.alive and bat_n(world.templates[d.tpl]["bat"], B_TANK) > 0:
-				_ea[d.owner] = maxf(float(_ea.get(d.owner, 0.0)), d.armor)
+		# по плоским массивам; есть ли танки — один раз на шаблон
+		var alive := world.d_alive
+		var tpl := world.d_tpl
+		var own := world.d_owner
+		var arm := world.d_armor
+		var tank := {}
+		for i in mini(alive.size(), world.divisions.size()):
+			if alive[i] == 0:
+				continue
+			var t := tpl[i]
+			var tk: Variant = tank.get(t)
+			if tk == null:
+				tk = bat_n(world.templates[t]["bat"], B_TANK) > 0
+				tank[t] = tk
+			if tk:
+				_ea[own[i]] = maxf(float(_ea.get(own[i], 0.0)), arm[i])
 	var best := 0.0
 	for e in nat.at_war:
 		best = maxf(best, float(_ea.get(e, 0.0)))
@@ -1077,6 +1090,14 @@ static func at_template(world: World) -> int:
 
 
 static func ai_template(world: World, nat: World.Nation, k: int, mountainous: bool) -> int:
+	var ctx := ai_cycle(world, nat, mountainous)
+	var cycle: Array = ctx[0]
+	return with_support(world, cycle[k % cycle.size()], ctx[1])
+
+
+## Цикл базовых шаблонов призыва ИИ и роты поддержки к ним: [базы, роты].
+## Не меняется, пока идёт один призыв (склад на выбор не влияет).
+static func ai_cycle(world: World, nat: World.Nation, mountainous: bool) -> Array:
 	var avail := available_templates(world, nat)
 	# с «Противотанковыми пушками» вместо пехоты с артиллерией — с ПТО, если у
 	# противника (нынешнего или запланированного) есть танки, которых она не пробивает
@@ -1088,7 +1109,7 @@ static func ai_template(world: World, nat: World.Nation, k: int, mountainous: bo
 		cycle.append(T_ARM)
 	if mountainous and avail.has(T_MNT):
 		cycle.append(T_MNT)
-	return with_support(world, cycle[k % cycle.size()], ai_support(world, nat))
+	return [cycle, ai_support(world, nat)]
 
 
 ## Роты поддержки, которые ИИ добавляет в шаблоны: открытые технологиями и
