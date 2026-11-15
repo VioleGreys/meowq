@@ -282,23 +282,19 @@ static func daily(world: World) -> void:
 	Prof.add("пс:split_cut", _q); _q = Time.get_ticks_usec()
 	# пункты за морем по странам и участкам; дивизии там
 	var divs := {}   # страна * pc + участок -> дивизий
-	var alive := world.d_alive
 	var dprov := world.d_prov
 	var downer := world.d_owner
-	var total := PackedInt32Array()
-	total.resize(nc)
 	var home := PackedInt32Array()
 	home.resize(nc)
 	for nat in world.nations:
 		home[nat.id] = nat.dep_home
-	for i in alive.size():
-		if alive[i] == 0 or dprov[i] < 0:
-			continue
-		var o := downer[i]
-		total[o] += 1
+	# дивизии вне метрополии — выборкой (World.overseas_slots), не проходом всех
+	var osl := world.overseas_slots(home)
+	var total: PackedInt32Array = osl[1]
+	for i in osl[0]:
 		var cpv := comp[dprov[i]]
-		if cpv >= 0 and cpv != home[o]:
-			var key := o * pc + cpv
+		if cpv >= 0:
+			var key := downer[i] * pc + cpv
 			divs[key] = int(divs.get(key, 0)) + 1
 	var by_nat: Array = []   # страна -> участок -> пункты (по возрастанию номера)
 	by_nat.resize(nc)
@@ -593,21 +589,15 @@ static func pools(world: World) -> Array:
 	var comp := world.p_comp
 	var downer := world.d_owner
 	var dprov := world.d_prov
-	var dalive := world.d_alive
 	var home := PackedInt32Array()
 	home.resize(nc)
 	for nat in world.nations:
 		home[nat.id] = nat.dep_home
-	for i in n:
+	# по умолчанию — запас хозяина; вне метрополии — склад участка или море
+	pool = downer.duplicate()
+	pool.resize(n)
+	for i in world.overseas_slots(home)[0]:
 		var o := downer[i]
-		var p := dprov[i]
-		if dalive[i] == 0 or o < 0 or p < 0:
-			pool[i] = o
-			continue
-		var cpv := comp[p]
-		if cpv >= 0 and cpv == home[o]:
-			pool[i] = o
-		else:
-			var key := o * pc + cpv
-			pool[i] = nc + int(best[key]) if best.has(key) else (o if sea.has(key) else -1)
+		var key := o * pc + comp[dprov[i]]
+		pool[i] = nc + int(best[key]) if best.has(key) else (o if sea.has(key) else -1)
 	return [pool, order]

@@ -1118,6 +1118,50 @@ func has_enemies(nation: int, prov: int) -> bool:
 
 
 ## Дивизии в провинции (живые, не в море) — новый массив, порядок списка.
+## Живые дивизии страны n — слоты по возрастанию (C++ — MeowqCore.owner_slots):
+## отбор для функций «на одну страну» без прохода всех дивизий в GDScript.
+static var _has_slots := -1
+
+
+func slots_of(n: int) -> PackedInt32Array:
+	if _has_slots < 0:
+		_has_slots = 1 if Native.core != null and Native.core.has_method("owner_slots") else 0
+	if _has_slots == 1 and Native.core != null:
+		return Native.core.call("owner_slots", d_alive, d_owner, n)
+	var res := PackedInt32Array()
+	var m := mini(d_alive.size(), d_owner.size())
+	for i in m:
+		if d_alive[i] == 1 and d_owner[i] == n:
+			res.append(i)
+	return res
+
+
+## Дивизии не на участке метрополии (p_comp, home — Nation.dep_home по
+## странам): живые, с хозяином и провинцией, кроме стоящих на участке своей
+## метрополии; и число живых с провинцией по странам. C++ —
+## MeowqCore.overseas_slots. → [слоты по возрастанию, по странам].
+func overseas_slots(home: PackedInt32Array) -> Array:
+	if Native.core != null and Native.core.has_method("overseas_slots"):
+		return Native.core.call("overseas_slots", d_alive, d_prov, d_owner, p_comp, home, nation_count)
+	var slots := PackedInt32Array()
+	var total := PackedInt32Array()
+	total.resize(nation_count)
+	for i in d_alive.size():
+		if d_alive[i] == 0:
+			continue
+		var p := d_prov[i]
+		var o := d_owner[i]
+		if p < 0 or o < 0:
+			continue
+		if o < nation_count:
+			total[o] += 1
+		var c := p_comp[p]
+		if c >= 0 and o < nation_count and c == home[o]:
+			continue
+		slots.append(i)
+	return [slots, total]
+
+
 func divs_in(p: int) -> Array:
 	var res: Array = []
 	var h := pl_head[p]

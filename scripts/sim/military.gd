@@ -527,15 +527,13 @@ static func ai_retrain(world: World, nat: World.Nation) -> int:
 	var memo := {}   # шаблон → шаблон с нынешними ротами (with_support перебирает все шаблоны)
 	# отбор — по плоским массивам (свойства Division идут через геттеры); индекс
 	# в world.divisions = slot. retrain пишет только в дивизию i — чтение i до записи
-	var alive := world.d_alive
-	var owner := world.d_owner
 	var battle := world.d_battle
 	var transit := world.d_transit
 	var war := not nat.at_war.is_empty()
-	for i in world.divisions.size():
+	for i in world.slots_of(nat.id):   # = живые с owner == nat.id, по возрастанию
 		if done >= budget:
 			break
-		if alive[i] == 0 or owner[i] != nat.id or battle[i] == 1 or transit[i] > 0:
+		if battle[i] == 1 or transit[i] > 0:
 			continue
 		var tp := world.d_tpl[i]
 		var t: int = memo.get(tp, -2)

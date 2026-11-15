@@ -1360,9 +1360,7 @@ static func ai_transfers(world: World, n: int) -> void:
 	is_p.resize(world.prov_count)
 	for p in port_cands(world):
 		is_p[p] = 1
-	for i in own.size():
-		if own[i] != n or alive[i] == 0:
-			continue
+	for i in world.slots_of(n):   # = own[i] == n и alive[i] == 1
 		total += 1
 		if home[dprov[i]] == 1:
 			at_home += 1
@@ -2696,12 +2694,7 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 	if port < 0:
 		return
 	# свои живые дивизии — по плоским массивам, объект — только для отобранных
-	var own_i := PackedInt32Array()
-	var a_alive := world.d_alive
-	var a_own := world.d_owner
-	for i in a_alive.size():
-		if a_alive[i] == 1 and a_own[i] == n:
-			own_i.append(i)
+	var own_i := world.slots_of(n)
 	var ready: Array = []
 	for i in own_i:
 		var d: World.Division = world.divisions[i]

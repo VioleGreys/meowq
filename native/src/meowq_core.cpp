@@ -30,6 +30,8 @@ void MeowqCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("leaders_daily", "alive", "dx", "bt", "own", "gain", "gen", "mar", "la", "ldf", "ls", "ae", "de", "se",
 			"act", "code", "fac", "has_act", "ncmd", "xp_new", "xp_drill", "xp_g", "xp_m"), &MeowqCore::leaders_daily);
 	ClassDB::bind_method(D_METHOD("blockade", "t"), &MeowqCore::blockade);
+	ClassDB::bind_method(D_METHOD("overseas_slots", "alive", "prov", "owner", "comp", "home", "nc"), &MeowqCore::overseas_slots);
+	ClassDB::bind_method(D_METHOD("owner_slots", "alive", "owner", "n"), &MeowqCore::owner_slots);
 	ClassDB::bind_method(D_METHOD("land_components", "ctrl", "land", "ally", "adj_start", "adj_list", "waste", "nc"), &MeowqCore::land_components);
 	ClassDB::bind_method(D_METHOD("place_factory", "owner", "ctrl", "civ", "mil", "pop", "terrain", "nid", "max_factories", "t_urban"), &MeowqCore::place_factory);
 	ClassDB::bind_method(D_METHOD("combat", "provs", "att_start", "att_list", "seeds", "str", "org", "eq", "def", "atk", "ent", "landing", "sup", "tpl", "hard", "owner", "battle", "pl_head", "d_nx", "war", "nc", "def_mult", "terrain", "region", "cas", "tmul", "prov", "tpl_width", "fw", "armor", "pierce", "armor_cut", "tpl_sc", "coord"), &MeowqCore::combat);

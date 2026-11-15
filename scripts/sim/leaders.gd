@@ -345,12 +345,8 @@ static func _assign(world: World, nat: World.Nation, only: Array) -> void:
 	var cnt := {}       # генерал -> дивизий
 	var todo: Array = []
 	var rear: Array = []
-	var owner := world.d_owner
-	var alive := world.d_alive
 	var divs: Array = world.divisions
-	for i in mini(alive.size(), divs.size()):
-		if alive[i] == 0 or owner[i] != nat.id:
-			continue
+	for i in world.slots_of(nat.id):   # = живые с owner == nat.id
 		var d: World.Division = divs[i]
 		var g := d._lead
 		if g >= 0 and (g >= cmd.size() or cmd[g].owner != nat.id or not available(world, cmd[g])):

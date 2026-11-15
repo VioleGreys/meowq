@@ -233,3 +233,51 @@ Array MeowqCore::blockade(const Dictionary &t) const {
 	res.push_back(ob_list);
 	return res;
 }
+
+
+// Живые дивизии страны n по возрастанию слота (World.slots_of, двойник на GDScript).
+PackedInt32Array MeowqCore::owner_slots(const PackedByteArray &alive, const PackedInt32Array &owner, int n) const {
+	PackedInt32Array res;
+	const int m = int(alive.size() < owner.size() ? alive.size() : owner.size());
+	const uint8_t *al = alive.ptr();
+	const int32_t *ow = owner.ptr();
+	int k = 0;
+	for (int i = 0; i < m; i++) if (al[i] == 1 && ow[i] == n) k++;
+	res.resize(k);
+	int32_t *r = res.ptrw();
+	k = 0;
+	for (int i = 0; i < m; i++) if (al[i] == 1 && ow[i] == n) r[k++] = i;
+	return res;
+}
+
+
+// Дивизии не на участке метрополии (World.overseas_slots, двойник на GDScript):
+// живые, с хозяином и провинцией, кроме стоящих на участке home[хозяина];
+// и число живых с провинцией по странам. → [слоты, по странам].
+Array MeowqCore::overseas_slots(const PackedByteArray &alive, const PackedInt32Array &prov, const PackedInt32Array &owner,
+		const PackedInt32Array &comp, const PackedInt32Array &home, int nc) const {
+	PackedInt32Array slots, total;
+	total.resize(nc);
+	int32_t *tot = total.ptrw();
+	for (int i = 0; i < nc; i++) tot[i] = 0;
+	const int m = int(alive.size());
+	const uint8_t *al = alive.ptr();
+	const int32_t *pv = prov.ptr(), *ow = owner.ptr(), *cm = comp.ptr(), *hm = home.ptr();
+	std::vector<int32_t> out;
+	for (int i = 0; i < m; i++) {
+		if (al[i] == 0) continue;
+		const int32_t p = pv[i], o = ow[i];
+		if (p < 0 || o < 0) continue;
+		if (o < nc) tot[o]++;
+		const int32_t c = cm[p];
+		if (c >= 0 && o < nc && c == hm[o]) continue;
+		out.push_back(i);
+	}
+	slots.resize(int64_t(out.size()));
+	int32_t *sl = slots.ptrw();
+	for (size_t k = 0; k < out.size(); k++) sl[k] = out[k];
+	Array r;
+	r.push_back(slots);
+	r.push_back(total);
+	return r;
+}

@@ -32,7 +32,6 @@ static func daily(world: World) -> void:
 	if world.p_comp.size() != pc or world.d_sup.size() != world.d_alive.size():
 		return
 	var comp := world.p_comp
-	var alive := world.d_alive
 	var dprov := world.d_prov
 	var downer := world.d_owner
 	var sup := world.d_sup
@@ -42,12 +41,12 @@ static func daily(world: World) -> void:
 	home.resize(nc)
 	for nat in world.nations:
 		home[nat.id] = nat.dep_home
-	for i in alive.size():
-		if alive[i] == 0 or dprov[i] < 0 or sup[i] >= 0.999:
+	for i in world.overseas_slots(home)[0]:   # живые не на участке метрополии
+		if sup[i] >= 0.999:
 			continue
 		var o := downer[i]
 		var c := comp[dprov[i]]
-		if c < 0 or c == home[o]:
+		if c < 0:
 			continue
 		var key := o * pc + c
 		if not pockets.has(key):
