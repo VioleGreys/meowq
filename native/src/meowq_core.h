@@ -114,6 +114,8 @@ public:
 	int raid_region(const PackedInt32Array &ctrl, const PackedByteArray &war, const PackedByteArray &land,
 			const PackedInt32Array &region, const PackedInt32Array &civ, const PackedInt32Array &mil,
 			const PackedInt32Array &vpa, const PackedByteArray &reach, int n, int nc) const;
+	PackedInt32Array side_slots(const PackedByteArray &alive, const PackedInt32Array &owner,
+			const PackedByteArray &ally, int n, int nc) const;
 	PackedInt32Array owner_slots(const PackedByteArray &alive, const PackedInt32Array &owner, int n) const;
 	PackedInt32Array land_components(const PackedInt32Array &ctrl, const PackedByteArray &land, const PackedByteArray &ally,
 			const PackedInt32Array &adj_start, const PackedInt32Array &adj_list, const PackedByteArray &waste, int nc) const;
@@ -155,7 +157,7 @@ public:
 			const PackedInt32Array &owner, const PackedInt32Array &ctrl, const PackedInt32Array &adj_start,
 			const PackedInt32Array &adj_list, const PackedByteArray &land, const PackedByteArray &hostile, int nc,
 			const PackedFloat64Array &plan_in, double gain, double active, double rear) const;
-	String version() const { return "meowq-core 61"; }
+	String version() const { return "meowq-core 62"; }
 	// Воздушный бой района i снимка t (Forces.air_begin): пачки по 100, обнаружение,
 	// день и ночь, превосходство; двойник — Forces.air_region_gd.
 	PackedFloat64Array air_region(const Dictionary &t, int i) const;

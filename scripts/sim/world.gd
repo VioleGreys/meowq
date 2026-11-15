@@ -1162,6 +1162,23 @@ func overseas_slots(home: PackedInt32Array) -> Array:
 	return [slots, total]
 
 
+## Живые дивизии стороны страны n (своя и союзные по ally) — слоты по
+## возрастанию (C++ — MeowqCore.side_slots).
+func side_slots(n: int) -> PackedInt32Array:
+	if Native.core != null and Native.core.has_method("side_slots"):
+		return Native.core.call("side_slots", d_alive, d_owner, ally, n, nation_count)
+	var res := PackedInt32Array()
+	var base := n * nation_count
+	for i in mini(d_alive.size(), d_owner.size()):
+		if d_alive[i] == 0:
+			continue
+		var o := d_owner[i]
+		if o < 0 or (o != n and ally[base + o] != 1):
+			continue
+		res.append(i)
+	return res
+
+
 func divs_in(p: int) -> Array:
 	var res: Array = []
 	var h := pl_head[p]

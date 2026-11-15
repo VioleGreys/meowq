@@ -1545,12 +1545,8 @@ static func _exp_transfers(world: World, n: int) -> void:
 	var total := 0
 	var home_src := {}   # порт → [дивизии]
 	var idle_src := {}   # участок без фронта → [дивизии]
-	for i in own.size():
-		if alive[i] == 0 or own[i] < 0:
-			continue
+	for i in world.side_slots(n):   # живые своей стороны (своя и союзные)
 		var o := own[i]
-		if o != n and ally[base + o] != 1:
-			continue
 		var dp := dprov[i]
 		var c: int = comp[dp]
 		if tr[i] != 0:

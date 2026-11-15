@@ -422,3 +422,26 @@ int MeowqCore::raid_region(const PackedInt32Array &ctrl, const PackedByteArray &
 	}
 	return best;
 }
+
+
+// Живые дивизии стороны страны n (своя и союзные: ally[n, хозяин]) по
+// возрастанию слота (World.side_slots, двойник на GDScript).
+PackedInt32Array MeowqCore::side_slots(const PackedByteArray &alive, const PackedInt32Array &owner,
+		const PackedByteArray &ally, int n, int nc) const {
+	const int m = int(alive.size() < owner.size() ? alive.size() : owner.size());
+	const uint8_t *al = alive.ptr(), *aly = ally.ptr();
+	const int32_t *ow = owner.ptr();
+	const int64_t base = int64_t(n) * nc;
+	std::vector<int32_t> out;
+	for (int i = 0; i < m; i++) {
+		if (al[i] == 0) continue;
+		const int o = ow[i];
+		if (o < 0 || (o != n && aly[base + o] != 1)) continue;
+		out.push_back(i);
+	}
+	PackedInt32Array r;
+	r.resize(int64_t(out.size()));
+	int32_t *rp = r.ptrw();
+	for (size_t k = 0; k < out.size(); k++) rp[k] = out[k];
+	return r;
+}
