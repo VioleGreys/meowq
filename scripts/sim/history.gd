@@ -538,7 +538,7 @@ static func _is_key(fd: Dictionary) -> bool:
 	for e in fd.get("effects", []):
 		if e.get("t", "") in ["event", "war", "annex", "transfer", "release", "faction", "join_faction_of",
 				"pact", "break_pact", "guarantee", "peace", "peace_all", "civil_war", "later", "leader", "ideology", "rep", "concede",
-				"offensive", "landing", "landing_area", "disband_abroad", "seize", "fort", "war_limit", "attack_limit", "hold", "hub"]:
+				"offensive", "landing", "landing_area", "disband_abroad", "seize", "fort", "war_limit", "attack_limit", "hold", "hub", "siege", "defend_lands"]:
 			return true
 	return false
 
@@ -1172,9 +1172,34 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 					if cp >= 0:
 						route.append(cp)
 				if target >= 0 and not route.is_empty():
-					nat.offensive = [target, route, 0, String(e.get("name", ""))]
+					# второстепенные направления: {"route", "weight" (доля сил в %), "name"}
+					var axes: Array = []
+					for ax in e.get("axes", []):
+						var ar := PackedInt32Array()
+						for city in ax.get("route", []):
+							var ap := names.find(String(city))
+							if ap >= 0:
+								ar.append(ap)
+						if not ar.is_empty():
+							axes.append([ar, 0, clampi(int(ax.get("weight", 50)), 1, 99), String(ax.get("name", ""))])
+					nat.offensive = [target, route, 0, String(e.get("name", "")), axes]
 			"offensive_end":
 				nat.offensive = []
+			"siege":
+				# осада города: ИИ держит у кольца по n дивизий на каждый свой участок
+				# рядом с городом, а штурмует его только assault дней из каждых period
+				# (в эти дни город — направление удара с весом weight)
+				for city in e.get("provs", []):
+					var sp := Array(world.p_name).find(String(city))
+					if sp >= 0:
+						nat.siege[sp] = [int(e.get("n", 2)), maxi(1, int(e.get("period", 60))), int(e.get("assault", 10)),
+							clampi(int(e.get("weight", 60)), 1, 100), world.day]
+			"siege_end":
+				if e.has("provs"):
+					for city in e["provs"]:
+						nat.siege.erase(Array(world.p_name).find(String(city)))
+				else:
+					nat.siege.clear()
 			"war_limit":
 				# рубеж операций ИИ: на землях adm0 фронт — только в рамках boxes
 				# ([запад, юг, восток, север]); add — добавить к прежним
@@ -1202,6 +1227,20 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				nat.attack_limit = [codes, ab, ex]
 			"attack_limit_end":
 				nat.attack_limit = []
+			"defend_lands":
+				# на землях adm0 ИИ только обороняется — не трогая рамки attack_limit
+				# (Германия в Италии после Кассибиле: линии Густава и Готская)
+				var dl: Array = []
+				var d0 = e.get("adm0", [])
+				for c in (d0 if d0 is Array else [d0]):
+					dl.append(String(c))
+				nat.defend_lands = dl
+			"defend_lands_end":
+				nat.defend_lands = []
+			"surrender_to":
+				# капитуляция — этой стране (Япония — США по Потсдамской декларации),
+				# а не тому, кто занял больше провинций
+				nat.surrender_to = target
 			"landing_area":
 				# обычные (не исторические) высадки ИИ — только в рамках boxes: Япония
 				# высаживалась в Европе и Западной Африке на самый слабый берег Британии
@@ -1973,7 +2012,10 @@ static func effects_text(world: World, effects: Array) -> String:
 			"no_attack_end":
 				parts.append("%sнаступление на %s" % [who, tname])
 			"offensive":
-				parts.append("%sплан наступления%s: %s" % [who, " «%s»" % e["name"] if e.has("name") else "", " → ".join(e.get("route", []))])
+				var ofs := "%sплан наступления%s: %s" % [who, " «%s»" % e["name"] if e.has("name") else "", " → ".join(e.get("route", []))]
+				for ax in e.get("axes", []):
+					ofs += "; %s%s (%d %% сил)" % ["%s: " % ax["name"] if ax.has("name") else "", " → ".join(ax.get("route", [])), int(ax.get("weight", 50))]
+				parts.append(ofs)
 			"offensive_end":
 				parts.append("%sплан наступления закончен" % who)
 			"war_limit":
@@ -1984,12 +2026,22 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sнаступление только на %d направлении(ях), в остальном — оборона" % [who, e.get("boxes", []).size()])
 			"attack_limit_end":
 				parts.append("%sограничение наступления снято" % who)
+			"defend_lands":
+				parts.append("%sтолько оборона: %s" % [who, ", ".join(e.get("adm0", []) if e.get("adm0", []) is Array else [e["adm0"]])])
+			"defend_lands_end":
+				parts.append("%sоборона на своих рубежах снята" % who)
+			"surrender_to":
+				parts.append("%sкапитуляция — стране %s" % [who, tname])
 			"landing_area":
 				parts.append("%sвысадки — только в своём районе войны" % who)
 			"hold":
 				parts.append("%sгарнизон: %s — не меньше %d дивизий" % [who, ", ".join(e.get("provs", [])), int(e.get("n", 0))])
 			"hub":
 				parts.append("%sснабжение %s — %d дн." % [who, ", ".join(e.get("provs", [])), int(e.get("days", 365))])
+			"siege":
+				parts.append("%sосада: %s — кольцо держат, штурм раз в %d дн." % [who, ", ".join(e.get("provs", [])), int(e.get("period", 60))])
+			"siege_end":
+				parts.append("%sосада снята" % who)
 			"landing":
 				parts.append("%sвысадка: %s" % [who, e.get("prov", "")])
 			"seize":

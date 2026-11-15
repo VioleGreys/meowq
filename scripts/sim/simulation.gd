@@ -594,6 +594,7 @@ func _phase_ai() -> void:
 	for nat in world.nations:
 		if nat.alive and not nat.is_player:
 			_offensive_step(nat)
+			_siege_step(nat)
 			jobs.append({"nation": nat.id})
 			# развёртывание к запланированной фокусами войне: часть армии заранее
 			# держит фронт на границе с будущим противником (как армия игрока)
@@ -880,6 +881,40 @@ func _offensive_step(nat: World.Nation) -> void:
 		nat.offensive = []
 	else:
 		nat.offensive[2] = i
+		if nat.offensive.size() > 4:
+			_axes_step(nat)
+
+
+## Осада (эффект siege): в журнал — начало штурма города (первые дни его срока).
+func _siege_step(nat: World.Nation) -> void:
+	for sp in nat.siege:
+		if not AIPlanner.siege_assault(world, nat, sp):
+			continue
+		var sg: Array = nat.siege[sp]
+		var period: int = sg[1]
+		if (world.day - int(sg[4])) % period < period - int(sg[2]) + AI_PERIOD and (nat.is_player or nat.major):
+			world.log_event("%s: штурм %s" % [nat.name, world.p_name[sp]])
+
+
+## Второстепенные направления плана: веха взята (нами или союзником) — к следующей;
+## последняя взята — направление закончено.
+func _axes_step(nat: World.Nation) -> void:
+	var axes: Array = nat.offensive[4]
+	var keep: Array = []
+	for ax in axes:
+		var route: PackedInt32Array = ax[0]
+		var i: int = ax[1]
+		while i < route.size():
+			var c := world.p_controller[route[i]]
+			if c != nat.id and not (c >= 0 and Diplomacy.same_side(world, c, nat.id)):
+				break
+			i += 1
+			if i < route.size() and (nat.is_player or nat.major):
+				world.log_event("%s: план «%s», %s — взят %s, удар на %s" % [nat.name, nat.offensive[3], ax[3], world.p_name[route[i - 1]], world.p_name[route[i]]])
+		if i < route.size():
+			ax[1] = i
+			keep.append(ax)
+	nat.offensive[4] = keep
 
 
 func _staging_enemy(nat: World.Nation) -> int:
@@ -1610,6 +1645,10 @@ func _capitulate(nid: int) -> void:
 		if occ[k] > best and (not major_only or Diplomacy.is_major(world, k)):
 			best = occ[k]
 			winner = k
+	# кому сдаваться — задано историей (эффект surrender_to), если с ним ещё война
+	var st: int = world.nations[nid].surrender_to
+	if st >= 0 and world.nations[st].alive and world.is_at_war(nid, st):
+		winner = st
 	# гражданская война: взятое у нас — уже не наше (History.civil_owner), победитель — другая сторона
 	if winner < 0:
 		for pr in world.civil_pairs:

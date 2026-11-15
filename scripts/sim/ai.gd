@@ -77,6 +77,12 @@ static func nation_args(world: World, nid: int, mine: PackedInt32Array) -> Array
 	# план наступления: цели атаки ближе к текущей вехе — первыми, у направления
 	# удара — больше дивизий (Simulation._offensive_step двигает вехи)
 	var obj := offensive_objective(world, nat)
+	# без плана — штурм осаждённого города в его срок (эффект siege)
+	if obj < 0:
+		for sp in nat.siege:
+			if siege_assault(world, nat, sp):
+				obj = sp
+				break
 	if obj >= 0:
 		opts["objective"] = obj
 	var lim := war_limit_fronts(world, nat)
@@ -126,6 +132,51 @@ static func offensive_objective(world: World, nat: World.Nation) -> int:
 	var route: PackedInt32Array = nat.offensive[1]
 	var i: int = nat.offensive[2]
 	return route[i] if i < route.size() else -1
+
+
+## Осада (эффект siege): город ещё у врага, с которым воюем.
+static func siege_on(world: World, nat: World.Nation, sp: int) -> bool:
+	var c := world.p_controller[sp]
+	return c >= 0 and c != nat.id and world.is_at_war(nat.id, c)
+
+
+## Срок штурма осаждённого города: последние assault дней каждого периода.
+static func siege_assault(world: World, nat: World.Nation, sp: int) -> bool:
+	if not siege_on(world, nat, sp):
+		return false
+	var sg: Array = nat.siege[sp]
+	var period: int = sg[1]
+	return (world.day - int(sg[4])) % period >= period - int(sg[2])
+
+
+## Второстепенные направления удара стран ИИ (CSR по странам): ax_start (nc + 1),
+## ax_list — пары «провинция-цель, вес в %»: текущие вехи второстепенных
+## направлений плана и осаждённые города в срок штурма. Только при идущем плане.
+static func axes_tables(world: World) -> Array:
+	var start := PackedInt32Array()
+	var lst := PackedInt32Array()
+	start.resize(world.nation_count + 1)
+	var n := 0
+	for nid in world.nation_count:
+		start[nid] = n
+		var nat: World.Nation = world.nations[nid]
+		if nat.is_player or not nat.alive or offensive_objective(world, nat) < 0:
+			continue
+		if nat.offensive.size() > 4:
+			for ax in nat.offensive[4]:
+				var route: PackedInt32Array = ax[0]
+				var p: int = route[int(ax[1])]
+				if siege_on(world, nat, p) and not nat.siege.has(p):
+					lst.append(p)
+					lst.append(int(ax[2]))
+					n += 1
+		for sp in nat.siege:
+			if siege_assault(world, nat, sp):
+				lst.append(sp)
+				lst.append(int(nat.siege[sp][3]))
+				n += 1
+	start[world.nation_count] = n
+	return [start, lst]
 
 
 ## Аргументы plan_job из opts (главный поток): всё, что план читает у страны.
@@ -298,27 +349,46 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	if idle.is_empty():
 		return result
 
-	# расстояние до цели наступления (по суше, без учёта владельца)
-	var obj_dist := PackedInt32Array()
+	# направления удара: главное (цель наступления, вес 100) и второстепенные из
+	# плана страны (таблица ax_start / ax_list: пары «провинция, вес в %») — только
+	# для общего плана страны (mode auto), не для котлов и деблокирования
+	var ax_prov := PackedInt32Array()
+	var ax_w := PackedInt32Array()
 	if objective >= 0:
-		obj_dist.resize(prov_count)
+		ax_prov.append(objective)
+		ax_w.append(100)
+		var ax_start: PackedInt32Array = tb.get("ax_start", PackedInt32Array())
+		if mode_i == 0 and ax_start.size() == nc + 1:
+			var ax_list: PackedInt32Array = tb["ax_list"]
+			for k in range(ax_start[nid], ax_start[nid + 1]):
+				ax_prov.append(ax_list[2 * k])
+				ax_w.append(ax_list[2 * k + 1])
+	var n_ax := ax_prov.size()
+	# расстояние до цели каждого направления (по суше, без учёта владельца)
+	var obj_dist := PackedInt32Array()
+	if n_ax > 0:
+		obj_dist.resize(n_ax * prov_count)
 		obj_dist.fill(1 << 20)
-		obj_dist[objective] = 0
-		var queue := PackedInt32Array([objective])
-		var head := 0
-		while head < queue.size():
-			var p := queue[head]
-			head += 1
-			for k in range(a_start[p], a_start[p + 1]):
-				var q := a_list[k]
-				if land[q] == 1 and obj_dist[q] > obj_dist[p] + 1:
-					obj_dist[q] = obj_dist[p] + 1
-					queue.append(q)
+		for a in n_ax:
+			var base := a * prov_count
+			obj_dist[base + ax_prov[a]] = 0
+			var queue := PackedInt32Array([ax_prov[a]])
+			var head := 0
+			while head < queue.size():
+				var p := queue[head]
+				head += 1
+				for k in range(a_start[p], a_start[p + 1]):
+					var q := a_list[k]
+					if land[q] == 1 and obj_dist[base + q] > obj_dist[base + p] + 1:
+						obj_dist[base + q] = obj_dist[base + p] + 1
+						queue.append(q)
 
 	var used := {}
 	var orders: Array = []
-	# направление главного удара: лучшие цели атаки (AXIS_N), к ним стягиваем силы
+	# направление удара: лучшие цели атаки, к ним стягиваем силы; значение —
+	# номер направления (0 — главное или без плана)
 	var main_axis := {}
+	var t_axis := {}   # цель -> ближайшее направление
 	if attack_allowed:
 		# Атакуем слабые вражеские провинции превосходящими силами; при цели —
 		# в первую очередь те, что ближе к ней.
@@ -345,8 +415,13 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				clim = minf(1.0, p_hot[t] * (1.0 - minf(1.0, n_hot[nid])) + p_cold[t] * (1.0 - minf(1.0, n_cold[nid])))
 			var climf := 1.0 - CLIM_ATK * clim
 			var score: float = enemy_str * def_mult * SCORE_STR - vp[t] * 6.0 + rng.randf() * 20.0 + clim * 30.0 - float(pocketed) * 12.0
-			if objective >= 0:
-				score += obj_dist[t] * 25.0
+			if n_ax > 0:
+				var best := 0
+				for a in range(1, n_ax):
+					if obj_dist[a * prov_count + t] < obj_dist[best * prov_count + t]:
+						best = a
+				t_axis[t] = best
+				score += obj_dist[best * prov_count + t] * 25.0
 			# охват: цель, которую можно атаковать с нескольких наших участков, важнее
 			var dirs := 0
 			var hostile_n := 0
@@ -396,18 +471,33 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			target_list.append([score, t, enemy_str * def_mult * risk / climf, dirs])
 		# порядок однозначный (при равенстве — номер провинции): так же сортирует C++
 		target_list.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
-		for j in mini(3, target_list.size()):
-			main_axis[int(target_list[j][1])] = true
+		if n_ax == 0:
+			for j in mini(3, target_list.size()):
+				main_axis[int(target_list[j][1])] = 0
+		else:
+			# на каждое направление — свои лучшие цели: главному 3, второстепенному
+			# по весу (40 % — 1, 60 % — 2)
+			var quota := PackedInt32Array()
+			quota.resize(n_ax)
+			for a in n_ax:
+				quota[a] = maxi(1, int(round(3.0 * float(ax_w[a]) / 100.0)))
+			for entry in target_list:
+				var a: int = t_axis[int(entry[1])]
+				if quota[a] > 0:
+					quota[a] -= 1
+					main_axis[int(entry[1])] = a
 		var left := {}   # сколько наших дивизий останется в провинции
 		for entry in target_list:
 			var t: int = entry[1]
 			var need: float = entry[2] * ratio
 			# направление главного удара к цели наступления — сил с запасом (AXIS_COMMIT)
-			var commit: float = need * AXIS_COMMIT if objective >= 0 and main_axis.has(t) else need
+			var commit: float = need
+			if n_ax > 0 and main_axis.has(t):
+				commit = need * (1.0 + (AXIS_COMMIT - 1.0) * float(ax_w[int(main_axis[t])]) / 100.0)
 			# осторожная страна не лезет в пустую провинцию-выступ (котёл)
 			if float(entry[2]) <= 0.0 and ratio >= 4.0 and int(entry[3]) < 2:
 				continue
-			var breach := objective >= 0 and float(entry[2]) <= 0.0 and main_axis.has(t)
+			var breach := n_ax > 0 and float(entry[2]) <= 0.0 and main_axis.has(t)
 			var group: Array = []
 			for k in range(a_start[t], a_start[t + 1]):
 				var q := a_list[k]
@@ -510,7 +600,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var weight := {}
 	var ally_need := {}
 	var wsum := 0.0
-	var axis_front := {}   # к цели наступления: участки главного удара — до ёмкости снабжения
+	var axis_front := {}   # к цели наступления: участки удара -> вес направления (доля ёмкости снабжения)
 	for f in fronts:
 		var threat := 0.0
 		for k in range(a_start[f], a_start[f + 1]):
@@ -532,12 +622,14 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		weight[f] = 1.0 + threat + vp[f] * 0.15   # крупные города держим плотнее
 		# участки у направления главного удара — плотнее (в пределах снабжения)
 		if not main_axis.is_empty():
+			var aw := 0
 			for k in range(a_start[f], a_start[f + 1]):
 				if main_axis.has(a_list[k]):
-					weight[f] = float(weight[f]) + 3.0
-					if objective >= 0:
-						axis_front[f] = true
-					break
+					aw = maxi(aw, ax_w[int(main_axis[a_list[k]])] if n_ax > 0 else 1)
+			if aw > 0:
+				weight[f] = float(weight[f]) + 3.0
+				if n_ax > 0:
+					axis_front[f] = aw
 		wsum += weight[f]
 	var desired := {}
 	# план наступления: участкам главного удара — до ёмкости снабжения, прочим —
@@ -545,7 +637,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var pool := divs.size()
 	if has_cap and not axis_front.is_empty():
 		for f in axis_front:
-			pool -= maxi(1, int(floor(supcap[f])))
+			pool -= _axis_cap(supcap[f], axis_front[f])
 		pool = maxi(0, pool)
 	for f in fronts:
 		if ally_front.has(f):
@@ -559,7 +651,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			desired[f] = mini(int(desired[f]), maxi(1, int(floor(supcap[f]))))
 			# план наступления: участки главного удара заполняем до ёмкости снабжения
 			if axis_front.has(f):
-				desired[f] = maxi(1, int(floor(supcap[f])))
+				desired[f] = _axis_cap(supcap[f], axis_front[f])
 		# гарнизон (эффект hold): не меньше заданного, и сверх ёмкости снабжения
 		if hold_base >= 0 and holdt[hold_base + f] > 0:
 			desired[f] = maxi(int(desired[f]), int(holdt[hold_base + f]))
@@ -703,6 +795,14 @@ const SCORE_STR := 5.0  # сила обороны в очереди целей (
 const AXIS_COMMIT := 2.0 # к цели наступления (план, группа с целью): на лучшие цели — вдвое больше нужного
 
 
+## Участок у направления удара: доля ёмкости снабжения по весу направления
+## (главное — вся ёмкость), не меньше одной дивизии.
+static func _axis_cap(cap: float, w: int) -> int:
+	if w >= 100:
+		return maxi(1, int(floor(cap)))
+	return maxi(1, int(floor(cap * float(w) / 100.0)))
+
+
 ## Провинция, которую не удержать: наши в ней уже в бою, а сила атакующих (враги
 ## в бою в соседних провинциях) больше обороны (с местностью) в ESCAPE_RATIO раз.
 static func _hopeless(tb: Dictionary, nid: int, pv: int) -> bool:
@@ -756,7 +856,8 @@ static func _power(world: World, nid: int) -> float:
 
 ## Таблицы мира для нативного планировщика (одни на всю пачку заданий ИИ).
 static func ai_tables(world: World) -> Dictionary:
-	return {"ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
+	var axt := axes_tables(world)
+	return {"ax_start": axt[0], "ax_list": axt[1], "ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
 		"war": world.war, "ally": world.ally, "pass": world.pass_table(), "nc": world.nation_count, "def": world.p_def_mult, "vp": world.vp_ai(),
 		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
@@ -780,10 +881,19 @@ static func attack_limit_table(world: World) -> PackedByteArray:
 			lims.append(nat.attack_limit)
 		if not nat.war_limit.is_empty():
 			lims.append([[nat.war_limit[0]], nat.war_limit[1], []])
-		if not lims.is_empty() and t.is_empty():
+		# осада: город вне срока штурма — не цель (кольцо держат, но не лезут)
+		var closed: Array = []
+		for sp in nat.siege:
+			if siege_on(world, nat, sp) and not siege_assault(world, nat, sp):
+				closed.append(sp)
+		if not nat.defend_lands.is_empty():
+			lims.append([nat.defend_lands, [[0.0, 0.0, 0.0, 0.0]], []])
+		if (not lims.is_empty() or not closed.is_empty()) and t.is_empty():
 			t.resize(world.nation_count * pc)
 		for lim in lims:
 			_attack_limit_fill(world, t, nat.id, lim)
+		for sp in closed:
+			t[nat.id * pc + int(sp)] = 1
 	return t
 
 
@@ -817,12 +927,21 @@ static func hold_table(world: World) -> PackedByteArray:
 	var t := PackedByteArray()
 	var pc := world.prov_count
 	for nat in world.nations:
-		if nat.hold.is_empty() or nat.is_player or not nat.alive:
+		if (nat.hold.is_empty() and nat.siege.is_empty()) or nat.is_player or not nat.alive:
 			continue
 		if t.is_empty():
 			t.resize(world.nation_count * pc)
 		for hp in nat.hold:
 			t[nat.id * pc + int(hp)] = clampi(int(nat.hold[hp]), 0, 255)
+		# осада: на каждом нашем участке у города — не меньше n дивизий (кольцо)
+		for sp in nat.siege:
+			if not siege_on(world, nat, sp):
+				continue
+			var sn := clampi(int(nat.siege[sp][0]), 0, 255)
+			for k in range(world.adj_start[sp], world.adj_start[sp + 1]):
+				var q := world.adj_list[k]
+				if world.p_land[q] == 1 and world.p_controller[q] == nat.id:
+					t[nat.id * pc + q] = maxi(t[nat.id * pc + q], sn)
 	return t
 
 

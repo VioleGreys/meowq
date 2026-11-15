@@ -186,27 +186,52 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	}
 	if (idle.empty()) return result;
 
-	// расстояние до цели наступления (по суше)
-	std::vector<int32_t> obj_dist;
+	// направления удара: главное (цель, вес 100) и второстепенные из плана страны
+	// (ax_start / ax_list) — только для общего плана (mode auto; как ai.gd)
+	std::vector<int32_t> ax_prov, ax_w;
 	if (objective >= 0) {
-		obj_dist.assign(pc, 1 << 20);
-		obj_dist[objective] = 0;
-		std::vector<int32_t> queue{ objective };
-		for (size_t head = 0; head < queue.size(); head++) {
-			const int32_t p = queue[head];
-			for (int32_t k = a_start[p]; k < a_start[p + 1]; k++) {
-				const int32_t q = a_list[k];
-				if (land[q] == 1 && obj_dist[q] > obj_dist[p] + 1) {
-					obj_dist[q] = obj_dist[p] + 1;
-					queue.push_back(q);
+		ax_prov.push_back(objective);
+		ax_w.push_back(100);
+		const PackedInt32Array ax_start_a = tables.has("ax_start") ? PackedInt32Array(tables["ax_start"]) : PackedInt32Array();
+		if (mode == AUTO && ax_start_a.size() == nc + 1) {
+			const PackedInt32Array ax_list_a = tables["ax_list"];
+			for (int32_t k = ax_start_a[nid]; k < ax_start_a[nid + 1]; k++) {
+				ax_prov.push_back(ax_list_a[2 * k]);
+				ax_w.push_back(ax_list_a[2 * k + 1]);
+			}
+		}
+	}
+	const int n_ax = int(ax_prov.size());
+	// расстояние до цели каждого направления (по суше)
+	std::vector<int32_t> obj_dist;
+	if (n_ax > 0) {
+		obj_dist.assign(size_t(n_ax) * pc, 1 << 20);
+		std::vector<int32_t> queue;
+		for (int a = 0; a < n_ax; a++) {
+			int32_t *od = obj_dist.data() + size_t(a) * pc;
+			od[ax_prov[a]] = 0;
+			queue.assign(1, ax_prov[a]);
+			for (size_t head = 0; head < queue.size(); head++) {
+				const int32_t p = queue[head];
+				for (int32_t k = a_start[p]; k < a_start[p + 1]; k++) {
+					const int32_t q = a_list[k];
+					if (land[q] == 1 && od[q] > od[p] + 1) {
+						od[q] = od[p] + 1;
+						queue.push_back(q);
+					}
 				}
 			}
 		}
 	}
+	auto axis_cap = [&](int32_t f, int w) {
+		if (w >= 100) return capd(f);
+		return std::max(1, int(std::floor(double(supcap[f]) * double(w) / 100.0)));
+	};
 
 	std::vector<char> used(ndv, 0);
 	// направление главного удара: лучшие цели атаки (3), к ним стягиваем силы
-	std::vector<char> main_axis(pc, 0);
+	// значение — номер направления + 1 (0 — не направление удара)
+	std::vector<int32_t> main_axis(pc, 0), t_axis(pc, 0);
 	bool has_axis = false;
 	if (attack_allowed) {
 		struct Entry {
@@ -240,7 +265,13 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 				clim = std::min(1.0, double(p_hot[t]) * (1.0 - std::min(1.0, n_hot[nid])) + double(p_cold[t]) * (1.0 - std::min(1.0, n_cold[nid])));
 			const double climf = 1.0 - CLIM_ATK * clim;
 			double score = enemy_str * def_mult * 5.0 - vp[t] * 6.0 + double(rng->randf()) * 20.0 + clim * 30.0 - double(pocketed) * 12.0;
-			if (objective >= 0) score += obj_dist[t] * 25.0;
+			if (n_ax > 0) {
+				int best = 0;
+				for (int a = 1; a < n_ax; a++)
+					if (obj_dist[size_t(a) * pc + t] < obj_dist[size_t(best) * pc + t]) best = a;
+				t_axis[t] = best;
+				score += obj_dist[size_t(best) * pc + t] * 25.0;
+			}
 			// охват: цель, которую можно атаковать с нескольких наших участков, важнее
 			int dirs = 0, hostile_n = 0, closing = 0, sup_n = 0;
 			double sup_sum = 0.0;
@@ -285,9 +316,23 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		std::sort(target_list.begin(), target_list.end(), [](const Entry &a, const Entry &b) {
 			return a.score < b.score || (a.score == b.score && a.t < b.t);
 		});
-		for (size_t j = 0; j < target_list.size() && j < 3; j++) {
-			main_axis[target_list[j].t] = 1;
-			has_axis = true;
+		if (n_ax == 0) {
+			for (size_t j = 0; j < target_list.size() && j < 3; j++) {
+				main_axis[target_list[j].t] = 1;
+				has_axis = true;
+			}
+		} else {
+			// на каждое направление — свои лучшие цели: главному 3, второстепенному по весу (как ai.gd)
+			std::vector<int> quota(n_ax);
+			for (int a = 0; a < n_ax; a++) quota[a] = std::max(1, int(std::round(3.0 * double(ax_w[a]) / 100.0)));
+			for (const Entry &entry : target_list) {
+				const int a = t_axis[entry.t];
+				if (quota[a] > 0) {
+					quota[a]--;
+					main_axis[entry.t] = a + 1;
+					has_axis = true;
+				}
+			}
 		}
 		std::vector<int32_t> left(pc, INT_MIN);   // сколько наших дивизий останется в провинции
 		std::vector<int32_t> group, chosen;
@@ -295,10 +340,11 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			const int32_t t = entry.t;
 			double need = entry.es * ratio;
 			// направление главного удара к цели наступления — сил с запасом (как ai.gd)
-			double commit = (objective >= 0 && main_axis[t]) ? need * 2.0 : need;
+			double commit = need;
+			if (n_ax > 0 && main_axis[t]) commit = need * (1.0 + (2.0 - 1.0) * double(ax_w[main_axis[t] - 1]) / 100.0);
 			// осторожная страна не лезет в пустую провинцию-выступ (котёл)
 			if (entry.es <= 0.0 && ratio >= 4.0 && entry.dirs < 2) continue;
-			const bool breach = objective >= 0 && entry.es <= 0.0 && main_axis[t];
+			const bool breach = n_ax > 0 && entry.es <= 0.0 && main_axis[t];
 			group.clear();
 			for (int32_t k = a_start[t]; k < a_start[t + 1]; k++) {
 				const int32_t q = a_list[k];
@@ -433,7 +479,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	}
 	for (int32_t i : rotated) per_front[dv_prov[i]] -= 1;
 	std::vector<double> weight(pc, 0.0), ally_need(pc, 0.0);
-	std::vector<char> axis_front(pc, 0);
+	std::vector<int32_t> axis_front(pc, 0);   // вес направления у участка удара (как ai.gd)
 	double wsum = 0.0;
 	for (int32_t f : fronts.order) {
 		double threat = 0.0;
@@ -457,12 +503,15 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		}
 		weight[f] = 1.0 + threat + vp[f] * 0.15;
 		if (has_axis) {
-			for (int32_t k = a_start[f]; k < a_start[f + 1]; k++)
-				if (main_axis[a_list[k]]) {
-					weight[f] += 3.0;
-					if (objective >= 0) axis_front[f] = 1;   // план наступления: до ёмкости снабжения (как ai.gd)
-					break;
-				}
+			int aw = 0;
+			for (int32_t k = a_start[f]; k < a_start[f + 1]; k++) {
+				const int32_t ma = main_axis[a_list[k]];
+				if (ma) aw = std::max(aw, n_ax > 0 ? int(ax_w[ma - 1]) : 1);
+			}
+			if (aw > 0) {
+				weight[f] += 3.0;
+				if (n_ax > 0) axis_front[f] = aw;   // план наступления: доля ёмкости снабжения (как ai.gd)
+			}
 		}
 		wsum += weight[f];
 	}
@@ -471,7 +520,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	int64_t pool = divs.size();
 	if (has_cap) {
 		for (int32_t f : fronts.order)
-			if (axis_front[f]) pool -= capd(f);
+			if (axis_front[f]) pool -= axis_cap(f, axis_front[f]);
 		if (pool < 0) pool = 0;
 	}
 	for (int32_t f : fronts.order) {
@@ -482,7 +531,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		}
 		desired[f] = wsum > 0.0 ? std::max(1, int(std::round(double(pool) * weight[f] / wsum))) : 1;
 		if (has_cap) desired[f] = std::min(desired[f], capd(f));
-		if (has_cap && axis_front[f]) desired[f] = capd(f);
+		if (has_cap && axis_front[f]) desired[f] = axis_cap(f, axis_front[f]);
 		// гарнизон (эффект hold): не меньше заданного (как ai.gd)
 		if (hold_base >= 0 && holdt[hold_base + f] > 0) desired[f] = std::max(desired[f], int(holdt[hold_base + f]));
 	}
