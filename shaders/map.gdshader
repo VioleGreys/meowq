@@ -18,8 +18,14 @@ uniform bool has_terrain = false;
 uniform bool terrain_mode = false;              // режим «Местность»: подложка без цветов стран
 // графика карты в полном разрешении (tools/build_map_art.py): цвет природных
 // зон (Natural Earth NE1_HR_LC) и нормали рельефа суши и дна (ETOPO1)
-uniform sampler2D color_tex : filter_linear_mipmap;
-uniform sampler2D normal_tex : hint_normal, filter_linear_mipmap;
+// вдвое подробнее карты, половинами запад/восток с перекрытием (шире 8192
+// текстуры есть не на всех телефонах); art_geom — ширина подложки, сдвиг
+// восточной половины, ширина половины, высота
+uniform sampler2D color_w : filter_linear_mipmap;
+uniform sampler2D color_e : filter_linear_mipmap;
+uniform sampler2D normal_w : hint_normal, filter_linear_mipmap;
+uniform sampler2D normal_e : hint_normal, filter_linear_mipmap;
+uniform vec4 art_geom = vec4(11264.0, 5600.0, 5664.0, 5250.0);
 uniform bool has_art = false;
 // детальные текстуры местности вблизи (ambientCG, tools/build_detail.py):
 // r — трава, g — скалы, b — песок, a — снег; среднее 0.5
@@ -62,7 +68,8 @@ int nation(vec4 c) {
 }
 
 // бикубическая (B-сплайн) выборка 4 билинейными: вблизи — без ромбиков сетки
-vec4 tex_bicubic(sampler2D t, vec2 uv, vec2 ts) {
+// (с явными производными: выборка — в ветвлении по половине подложки)
+vec4 tex_bicubic(sampler2D t, vec2 uv, vec2 ts, vec2 gx, vec2 gy) {
 	vec2 st = uv * ts - 0.5;
 	vec2 i = floor(st);
 	vec2 f = st - i;
@@ -76,8 +83,8 @@ vec4 tex_bicubic(sampler2D t, vec2 uv, vec2 ts) {
 	vec2 g1 = w2 + w3;
 	vec2 p0 = (i - 0.5 + w1 / g0) / ts;
 	vec2 p1 = (i + 1.5 + w3 / g1) / ts;
-	return g0.y * (g0.x * texture(t, vec2(p0.x, p0.y)) + g1.x * texture(t, vec2(p1.x, p0.y)))
-		+ g1.y * (g0.x * texture(t, vec2(p0.x, p1.y)) + g1.x * texture(t, vec2(p1.x, p1.y)));
+	return g0.y * (g0.x * textureGrad(t, vec2(p0.x, p0.y), gx, gy) + g1.x * textureGrad(t, vec2(p1.x, p0.y), gx, gy))
+		+ g1.y * (g0.x * textureGrad(t, vec2(p0.x, p1.y), gx, gy) + g1.x * textureGrad(t, vec2(p1.x, p1.y), gx, gy));
 }
 
 void fragment() {
@@ -230,8 +237,20 @@ void fragment() {
 	float near_k = smoothstep(0.35, 1.6, zoom);
 	mediump float rf = 1.0;
 	mediump float slope = 0.0;
+	// половина подложки и производные координат (до ветвлений по пикселю)
+	float ax = UV.x * art_geom.x;
+	bool a_east = ax >= art_geom.x * 0.5;
+	vec2 auv = vec2((a_east ? ax - art_geom.y : ax) / art_geom.z, UV.y);
+	vec2 agx = vec2(dFdx(UV.x) * art_geom.x / art_geom.z, dFdx(UV.y));
+	vec2 agy = vec2(dFdy(UV.x) * art_geom.x / art_geom.z, dFdy(UV.y));
+	vec2 ats = art_geom.zw;
 	if (has_art) {
-		vec2 g = (quality == 2 && zoom > 0.9) ? tex_bicubic(normal_tex, UV, map_size).rg : texture(normal_tex, UV).rg;
+		vec2 g;
+		if (quality == 2 && zoom > 0.9) {
+			g = a_east ? tex_bicubic(normal_e, auv, ats, agx, agy).rg : tex_bicubic(normal_w, auv, ats, agx, agy).rg;
+		} else {
+			g = a_east ? textureGrad(normal_e, auv, agx, agy).rg : textureGrad(normal_w, auv, agx, agy).rg;
+		}
 		vec2 nxy = g * 2.0 - 1.0;
 		slope = length(nxy);
 		vec3 nn = normalize(vec3(nxy * mix(0.7, 1.3, near_k), sqrt(max(0.0, 1.0 - dot(nxy, nxy)))));
@@ -284,7 +303,7 @@ void fragment() {
 			// как на картах жанра: издали — «бумажная» политическая карта (цвет
 			// страны, рельеф едва заметен), вблизи — природные зоны (Natural Earth)
 			// сквозь полупрозрачный цвет страны и объёмный свет рельефа (ETOPO1)
-			mediump vec3 terr = texture(color_tex, UV).rgb;
+			mediump vec3 terr = a_east ? textureGrad(color_e, auv, agx, agy).rgb : textureGrad(color_w, auv, agx, agy).rgb;
 			mediump float tl = dot(terr, vec3(0.299, 0.587, 0.114));
 			terr = clamp(vec3(tl) + (terr - vec3(tl)) * 1.35, 0.0, 1.0) * 0.96;
 			if (terrain_mode) {

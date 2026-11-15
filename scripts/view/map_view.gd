@@ -26,8 +26,9 @@ var ctrl_img: Image
 var owner_img: Image
 var ctrl_tex: ImageTexture
 var owner_tex: ImageTexture
-const ART_COLOR := "res://assets/map/colormap.jpg"
-const ART_NORMAL := "res://assets/map/normal.png"
+const ART_DIR := "res://assets/map/"
+const ART_FILES := {"color_w": "colormap_w.jpg", "color_e": "colormap_e.jpg", "normal_w": "normal_w.png", "normal_e": "normal_e.png"}
+const ART_PAD := 32.0   # перекрытие половин (tools/build_map_art.py PAD)
 var front_img: Image          # фронты армий игрока: rgb — цвет армии, a — роль (шейдер front_tex)
 var front_tex: ImageTexture
 var _front_hash := 0
@@ -163,10 +164,16 @@ func setup(w: World) -> void:
 		mat.set_shader_parameter("has_terrain", false)
 	# графика карты в полном разрешении (tools/build_map_art.py; импорт Godot со
 	# сжатием в видеопамяти): цвет природных зон и нормали рельефа суши и дна
-	var art := world.width == 5632 and ResourceLoader.exists(ART_COLOR) and ResourceLoader.exists(ART_NORMAL)
+	# (вдвое подробнее карты, половинами запад/восток с перекрытием ART_PAD)
+	var art := world.width == 5632
+	for k in ["color_w", "color_e", "normal_w", "normal_e"]:
+		art = art and ResourceLoader.exists(ART_DIR + ART_FILES[k])
 	if art:
-		mat.set_shader_parameter("color_tex", load(ART_COLOR))
-		mat.set_shader_parameter("normal_tex", load(ART_NORMAL))
+		var cw: Texture2D = load(ART_DIR + ART_FILES["color_w"])
+		for k in ART_FILES:
+			mat.set_shader_parameter(k, load(ART_DIR + ART_FILES[k]))
+		var w2 := float(world.width * 2)
+		mat.set_shader_parameter("art_geom", Vector4(w2, w2 * 0.5 - ART_PAD, float(cw.get_width()), float(cw.get_height())))
 	mat.set_shader_parameter("has_art", art)
 	if world.detail_image != null:
 		mat.set_shader_parameter("detail_tex", ImageTexture.create_from_image(world.detail_image))
