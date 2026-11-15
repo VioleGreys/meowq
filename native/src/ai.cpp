@@ -623,7 +623,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	const uint8_t *war_row = pass_a.ptr() + int64_t(nid) * nc;
 	// участки-гарнизоны (hold) рядом с врагом, по порядку провинций (как ai.gd hold_prio)
 	std::vector<int32_t> hold_prio;
-	if (at_war && hold_base >= 0) {
+	if (at_war && hold_base >= 0 && !tables.has("hprio_off")) {
 		for (int32_t f = 0; f < pc; f++) {
 			if (!fronts.has[f] || holdt[hold_base + f] == 0 || ally_front[f]) continue;
 			for (int32_t k = a_start[f]; k < a_start[f + 1]; k++) {

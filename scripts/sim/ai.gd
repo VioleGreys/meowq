@@ -757,7 +757,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				per_front[found] = int(per_front.get(found, 0)) - 1
 	# участки-гарнизоны (hold) рядом с врагом, по порядку провинций
 	var hold_prio: Array = []
-	if at_war and hold_base >= 0:
+	if at_war and hold_base >= 0 and not tb.has("hprio_off"):
 		for f in prov_count:
 			if not fronts.has(f) or holdt[hold_base + f] == 0 or ally_front.has(f):
 				continue
@@ -929,13 +929,16 @@ static func _power(world: World, nid: int) -> float:
 ## Таблицы мира для нативного планировщика (одни на всю пачку заданий ИИ).
 static func ai_tables(world: World) -> Dictionary:
 	var axt := axes_tables(world)
-	return {"ax_start": axt[0], "ax_list": axt[1], "st_start": axt[2], "st_list": axt[3], "besieged": besieged_table(world), "ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
+	var dbg := {}
+	if OS.get_cmdline_user_args().has("--no-hprio"):
+		dbg["hprio_off"] = 1
+	return dbg.merged({"ax_start": axt[0], "ax_list": axt[1], "st_start": axt[2], "st_list": axt[3], "besieged": besieged_table(world), "ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
 		"war": world.war, "ally": world.ally, "pass": world.pass_table(), "nc": world.nation_count, "def": world.p_def_mult, "vp": world.vp_ai(),
 		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
 		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list, "supcap": world.p_supcap,
 		"nohit": no_attack_table(world), "atklim": attack_limit_table(world), "hold": hold_table(world), "dv_sup": world.d_sup, "p_hot": world.p_hot, "p_cold": world.p_cold,
-		"n_hot": world.n_hot, "n_cold": world.n_cold}
+		"n_hot": world.n_hot, "n_cold": world.n_cold})
 
 
 ## Провинции, которые ИИ страны не атакует (эффект attack_limit: земли adm0 вне
