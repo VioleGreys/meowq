@@ -116,7 +116,15 @@ static func check(world: World, n: int, cond: Dictionary, ahead: int = 0) -> Str
 			return "нужна война: %s — %s" % [cond["at_war_pair"][0], cond["at_war_pair"][1]]
 	if cond.has("lost") and not _lost_ok(world, cond["lost"]):
 		return "пока %s держит свои земли" % cond["lost"].get("tag", "")
+	if cond.has("not_capitulated") and not _free(world, String(cond["not_capitulated"])):
+		return "страна %s уже сдалась" % cond["not_capitulated"]
 	return ""
+
+
+## Условие «not_capitulated»: страна жива и не сдалась (не в оккупации до мира).
+static func _free(world: World, tag: String) -> bool:
+	var t := tag_id(world, tag)
+	return t >= 0 and world.nations[t].alive and not world.nations[t].capitulated
 
 
 ## Условие «lost»: {"tag", "provs": [названия], "n": сколько (1)} — не меньше n
@@ -174,6 +182,8 @@ static func check_ok(world: World, n: int, cond: Dictionary, ahead: int = 0) -> 
 		if a < 0 or b < 0 or not world.is_at_war(a, b):
 			return false
 	if cond.has("lost") and not _lost_ok(world, cond["lost"]):
+		return false
+	if cond.has("not_capitulated") and not _free(world, String(cond["not_capitulated"])):
 		return false
 	return true
 

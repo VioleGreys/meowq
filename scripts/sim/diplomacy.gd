@@ -194,7 +194,10 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 			# члены фракции — кроме тех, у кого пакт с нападающим (СССР и Япония, 1941 г.)
 			# и кроме блока со своими войнами (Япония — не в европейской войне Германии)
 			for m in faction_members(world, world.nations[root(world, d)].faction):
-				if not world.nations[m].pacts.has(a) and (not world.nations[m].own_wars or m == b):
+				# капитулировавшие (в оккупации) не вступают: Германия «вступала» в войну
+				# СССР с Японией 08.08.1945
+				if not world.nations[m].pacts.has(a) and (not world.nations[m].own_wars or m == b) \
+						and (m == b or not world.nations[m].capitulated):
 					add.append(m)
 			# гаранты — только за саму жертву (а не за всю её сторону: иначе
 			# британская гарантия Румынии 1939 г. ставила Британию за Германию)

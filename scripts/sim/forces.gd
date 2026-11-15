@@ -1193,7 +1193,8 @@ static func invasion_check(world: World, divs: Array, target: int) -> Array:
 		return ["нет войны с владельцем провинции", 0, -1]
 	var start_zones := {}
 	for d in divs:
-		if not is_port(world, d.prov) or world.p_controller[d.prov] != n:
+		# союзный порт — только у готового плана высадки (историческая высадка ИИ)
+		if not is_port(world, d.prov) or not _port_ok(world, n, d.prov, d.inv_plan >= 0):
 			return ["дивизии должны стоять в своём порту", 0, -1]
 		for q in world.p_adj[d.prov]:
 			if world.p_land[q] == 0:
@@ -1647,7 +1648,8 @@ static func _side_zone(world: World, n: int, p: int, limit: int) -> int:
 
 ## Подготовка высадки. Пустая строка — план создан; иначе причина.
 ## max_days > 0 — подготовка не дольше (историческая операция спланирована заранее).
-static func plan_invasion(world: World, divs: Array, target: int, max_days := 0) -> String:
+## allied — посадка и в союзном порту (историческая высадка ИИ).
+static func plan_invasion(world: World, divs: Array, target: int, max_days := 0, allied := false) -> String:
 	if divs.is_empty():
 		return "нет дивизий"
 	var n: int = divs[0].owner
@@ -1661,7 +1663,7 @@ static func plan_invasion(world: World, divs: Array, target: int, max_days := 0)
 	for d in divs:
 		if d.prov != port:
 			return "для высадки дивизии должны стоять в одной прибрежной провинции"
-	if not is_port(world, port) or world.p_controller[port] != n:
+	if not is_port(world, port) or not _port_ok(world, n, port, allied):
 		return "посадка только в своём порту (прибрежный город или база)"
 	var dist := _sea_distance(world, port, target)
 	if dist < 0:
@@ -1750,7 +1752,7 @@ static func daily_plans(world: World) -> void:
 					d.inv_plan = -1
 			else:
 				divs.append(d)
-		if divs.is_empty() or world.p_controller[plan.port] != plan.owner:
+		if divs.is_empty() or not _port_ok(world, plan.owner, plan.port, true):
 			cancel_plan(world, plan)
 			continue
 		var c := world.p_controller[plan.target]
@@ -2553,21 +2555,27 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 	# стоит весь десант: иначе войскам до него не дойти (для Шанхая ближайшим
 	# своим портом был Порт-Артур — десант не собирался никогда; Япония с 1938 г.
 	# держала порт Такао на Тайване — на остров не дойти, и высадки на Манилу не было)
+	# исторический десант садится и в союзном или взятом порту, где уже стоит
+	# достаточно своих войск (на Окинаву США шли из Портленда — 23 дн. пути и
+	# месяц сбора; в истории — с Лейте, Сайпана, Улити)
 	var home_m := PackedByteArray()
-	if port >= 0 and world.p_controller[port] == n and not nat.hold.has(port) and _own_divs(world, n, port) < min_ready:
+	if port >= 0 and _port_ok(world, n, port, goal >= 0) and not nat.hold.has(port) and _own_divs(world, n, port) < min_ready:
 		home_m = own_reach(world, n, nat.capital)[0]
-		if home_m[port] == 0:
+		if home_m[port] == 0 or world.p_owner[port] != n:
 			port = -1
 	# гарнизон (Nation.hold) — не порт посадки: иначе десант увозил защитников
 	# блокадного Ленинграда в Никель
-	if port < 0 or world.p_controller[port] != n or nat.hold.has(port):
+	if port < 0 or not _port_ok(world, n, port, goal >= 0) or nat.hold.has(port):
 		port = -1
 		var port_d := INF
 		if home_m.is_empty():
 			home_m = own_reach(world, n, nat.capital)[0]
 		for p in world.prov_count:
-			if world.p_controller[p] == n and world.p_owner[p] == n and is_port(world, p) and not nat.hold.has(p) \
-					and (home_m[p] == 1 or _own_divs(world, n, p) >= min_ready):
+			if not is_port(world, p) or nat.hold.has(p):
+				continue
+			var mine: bool = world.p_controller[p] == n and world.p_owner[p] == n
+			if (mine and (home_m[p] == 1 or _own_divs(world, n, p) >= min_ready)) \
+					or (goal >= 0 and _port_ok(world, n, p, true) and _own_divs(world, n, p) >= min_ready):
 				var dd := world.p_center[p].distance_squared_to(world.p_center[best])
 				if dd < port_d:
 					port_d = dd
@@ -2612,9 +2620,17 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 		return
 	var group := ready.slice(0, mini(max_group, ready.size()))
 	# историческая операция спланирована заранее — подготовка короче
-	if plan_invasion(world, group, best, LAND_PREP_GOAL if goal >= 0 else 0) == "":
+	if plan_invasion(world, group, best, LAND_PREP_GOAL if goal >= 0 else 0, goal >= 0) == "":
 		nat.inv_target = -1
 		nat.inv_port = -1
+
+
+## Порт посадки: свой; для исторической высадки (allied) — и союзный или взятый у врага.
+static func _port_ok(world: World, n: int, p: int, allied: bool) -> bool:
+	var c := world.p_controller[p]
+	if c == n:
+		return true
+	return allied and c >= 0 and Diplomacy.same_side(world, c, n)
 
 
 static func _in_area(boxes: Array, ll: Vector2) -> bool:

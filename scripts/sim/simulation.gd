@@ -1597,10 +1597,17 @@ func _cap_countries() -> void:
 func _capitulate(nid: int) -> void:
 	var occ := _occupants(nid)
 	# главный победитель — тот, кто держит больше всего наших провинций
+	# (великую державу — великая держава, если та заняла хоть что-то: Японию в
+	# 1945 г. иначе «принимала» Гуанси, взявшая больше японских провинций в Китае)
 	var winner := -1
 	var best := -1
+	var major_only := false
+	if Diplomacy.is_major(world, nid):
+		for k in occ:
+			if Diplomacy.is_major(world, k):
+				major_only = true
 	for k in occ:
-		if occ[k] > best:
+		if occ[k] > best and (not major_only or Diplomacy.is_major(world, k)):
 			best = occ[k]
 			winner = k
 	# гражданская война: взятое у нас — уже не наше (History.civil_owner), победитель — другая сторона
@@ -1617,7 +1624,8 @@ func _capitulate(nid: int) -> void:
 		_fix_capitals()
 		return
 	# иначе — изгнание (есть колонии и союзники) или оккупация до конца войны
-	if not Diplomacy.try_exile(world, nid, winner):
+	# черта no_exile — сдача по приказу правительства (рескрипт): без изгнания
+	if world.nations[nid].b("no_exile") > 0.0 or not Diplomacy.try_exile(world, nid, winner):
 		Peace.capitulate(world, nid, winner)
 
 
