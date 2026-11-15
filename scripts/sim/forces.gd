@@ -1628,6 +1628,18 @@ static func _own_divs(world: World, n: int, p: int) -> int:
 	return k
 
 
+## Дивизий страны n в провинции p, готовых к посадке (как ready в ai_invasion:
+## организация выше половины, не в бою). Порт вне метрополии выбирается по ним:
+## американский гарнизон в отрезанном филиппинском кармане (организация 43 %)
+## годами числился «десантом» у Окинавы, и высадка не собиралась вовсе.
+static func _ready_divs(world: World, n: int, p: int) -> int:
+	var k := 0
+	for d in world.divs_in(p):
+		if d.alive and d.owner == n and not d.in_battle and d.org > d.max_org * 0.5:
+			k += 1
+	return k
+
+
 ## Сколько провинций своей стороны (свои и союзные) связано по суше с p — до limit.
 static func _side_zone(world: World, n: int, p: int, limit: int) -> int:
 	var seen := {p: true}
@@ -2559,7 +2571,7 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 	# достаточно своих войск (на Окинаву США шли из Портленда — 23 дн. пути и
 	# месяц сбора; в истории — с Лейте, Сайпана, Улити)
 	var home_m := PackedByteArray()
-	if port >= 0 and _port_ok(world, n, port, goal >= 0) and not nat.hold.has(port) and _own_divs(world, n, port) < min_ready:
+	if port >= 0 and _port_ok(world, n, port, goal >= 0) and not nat.hold.has(port) and _ready_divs(world, n, port) < min_ready:
 		home_m = own_reach(world, n, nat.capital)[0]
 		if home_m[port] == 0 or world.p_owner[port] != n:
 			port = -1
@@ -2574,8 +2586,8 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 			if not is_port(world, p) or nat.hold.has(p):
 				continue
 			var mine: bool = world.p_controller[p] == n and world.p_owner[p] == n
-			if (mine and (home_m[p] == 1 or _own_divs(world, n, p) >= min_ready)) \
-					or (goal >= 0 and _port_ok(world, n, p, true) and _own_divs(world, n, p) >= min_ready):
+			if (mine and (home_m[p] == 1 or _ready_divs(world, n, p) >= min_ready)) \
+					or (goal >= 0 and _port_ok(world, n, p, true) and _ready_divs(world, n, p) >= min_ready):
 				var dd := world.p_center[p].distance_squared_to(world.p_center[best])
 				if dd < port_d:
 					port_d = dd
