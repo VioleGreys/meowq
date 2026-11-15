@@ -1132,12 +1132,16 @@ func _group_jobs() -> Array:
 				divs.append(d)
 		if divs.is_empty():
 			continue
-		var key := "%d:%d" % [g.owner, g.enemy]
-		if not by_key.has(key):
-			by_key[key] = []
-		by_key[key].append(g.id)
-		jobs.append({"group": g.id, "owner": g.owner, "divs": divs,
-			"opts": {"mode": g.mode, "enemy": g.enemy, "objective": g.objective}})
+		var opts := {"mode": g.mode, "enemy": g.enemy, "objective": g.objective}
+		if not g.front_sel.is_empty():
+			# свой участок (кисть): делёж фронта между армиями его не трогает
+			opts["fronts"] = sel_fronts(world, g.owner, g.front_sel)
+		else:
+			var key := "%d:%d" % [g.owner, g.enemy]
+			if not by_key.has(key):
+				by_key[key] = []
+			by_key[key].append(g.id)
+		jobs.append({"group": g.id, "owner": g.owner, "divs": divs, "opts": opts})
 	for key in by_key:
 		var ids: Array = by_key[key]
 		if ids.size() < 2:
@@ -1149,6 +1153,94 @@ func _group_jobs() -> Array:
 			if k >= 0 and k < segs.size():
 				job["opts"]["fronts"] = segs[k]
 	return jobs
+
+
+## Участок фронта по выделению кистью (ArmyGroup.front_sel) для AIPlanner:
+## наши провинции — выделенные и соседние с выделенными чужими; цели атаки
+## (ключ −(q+1)) — выделенные чужие и чужие соседи выделенных наших. Одна
+## выделенная чужая провинция — точечная атака со всех соседних наших.
+static func sel_fronts(world: World, owner: int, sel: PackedInt32Array) -> Dictionary:
+	var res := {}
+	var ctrl := world.p_controller
+	for p in sel:
+		if world.p_land[p] == 0:
+			continue
+		var mine := ctrl[p] == owner
+		if mine:
+			res[p] = true
+		else:
+			res[-p - 1] = true
+		for k in range(world.adj_start[p], world.adj_start[p + 1]):
+			var q := world.adj_list[k]
+			if world.p_land[q] == 0 or ctrl[q] < 0:
+				continue
+			if mine and ctrl[q] != owner:
+				res[-q - 1] = true
+			elif not mine and ctrl[q] == owner:
+				res[q] = true
+	return res
+
+
+## Выделение кистью группы армий — на parts кусков вдоль линии фронта (по
+## длинной оси выделения, как _split_front); у каждого куска — свои провинции.
+static func split_sel(world: World, sel: PackedInt32Array, parts: int) -> Array:
+	var res: Array = []
+	if parts <= 0:
+		return res
+	if parts == 1 or sel.size() <= 1:
+		res.append(sel.duplicate())
+		for i in range(1, parts):
+			res.append(sel.duplicate() if sel.size() == 1 else PackedInt32Array())
+		return res
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for p in sel:
+		lo = lo.min(world.p_center[p])
+		hi = hi.max(world.p_center[p])
+	var vertical := (hi.y - lo.y) >= (hi.x - lo.x)
+	var arr: Array = Array(sel)
+	arr.sort_custom(func(a, b):
+		var ca: Vector2 = world.p_center[a]
+		var cb: Vector2 = world.p_center[b]
+		var va := ca.y if vertical else ca.x
+		var vb := cb.y if vertical else cb.x
+		return va < vb or (va == vb and a < b))
+	var n := arr.size()
+	for i in parts:
+		var from := i * n / parts
+		var to := maxi((i + 1) * n / parts, from + 1)
+		var part := PackedInt32Array()
+		for j in range(from, mini(to, n)):
+			part.append(arr[j])
+		if part.is_empty():
+			part.append(arr[n - 1])   # армий больше, чем провинций: пустой кусок — это «весь фронт»
+		res.append(part)
+	return res
+
+
+## Провинция соприкосновения для кисти: своя у чужой суши (не союзной) или
+## чужая (не союзная) у своей.
+static func is_contact(world: World, owner: int, p: int) -> bool:
+	if p < 0 or world.p_land[p] == 0:
+		return false
+	var nc := world.nation_count
+	var c := world.p_controller[p]
+	if c < 0:
+		return false
+	var mine := c == owner
+	var has_ally := world.ally.size() == nc * nc
+	if not mine and has_ally and world.ally[owner * nc + c] == 1:
+		return false
+	for k in range(world.adj_start[p], world.adj_start[p + 1]):
+		var q := world.adj_list[k]
+		var d := world.p_controller[q]
+		if world.p_land[q] == 0 or d < 0:
+			continue
+		if mine and d != owner and not (has_ally and world.ally[owner * nc + d] == 1):
+			return true
+		if not mine and d == owner:
+			return true
+	return false
 
 
 func _split_front(owner: int, enemy: int, parts: int) -> Array:

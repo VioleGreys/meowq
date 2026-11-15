@@ -259,9 +259,16 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		mode = "hold"
 	elif mode_i == 2:
 		mode = "attack"
+	# выделенный игроком участок (кисть, Hud): наши провинции — как есть, цели
+	# атаки — со знаком минус (−(q+1)); пусто — весь фронт
 	var allowed := {}
+	var tgt := {}
 	for p in allowed_list:
-		allowed[p] = true
+		if p >= 0:
+			allowed[p] = true
+		else:
+			tgt[-p - 1] = true
+	var has_tgt := not tgt.is_empty()
 
 	# локальные ссылки на массивы мира — без конкуренции потоков за refcount
 	var ctrl: PackedInt32Array = tb["ctrl"]
@@ -339,25 +346,28 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 						targets[q] = true
 					fpairs.append(p)
 					fpairs.append(q)
-			elif own_p and matches and (enemy >= 0 or mode == "auto") and (ally.size() == 0 or ally[nid * nc + c] == 0):
+			elif own_p and matches and (enemy >= 0 or mode == "auto" or has_tgt) and (ally.size() == 0 or ally[nid * nc + c] == 0):
 				fronts[p] = true
 				fpairs.append(p)
 				fpairs.append(q)
-	if not allowed.is_empty():
+	if not allowed.is_empty() or has_tgt:
 		for f in fronts.keys():
 			if not allowed.has(f):
 				fronts.erase(f)
 		for t in targets.keys():
 			var near := false
-			for k in range(a_start[t], a_start[t + 1]):
-				if allowed.has(a_list[k]):
-					near = true
-					break
+			if has_tgt:
+				near = tgt.has(t)
+			else:
+				for k in range(a_start[t], a_start[t + 1]):
+					if allowed.has(a_list[k]):
+						near = true
+						break
 			if not near:
 				targets.erase(t)
 		var fp := PackedInt32Array()
 		for i in range(0, fpairs.size(), 2):
-			if allowed.has(fpairs[i]):
+			if allowed.has(fpairs[i]) and (not has_tgt or tgt.has(fpairs[i + 1])):
 				fp.append(fpairs[i])
 				fp.append(fpairs[i + 1])
 		fpairs = fp

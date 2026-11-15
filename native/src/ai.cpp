@@ -111,6 +111,19 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	}
 	const bool attack_allowed = at_war && (mode == ATTACK || mode == AUTO);
 
+	// выделенный игроком участок (как ai.gd): цели атаки — со знаком минус (−(q+1))
+	std::vector<char> allowed(pc, 0), tgt(pc, 0);
+	bool has_allowed = false, has_tgt = false;
+	for (int64_t k = 0; k < allowed_list.size(); k++) {
+		const int32_t v = allowed_list[k];
+		if (v >= 0) {
+			allowed[v] = 1;
+			has_allowed = true;
+		} else {
+			tgt[-v - 1] = 1;
+			has_tgt = true;
+		}
+	}
 	// фронт
 	OrderedSet fronts(pc), targets(pc);
 	PackedInt32Array fpairs;
@@ -135,19 +148,21 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 					fpairs.push_back(p);
 					fpairs.push_back(q);
 				}
-			} else if (own_p && matches && (enemy >= 0 || mode == AUTO) && (!has_ally || ally[int64_t(nid) * nc + c] == 0)) {
+			} else if (own_p && matches && (enemy >= 0 || mode == AUTO || has_tgt) && (!has_ally || ally[int64_t(nid) * nc + c] == 0)) {
 				fronts.add(p);
 				fpairs.push_back(p);
 				fpairs.push_back(q);
 			}
 		}
 	}
-	if (allowed_list.size() > 0) {
-		std::vector<char> allowed(pc, 0);
-		for (int64_t k = 0; k < allowed_list.size(); k++) allowed[allowed_list[k]] = 1;
+	if (has_allowed || has_tgt) {
 		fronts.keep_if(allowed);
 		std::vector<char> near(pc, 0);
 		for (int32_t t : targets.order) {
+			if (has_tgt) {
+				near[t] = tgt[t];
+				continue;
+			}
 			for (int32_t k = a_start[t]; k < a_start[t + 1]; k++) {
 				if (allowed[a_list[k]]) {
 					near[t] = 1;
@@ -158,7 +173,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		targets.keep_if(near);
 		PackedInt32Array fp;
 		for (int64_t i = 0; i + 1 < fpairs.size(); i += 2) {
-			if (allowed[fpairs[i]]) {
+			if (allowed[fpairs[i]] && (!has_tgt || tgt[fpairs[i + 1]])) {
 				fp.push_back(fpairs[i]);
 				fp.push_back(fpairs[i + 1]);
 			}

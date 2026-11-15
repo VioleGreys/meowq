@@ -23,6 +23,11 @@ uniform float lat_top = 80.0;
 // 0 — низкое (один тексель, границы по соседям — дёшево для слабых телефонов);
 // берег по векторной доле суши — на среднем и высоком
 uniform int quality = 2;
+// фронты армий игрока (MapView.set_front): rgb — цвет армии, a — роль/255:
+// 1 — наш участок фронта, 2 — чужая сторона линии, 4 — выделено кистью (правка
+// участка), 8 — цель атаки (штриховка)
+uniform sampler2D front_tex : filter_nearest;
+uniform bool front_on = false;
 
 const int NS = 8;
 
@@ -298,6 +303,29 @@ void fragment() {
 			w_other = max(w_other, s2);
 		}
 	}
+	// фронт: наш участок против целей — линия по границе между ними (как в жанре)
+	float w_fo = 0.0;
+	float w_ft = 0.0;
+	int fo_j = -1;
+	int role_top = 0;
+	if (front_on) {
+		for (int j = 0; j < NS; j++) {
+			if (uid[j] < 0) {
+				continue;
+			}
+			int r = int(pal(front_tex, uid[j]).a * 255.0 + 0.5);
+			if ((r & 1) != 0) {
+				w_fo += uw[j];
+				if (fo_j < 0 || uw[j] > uw[fo_j]) {
+					fo_j = j;
+				}
+			}
+			if ((r & 2) != 0) {
+				w_ft += uw[j];
+			}
+		}
+		role_top = int(pal(front_tex, id).a * 255.0 + 0.5);
+	}
 	// Производные (fwidth) — только здесь, вне ветвлений: внутри условий они на
 	// части мобильных ГП (OpenGL ES) не определены и давали ложные штрихи
 	// по пиксельной сетке у берегов.
@@ -309,6 +337,9 @@ void fragment() {
 	float s2 = uw[top] + w_prov2;
 	float d2 = s2 > 0.0 ? (uw[top] - w_prov2) / s2 : 1.0;
 	float fw2 = fwidth(d2);
+	float s3 = w_fo + w_ft;
+	float d3 = s3 > 0.0 ? abs(w_fo - w_ft) / s3 : 1.0;
+	float fw3 = fwidth(d3);
 	if (quality == 0) {
 		// низкое качество: границы по соседним текселям (как раньше, дёшево)
 		vec2 f = fract(px);
@@ -350,6 +381,27 @@ void fragment() {
 		float w = max(lw_min(0.6), 0.14 * texel_px);
 		float a2 = smoothstep(0.45, 1.3, zoom);
 		col = mix(col, col * 0.6, (1.0 - smoothstep(w - 0.7, w + 0.7, dp)) * a2);
+	}
+
+	if (front_on && land && role_top != 0) {
+		mediump vec3 fc = pal(front_tex, id).rgb;
+		if ((role_top & 4) != 0) {
+			// выделено кистью: заливка цветом армии
+			col = mix(col, fc, 0.32);
+		}
+		if ((role_top & 8) != 0) {
+			// цель атаки: косая штриховка цветом армии (постоянного шага на экране)
+			float st = step(0.62, fract((FRAGCOORD.x - FRAGCOORD.y) / (11.0 * res_k)));
+			col = mix(col, fc * 0.9, st * 0.42);
+		}
+	}
+	if (front_on && land && w_fo > 0.0 && w_ft > 0.0 && fo_j >= 0) {
+		// линия фронта: тёмная кайма и цвет армии — толще границы стран
+		mediump vec3 fc = pal(front_tex, uid[fo_j]).rgb;
+		float dp = d3 / max(fw3, 0.5 / texel_px) * 0.5;
+		float w = min(max(lw_min(2.3 * res_k), 0.55 * texel_px), 7.0 * res_k);
+		col = mix(col, vec3(0.05, 0.04, 0.03), (1.0 - smoothstep(w + 0.4, w + 1.6, dp)) * 0.85);
+		col = mix(col, fc, 1.0 - smoothstep(w - 0.8, w + 0.4, dp));
 	}
 
 	if (id == selected_id && land) {

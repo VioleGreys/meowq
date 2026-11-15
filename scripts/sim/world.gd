@@ -456,6 +456,7 @@ class ArmyGroup:
 	var objective := -1             # провинция-цель наступления
 	var alive := true
 	var front_pairs := PackedInt32Array()   # пары (наша провинция, чужая) для отрисовки фронта
+	var front_sel := PackedInt32Array()     # участок фронта, выделенный кистью: провинции соприкосновения (наши и чужие); пусто — весь фронт
 	var general := -1               # командующий армией (World.commanders), -1 — нет
 	var front := -1                 # группа армий (World.fronts), -1 — нет
 
@@ -493,6 +494,7 @@ class ArmyFront:
 	var color := Color.WHITE
 	var marshal := -1
 	var alive := true
+	var front_sel := PackedInt32Array()     # участок, выделенный кистью (делится между армиями); пусто — нет
 
 
 var seed_value := 0

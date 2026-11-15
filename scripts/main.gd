@@ -70,6 +70,7 @@ func _ready() -> void:
 	hud.game = self
 	add_child(hud)
 	map_view.province_tapped.connect(_on_province_tapped)
+	map_view.province_painted.connect(_on_province_painted)
 	autosave_on = Settings.autosave()
 	if _arg("autosave_sec") != "":
 		autosave_usec = int(float(_arg("autosave_sec")) * 1000000.0)
@@ -283,11 +284,33 @@ func _auto_screenshot_locked() -> void:
 					if g.alive and g.owner == me:
 						g.mode = "attack"
 						g.objective = world.nations[war_on].capital
+				if _arg("frontsel") != "":
+					# --frontsel=K: участок фронта — K чужих провинций соприкосновения,
+					# ближайших к столице противника (проверка кисти без человека)
+					var cands: Array = []
+					for p in world.prov_count:
+						if world.p_controller[p] == war_on and Simulation.is_contact(world, me, p):
+							cands.append(p)
+					var cp: Vector2 = world.p_center[world.nations[war_on].capital]
+					cands.sort_custom(func(a, b): return world.p_center[a].distance_to(cp) < world.p_center[b].distance_to(cp))
+					var sel := PackedInt32Array(cands.slice(0, int(_arg("frontsel"))))
+					if selected_front >= 0:
+						_set_front_sel(world.fronts[selected_front], sel)
+					else:
+						for g in world.groups:
+							if g.alive and g.owner == me:
+								g.front_sel = sel
+								_front_enemy(g)
 			sim.tick()
 		if selected_front >= 0:
 			select_front(selected_front)
 		elif selected_group >= 0:
 			select_group(selected_group)
+		if "--frontedit" in OS.get_cmdline_user_args():
+			if selected_front >= 0:
+				start_front_edit_f(selected_front)
+			elif selected_group >= 0:
+				start_front_edit(selected_group)
 		hud.on_tick()
 		if _arg("zoom") != "":
 			map_view.camera.zoom = Vector2.ONE * float(_arg("zoom"))
@@ -651,7 +674,7 @@ func _take_frame() -> void:
 	if _frame_new:
 		hud.top_data = _frame_top
 		if not _frame_taken and not _frame_list.is_empty():
-			unit_layer.take(_frame_list[0], _frame_list[1])
+			unit_layer.take(_frame_list[0], _frame_list[1], _frame_list[2])
 			_frame_taken = true
 			_frame_list = []
 		_fresh_note()
@@ -944,6 +967,8 @@ func _on_province_tapped(p: int) -> void:
 
 
 func _on_province_tapped_locked(p: int) -> void:
+	if editing_front():
+		return   # правка участка фронта: касание уже отработала кисть
 	if state == "select":
 		if world.p_land[p] == 1:
 			pick(world.p_owner[p])
@@ -1058,7 +1083,158 @@ func _on_province_tapped_locked(p: int) -> void:
 		hud.show_selection()
 
 
+# --- Участок фронта кистью (как в жанре) ---------------------------------------
+
+var front_edit := -1          # армия, чей участок фронта правится кистью
+var front_edit_f := -1        # или группа армий (участок делится между её армиями)
+var _paint_erase := false     # мазок стирает (начат на уже выделенной провинции)
+
+
+## Начать правку участка армии: один палец рисует (провинции соприкосновения с
+## противником — свои и чужие), два — двигают карту; касание — одна провинция.
+func start_front_edit(id: int) -> void:
+	front_edit = id
+	front_edit_f = -1
+	map_view.paint_mode = true
+	_edit_marks()
+	hud.show_front_edit(world.groups[id].name, world.groups[id].front_sel.size())
+
+
+## Начать правку участка группы армий: выделение делится между армиями вдоль
+## линии фронта (Simulation.split_sel).
+func start_front_edit_f(id: int) -> void:
+	front_edit = -1
+	front_edit_f = id
+	map_view.paint_mode = true
+	_edit_marks()
+	hud.show_front_edit(world.fronts[id].name, world.fronts[id].front_sel.size())
+
+
+func editing_front() -> bool:
+	return front_edit >= 0 or front_edit_f >= 0
+
+
+func _edit_marks() -> void:
+	var ids := {}
+	var sel := PackedInt32Array()
+	if front_edit >= 0:
+		ids[front_edit] = true
+		sel = world.groups[front_edit].front_sel
+	elif front_edit_f >= 0:
+		var f: World.ArmyFront = world.fronts[front_edit_f]
+		for g in Leaders.armies_of_front(world, f):
+			ids[g.id] = true
+		sel = f.front_sel
+	unit_layer.edit_ids = ids
+	unit_layer.edit_sel = sel
+	_layer_dirty = true
+
+
+func _end_edit_marks() -> void:
+	front_edit = -1
+	front_edit_f = -1
+	unit_layer.edit_ids = {}
+	unit_layer.edit_sel = PackedInt32Array()
+	map_view.paint_mode = false
+	_layer_dirty = true
+
+
+func stop_front_edit() -> void:
+	var g := front_edit
+	var f := front_edit_f
+	_end_edit_marks()
+	if g >= 0 and world.groups[g].alive:
+		select_group(g)
+	elif f >= 0 and world.fronts[f].alive:
+		select_front(f)
+
+
+## Очистить выделение: армия (или группа) снова держит весь фронт с противником.
+func clear_front_sel() -> void:
+	act(func():
+		if front_edit >= 0:
+			world.groups[front_edit].front_sel = PackedInt32Array()
+			_front_enemy(world.groups[front_edit])
+		elif front_edit_f >= 0:
+			_set_front_sel(world.fronts[front_edit_f], PackedInt32Array())
+		_edit_marks())
+
+
+func _on_province_painted(provs: PackedInt32Array, first: bool) -> void:
+	if not editing_front():
+		return
+	act(func(): _paint_locked(provs, first))
+
+
+func _paint_locked(provs: PackedInt32Array, first: bool) -> void:
+	if not editing_front() or state != "play":
+		return
+	var owner := player()
+	var sel: PackedInt32Array
+	if front_edit >= 0:
+		if not world.groups[front_edit].alive:
+			return
+		sel = world.groups[front_edit].front_sel
+	else:
+		if not world.fronts[front_edit_f].alive:
+			return
+		sel = world.fronts[front_edit_f].front_sel
+	if first:
+		# мазок, начатый на выделенной провинции, стирает; иначе — добавляет
+		_paint_erase = not provs.is_empty() and sel.has(provs[0])
+	var changed := false
+	for p in provs:
+		if not Simulation.is_contact(world, owner, p):
+			continue
+		var i := sel.find(p)
+		if _paint_erase and i >= 0:
+			sel.remove_at(i)
+			changed = true
+		elif not _paint_erase and i < 0:
+			sel.append(p)
+			changed = true
+	if not changed:
+		return
+	if front_edit >= 0:
+		var g: World.ArmyGroup = world.groups[front_edit]
+		g.front_sel = sel
+		_front_enemy(g)
+		hud.show_front_edit(g.name, sel.size())
+	else:
+		var f: World.ArmyFront = world.fronts[front_edit_f]
+		_set_front_sel(f, sel)
+		hud.show_front_edit(f.name, sel.size())
+	_edit_marks()
+
+
+## Участок группы армий: делится между её армиями вдоль линии фронта.
+func _set_front_sel(f: World.ArmyFront, sel: PackedInt32Array) -> void:
+	f.front_sel = sel
+	var armies := Leaders.armies_of_front(world, f)
+	var parts := Simulation.split_sel(world, sel, armies.size())
+	for k in armies.size():
+		var g: World.ArmyGroup = armies[k]
+		g.front_sel = parts[k] if k < parts.size() else PackedInt32Array()
+		_front_enemy(g)
+
+
+## Противник армии по выделению: одна страна (в войне с нами) — она, иначе все.
+func _front_enemy(g: World.ArmyGroup) -> void:
+	var en := -2
+	for p in g.front_sel:
+		var c := world.p_controller[p]
+		if c == g.owner:
+			continue
+		if en == -2:
+			en = c
+		elif en != c:
+			en = -1
+	g.enemy = en if en >= 0 and world.is_at_war(g.owner, en) else -1
+
+
 func clear_selection() -> void:
+	if editing_front():
+		_end_edit_marks()
 	selected_group = -1
 	selected_front = -1
 	selected_fleet = -1

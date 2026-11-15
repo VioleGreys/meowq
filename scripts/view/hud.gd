@@ -1206,6 +1206,8 @@ func on_tick() -> void:
 			show_fleet(w.fleets[game.selected_fleet])
 		elif game.selected_wing >= 0 and w.wings[game.selected_wing].alive:
 			show_wing(w.wings[game.selected_wing])
+		elif game.editing_front():
+			pass   # правка участка кистью: подсказка остаётся
 		elif game.selected_front >= 0:
 			var f: World.ArmyFront = w.fronts[game.selected_front]
 			if f.alive:
@@ -1369,12 +1371,16 @@ func show_group(g: World.ArmyGroup) -> void:
 	atk.disabled = g.mode == "attack"
 	info_actions.add_child(atk)
 	var w: World = game.world
-	var en: String = "все противники" if g.enemy < 0 else w.nations[g.enemy].name
-	info_actions.add_child(_button("Фронт: %s ▸" % en, func():
-		var opts: Array = game.enemy_options()
-		var i := opts.find(g.enemy)
-		g.enemy = opts[(i + 1) % opts.size()]
-		show_group(g)))
+	var gid: int = g.id
+	var sel_txt := "весь фронт" if g.front_sel.is_empty() else "участок · %d пров." % g.front_sel.size()
+	info_actions.add_child(_button("✎ Участок фронта: %s" % sel_txt, func(): game.start_front_edit(gid)))
+	if g.front_sel.is_empty():
+		var en: String = "все противники" if g.enemy < 0 else w.nations[g.enemy].name
+		info_actions.add_child(_button("Против: %s ▸" % en, func():
+			var opts: Array = game.enemy_options()
+			var i := opts.find(g.enemy)
+			g.enemy = opts[(i + 1) % opts.size()]
+			show_group(g)))
 	# генерал: по кругу — свободные (лучшие первыми) и «без генерала»
 	var gname: String = "нет" if g.general < 0 else w.commanders[g.general].name
 	info_actions.add_child(_button("Генерал: %s ▸" % gname, func():
@@ -1407,6 +1413,20 @@ func show_group(g: World.ArmyGroup) -> void:
 		game.sim.disband_group(g)
 		game.clear_selection()))
 	info_actions.add_child(_button("✕", func(): game.clear_selection(), Vector2(56, 56)))
+	info_panel.show()
+	_layout_info.call_deferred()
+
+
+## Правка участка фронта кистью (как в жанре): армия или группа армий.
+func show_front_edit(name: String, n: int) -> void:
+	_info_prov = -1
+	_info_text("%s — участок фронта\nВедите пальцем по границе с противником: выделяются провинции соприкосновения — свои и чужие. Касание — одна провинция (точечная атака). Мазок с выделенной провинции стирает. Карту двигайте двумя пальцами.\n%s" % [
+		name, "Выделено: весь фронт (ничего не выбрано)" if n == 0 else "Выделено провинций: %d" % n])
+	_clear(info_actions)
+	info_actions.add_child(_button("Готово", func(): game.stop_front_edit()))
+	var clr := _button("Весь фронт", func(): game.clear_front_sel())
+	clr.disabled = n == 0
+	info_actions.add_child(clr)
 	info_panel.show()
 	_layout_info.call_deferred()
 
@@ -1461,14 +1481,21 @@ func show_front(f: World.ArmyFront) -> void:
 		show_front(f))
 	atk.disabled = mode == "attack"
 	info_actions.add_child(atk)
+	var fid: int = f.id
+	var fsel := "весь фронт" if f.front_sel.is_empty() else "участок · %d пров." % f.front_sel.size()
+	info_actions.add_child(_button("✎ Участок фронта: %s" % fsel, func(): game.start_front_edit_f(fid)))
 	var en: String = "все противники" if enemy < 0 else w.nations[enemy].name
-	info_actions.add_child(_button("Фронт: %s ▸" % en, func():
+	var en_b := _button("Против: %s ▸" % en, func():
 		var opts: Array = game.enemy_options()
 		var i := opts.find(enemy)
 		var nx: int = opts[(i + 1) % opts.size()]
 		for g in Leaders.armies_of_front(w, f):
 			g.enemy = nx
-		show_front(f)))
+		show_front(f))
+	if f.front_sel.is_empty():
+		info_actions.add_child(en_b)
+	else:
+		en_b.queue_free()
 	var mname: String = "нет" if f.marshal < 0 else w.commanders[f.marshal].name
 	info_actions.add_child(_button("Маршал: %s ▸" % mname, func():
 		var opts: Array = [-1]

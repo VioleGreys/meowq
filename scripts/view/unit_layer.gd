@@ -165,6 +165,10 @@ func _process(_dt: float) -> void:
 		_battles.queue_redraw()
 
 
+var edit_ids := {}                      # армии, чей участок правится кистью (main): id -> true
+var edit_sel := PackedInt32Array()      # выделение кистью (армии или группы армий)
+
+
 func _wp(p: int) -> Vector2:
 	return world.p_center[p] * MapView.SCALE
 
@@ -174,13 +178,17 @@ func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
 	var r := build(sel_fleet, sel_wing)
 	items = r[0]
 	_has_battles = r[1]
+	if map != null:
+		map.set_front(r[2])
 	_dirty = true
 
 
 ## Принять список, собранный потоком симуляции (конвейер экрана, main._publish).
-func take(list: Array, battles: bool) -> void:
+func take(list: Array, battles: bool, marks: Dictionary = {}) -> void:
 	items = list
 	_has_battles = battles
+	if map != null:
+		map.set_front(marks)
 	_dirty = true
 
 
@@ -246,13 +254,12 @@ func build(sel_fleet: int = -1, sel_wing: int = -1) -> Array:
 			pts.append(centers[nx] * sc)
 			col = arrow_cols[a_owner[i]]
 		out.append([ARROW, pts, col, is_sel, clampf(a_prog[i], 0.0, 1.0), a_owner[i] == player])
-	# фронты и цели армий игрока
+	# фронты и цели армий игрока: линия по границе и штриховка целей рисует
+	# шейдер карты (front_marks → MapView.set_front), здесь — только значок цели
+	var fmarks := front_marks()
 	for g in world.groups:
 		if not g.alive or g.owner != player:
 			continue
-		var fp: PackedInt32Array = g.front_pairs
-		for i in range(0, fp.size(), 2):
-			out.append([FRONT, _wp(fp[i]), _wp(fp[i + 1]), g.color])
 		if g.objective >= 0 and g.mode == "attack":
 			out.append([OBJECTIVE, _wp(g.objective), g.color])
 	for p in battle_provs:
@@ -296,7 +303,51 @@ func build(sel_fleet: int = -1, sel_wing: int = -1) -> Array:
 		out.append([COUNTER, centers[p] * sc, k, nat_cols[o], n, c_tpl[ci],
 			c_str[ci] / (100.0 * n), c_org[ci] / n, m[0], m[1], c_sup[ci] < 0.3, o == player])
 	_rebuild_navy_air(out, sel_fleet, sel_wing)
-	return [out, has_battles]
+	return [out, has_battles, fmarks]
+
+
+## Отметки фронтов армий игрока для шейдера карты: провинция -> [роль, цвет]
+## (биты роли — MapView.set_front). Армии, участок которых правится кистью
+## (edit_ids), показывают выделение и участок по нему сразу — до плана дня.
+func front_marks() -> Dictionary:
+	var marks := {}
+	if player < 0:
+		return marks
+	var ctrl := world.p_controller
+	for g in world.groups:
+		if not g.alive or g.owner != player:
+			continue
+		var col: Color = g.color
+		var fp: PackedInt32Array = g.front_pairs
+		var atk: bool = g.mode == "attack"
+		if edit_ids.has(g.id):
+			var fr: Dictionary = Simulation.sel_fronts(world, g.owner, g.front_sel)
+			fp = PackedInt32Array()
+			# предпросмотр: пары «наша — цель» из выделения
+			for k in fr:
+				var q: int = k
+				if q >= 0:
+					continue
+				q = -q - 1
+				for j in range(world.adj_start[q], world.adj_start[q + 1]):
+					var p := world.adj_list[j]
+					if fr.has(p) and ctrl[p] == g.owner:
+						fp.append(p)
+						fp.append(q)
+		for i in range(0, fp.size(), 2):
+			var a := fp[i]
+			var b := fp[i + 1]
+			var ma: Array = marks.get(a, [0, col])
+			ma[0] = int(ma[0]) | 1
+			marks[a] = ma
+			var mb: Array = marks.get(b, [0, col])
+			mb[0] = int(mb[0]) | (10 if atk else 2)
+			marks[b] = mb
+	for p in edit_sel:
+		var m: Array = marks.get(p, [0, Color(1.0, 0.92, 0.55)])
+		m[0] = int(m[0]) | 4
+		marks[p] = m
+	return marks
 
 
 func _rebuild_navy_air(out: Array, sel_fleet: int, sel_wing: int) -> void:

@@ -26,6 +26,13 @@ var ctrl_img: Image
 var owner_img: Image
 var ctrl_tex: ImageTexture
 var owner_tex: ImageTexture
+var front_img: Image          # фронты армий игрока: rgb — цвет армии, a — роль (шейдер front_tex)
+var front_tex: ImageTexture
+var _front_hash := 0
+var paint_mode := false       # кисть участка фронта: один палец рисует, два — двигают карту
+const BRUSH_PX := 16.0        # радиус кисти на экране
+signal province_painted(provs: PackedInt32Array, first: bool)
+var _paint_last := Vector2.ZERO
 var map_mode := MapMode.POLITICAL
 # Карта рисуется во внутренний буфер (SubViewport) и только при изменениях:
 # сдвиг, масштаб, новый день (палитра), выбор. В остальные кадры экран
@@ -138,6 +145,11 @@ func setup(w: World) -> void:
 	owner_img = Image.create(64, rows, false, Image.FORMAT_RGBA8)
 	ctrl_tex = ImageTexture.create_from_image(ctrl_img)
 	owner_tex = ImageTexture.create_from_image(owner_img)
+	front_img = Image.create(64, rows, false, Image.FORMAT_RGBA8)
+	front_tex = ImageTexture.create_from_image(front_img)
+	_front_hash = 0
+	mat.set_shader_parameter("front_tex", front_tex)
+	mat.set_shader_parameter("front_on", false)
 	mat.set_shader_parameter("id_tex", sprite.texture)
 	mat.set_shader_parameter("ctrl_tex", ctrl_tex)
 	mat.set_shader_parameter("owner_tex", owner_tex)
@@ -188,6 +200,27 @@ func center_on(p: int) -> void:
 
 func set_selected(prov: int) -> void:
 	mat.set_shader_parameter("selected_id", prov)
+	redraw()
+
+
+## Фронты армий игрока на карте: провинция -> [роль, цвет] (роль — биты:
+## 1 — наш участок, 2 — чужая сторона линии, 4 — выделено кистью, 8 — цель
+## атаки). Текстура обновляется, только если отметки изменились.
+func set_front(marks: Dictionary) -> void:
+	if front_img == null:
+		return
+	var h := marks.hash()
+	if h == _front_hash:
+		return
+	_front_hash = h
+	front_img.fill(Color(0, 0, 0, 0))
+	for p in marks:
+		var m: Array = marks[p]
+		var c: Color = m[1]
+		c.a = int(m[0]) / 255.0
+		front_img.set_pixel(int(p) % 64, int(p) / 64, c)
+	front_tex.update(front_img)
+	mat.set_shader_parameter("front_on", not marks.is_empty())
 	redraw()
 
 
@@ -465,6 +498,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			if _touches.size() >= 2:
 				_gesture_multi = true
 				_pinch_dist = _pinch_distance()
+			elif paint_mode:
+				_paint_last = event.position
+				_paint_at(event.position, true)
 		else:
 			var was_tap: bool = _touches.size() == 1 and not _gesture_multi and _gesture_moved < TAP_SLOP
 			_touches.erase(event.index)
@@ -480,13 +516,24 @@ func _unhandled_input(event: InputEvent) -> void:
 		_touches[event.index] = event.position
 		_gesture_moved += (event.position - prev).length()
 		if _touches.size() == 1:
-			camera.position -= (event.position - prev) / camera.zoom.x
-			_on_view_changed()
+			if paint_mode and not _gesture_multi:
+				# кисть: провинции вдоль пути пальца (шаг — полрадиуса кисти)
+				var seg: Vector2 = event.position - _paint_last
+				var steps := maxi(1, ceili(seg.length() / (BRUSH_PX * 0.5)))
+				for i in steps:
+					_paint_at(_paint_last + seg * float(i + 1) / steps, false)
+				_paint_last = event.position
+			elif not paint_mode:
+				camera.position -= (event.position - prev) / camera.zoom.x
+				_on_view_changed()
 		elif _touches.size() >= 2:
 			var d := _pinch_distance()
 			if _pinch_dist > 0.0:
 				_zoom_at(_pinch_center(), d / _pinch_dist)
 			_pinch_dist = d
+			# двумя пальцами карта и сдвигается (в режиме кисти — только так)
+			camera.position -= (event.position - prev) * 0.5 / camera.zoom.x
+			_on_view_changed()
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -519,6 +566,19 @@ func _zoom_at(screen_pos: Vector2, factor: float) -> void:
 	var after := screen_to_world(screen_pos)
 	camera.position += before - after
 	_on_view_changed()
+
+
+## Провинции суши под кистью (центр и 8 точек по кругу) → province_painted.
+func _paint_at(screen_pos: Vector2, first: bool) -> void:
+	var res := PackedInt32Array()
+	for k in 9:
+		var off := Vector2.ZERO if k == 0 else Vector2.from_angle(TAU * (k - 1) / 8.0) * BRUSH_PX
+		var wp := screen_to_world(screen_pos + off) / SCALE
+		var p := world.province_at_pixel(wp)
+		if p >= 0 and world.p_land[p] == 1 and not res.has(p):
+			res.append(p)
+	if not res.is_empty() or first:
+		province_painted.emit(res, first)
 
 
 func _tap(screen_pos: Vector2) -> void:
