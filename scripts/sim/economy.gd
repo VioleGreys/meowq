@@ -273,9 +273,22 @@ static func refresh_blockade(world: World) -> Dictionary:
 	zl.resize(nc)
 	for x in nc:
 		zl[x] = []
-	for p in world.prov_count:
+	# порты (и плацдармы) по возрастанию номера — без прохода по всем провинциям
+	if world.p_port.size() != world.prov_count:
+		Forces.refresh_ports(world)
+	var plist: PackedInt32Array = world.port_list
+	if not world.beachheads.is_empty():
+		plist = plist.duplicate()
+		var extra := false
+		for p in world.beachheads:
+			if world.p_port[p] == 0 and int(world.beachheads[p]) >= world.day:
+				plist.append(p)
+				extra = true
+		if extra:
+			plist.sort()
+	for p in plist:
 		var c := ctrl[p]
-		if c < 0 or land[p] == 0 or not Forces.is_port(world, p):
+		if c < 0 or land[p] == 0:
 			continue
 		for k in range(a_start[p], a_start[p + 1]):
 			var q := a_list[k]
@@ -330,35 +343,59 @@ static func refresh_blockade(world: World) -> Dictionary:
 		reach.append([f.owner, zs, ws])
 	Prof.add("бл:округа", _pb)
 	_pb = Time.get_ticks_usec()
+	# хозяева флотов с округами — по порядку появления; силы «своих» и
+	# «врагов» зависят только от того, кем каждый из них приходится стране:
+	# у союзников с одинаковыми войнами суммы те же — считаем один раз
+	var r_owners := PackedInt32Array()
+	var r_seen := {}
+	for fr in reach:
+		if not r_seen.has(fr[0]):
+			r_seen[fr[0]] = true
+			r_owners.append(fr[0])
+	var r_memo := {}
 	for b in nc:
 		var bn: World.Nation = world.nations[b]
 		if not bn.alive or bn.at_war.is_empty():
 			continue
-		# флоты в округе: своя сторона (союзники) против врагов
-		var own_r := PackedFloat32Array()
-		var en_r := PackedFloat32Array()
-		var any_enemy := false
-		# пишем прямо в en_r / own_r: присваивание упакованного массива другой
-		# переменной и запись в неё копирует его целиком (копирование при записи)
-		for fr in reach:
-			var o: int = fr[0]
-			var zs: PackedInt32Array = fr[1]
-			var ws: PackedFloat32Array = fr[2]
+		var cls := PackedByteArray()
+		cls.resize(r_owners.size())
+		var any_war := false
+		for j in r_owners.size():
+			var o := r_owners[j]
 			if war[b * nc + o] == 1:
-				if en_r.is_empty():
-					en_r.resize(world.prov_count)
-				any_enemy = true
-				for i in zs.size():
-					en_r[zs[i]] += ws[i]
+				cls[j] = 1
+				any_war = true
 			elif world.ally[b * nc + o] == 1 or o == b:
-				if own_r.is_empty():
-					own_r.resize(world.prov_count)
-				for i in zs.size():
-					own_r[zs[i]] += ws[i]
-		if not any_enemy:
+				cls[j] = 2
+		if not any_war:
 			continue
-		if own_r.is_empty():
-			own_r.resize(world.prov_count)
+		# флоты в округе: своя сторона (союзники) против врагов
+		var mr: Array = r_memo.get(cls, [])
+		if mr.is_empty():
+			var own_m := PackedFloat32Array()
+			var en_m := PackedFloat32Array()
+			# пишем прямо в en_m / own_m: присваивание упакованного массива другой
+			# переменной и запись в неё копирует его целиком (копирование при записи)
+			for fr in reach:
+				var o: int = fr[0]
+				var zs: PackedInt32Array = fr[1]
+				var ws: PackedFloat32Array = fr[2]
+				if war[b * nc + o] == 1:
+					if en_m.is_empty():
+						en_m.resize(world.prov_count)
+					for i in zs.size():
+						en_m[zs[i]] += ws[i]
+				elif world.ally[b * nc + o] == 1 or o == b:
+					if own_m.is_empty():
+						own_m.resize(world.prov_count)
+					for i in zs.size():
+						own_m[zs[i]] += ws[i]
+			if own_m.is_empty():
+				own_m.resize(world.prov_count)
+			mr = [own_m, en_m]
+			r_memo[cls] = mr
+		var own_r: PackedFloat32Array = mr[0]
+		var en_r: PackedFloat32Array = mr[1]
 		# у своих и союзных берегов
 		var near := {}
 		for x in nc:

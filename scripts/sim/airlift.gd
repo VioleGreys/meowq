@@ -146,9 +146,19 @@ static func _home_depots(world: World, nat: World.Nation) -> Array:
 	var vp := world.p_vp
 	var n := nat.id
 	var h := nat.dep_home
-	for p in world.prov_count:
-		if ctrl[p] == n and comp[p] == h and (vp[p] >= Depots.DEPOT_VP or p == nat.capital):
-			res.append(world.p_lonlat[p])
+	# крупные города по возрастанию номера, столица — на своём месте
+	var cap := nat.capital
+	var cap_done := cap < 0 or cap >= world.prov_count or vp[cap] >= Depots.DEPOT_VP
+	var ll := world.p_lonlat
+	for p in Depots.big_cities(world):
+		if not cap_done and cap < p:
+			cap_done = true
+			if ctrl[cap] == n and comp[cap] == h:
+				res.append(ll[cap])
+		if ctrl[p] == n and comp[p] == h:
+			res.append(ll[p])
+	if not cap_done and ctrl[cap] == n and comp[cap] == h:
+		res.append(ll[cap])
 	return res
 
 

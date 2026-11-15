@@ -105,11 +105,23 @@ static func war_limit_fronts(world: World, nat: World.Nation) -> Dictionary:
 	var out := {}
 	var ctrl := world.p_controller
 	var land := world.p_land
+	var nc := world.nation_count
+	var al := world.ally
+	var fresh := al.size() == nc * nc   # = Diplomacy.same_side (Simulation._refresh_sides)
+	var base := nat.id * nc
+	# провинции страны-кода — по указателю, без сравнения строк на каждой
+	var in_code := PackedByteArray()
+	in_code.resize(world.prov_count)
+	for p in _adm0_index(world).get(code, PackedInt32Array()):
+		in_code[p] = 1
 	for p in world.prov_count:
 		# и союзная земля: японские войска в Таиланде идут на Малайю и Бирму
-		if land[p] == 0 or ctrl[p] < 0 or (ctrl[p] != nat.id and not Diplomacy.same_side(world, ctrl[p], nat.id)):
+		if land[p] == 0:
 			continue
-		if world.p_adm0[p] == code:
+		var c := ctrl[p]
+		if c < 0 or (c != nat.id and not (al[base + c] == 1 if fresh else Diplomacy.same_side(world, c, nat.id))):
+			continue
+		if in_code[p] == 1:
 			var ll: Vector2 = world.p_lonlat[p]
 			var inside := false
 			for b in boxes:

@@ -50,33 +50,81 @@ static func is_depot(world: World, p: int) -> bool:
 
 
 ## Маска пунктов снабжения на всех провинциях — то же, что is_depot(p) для
-## каждой p, одним проходом по массивам (на день: владельцы не меняются).
+## каждой p (на день: владельцы не меняются). Постоянная часть (крупные
+## города, столицы колоний) — списком один раз, остальное — по портам,
+## плацдармам и столицам: без прохода по всем провинциям.
 static func mask(world: World) -> PackedByteArray:
+	return mask_list(world)[0]
+
+
+static var _base_list := PackedInt32Array()
+static var _base_cc := PackedByteArray()
+static var _base_of := 0
+
+
+static var _big := PackedInt32Array()
+static var _big_of := 0
+
+
+## Крупные города (очки победы ≥ DEPOT_VP) по возрастанию номера — очки
+## победы постоянны, список один на карту.
+static func big_cities(world: World) -> PackedInt32Array:
+	if _big_of != world.get_instance_id() or _big.is_empty():
+		var res := PackedInt32Array()
+		var vp := world.p_vp
+		for p in world.prov_count:
+			if vp[p] >= DEPOT_VP:
+				res.append(p)
+		_big = res
+		_big_of = world.get_instance_id()
+	return _big
+
+
+## [маска, пункты по возрастанию номера].
+static func mask_list(world: World) -> Array:
 	var pc := world.prov_count
 	var res := PackedByteArray()
 	res.resize(pc)
 	var land := world.p_land
 	var ctrl := world.p_controller
-	var vp := world.p_vp
 	var cc := _colcap(world)
 	if world.p_port.size() != pc:
 		Forces.refresh_ports(world)
-	var port := world.p_port
+	if _base_of != world.get_instance_id() or _base_cc != cc:
+		var vp := world.p_vp
+		var bl := PackedInt32Array()
+		for p in pc:
+			if land[p] == 1 and (vp[p] >= DEPOT_VP or cc[p] == 1):
+				bl.append(p)
+		_base_list = bl
+		_base_cc = cc.duplicate()
+		_base_of = world.get_instance_id()
+	var lst: PackedInt32Array = _base_list.duplicate()
+	for p in lst:
+		res[p] = 1
+	var extra := false
 	var lvl := world.p_node_lvl
-	var has_lvl := lvl.size() == pc
-	var bh := world.beachheads
-	for p in pc:
-		if land[p] == 0:
-			continue
-		if vp[p] >= DEPOT_VP or cc[p] == 1:
-			res[p] = 1
-		elif has_lvl and lvl[p] >= 1 and (port[p] == 1 or (not bh.is_empty() and bh.has(p) and int(bh[p]) >= world.day)):
-			res[p] = 1
+	if lvl.size() == pc:
+		for p in world.port_list:
+			if res[p] == 0 and land[p] == 1 and lvl[p] >= 1:
+				res[p] = 1
+				lst.append(p)
+				extra = true
+		var bh := world.beachheads
+		for p in bh:
+			if res[p] == 0 and land[p] == 1 and lvl[p] >= 1 and int(bh[p]) >= world.day:
+				res[p] = 1
+				lst.append(p)
+				extra = true
 	for nat in world.nations:
 		var cp: int = nat.capital
-		if cp >= 0 and cp < pc and land[cp] == 1 and ctrl[cp] == nat.id:
+		if cp >= 0 and cp < pc and land[cp] == 1 and ctrl[cp] == nat.id and res[cp] == 0:
 			res[cp] = 1
-	return res
+			lst.append(cp)
+			extra = true
+	if extra:
+		lst.sort()
+	return [res, lst]
 
 
 ## Столицы колоний: крупнейший город (очки победы; при равенстве — меньший
@@ -193,7 +241,9 @@ static func daily(world: World) -> void:
 	Prof.add("пс:static", _q); _q = Time.get_ticks_usec()
 	components(world)
 	Prof.add("пс:components", _q); _q = Time.get_ticks_usec()
-	var dmask := mask(world)
+	var ml := mask_list(world)
+	var dmask: PackedByteArray = ml[0]
+	var dlist: PackedInt32Array = ml[1]
 	var ctrl := world.p_controller
 	var comp := world.p_comp
 	if world.p_dsup.size() != pc:
@@ -215,7 +265,7 @@ static func daily(world: World) -> void:
 			world.dep_stock.erase(p)
 			world.dep_owner.erase(p)
 	Prof.add("пс:склады", _q); _q = Time.get_ticks_usec()
-	_split_cut(world, dmask)
+	_split_cut(world, dlist)
 	Prof.add("пс:split_cut", _q); _q = Time.get_ticks_usec()
 	# пункты за морем по странам и участкам; дивизии там
 	var divs := {}   # страна * pc + участок -> дивизий
@@ -239,9 +289,9 @@ static func daily(world: World) -> void:
 			divs[key] = int(divs.get(key, 0)) + 1
 	var by_nat: Array = []   # страна -> участок -> пункты (по возрастанию номера)
 	by_nat.resize(nc)
-	for p in pc:
+	for p in dlist:
 		var c := ctrl[p]
-		if c < 0 or dmask[p] == 0 or comp[p] < 0 or comp[p] == home[c]:
+		if c < 0 or comp[p] < 0 or comp[p] == home[c]:
 			continue
 		if by_nat[c] == null:
 			by_nat[c] = {}
@@ -418,20 +468,32 @@ static func ai_ports(world: World, divs: Dictionary, by_nat: Array) -> void:
 ## очкам победы). Пункт, вчера связанный со столицей, а сегодня отрезанный
 ## (котёл, раскол страны), оставляет себе свою долю запаса метрополии —
 ## отрезанный город держится на своих складах (юг националистов 1936 г.).
-static func _split_cut(world: World, dmask: PackedByteArray) -> void:
+static func _split_cut(world: World, dlist: PackedInt32Array) -> void:
 	var pc := world.prov_count
 	var ctrl := world.p_controller
 	var prev: Dictionary = world.dep_linked
 	var now := {}
+	var nc := world.nation_count
 	var weight := PackedFloat64Array()
-	weight.resize(world.nation_count)
+	weight.resize(nc)
+	var capn := PackedInt32Array()
+	capn.resize(nc)
+	var home := PackedInt32Array()
+	home.resize(nc)
+	for nat in world.nations:
+		capn[nat.id] = nat.capital
+		home[nat.id] = nat.dep_home
+	var comp := world.p_comp
+	var has_comp := comp.size() == pc
+	var vp := world.p_vp
 	var cut: Array = []
-	for p in pc:
+	for p in dlist:
 		var c := ctrl[p]
-		if c < 0 or dmask[p] == 0:
+		if c < 0:
 			continue
-		var w := float(maxi(1, world.p_vp[p])) * (CAP_W if world.nations[c].capital == p else 1.0)
-		if overseas(world, c, p):
+		var w := float(maxi(1, vp[p])) * (CAP_W if capn[c] == p else 1.0)
+		# = overseas(world, c, p)
+		if has_comp and (home[c] < 0 or comp[p] != home[c]):
 			if int(prev.get(p, -1)) == c:
 				cut.append(p)
 				weight[c] += w

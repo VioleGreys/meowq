@@ -414,7 +414,9 @@ func _phase_supply() -> void:
 					pconv[int(rt[1])] = 0.0
 	# блокада возможна, только если во всех соседних морских зонах есть флоты
 	_px = Time.get_ticks_usec()
-	var dmask := Depots.mask(world)   # = Depots.is_depot по всем провинциям
+	var dml := Depots.mask_list(world)   # = Depots.is_depot по всем провинциям
+	var dmask: PackedByteArray = dml[0]
+	var dlist: PackedInt32Array = dml[1]
 	if Native.core != null:
 		# всё в ядре: открытое море и блокада по господству (флоты зон — один раз)
 		var zhf := PackedByteArray()
@@ -460,8 +462,8 @@ func _phase_supply() -> void:
 	# как и порты-пункты; за морем — пока участок снабжается конвоями или со
 	# складов (Depots: подача p_dsup)
 	if cut_ok:
-		for p in world.prov_count:
-			if dmask[p] == 0 or port[p] == 1:
+		for p in dlist:
+			if port[p] == 1:
 				continue
 			var c := ctl[p]
 			if c < 0 or is_land[p] == 0 or not rep_index.has(rep[c]) or pconv[p] <= 0.0:
