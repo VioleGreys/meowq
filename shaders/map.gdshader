@@ -16,6 +16,15 @@ uniform float res_k = 1.0;   // пикселей буфера карты на л
 uniform sampler2D terrain_tex : filter_linear;  // спутниковая подложка (NASA Blue Marble), только суша
 uniform bool has_terrain = false;
 uniform bool terrain_mode = false;              // режим «Местность»: подложка без цветов стран
+// отмывка рельефа (Natural Earth SR_HR / OB_LR, tools/build_terrain_ne.py): суша —
+// свет с северо-запада (ровное место ~0.80), море — яркость рельефа дна
+uniform sampler2D shade_tex : filter_linear;
+uniform bool has_shade = false;
+// детальные текстуры местности вблизи (ambientCG, tools/build_detail.py):
+// r — трава, g — скалы, b — песок, a — снег; среднее 0.5
+uniform sampler2D detail_tex : filter_linear_mipmap, repeat_enable;
+uniform bool has_detail = false;
+const float DETAIL_TILE = 36.0;   // пикселей карты на тайл
 // проекция Миллера для сетки широт и долгот (как tools/build_map.py)
 uniform float lon_min = -169.0;
 uniform float lat_top = 80.0;
@@ -196,6 +205,9 @@ void fragment() {
 	mediump vec3 n = normalize(vec3(-hx * 7.0, -hy * 7.0, 1.0));
 	mediump float light = clamp(dot(n, normalize(vec3(-0.55, -0.65, 0.75))), 0.0, 1.0);
 
+	// отмывка: ближе — рельеф сильнее (как на картах жанра: горы объёмны вблизи)
+	mediump float shd = has_shade ? texture(shade_tex, UV).r : 0.8;
+	float near_k = smoothstep(0.35, 1.6, zoom);
 	mediump vec3 col;   // цвет — в половинной точности (дешевле на мобильных ГП)
 	// мелкие озёра входят в провинции суши, но по высоте ниже уровня моря — вода
 	// (только на низком качестве: на среднем и высоком озёра — в векторном контуре)
@@ -203,12 +215,19 @@ void fragment() {
 	if (!land || lake || sea_px) {
 		// вода: мелководье у берегов светлее, глубина темнее, лёгкая рябь
 		float depth = clamp((0.5 - h) * 2.4, 0.0, 1.0);
-		if (quality > 0) {
-			// глубина по растру не доходит до нуля у самого берега (иначе светлая
-			// кайма повторяет пиксели), мелководье — узкой полосой по контуру
-			depth = clamp((0.5 - min(h, 0.45)) * 2.4, 0.0, 1.0) * (1.0 - smoothstep(0.0, 0.5, cov) * 0.7);
+		if (has_shade) {
+			// глубина по рельефу дна (Natural Earth): светлое — шельф, тёмное —
+			// впадины; у самого берега — чуть светлее (по доле суши)
+			depth = clamp((0.85 - shd) / 0.16, 0.0, 1.0) * (1.0 - smoothstep(0.0, 0.5, cov) * 0.5);
+			col = mix(vec3(0.25, 0.45, 0.50), vec3(0.04, 0.11, 0.19), pow(depth, 0.7));
+		} else {
+			if (quality > 0) {
+				// глубина по растру не доходит до нуля у самого берега (иначе светлая
+				// кайма повторяет пиксели), мелководье — узкой полосой по контуру
+				depth = clamp((0.5 - min(h, 0.45)) * 2.4, 0.0, 1.0) * (1.0 - smoothstep(0.0, 0.5, cov) * 0.7);
+			}
+			col = mix(vec3(0.22, 0.42, 0.50), vec3(0.07, 0.15, 0.25), pow(depth, 0.45));
 		}
-		col = mix(vec3(0.22, 0.42, 0.50), vec3(0.07, 0.15, 0.25), pow(depth, 0.45));
 		float wave = sin(px.x * 0.21 + sin(px.y * 0.13) * 2.0);   // рябь (неподвижная: карта рисуется по изменениям)
 		col += vec3(0.015) * wave * (1.0 - depth * 0.5);
 		// сетка широт и долгот через 15° — как на штабной карте
@@ -229,7 +248,35 @@ void fragment() {
 			float s = step(0.5, fract((px.x + px.y) * 0.28));
 			base = mix(base, oc.rgb, s * 0.75);
 		}
-		if (has_terrain) {
+		if (has_terrain && has_shade) {
+			// как на картах жанра: издали — «бумажная» политическая карта (цвет
+			// страны, рельеф едва заметен), вблизи — природные зоны (Natural Earth)
+			// сквозь полупрозрачный цвет страны и объёмная отмывка рельефа
+			mediump vec3 terr = texture(terrain_tex, UV).rgb;
+			mediump float tl = dot(terr, vec3(0.299, 0.587, 0.114));
+			mediump float rf = clamp(1.0 + (shd - 0.80) * mix(1.3, 2.0, near_k), 0.4, 1.4);
+			if (terrain_mode) {
+				col = terr * 0.95 * rf;
+			} else {
+				mediump vec3 far_c = base * (0.9 + 0.14 * (tl - 0.75));
+				mediump vec3 near_c = mix(terr * 0.92, base, 0.45);
+				col = mix(far_c, near_c, near_k) * rf;
+			}
+			if (has_detail && quality == 2) {
+				// вблизи — фактура местности: веса по цвету природной зоны и крутизне
+				float dk = smoothstep(1.2, 3.0, zoom);
+				if (dk > 0.0) {
+					mediump vec4 dt = texture(detail_tex, px / DETAIL_TILE);
+					mediump float sat = max(terr.r, max(terr.g, terr.b)) - min(terr.r, min(terr.g, terr.b));
+					mediump float w_snow = smoothstep(0.80, 0.90, tl) * (1.0 - smoothstep(0.06, 0.14, sat));
+					mediump float w_rock = smoothstep(0.03, 0.12, abs(shd - 0.80)) * (1.0 - w_snow);
+					mediump float w_sand = smoothstep(0.0, 0.06, terr.r - terr.g) * (1.0 - w_snow - w_rock);
+					mediump float w_grass = max(0.0, 1.0 - w_snow - w_rock - w_sand);
+					mediump float d = dt.r * w_grass + dt.g * w_rock + dt.b * w_sand + dt.a * w_snow;
+					col *= 1.0 + (d - 0.5) * 0.32 * dk;
+				}
+			}
+		} else if (has_terrain) {
 			mediump vec3 terr = texture(terrain_tex, UV).rgb;
 			mediump float tl = dot(terr, vec3(0.299, 0.587, 0.114));
 			if (terrain_mode) {

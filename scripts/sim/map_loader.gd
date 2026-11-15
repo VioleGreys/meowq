@@ -37,6 +37,18 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		var t_img := Image.new()
 		if t_img.load_jpg_from_buffer(FileAccess.get_file_as_bytes(dir + "/terrain.jpg.bin")) == OK:
 			world.terrain_image = t_img
+	# отмывка рельефа суши и дна (Natural Earth, tools/build_terrain_ne.py) — только для вида
+	if FileAccess.file_exists(dir + "/shade.jpg.bin"):
+		var s_img := Image.new()
+		if s_img.load_jpg_from_buffer(FileAccess.get_file_as_bytes(dir + "/shade.jpg.bin")) == OK:
+			s_img.convert(Image.FORMAT_L8)
+			world.shade_image = s_img
+	# детальные текстуры местности (ambientCG, tools/build_detail.py) — только для вида
+	if FileAccess.file_exists(dir + "/detail.png.bin"):
+		var d_img := Image.new()
+		if d_img.load_png_from_buffer(FileAccess.get_file_as_bytes(dir + "/detail.png.bin")) == OK:
+			d_img.generate_mipmaps()
+			world.detail_image = d_img
 	world.province_ids = PackedInt32Array()
 	world.ai_wars = false
 

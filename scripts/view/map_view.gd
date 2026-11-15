@@ -159,6 +159,16 @@ func setup(w: World) -> void:
 		mat.set_shader_parameter("has_terrain", true)
 	else:
 		mat.set_shader_parameter("has_terrain", false)
+	if world.shade_image != null:
+		mat.set_shader_parameter("shade_tex", ImageTexture.create_from_image(world.shade_image))
+		mat.set_shader_parameter("has_shade", true)
+	else:
+		mat.set_shader_parameter("has_shade", false)
+	if world.detail_image != null:
+		mat.set_shader_parameter("detail_tex", ImageTexture.create_from_image(world.detail_image))
+		mat.set_shader_parameter("has_detail", true)
+	else:
+		mat.set_shader_parameter("has_detail", false)
 	mat.set_shader_parameter("map_size", Vector2(world.width, world.height))
 
 	camera = Camera2D.new()

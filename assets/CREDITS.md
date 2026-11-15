@@ -7,6 +7,8 @@
 |---|---|---|---|
 | Спутниковый снимок «Whole world — land and oceans» (Blue Marble) | подложка рельефа карты, `data/world1936/terrain.jpg.bin` (перепроецирован `tools/build_terrain.py`) | NASA / Goddard Space Flight Center, Visible Earth; копия на Викискладе | общественное достояние |
 | Границы, реки, озёра, города, акватории | карта (`tools/build_map.py`) | Natural Earth | общественное достояние |
+| Цвет природных зон NE1_HR_LC, отмывка рельефа SR_HR, рельеф дна OB_LR (Tom Patterson) | подложка карты: `data/world1936/terrain.jpg.bin`, `shade.jpg.bin` (`tools/build_terrain_ne.py`) | Natural Earth, naturalearthdata.com | общественное достояние |
+| Текстуры Grass004, Rock030, Ground054, Snow006 | фактура местности вблизи, `data/world1936/detail.png.bin` (`tools/build_detail.py`) | ambientCG.com | CC0 |
 | Шрифт Oswald | заголовки, кнопки, подписи стран | Vernon Adams и др., Google Fonts | SIL Open Font License 1.1 (`fonts/OFL-Oswald.txt`) |
 | Иконки родов войск, флота, авиации, меню (21 шт., список — `tools/build_icons.py`) | фишки на карте, боковое меню, `assets/icons/icons.json` | game-icons.net (авторы — Lorc, Delapouite и др.), через npm-пакет @iconify-json/game-icons | CC BY 3.0 — указать авторов на экране «Авторы» |
 | Звуки нажатия кнопок (`assets/sounds/`) | интерфейс | свои, синтезированы `tools/build_sounds.py` | наши |
@@ -22,4 +24,6 @@
 Решение пользователя: допускаются общественное достояние, CC0, CC BY (с
 указанием автора) и некоммерческие лицензии (NC) — но тогда игру нельзя
 продавать, пока такие материалы не заменены. Отмечать NC-материалы здесь явно.
-Материалы коммерческих игр не используем.
+Материалы коммерческих игр не используем. Игру продавать не будем (решение
+пользователя, ноябрь 2026): материалы с указанием авторства (CC BY, CC BY-SA)
+и некоммерческие (NC) можно брать без ограничений — с записью сюда.
