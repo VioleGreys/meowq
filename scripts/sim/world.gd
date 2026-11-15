@@ -1022,7 +1022,10 @@ func refresh_stats() -> void:
 		n_org[n.id] = 40.0 * (1.0 + n.b("org"))
 		n_speed[n.id] = 0.28 * (1.0 + n.b("speed"))
 	# качество флота и авиации меняется только с бонусами (stats_dirty)
-	var changed := n_ship.size() != nation_count * ShipDesigns.FAMS
+	# пересчёт — только у стран со сменой бонусов (все — при смене размеров)
+	var all := n_ship.size() != nation_count * ShipDesigns.FAMS or n_air.size() != nation_count * 4 \
+			or n_air_def.size() != nation_count
+	var changed := all
 	for n in nations:
 		changed = changed or n.stats_dirty
 	if not changed:
@@ -1031,6 +1034,8 @@ func refresh_stats() -> void:
 	n_air.resize(nation_count * 4)
 	n_air_def.resize(nation_count)
 	for n in nations:
+		if not all and not n.stats_dirty:
+			continue
 		var nav: float = 1.0 + n.b("naval")
 		var o: int = n.id * ShipDesigns.FAMS
 		n_ship[o] = nav + n.b("ship_bb")

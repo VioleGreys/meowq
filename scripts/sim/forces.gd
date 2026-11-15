@@ -297,6 +297,24 @@ static func is_port(world: World, p: int) -> bool:
 	return not world.beachheads.is_empty() and world.beachheads.has(p) and int(world.beachheads[p]) >= world.day
 
 
+## Порты и действующие плацдармы (= is_port) по возрастанию номера.
+static func port_cands(world: World) -> PackedInt32Array:
+	if world.p_port.size() != world.prov_count:
+		refresh_ports(world)
+	var plist: PackedInt32Array = world.port_list
+	if world.beachheads.is_empty():
+		return plist
+	plist = plist.duplicate()
+	var extra := false
+	for p in world.beachheads:
+		if world.p_port[p] == 0 and int(world.beachheads[p]) >= world.day:
+			plist.append(p)
+			extra = true
+	if extra:
+		plist.sort()
+	return plist
+
+
 static func refresh_ports(world: World) -> void:
 	world.p_port.resize(world.prov_count)
 	for p in world.prov_count:
@@ -1291,10 +1309,10 @@ static func ai_transfers(world: World, n: int) -> void:
 	var nc := world.nation_count
 	# заморские порты на фронте и сколько им не хватает
 	var dests: Array = []   # [нужно, порт]
-	for p in world.prov_count:
+	for p in port_cands(world):
 		# экспедиция — и в союзные порты на фронте (французский Тунис для США, 1942 г.)
 		var dest_ok: bool = ctrl[p] == n or (exp_share > 0.0 and ctrl[p] >= 0 and world.ally[n * nc + ctrl[p]] == 1)
-		if not dest_ok or home[p] == 1 or not is_port(world, p):
+		if not dest_ok or home[p] == 1:
 			continue
 		var enemies := 0
 		for k in range(a_start[p], a_start[p + 1]):
@@ -1338,13 +1356,17 @@ static func ai_transfers(world: World, n: int) -> void:
 	var day := world.day
 	var at_home := 0
 	var total := 0
+	var is_p := PackedByteArray()
+	is_p.resize(world.prov_count)
+	for p in port_cands(world):
+		is_p[p] = 1
 	for i in own.size():
 		if own[i] != n or alive[i] == 0:
 			continue
 		total += 1
 		if home[dprov[i]] == 1:
 			at_home += 1
-		if nxt[i] >= 0 or tr[i] != 0 or inv[i] >= 0 or resv[i] >= day or bt[i] != 0 or not is_port(world, dprov[i]):
+		if nxt[i] >= 0 or tr[i] != 0 or inv[i] >= 0 or resv[i] >= day or bt[i] != 0 or is_p[dprov[i]] == 0:
 			continue
 		if home[dprov[i]] == 0 and (exp_share <= 0.0 or ctrl[dprov[i]] != n):
 			continue
@@ -2511,14 +2533,20 @@ static func _raid_region(world: World, n: int) -> int:
 	var war := world.war
 	var nc := world.nation_count
 	var ctrl := world.p_controller
+	var land := world.p_land
+	var preg := world.p_region
+	var civ := world.p_civ
+	var mil := world.p_mil
+	var vpa := world.vp_ai()
+	var base := n * nc
 	for p in world.prov_count:
 		var c := ctrl[p]
-		if c < 0 or war[n * nc + c] == 0 or world.p_land[p] == 0:
+		if c < 0 or war[base + c] == 0 or land[p] == 0:
 			continue
-		var r := world.p_region[p]
+		var r := preg[p]
 		if not reach.has(r):
 			continue
-		value[r] = float(value.get(r, 0.0)) + world.p_civ[p] + world.p_mil[p] * 1.5 + world.vp_ai()[p] * 0.5
+		value[r] = float(value.get(r, 0.0)) + civ[p] + mil[p] * 1.5 + vpa[p] * 0.5
 	var best := -1
 	var best_v := 0.0
 	for r in value:
@@ -2613,8 +2641,10 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 	elif best < 0 or world.p_controller[best] != enemy or (not nat.landing_area.is_empty() and not _in_area(nat.landing_area, world.p_lonlat[best])):
 		best = -1
 		var best_score := INF
+		var t_ctrl := world.p_controller
+		var t_coast := world.p_coastal
 		for p in world.prov_count:
-			if world.p_controller[p] != enemy or world.p_coastal[p] == 0:
+			if t_ctrl[p] != enemy or t_coast[p] == 0:
 				continue
 			if not nat.landing_area.is_empty() and not _in_area(nat.landing_area, world.p_lonlat[p]):
 				continue
@@ -2652,8 +2682,8 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 		var port_d := INF
 		if home_m.is_empty():
 			home_m = own_reach(world, n, nat.capital)[0]
-		for p in world.prov_count:
-			if not is_port(world, p) or nat.hold.has(p) or not _on_sea(world, p):
+		for p in port_cands(world):
+			if nat.hold.has(p) or not _on_sea(world, p):
 				continue
 			var mine: bool = world.p_controller[p] == n and world.p_owner[p] == n
 			if (mine and (home_m[p] == 1 or _ready_divs(world, n, p) >= min_ready)) \
@@ -2665,9 +2695,17 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 		nat.inv_port = port
 	if port < 0:
 		return
+	# свои живые дивизии — по плоским массивам, объект — только для отобранных
+	var own_i := PackedInt32Array()
+	var a_alive := world.d_alive
+	var a_own := world.d_owner
+	for i in a_alive.size():
+		if a_alive[i] == 1 and a_own[i] == n:
+			own_i.append(i)
 	var ready: Array = []
-	for d in world.divisions:
-		if d.alive and d.owner == n and d.prov == port and d.path.is_empty() and not d.in_battle \
+	for i in own_i:
+		var d: World.Division = world.divisions[i]
+		if d.prov == port and d.path.is_empty() and not d.in_battle \
 				and d.transit_days == 0 and d.org > d.max_org * 0.5:
 			ready.append(d)
 	# уже собравшиеся в порту ждут остальных — фронт их не забирает
@@ -2676,15 +2714,17 @@ static func ai_invasion(world: World, n: int, rng: RandomNumberGenerator) -> voi
 	if ready.size() < min_ready:
 		# собираем десант: ближайшие свободные дивизии не с фронта идут в порт
 		var on_way := 0
-		for d in world.divisions:
-			if d.alive and d.owner == n and d.reserved_until >= world.day and not d.path.is_empty():
+		for i in own_i:
+			var d: World.Division = world.divisions[i]
+			if d.reserved_until >= world.day and not d.path.is_empty():
 				on_way += 1
 		var need := min_ready + 1 - ready.size() - on_way
 		if need <= 0:
 			return
 		var cands: Array = []
-		for d in world.divisions:
-			if d.alive and d.owner == n and d.path.is_empty() and not d.in_battle and d.transit_days == 0 \
+		for i in own_i:
+			var d: World.Division = world.divisions[i]
+			if d.path.is_empty() and not d.in_battle and d.transit_days == 0 \
 					and d.prov != port and d.reserved_until < world.day and not _at_front(world, d):
 				cands.append(d)
 		cands.sort_custom(func(x, y): return world.p_center[x.prov].distance_squared_to(world.p_center[port]) < world.p_center[y.prov].distance_squared_to(world.p_center[port]))

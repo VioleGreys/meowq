@@ -274,19 +274,7 @@ static func refresh_blockade(world: World) -> Dictionary:
 	for x in nc:
 		zl[x] = []
 	# порты (и плацдармы) по возрастанию номера — без прохода по всем провинциям
-	if world.p_port.size() != world.prov_count:
-		Forces.refresh_ports(world)
-	var plist: PackedInt32Array = world.port_list
-	if not world.beachheads.is_empty():
-		plist = plist.duplicate()
-		var extra := false
-		for p in world.beachheads:
-			if world.p_port[p] == 0 and int(world.beachheads[p]) >= world.day:
-				plist.append(p)
-				extra = true
-		if extra:
-			plist.sort()
-	for p in plist:
+	for p in Forces.port_cands(world):
 		var c := ctrl[p]
 		if c < 0 or land[p] == 0:
 			continue
