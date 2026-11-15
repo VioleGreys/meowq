@@ -692,8 +692,15 @@ static func produce(nat: World.Nation) -> void:
 	# рейды по торговле бьют не по выпуску, а по морскому импорту (Convoys → res_fill)
 	var mult := FACTORY_PTS * maxf(0.1, 1.0 + nat.b("industry"))
 	var cap := eff_cap(nat)
-	for k in EQ_COUNT:
-		nat.daily_output[k] = 0.0
+	# склад, выпуск и накопленное — в своих копиях (те же сложения), потом на место
+	var st := nat.stock
+	var dout := PackedFloat32Array()
+	dout.resize(EQ_COUNT)
+	var acc := nat.prod_acc
+	# обеспеченность ресурсами — как Economy.line_mult (встроено: вызов дороже счёта)
+	var nz: PackedInt32Array = Economy._NEED_NZ_HEAVY if nat.tank_heavy else Economy._NEED_NZ
+	var at: PackedInt32Array = Economy._NEED_AT
+	var fl := nat.res_fill
 	for line in nat.lines:
 		var eq: int = line[0]
 		var f: int = line[1]
@@ -701,7 +708,11 @@ static func produce(nat: World.Nation) -> void:
 			continue
 		var eff: float = line[2]
 		# нехватка ресурсов для того, что выпускает линия (Economy.RES_NEED)
-		var units: float = f * mult * eff * Economy.line_mult(nat, eq) / EQ_COST[eq]
+		var fill := 1.0
+		for j in range(at[eq], at[eq + 1], 3):
+			fill = minf(fill, fl[nz[j + 1]])
+		var lm := Economy.SHORT_FLOOR + (1.0 - Economy.SHORT_FLOOR) * fill
+		var units: float = f * mult * eff * lm / EQ_COST[eq]
 		# самолёты: цена выпуска по проекту в производстве (Designs)
 		if eq == EQ_TANK:
 			units /= nat.tank_cost   # бронетехника: цена по проекту танка (TankDesigns)
@@ -709,10 +720,13 @@ static func produce(nat: World.Nation) -> void:
 			units /= nat.plane_cost[0]
 		elif eq == EQ_BOMB:
 			units /= nat.plane_cost[1]
-		nat.stock[eq] += units
-		nat.daily_output[eq] += units
-		nat.prod_acc[eq] += units
+		st[eq] += units
+		dout[eq] += units
+		acc[eq] += units
 		line[2] = minf(cap, eff + EFF_GAIN * (cap - eff)) if eff < cap else cap
+	nat.stock = st
+	nat.daily_output = dout
+	nat.prod_acc = acc
 	# помощь из-за рубежа (черты с aid_eq — в военных заводах при потолке 1936 г.),
 	# пока страна воюет: три четверти — стрелковое оружие, четверть — артиллерия
 	var aid := nat.b("aid_eq") * FACTORY_PTS * EFF_CAP

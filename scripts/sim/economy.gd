@@ -35,6 +35,34 @@ const RES_NEED := [
 const HEAVY_TANK_NEED := [1, 3, 0, 0, 0, 2]
 
 
+## Ненулевые нормы [снаряжение, ресурс, норма, …] (Economy.refresh); тяжёлое шасси — своё.
+static var _NEED_NZ := _need_nz(false)
+static var _NEED_NZ_HEAVY := _need_nz(true)
+static var _NEED_AT := _need_at()   # начало троек снаряжения eq в _NEED_NZ (одно и то же у тяжёлого шасси)
+
+
+static func _need_at() -> PackedInt32Array:
+	var res := PackedInt32Array()
+	var j := 0
+	for eq in RES_NEED.size():
+		res.append(j)
+		for v in RES_NEED[eq]:
+			if int(v) != 0:
+				j += 3
+	res.append(j)
+	return res
+
+
+static func _need_nz(heavy: bool) -> PackedInt32Array:
+	var res := PackedInt32Array()
+	for eq in RES_NEED.size():
+		var need: Array = HEAVY_TANK_NEED if heavy and eq == Military.EQ_TANK else RES_NEED[eq]
+		for r in need.size():
+			if int(need[r]) != 0:
+				res.append_array([eq, r, int(need[r])])
+	return res
+
+
 ## Нормы линии eq у страны (танки — по шасси проекта в производстве).
 static func need_of(nat: World.Nation, eq: int) -> Array:
 	if eq == Military.EQ_TANK and nat.tank_heavy:
@@ -127,19 +155,50 @@ static func refresh(world: World) -> void:
 	for nat in world.nations:
 		if not nat.alive:
 			continue
+		# нормы и заводы — целые числа: сумма точна в любом порядке, поэтому
+		# сначала заводы по видам снаряжения, потом ненулевые нормы
+		var fe := PackedFloat64Array()
+		fe.resize(Military.EQ_COUNT)
 		for line in nat.lines:
 			var f := float(line[1])
-			if f <= 0.0:
-				continue
-			var need: Array = need_of(nat, int(line[0]))
-			for r in RES_COUNT:
-				nat.res_need[r] += f * float(need[r])
+			if f > 0.0:
+				fe[int(line[0])] += f
+		var rn := PackedFloat32Array()
+		rn.resize(RES_COUNT)
+		var nz := _NEED_NZ_HEAVY if nat.tank_heavy else _NEED_NZ
+		for j in range(0, nz.size(), 3):
+			var f := fe[nz[j]]
+			if f > 0.0:
+				rn[nz[j + 1]] += f * float(nz[j + 2])
+		nat.res_need = rn
 
 
 ## Добыча стран по контролируемым провинциям + синтетика.
 static func _refresh_prod(world: World) -> void:
 	for nat in world.nations:
 		nat.res_prod.fill(0.0)
+	var ctrl := world.p_controller
+	if Native.core != null and Native.core.has_method("res_prod"):
+		var mult := PackedFloat64Array()
+		mult.resize(world.nation_count)
+		for nat in world.nations:
+			mult[nat.id] = 1.0 + nat.b("resources")
+		var rp: Array = Native.core.res_prod(world.res_prov, world.res_val, ctrl, world.p_yield, mult, world.nation_count)
+		world.res_ctrl = rp[0]
+		var pr: PackedFloat32Array = rp[1]
+		for nat in world.nations:
+			nat.res_prod = pr.slice(nat.id * RES_COUNT, nat.id * RES_COUNT + RES_COUNT)
+	else:
+		_refresh_prod_gd(world)
+	Puppets.adjust_resources(world)   # отчисления марионеток сюзерену
+	# синтетика (заводы синтетического горючего и каучука — эффект synthetic)
+	for nat in world.nations:
+		if nat.alive:
+			for r in RES_COUNT:
+				nat.res_prod[r] += nat.res_synth[r]
+
+
+static func _refresh_prod_gd(world: World) -> void:
 	var ctrl := world.p_controller
 	world.res_ctrl.resize(world.res_prov.size())
 	var yl := world.p_yield.size() == world.prov_count
@@ -154,12 +213,6 @@ static func _refresh_prod(world: World) -> void:
 			mult *= world.p_yield[world.res_prov[i]]   # чужие земли — по законам (Occupation)
 		for r in RES_COUNT:
 			nat.res_prod[r] += world.res_val[i * RES_COUNT + r] * mult
-	Puppets.adjust_resources(world)   # отчисления марионеток сюзерену
-	# синтетика (заводы синтетического горючего и каучука — эффект synthetic)
-	for nat in world.nations:
-		if nat.alive:
-			for r in RES_COUNT:
-				nat.res_prod[r] += nat.res_synth[r]
 
 
 ## Сколько ресурса r у страны в распоряжении: добыча − продано + куплено.
@@ -596,28 +649,41 @@ static func _add(bn: World.Nation, sn: World.Nation, r: int, u: float) -> void:
 
 ## Пересчитать купленное/проданное и оплату у всех стран.
 static func _recount(world: World) -> void:
-	for nat in world.nations:
-		nat.res_in.fill(0.0)
-		nat.res_out.fill(0.0)
-		nat.trade_civ = 0.0
-		nat.trade_civ_in = 0.0
+	# в плоских массивах (те же сложения в том же порядке, float32 — как у стран)
+	var nn := world.nations.size()
+	var r_in := PackedFloat32Array()
+	r_in.resize(nn * RES_COUNT)
+	var r_out := PackedFloat32Array()
+	r_out.resize(nn * RES_COUNT)
+	var civ := PackedFloat64Array()
+	civ.resize(nn)
+	var civ_in := PackedFloat64Array()
+	civ_in.resize(nn)
 	for c in world.contracts:
 		var u := float(c[3])
-		var bn: World.Nation = world.nations[c[0]]
-		var sn: World.Nation = world.nations[c[1]]
-		bn.res_in[c[2]] += u
-		sn.res_out[c[2]] += u
-		bn.trade_civ += u / UNITS_PER_CIV
-		sn.trade_civ_in += u / UNITS_PER_CIV * SELLER_SHARE
+		var b: int = c[0]
+		var sl: int = c[1]
+		var r: int = c[2]
+		r_in[b * RES_COUNT + r] += u
+		r_out[sl * RES_COUNT + r] += u
+		civ[b] += u / UNITS_PER_CIV
+		civ_in[sl] += u / UNITS_PER_CIV * SELLER_SHARE
+	for nat in world.nations:
+		var k: int = nat.id * RES_COUNT
+		nat.res_in = r_in.slice(k, k + RES_COUNT)
+		nat.res_out = r_out.slice(k, k + RES_COUNT)
+		nat.trade_civ = civ[nat.id]
+		nat.trade_civ_in = civ_in[nat.id]
 
 
 ## Насколько линия обеспечена ресурсами (0..1) и множитель выпуска.
 static func line_mult(nat: World.Nation, eq: int) -> float:
-	var need: Array = need_of(nat, eq)
+	# ресурсы с ненулевой нормой (_NEED_NZ: тройки снаряжение, ресурс, норма)
+	var nz := _NEED_NZ_HEAVY if nat.tank_heavy else _NEED_NZ
+	var fl := nat.res_fill
 	var fill := 1.0
-	for r in RES_COUNT:
-		if float(need[r]) > 0.0:
-			fill = minf(fill, nat.res_fill[r])
+	for j in range(_NEED_AT[eq], _NEED_AT[eq + 1], 3):
+		fill = minf(fill, fl[nz[j + 1]])
 	return SHORT_FLOOR + (1.0 - SHORT_FLOOR) * fill
 
 
@@ -758,6 +824,18 @@ static func refresh_geo(world: World) -> void:
 	if world.p_mass.size() != world.prov_count:
 		_build_mass(world)
 	var mass := world.p_mass
+	if Native.core != null and Native.core.has_method("trade_geo") and world.p_coastal.size() == world.prov_count:
+		var g: Array = Native.core.trade_geo(world.p_controller, world.p_land, world.p_coastal, world.adj_start, world.adj_list, mass, nc)
+		world.trade_adj = g[0]
+		world.trade_coast = g[1]
+		var ks: PackedInt64Array = g[2]
+		var st: PackedInt32Array = g[3]
+		var ls: PackedInt32Array = g[4]
+		world.trade_mass = {}
+		for i in ks.size():
+			world.trade_mass[ks[i]] = ls.slice(st[i], st[i + 1])
+		world.trade_geo_day = world.day
+		return
 	var edges := {}
 	world.trade_adj = PackedByteArray()
 	world.trade_adj.resize(nc * nc)
@@ -921,6 +999,11 @@ static func daily(world: World) -> void:
 	var first := world.trade_score.size() != nc * nc
 	var dirty := false
 	var open_by = null   # день обхода: открытые зоны для путей конвоев
+	var due := _due(world, world.day, first)
+	var job: Dictionary = world.trade_job
+	var job_ok: bool = not first and not job.is_empty() and int(job["day"]) == world.day and job["due"] == due
+	# обход поставок — вместе с раздачей в C++ (trade_sweep), если рейтинг готов со вчера
+	var nat_keep: bool = job_ok and Native.core != null and Native.core.has_method("trade_sweep")
 	# раз в SWEEP_DAYS дней: добыча и потребность, обход поставок (истёкшие
 	# продлеваются на месяц, отказ/урезка вступает в силу, поставки исчезнувших
 	# и рассорившихся стран снимаются; война рвёт поставки сразу — on_war)
@@ -931,29 +1014,11 @@ static func daily(world: World) -> void:
 		_pt = Time.get_ticks_usec()
 		open_by = refresh_blockade(world)
 		Prof.add("вэ:блокада", _pt)
+		_pt = Time.get_ticks_usec()
 		dirty = true
-		var keep: Array = []
-		var cut := {}
-		for c in world.contracts:
-			if is_blocked(world, int(c[0]), int(c[1])):
-				# морская блокада рвёт и договорные поставки
-				cut[int(c[0])] = int(cut.get(int(c[0]), 0)) + 1
-				continue
-			if world.day >= int(c[4]):
-				if can_trade(world, c[0], c[1]) != "":
-					continue
-				if float(c[6]) >= 0.0:
-					c[3] = float(c[6])
-					c[6] = -1.0
-				if float(c[3]) < 0.05:
-					continue
-				while int(c[4]) <= world.day:
-					c[4] = int(c[4]) + CONTRACT_DAYS
-			keep.append(c)
-		world.contracts = keep
-		for b in cut:
-			world.log_event("Морская блокада: %s теряет заморские поставки (%d)" % [world.nations[b].name, cut[b]])
-		_recount(world)
+		if not nat_keep:
+			_keep_gd(world)
+		Prof.add("вэ:обход", _pt)
 	if world.trade_adj.size() != nc * nc or world.day - world.trade_geo_day >= CONTRACT_DAYS:
 		var _pg := Time.get_ticks_usec()
 		refresh_geo(world)
@@ -961,7 +1026,6 @@ static func daily(world: World) -> void:
 		Prof.add("вэ:гео", _pg)
 	# раз в SWEEP_DAYS дней, пакетом: рейтинг покупателей и раздача экспорта
 	# (продавцы), докупка недостающего и отказ от лишнего (покупатели)
-	var due := _due(world, world.day, first)
 	if not due.is_empty():
 		dirty = true
 		if first:
@@ -971,8 +1035,7 @@ static func daily(world: World) -> void:
 		var _pr := Time.get_ticks_usec()
 		var rows: Array = []
 		var plans: Array = []
-		var job: Dictionary = world.trade_job
-		if not first and not job.is_empty() and int(job["day"]) == world.day and job["due"] == due:
+		if job_ok:
 			Spec.finish(world)
 			rows = job["rows"]
 			plans = job["plans"]
@@ -987,39 +1050,11 @@ static func daily(world: World) -> void:
 		world.trade_job = {}
 		Prof.add("вэ:рейтинг", _pr)
 		_pr = Time.get_ticks_usec()
-		var index := {}
-		for c in world.contracts:
-			index[int(c[1]) * 100000 + int(c[0]) * 8 + int(c[2])] = c
-		for i in due.size():
-			var row: PackedFloat32Array = rows[i]
-			var s: int = due[i]
-			for b in nc:
-				world.trade_score[s * nc + b] = row[b]
-			if world.nations[s].alive:
-				apply_sales(world, s, plans[i], index)
-		_recount(world)
-		Prof.add("вэ:продажи", _pr)
-		_pr = Time.get_ticks_usec()
-		# покупатели этого дня: докупают из свободных остатков, отказываются от лишнего
-		var free: Array = []   # продавцы со свободным остатком — собираются, когда понадобятся
-		# договоры по покупателю (номера по возрастанию) — для отказа от лишнего
-		var by_buyer := {}
-		for k in world.contracts.size():
-			var bk: int = world.contracts[k][0]
-			if not by_buyer.has(bk):
-				by_buyer[bk] = []
-			by_buyer[bk].append(k)
-		for x in due:
-			var nat: World.Nation = world.nations[x]
-			if not nat.alive or (nat.is_player and not nat.trade_auto):
-				continue
-			var n0 := world.contracts.size()
-			_ai_buy(world, nat, free)
-			var mine: Array = by_buyer.get(x, [])
-			for k in range(n0, world.contracts.size()):
-				mine.append(k)   # новые договоры — только этого покупателя
-			_ai_cut(world, nat, mine)
-		Prof.add("вэ:закупки", _pr)
+		if Native.core != null and Native.core.has_method("trade_sweep"):
+			_sweep_native(world, due, rows, plans, nat_keep)
+			Prof.add("вэ:продажи", _pr)
+		else:
+			_sweep_gd(world, due, rows, plans, _pr)
 	if open_by != null:
 		# пути конвоев — по договорам после закупок этого дня
 		var _pc := Time.get_ticks_usec()
@@ -1029,6 +1064,210 @@ static func daily(world: World) -> void:
 		var _pf := Time.get_ticks_usec()
 		_update_fill(world)
 		Prof.add("вэ:fill", _pf)
+
+
+## Раздача экспорта, докупка и отказ от лишнего — в C++ (MeowqCore.trade_sweep),
+## операция в операцию как _sweep_gd (keep — сначала обход поставок, как _keep_gd);
+## поставки меняются на месте, новые — в конец.
+static func _sweep_native(world: World, due: PackedInt32Array, rows: Array, plans: Array, keep: bool) -> void:
+	var nc := world.nation_count
+	var alive := PackedByteArray()
+	alive.resize(nc)
+	var player := PackedByteArray()
+	player.resize(nc)
+	var auto := PackedByteArray()
+	auto.resize(nc)
+	var closed := PackedByteArray()
+	closed.resize(nc)
+	var fac := PackedInt32Array()
+	fac.resize(nc)
+	var over := PackedInt32Array()
+	over.resize(nc)
+	var law := PackedFloat64Array()
+	law.resize(nc)
+	var base := PackedFloat64Array()
+	base.resize(nc)
+	var civ := PackedFloat64Array()
+	civ.resize(nc)
+	var civ_in := PackedFloat64Array()
+	civ_in.resize(nc)
+	var prod := PackedFloat32Array()
+	var need := PackedFloat32Array()
+	var r_in := PackedFloat32Array()
+	var r_out := PackedFloat32Array()
+	for x in nc:
+		var nx: World.Nation = world.nations[x]
+		alive[x] = 1 if nx.alive else 0
+		player[x] = 1 if nx.is_player else 0
+		auto[x] = 1 if nx.trade_auto else 0
+		closed[x] = 1 if nx.trade_closed else 0
+		fac[x] = nx.faction
+		over[x] = nx.overlord
+		law[x] = float(LAWS[nx.trade_law]["export"])
+		base[x] = (float(nx.civ) - Politics.consumer_factories(nx)) * AI_CIV_SHARE
+		civ[x] = nx.trade_civ
+		civ_in[x] = nx.trade_civ_in
+		prod.append_array(nx.res_prod)
+		need.append_array(nx.res_need)
+		r_in.append_array(nx.res_in)
+		r_out.append_array(nx.res_out)
+	var emb := PackedByteArray()
+	emb.resize(nc * nc)
+	for k in world.embargoes:
+		var a := int(k) / 100000
+		var b := int(k) % 100000
+		if a < nc and b < nc:
+			emb[a * nc + b] = 1
+	var cl := world.contracts
+	var n0 := cl.size()
+	var c0 := PackedInt32Array()
+	c0.resize(n0)
+	var c1 := PackedInt32Array()
+	c1.resize(n0)
+	var c2 := PackedInt32Array()
+	c2.resize(n0)
+	var c3 := PackedFloat64Array()
+	c3.resize(n0)
+	var c4 := PackedInt32Array()
+	c4.resize(n0)
+	var c5 := PackedInt32Array()
+	c5.resize(n0)
+	var c6 := PackedFloat64Array()
+	c6.resize(n0)
+	for k in n0:
+		var c: Array = cl[k]
+		c0[k] = int(c[0])
+		c1[k] = int(c[1])
+		c2[k] = int(c[2])
+		c3[k] = float(c[3])
+		c4[k] = int(c[4])
+		c5[k] = int(c[5])
+		c6[k] = float(c[6])
+	var war := world.war
+	if war.size() != nc * nc:
+		war = PackedByteArray()
+		war.resize(nc * nc)
+	var res: Array = Native.core.trade_sweep({"nc": nc, "day": world.day, "due": due, "rows": rows, "plans": plans,
+		"score": world.trade_score, "alive": alive, "player": player, "auto": auto, "closed": closed,
+		"fac": fac, "over": over, "law": law, "base": base, "prod": prod, "need": need, "in": r_in, "out": r_out,
+		"civ": civ, "civ_in": civ_in, "war": war, "emb": emb, "block": world.trade_block, "rep": world.rep,
+		"c0": c0, "c1": c1, "c2": c2, "c3": c3, "c4": c4, "c5": c5, "c6": c6, "keep": keep})
+	world.trade_score = res[0]
+	var o0: PackedInt32Array = res[1]
+	var o1: PackedInt32Array = res[2]
+	var o2: PackedInt32Array = res[3]
+	var o3: PackedFloat64Array = res[4]
+	var o4: PackedInt32Array = res[5]
+	var o5: PackedInt32Array = res[6]
+	var o6: PackedFloat64Array = res[7]
+	var m := n0
+	if keep:
+		var kept: PackedInt32Array = res[12]
+		m = kept.size()
+		var nl: Array = []
+		nl.resize(m)
+		for j in m:
+			var k := kept[j]
+			var c: Array = cl[k]
+			if o3[j] != c3[k]:
+				c[3] = o3[j]
+			if o4[j] != c4[k]:
+				c[4] = o4[j]
+			if o6[j] != c6[k]:
+				c[6] = o6[j]
+			nl[j] = c
+		cl = nl
+		world.contracts = nl
+	else:
+		for k in n0:
+			var c: Array = cl[k]
+			if o3[k] != c3[k]:
+				c[3] = o3[k]
+			if o6[k] != c6[k]:
+				c[6] = o6[k]
+	for k in range(m, o0.size()):
+		cl.append([o0[k], o1[k], o2[k], o3[k], o4[k], o5[k], o6[k]])
+	var oi: PackedFloat32Array = res[8]
+	var oo: PackedFloat32Array = res[9]
+	var ocv: PackedFloat64Array = res[10]
+	var oci: PackedFloat64Array = res[11]
+	for x in nc:
+		var nx: World.Nation = world.nations[x]
+		nx.res_in = oi.slice(x * RES_COUNT, x * RES_COUNT + RES_COUNT)
+		nx.res_out = oo.slice(x * RES_COUNT, x * RES_COUNT + RES_COUNT)
+		nx.trade_civ = ocv[x]
+		nx.trade_civ_in = oci[x]
+	if keep:
+		var cb: PackedInt32Array = res[13]
+		var cn: PackedInt32Array = res[14]
+		for i in cb.size():
+			world.log_event("Морская блокада: %s теряет заморские поставки (%d)" % [world.nations[cb[i]].name, cn[i]])
+
+
+## Раздача экспорта, докупка и отказ от лишнего (GDScript-двойник trade_sweep).
+static func _sweep_gd(world: World, due: PackedInt32Array, rows: Array, plans: Array, _pr: int) -> void:
+	var nc := world.nation_count
+	var index := {}
+	for c in world.contracts:
+		index[int(c[1]) * 100000 + int(c[0]) * 8 + int(c[2])] = c
+	for i in due.size():
+		var row: PackedFloat32Array = rows[i]
+		var s: int = due[i]
+		for b in nc:
+			world.trade_score[s * nc + b] = row[b]
+		if world.nations[s].alive:
+			apply_sales(world, s, plans[i], index)
+	_recount(world)
+	Prof.add("вэ:продажи", _pr)
+	_pr = Time.get_ticks_usec()
+	# покупатели этого дня: докупают из свободных остатков, отказываются от лишнего
+	var free: Array = []   # продавцы со свободным остатком — собираются, когда понадобятся
+	# договоры по покупателю (номера по возрастанию) — для отказа от лишнего
+	var by_buyer := {}
+	for k in world.contracts.size():
+		var bk: int = world.contracts[k][0]
+		if not by_buyer.has(bk):
+			by_buyer[bk] = []
+		by_buyer[bk].append(k)
+	for x in due:
+		var nat: World.Nation = world.nations[x]
+		if not nat.alive or (nat.is_player and not nat.trade_auto):
+			continue
+		var n0 := world.contracts.size()
+		_ai_buy(world, nat, free)
+		var mine: Array = by_buyer.get(x, [])
+		for k in range(n0, world.contracts.size()):
+			mine.append(k)   # новые договоры — только этого покупателя
+		_ai_cut(world, nat, mine)
+	Prof.add("вэ:закупки", _pr)
+
+
+## Обход поставок (GDScript; в C++ — в trade_sweep с keep): истёкшие
+## продлеваются на месяц, отказ/урезка вступает в силу, поставки исчезнувших и
+## рассорившихся стран снимаются, морская блокада рвёт и договорные.
+static func _keep_gd(world: World) -> void:
+	var keep: Array = []
+	var cut := {}
+	for c in world.contracts:
+		if is_blocked(world, int(c[0]), int(c[1])):
+			# морская блокада рвёт и договорные поставки
+			cut[int(c[0])] = int(cut.get(int(c[0]), 0)) + 1
+			continue
+		if world.day >= int(c[4]):
+			if can_trade(world, c[0], c[1]) != "":
+				continue
+			if float(c[6]) >= 0.0:
+				c[3] = float(c[6])
+				c[6] = -1.0
+			if float(c[3]) < 0.05:
+				continue
+			while int(c[4]) <= world.day:
+				c[4] = int(c[4]) + CONTRACT_DAYS
+		keep.append(c)
+	world.contracts = keep
+	for b in cut:
+		world.log_event("Морская блокада: %s теряет заморские поставки (%d)" % [world.nations[b].name, cut[b]])
+	_recount(world)
 
 
 ## Поставка по договору (эффект supply): seller отдаёт buyer units ресурса r в
