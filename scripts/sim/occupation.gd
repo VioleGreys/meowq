@@ -145,25 +145,33 @@ static func step(world: World) -> void:
 		need[k] = float(need.get(k, 0.0)) + 0.5 + float(world.p_population[p]) / 2000.0
 		provs.append(p)
 	var stats := {}
+	# закон, прикрытие и бонусы стран — одни на пару «оккупант, владелец»
+	var kmemo := {}
 	for p in provs:
 		var k := kp[p]
-		var law: Dictionary = LAWS[law_of(world, k)]
-		var cover := minf(1.0, float(world.occ_garrison.get(k, 0.0)) / maxf(0.1, float(need[k])))
-		var integ := world.occ_integrate.has(k) and world.p_owner[p] == world.p_controller[p]
+		var km: Array = kmemo.get(k, [])
+		if km.is_empty():
+			# черты и фокусы: оккупант гасит сопротивление (occ_resist < 0) и
+			# поднимает принятие (occ_comply); владелец земли (изгнанник, партизаны)
+			# разгоняет сопротивление (resistance) и сбивает принятие
+			var nc_: World.Nation = world.nations[k / 4096]
+			var no_: World.Nation = world.nations[k % 4096]
+			km = [LAWS[law_of(world, k)], minf(1.0, float(world.occ_garrison.get(k, 0.0)) / maxf(0.1, float(need[k]))),
+				maxf(0.0, 1.0 + nc_.b("occ_resist") + no_.b("resistance")), maxf(0.0, 1.0 + nc_.b("occ_suppress")),
+				maxf(0.0, 1.0 + nc_.b("occ_comply") - 0.5 * no_.b("resistance")), world.occ_integrate.has(k)]
+			kmemo[k] = km
+		var law: Dictionary = km[0]
+		var cover: float = km[1]
+		var integ: bool = km[5] and world.p_owner[p] == world.p_controller[p]
 		var r := world.p_resist[p]
 		var cm := world.p_comply[p]
-		# черты и фокусы: оккупант гасит сопротивление (occ_resist < 0) и
-		# поднимает принятие (occ_comply); владелец земли (изгнанник, партизаны)
-		# разгоняет сопротивление (resistance) и сбивает принятие
-		var nc_: World.Nation = world.nations[k / 4096]
-		var no_: World.Nation = world.nations[k % 4096]
-		var rk := maxf(0.0, 1.0 + nc_.b("occ_resist") + no_.b("resistance"))
-		var dr := RESIST_GAIN * float(law["resist"]) * rk * (1.0 - cover) * (1.0 - 0.7 * cm / 100.0) - RESIST_SUPPRESS * cover * maxf(0.0, 1.0 + nc_.b("occ_suppress"))
+		var rk: float = km[2]
+		var dr := RESIST_GAIN * float(law["resist"]) * rk * (1.0 - cover) * (1.0 - 0.7 * cm / 100.0) - RESIST_SUPPRESS * cover * float(km[3])
 		r = clampf(r + dr * STEP, 0.0, 100.0)
 		var lc: float = law["comply"]
 		var dc := COMPLY_GAIN * lc * ((1.0 - r / 100.0) if lc > 0.0 else 1.0)
 		if lc > 0.0:
-			dc *= maxf(0.0, 1.0 + nc_.b("occ_comply") - 0.5 * no_.b("resistance"))
+			dc *= float(km[4])
 		if integ:
 			dc += INTEG_GAIN
 		cm = clampf(cm + dc * STEP, 0.0, 100.0)

@@ -813,28 +813,39 @@ static func ai_abilities(world: World) -> void:
 	var al := world.d_alive
 	var pl := world.d_plan
 	var n := mini(mini(gen.size(), bt.size()), al.size())
-	var cnt := {}   # командир -> [наступают в бою, обороняются в бою, ждут без плана]
+	# командир -> [наступают в бою, обороняются в бою, ждут без плана] — в
+	# плоском массиве по номеру командира (без списка на каждую дивизию)
+	var ncmd: int = world.commanders.size()
+	var cnt := PackedInt32Array()
+	cnt.resize(ncmd * 3)
+	var seen := PackedByteArray()
+	seen.resize(ncmd)
 	for s in n:
 		if al[s] == 0:
 			continue
-		for c in [gen[s], mar[s]]:
-			if c < 0:
-				continue
-			if not cnt.has(c):
-				cnt[c] = [0, 0, 0]
-			var e: Array = cnt[c]
-			if bt[s] != 0:
-				e[0 if nx[s] >= 0 else 1] += 1
-			elif nx[s] < 0 and pl[s] < 0.5:
-				e[2] += 1
-	var ids := cnt.keys()
-	ids.sort()
-	for cid in ids:
+		var kind := -1
+		if bt[s] != 0:
+			kind = 0 if nx[s] >= 0 else 1
+		elif nx[s] < 0 and pl[s] < 0.5:
+			kind = 2
+		var g := gen[s]
+		if g >= 0:
+			seen[g] = 1
+			if kind >= 0:
+				cnt[g * 3 + kind] += 1
+		var m := mar[s]
+		if m >= 0:
+			seen[m] = 1
+			if kind >= 0:
+				cnt[m * 3 + kind] += 1
+	for cid in ncmd:
+		if seen[cid] == 0:
+			continue
 		var c: World.Commander = world.commanders[cid]
 		var nat: World.Nation = world.nations[c.owner]
 		if nat.is_player or not c.alive or nat.at_war.is_empty():
 			continue
-		var e: Array = cnt[cid]
+		var e := [cnt[cid * 3], cnt[cid * 3 + 1], cnt[cid * 3 + 2]]
 		var k := 2 if c.marshal else 1   # маршалу — порог выше (вся группа)
 		var want := ""
 		if e[0] >= 4 * k and e[0] >= e[1]:
