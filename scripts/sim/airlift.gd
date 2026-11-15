@@ -38,12 +38,16 @@ static func daily(world: World) -> void:
 	var sup := world.d_sup
 	# дивизии с недостачей на участках не метрополии: страна * pc + участок -> [слоты]
 	var pockets := {}
+	var home := PackedInt32Array()
+	home.resize(nc)
+	for nat in world.nations:
+		home[nat.id] = nat.dep_home
 	for i in alive.size():
 		if alive[i] == 0 or dprov[i] < 0 or sup[i] >= 0.999:
 			continue
 		var o := downer[i]
 		var c := comp[dprov[i]]
-		if c < 0 or c == world.nations[o].dep_home:
+		if c < 0 or c == home[o]:
 			continue
 		var key := o * pc + c
 		if not pockets.has(key):
@@ -77,11 +81,16 @@ static func _deliver(world: World, nat: World.Nation, keys: Array, pockets: Dict
 	# участки в пределах дальности: недостача (в дивизиях) и опасность в воздухе
 	var plan: Array = []   # [слоты, недостача, опасность]
 	var need := 0.0
+	var in_r := {}   # провинция -> в пределах дальности (дивизии стоят по нескольку)
+	var dprov := world.d_prov
 	for key in keys:
 		var slots: Array = pockets[key]
 		var reach := false
 		for i in slots:
-			if _in_range(world, bases, world.d_prov[i]):
+			var dp := dprov[i]
+			if not in_r.has(dp):
+				in_r[dp] = _in_range(world, bases, dp)
+			if in_r[dp]:
 				reach = true
 				break
 		if not reach:
@@ -134,8 +143,11 @@ static func _home_depots(world: World, nat: World.Nation) -> Array:
 		return res
 	var comp := world.p_comp
 	var ctrl := world.p_controller
+	var vp := world.p_vp
+	var n := nat.id
+	var h := nat.dep_home
 	for p in world.prov_count:
-		if ctrl[p] == nat.id and comp[p] == nat.dep_home and (world.p_vp[p] >= Depots.DEPOT_VP or p == nat.capital):
+		if ctrl[p] == n and comp[p] == h and (vp[p] >= Depots.DEPOT_VP or p == nat.capital):
 			res.append(world.p_lonlat[p])
 	return res
 

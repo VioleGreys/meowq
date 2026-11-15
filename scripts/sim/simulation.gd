@@ -186,11 +186,17 @@ func _phase_economy() -> void:
 			Tech.fit_slots(nat)
 			# ИИ пересобирает проекты самолётов под новые технологии
 			if not nat.is_player and (world.day + nat.id) % 30 == 0:
+				var _pq := Time.get_ticks_usec()
 				Designs.ai_update(world, nat)
+				Prof.add("нс:самолёты", _pq); _pq = Time.get_ticks_usec()
 				ShipDesigns.ai_update(world, nat)
+				Prof.add("нс:корабли", _pq); _pq = Time.get_ticks_usec()
 				TankDesigns.ai_update(world, nat)
+				Prof.add("нс:танки", _pq); _pq = Time.get_ticks_usec()
 				Military.ai_retrain(world, nat)   # устаревшие дивизии — в шаблоны с нынешними ротами
+				Prof.add("нс:переучивание", _pq); _pq = Time.get_ticks_usec()
 				Leaders.ai_assign(world, nat)     # дивизии без генерала — в армии с местом или в новые
+				Prof.add("нс:генералы", _pq)
 		Prof.add("эк:наука-слоты", _pt)
 		_pt = Time.get_ticks_usec()
 		for tid in Tech.daily(world, nat):
@@ -390,6 +396,7 @@ func _phase_supply() -> void:
 					pconv[int(rt[1])] = 0.0
 	# блокада возможна, только если во всех соседних морских зонах есть флоты
 	_px = Time.get_ticks_usec()
+	var dmask := Depots.mask(world)   # = Depots.is_depot по всем провинциям
 	if Native.core != null:
 		# всё в ядре: открытое море и блокада по господству (флоты зон — один раз)
 		var zhf := PackedByteArray()
@@ -414,13 +421,13 @@ func _phase_supply() -> void:
 		for pi in plist.size():
 			var p := plist[pi]
 			var c := ctl[p]
-			if c >= 0 and rep_index.has(rep[c]) and hub_ok[pi] == 1 and not (cut_ok and pconv[p] <= 0.0) and Depots.is_depot(world, p):
+			if c >= 0 and rep_index.has(rep[c]) and hub_ok[pi] == 1 and not (cut_ok and pconv[p] <= 0.0) and dmask[p] == 1:
 				hubs[rep_index[rep[c]]].append(p)
 	else:
 		for pi in plist.size():
 			var p := plist[pi]
 			var c := ctl[p]
-			if c < 0 or not rep_index.has(rep[c]) or (cut_ok and pconv[p] <= 0.0) or not Depots.is_depot(world, p):
+			if c < 0 or not rep_index.has(rep[c]) or (cut_ok and pconv[p] <= 0.0) or dmask[p] == 0:
 				continue
 			var open_sea := false
 			for k in range(adj_s[p], adj_s[p + 1]):
@@ -436,10 +443,12 @@ func _phase_supply() -> void:
 	# складов (Depots: подача p_dsup)
 	if cut_ok:
 		for p in world.prov_count:
-			var c := ctl[p]
-			if c < 0 or port[p] == 1 or is_land[p] == 0 or not rep_index.has(rep[c]) or pconv[p] <= 0.0:
+			if dmask[p] == 0 or port[p] == 1:
 				continue
-			if world.nations[c].capital != p and Depots.is_depot(world, p):
+			var c := ctl[p]
+			if c < 0 or is_land[p] == 0 or not rep_index.has(rep[c]) or pconv[p] <= 0.0:
+				continue
+			if world.nations[c].capital != p:
 				hubs[rep_index[rep[c]]].append(p)
 	# плацдармы высадок временно работают как порты
 	for p in world.beachheads.keys():
@@ -470,10 +479,14 @@ func _phase_supply() -> void:
 			if world.nations[a].alive and rep_index.has(rep[a]):
 				so[a] = rep[a]
 				caps.append(world.nations[a].capital)
+		var _ps := Time.get_ticks_usec()
 		Supply.regions(world, so, srcs, caps)
+		Prof.add("сн:районы", _ps); _ps = Time.get_ticks_usec()
 		Airlift.daily(world)   # снабжение по воздуху — поверх раскладки по дивизиям
 		world.sup_args = [so, srcs, caps]   # для упреждения поля на завтра (Supply.spec)
+		Prof.add("сн:воздух", _ps); _ps = Time.get_ticks_usec()
 		Supply.ai_daily(world)
+		Prof.add("сн:ии", _ps)
 		Prof.add("снаб:сети", _pt0)
 		return
 	var results: Array = []
@@ -590,33 +603,8 @@ func _phase_ai() -> void:
 	if world.day % AI_PERIOD != 0:
 		return
 	var _pa := Time.get_ticks_usec()
-	var jobs: Array = []
-	for nat in world.nations:
-		if nat.alive and not nat.is_player:
-			_offensive_step(nat)
-			_siege_step(nat)
-			jobs.append({"nation": nat.id})
-			# развёртывание к запланированной фокусами войне: часть армии заранее
-			# держит фронт на границе с будущим противником (как армия игрока)
-			var x := _staging_enemy(nat)
-			if x >= 0:
-				jobs.append({"stage_of": nat.id, "enemy": x})
-			# окружённые части пытаются вырваться к основной зоне
-			# прорыв с двух сторон: из котла — к основной зоне, из основной зоны — навстречу
-			for bk in _breakouts(nat):
-				jobs.append({"pocket_of": nat.id, "comp": bk[0], "objective": bk[1]})
-				jobs.append({"relief_of": nat.id, "near": bk[1], "objective": bk[2]})
-	jobs.append_array(_group_jobs())
-	if jobs.is_empty():
-		return
-	Prof.add("ии:задачи", _pa)
-	_pa = Time.get_ticks_usec()
-	world.k_snapshot()
-	Prof.add("ии:k_snapshot", _pa)
-	_pa = Time.get_ticks_usec()
-	var day := world.day
-	var seed_value := world.seed_value
 	# дивизии по странам — один проход вместо прохода на каждую страну
+	# (шаги наступления и осады владельцев дивизий не меняют)
 	var by_nation: Array = []
 	by_nation.resize(world.nation_count)
 	for n in world.nation_count:
@@ -626,6 +614,39 @@ func _phase_ai() -> void:
 		by_nation[owner[i]].append(i)
 	for n in world.nation_count:
 		by_nation[n] = PackedInt32Array(by_nation[n])
+	var jobs: Array = []
+	for nat in world.nations:
+		if nat.alive and not nat.is_player:
+			var _pz := Time.get_ticks_usec()
+			_offensive_step(nat)
+			_siege_step(nat)
+			Prof.add("из:наступление", _pz); _pz = Time.get_ticks_usec()
+			jobs.append({"nation": nat.id})
+			# развёртывание к запланированной фокусами войне: часть армии заранее
+			# держит фронт на границе с будущим противником (как армия игрока)
+			var x := _staging_enemy(nat)
+			Prof.add("из:развёртывание", _pz); _pz = Time.get_ticks_usec()
+			if x >= 0:
+				jobs.append({"stage_of": nat.id, "enemy": x})
+			# окружённые части пытаются вырваться к основной зоне
+			# прорыв с двух сторон: из котла — к основной зоне, из основной зоны — навстречу
+			var bks := _breakouts(nat, by_nation[nat.id])
+			Prof.add("из:котлы", _pz)
+			for bk in bks:
+				jobs.append({"pocket_of": nat.id, "comp": bk[0], "objective": bk[1]})
+				jobs.append({"relief_of": nat.id, "near": bk[1], "objective": bk[2]})
+	var _pg0 := Time.get_ticks_usec()
+	jobs.append_array(_group_jobs())
+	Prof.add("из:группы", _pg0)
+	if jobs.is_empty():
+		return
+	Prof.add("ии:задачи", _pa)
+	_pa = Time.get_ticks_usec()
+	world.k_snapshot()
+	Prof.add("ии:k_snapshot", _pa)
+	_pa = Time.get_ticks_usec()
+	var day := world.day
+	var seed_value := world.seed_value
 	# дивизии на развёртывание: STAGE_SHARE армии (по id — состав не скачет)
 	var staged := {}
 	for job in jobs:
@@ -754,7 +775,7 @@ const BREAKOUT_SUP := 0.5    # окружение — среднее снабж�
 ## зоны со своими дивизиями на снабжении ниже BREAKOUT_SUP, откуда до основной зоны есть путь по суше не
 ## длиннее BREAKOUT_STEPS. → [[участок, цель (провинция основной зоны), провинция
 ## котла, откуда путь]], крупные котлы первыми (не больше 3).
-func _breakouts(nat: World.Nation) -> Array:
+func _breakouts(nat: World.Nation, mine: PackedInt32Array) -> Array:
 	var res: Array = []
 	var home: int = nat.dep_home
 	if nat.at_war.is_empty() or home < 0 or world.p_comp.size() != world.prov_count:
@@ -762,12 +783,16 @@ func _breakouts(nat: World.Nation) -> Array:
 	var comp := world.p_comp
 	var cnt := {}
 	var ssum := {}
-	for i in world.d_alive.size():
-		if world.d_alive[i] == 1 and world.d_owner[i] == nat.id and world.d_prov[i] >= 0 and world.d_transit[i] <= 0:
-			var c := comp[world.d_prov[i]]
+	var alive := world.d_alive
+	var dprov := world.d_prov
+	var transit := world.d_transit
+	var dsup := world.d_sup
+	for i in mine:   # дивизии страны по возрастанию слота — порядок сумм тот же
+		if alive[i] == 1 and dprov[i] >= 0 and transit[i] <= 0:
+			var c := comp[dprov[i]]
 			if c >= 0 and c != home:
 				cnt[c] = int(cnt.get(c, 0)) + 1
-				ssum[c] = float(ssum.get(c, 0.0)) + world.d_sup[i]
+				ssum[c] = float(ssum.get(c, 0.0)) + dsup[i]
 	# окружение — участок без снабжения (отрезанный, но снабжаемый через свой
 	# пункт или конвои — держит фронт, как север Республики в 1936–37 гг.)
 	for c in cnt.keys():
@@ -785,8 +810,9 @@ func _breakouts(nat: World.Nation) -> Array:
 		var dist := {}
 		var origin := {}
 		var q := PackedInt32Array()
+		var ctrl := world.p_controller
 		for p in world.prov_count:
-			if comp[p] == c and world.p_controller[p] == nat.id:
+			if comp[p] == c and ctrl[p] == nat.id:
 				dist[p] = 0
 				origin[p] = p
 				q.append(p)

@@ -49,6 +49,36 @@ static func is_depot(world: World, p: int) -> bool:
 	return world.p_node_lvl.size() == world.prov_count and world.p_node_lvl[p] >= 1 and Forces.is_port(world, p)
 
 
+## Маска пунктов снабжения на всех провинциях — то же, что is_depot(p) для
+## каждой p, одним проходом по массивам (на день: владельцы не меняются).
+static func mask(world: World) -> PackedByteArray:
+	var pc := world.prov_count
+	var res := PackedByteArray()
+	res.resize(pc)
+	var land := world.p_land
+	var ctrl := world.p_controller
+	var vp := world.p_vp
+	var cc := _colcap(world)
+	if world.p_port.size() != pc:
+		Forces.refresh_ports(world)
+	var port := world.p_port
+	var lvl := world.p_node_lvl
+	var has_lvl := lvl.size() == pc
+	var bh := world.beachheads
+	for p in pc:
+		if land[p] == 0:
+			continue
+		if vp[p] >= DEPOT_VP or cc[p] == 1:
+			res[p] = 1
+		elif has_lvl and lvl[p] >= 1 and (port[p] == 1 or (not bh.is_empty() and bh.has(p) and int(bh[p]) >= world.day)):
+			res[p] = 1
+	for nat in world.nations:
+		var cp: int = nat.capital
+		if cp >= 0 and cp < pc and land[cp] == 1 and ctrl[cp] == nat.id:
+			res[cp] = 1
+	return res
+
+
 ## Столицы колоний: крупнейший город (очки победы; при равенстве — меньший
 ## номер) каждой колониальной территории владельца на начало игры (код страны
 ## Natural Earth; сначала порт, потом побережье) — тоже пункт снабжения (Тетуан, Эль-Аюн, Асмэра, Дакар):
@@ -147,8 +177,12 @@ static func overseas(world: World, n: int, p: int) -> bool:
 static func daily(world: World) -> void:
 	var pc := world.prov_count
 	var nc := world.nation_count
+	var _q := Time.get_ticks_usec()
 	Supply._static(world)
+	Prof.add("пс:static", _q); _q = Time.get_ticks_usec()
 	components(world)
+	Prof.add("пс:components", _q); _q = Time.get_ticks_usec()
+	var dmask := mask(world)
 	var ctrl := world.p_controller
 	var comp := world.p_comp
 	if world.p_dsup.size() != pc:
@@ -159,7 +193,7 @@ static func daily(world: World) -> void:
 	keys.sort()
 	for p in keys:
 		var o: int = world.dep_owner.get(p, -1)
-		if o < 0 or ctrl[p] != o or not world.nations[o].alive or not is_depot(world, p):
+		if o < 0 or ctrl[p] != o or not world.nations[o].alive or dmask[p] == 0:
 			world.dep_stock.erase(p)
 			world.dep_owner.erase(p)
 			continue
@@ -169,7 +203,9 @@ static func daily(world: World) -> void:
 				world.nations[o].stock[k] += st[k]
 			world.dep_stock.erase(p)
 			world.dep_owner.erase(p)
-	_split_cut(world)
+	Prof.add("пс:склады", _q); _q = Time.get_ticks_usec()
+	_split_cut(world, dmask)
+	Prof.add("пс:split_cut", _q); _q = Time.get_ticks_usec()
 	# пункты за морем по странам и участкам; дивизии там
 	var divs := {}   # страна * pc + участок -> дивизий
 	var alive := world.d_alive
@@ -190,14 +226,16 @@ static func daily(world: World) -> void:
 	by_nat.resize(nc)
 	for p in pc:
 		var c := ctrl[p]
-		if c < 0 or comp[p] < 0 or comp[p] == world.nations[c].dep_home or not is_depot(world, p):
+		if c < 0 or dmask[p] == 0 or comp[p] < 0 or comp[p] == world.nations[c].dep_home:
 			continue
 		if by_nat[c] == null:
 			by_nat[c] = {}
 		if not by_nat[c].has(comp[p]):
 			by_nat[c][comp[p]] = []
 		by_nat[c][comp[p]].append(p)
+	Prof.add("пс:by_nat", _q); _q = Time.get_ticks_usec()
 	ai_ports(world, divs, by_nat)
+	Prof.add("пс:ai_ports", _q); _q = Time.get_ticks_usec()
 	world.dep_want = {}
 	for nat: World.Nation in world.nations:
 		var n := nat.id
@@ -365,7 +403,7 @@ static func ai_ports(world: World, divs: Dictionary, by_nat: Array) -> void:
 ## очкам победы). Пункт, вчера связанный со столицей, а сегодня отрезанный
 ## (котёл, раскол страны), оставляет себе свою долю запаса метрополии —
 ## отрезанный город держится на своих складах (юг националистов 1936 г.).
-static func _split_cut(world: World) -> void:
+static func _split_cut(world: World, dmask: PackedByteArray) -> void:
 	var pc := world.prov_count
 	var ctrl := world.p_controller
 	var prev: Dictionary = world.dep_linked
@@ -375,7 +413,7 @@ static func _split_cut(world: World) -> void:
 	var cut: Array = []
 	for p in pc:
 		var c := ctrl[p]
-		if c < 0 or not is_depot(world, p):
+		if c < 0 or dmask[p] == 0:
 			continue
 		var w := float(maxi(1, world.p_vp[p])) * (CAP_W if world.nations[c].capital == p else 1.0)
 		if overseas(world, c, p):

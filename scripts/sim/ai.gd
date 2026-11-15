@@ -975,22 +975,47 @@ static func _attack_limit_fill(world: World, t: PackedByteArray, nid: int, lim: 
 	var boxes: Array = lim[1]
 	var excl: Array = lim[2] if lim.size() > 2 else []
 	var base: int = nid * pc
-	for p in pc:
-		if not codes.has(world.p_adm0[p]):
+	var by_code := _adm0_index(world)
+	var lonlat := world.p_lonlat
+	var seen := {}
+	for code in codes:
+		if seen.has(code) or not by_code.has(code):
 			continue
-		var ll: Vector2 = world.p_lonlat[p]
-		var inside := boxes.is_empty()
-		for b in boxes:
-			if ll.x >= float(b[0]) and ll.y >= float(b[1]) and ll.x <= float(b[2]) and ll.y <= float(b[3]):
-				inside = true
-				break
-		# except — не атаковать и внутри рамок (Ленинград: блокада, а не штурм)
-		for b in excl:
-			if ll.x >= float(b[0]) and ll.y >= float(b[1]) and ll.x <= float(b[2]) and ll.y <= float(b[3]):
-				inside = false
-				break
-		if not inside:
-			t[base + p] = 1
+		seen[code] = true
+		for p: int in by_code[code]:
+			var ll: Vector2 = lonlat[p]
+			var inside := boxes.is_empty()
+			for b in boxes:
+				if ll.x >= float(b[0]) and ll.y >= float(b[1]) and ll.x <= float(b[2]) and ll.y <= float(b[3]):
+					inside = true
+					break
+			# except — не атаковать и внутри рамок (Ленинград: блокада, а не штурм)
+			for b in excl:
+				if ll.x >= float(b[0]) and ll.y >= float(b[1]) and ll.x <= float(b[2]) and ll.y <= float(b[3]):
+					inside = false
+					break
+			if not inside:
+				t[base + p] = 1
+
+
+static var _adm0_idx := {}
+static var _adm0_of := 0
+
+
+## Провинции по коду страны Natural Earth (p_adm0 не меняется за партию).
+static func _adm0_index(world: World) -> Dictionary:
+	if _adm0_of != world.get_instance_id() or _adm0_idx.is_empty():
+		var idx := {}
+		for p in world.prov_count:
+			var code := world.p_adm0[p]
+			if not idx.has(code):
+				idx[code] = PackedInt32Array()
+			var lst: PackedInt32Array = idx[code]
+			lst.append(p)
+			idx[code] = lst
+		_adm0_idx = idx
+		_adm0_of = world.get_instance_id()
+	return _adm0_idx
 
 
 ## Гарнизоны (Nation.hold): nc×prov_count — не меньше дивизий на участке фронта;
@@ -998,22 +1023,32 @@ static func _attack_limit_fill(world: World, t: PackedByteArray, nid: int, lim: 
 static func hold_table(world: World) -> PackedByteArray:
 	var t := PackedByteArray()
 	var pc := world.prov_count
-	var big: Array = []
-	for p in pc:
-		if world.p_vp[p] >= CAP_VP and world.p_land[p] == 1:
-			big.append(p)
+	# крупный город (очки победы столичные, CAP_VP) у фронта — враг в CAP_NEAR
+	# переходах по суше — гарнизон не меньше CAP_GARRISON (решение пользователя:
+	# важные города, как Москва, держать на крайний случай; столица могла переехать).
+	# Только своя национальная земля (Claims): не захваченные и не переданные —
+	# Германия держала бы Париж, Прагу и Рим после перемирия Италии.
+	# Один проход по городам (у города один хозяин), по возрастанию номера.
+	var caps_of := {}
+	var vp := world.p_vp
+	var land := world.p_land
+	var ctrl := world.p_controller
+	for c in pc:
+		if vp[c] < CAP_VP or land[c] == 0:
+			continue
+		var n := ctrl[c]
+		if n < 0:
+			continue
+		var on: World.Nation = world.nations[n]
+		if on.is_player or not on.alive or not Claims.is_core(world, n, c) or not _enemy_near(world, n, c, CAP_NEAR):
+			continue
+		if not caps_of.has(n):
+			caps_of[n] = []
+		caps_of[n].append(c)
 	for nat in world.nations:
 		if nat.is_player or not nat.alive:
 			continue
-		# крупный город (очки победы столичные, CAP_VP) у фронта — враг в CAP_NEAR
-		# переходах по суше — гарнизон не меньше CAP_GARRISON (решение пользователя:
-		# важные города, как Москва, держать на крайний случай; столица могла переехать)
-		var caps: Array = []
-		for c in big:
-			# только своя национальная земля (Claims): не захваченные и не переданные —
-			# Германия держала бы Париж, Прагу и Рим после перемирия Италии
-			if world.p_controller[c] == nat.id and Claims.is_core(world, nat.id, c) and _enemy_near(world, nat.id, c, CAP_NEAR):
-				caps.append(c)
+		var caps: Array = caps_of.get(nat.id, [])
 		if nat.hold.is_empty() and nat.siege.is_empty() and caps.is_empty():
 			continue
 		if t.is_empty():
@@ -1040,17 +1075,22 @@ static func _enemy_near(world: World, nid: int, p: int, depth: int) -> bool:
 	var seen := {p: 0}
 	var q: Array = [p]
 	var head := 0
+	var ctrl := world.p_controller
+	var war := world.war
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	var land := world.p_land
 	while head < q.size():
 		var x: int = q[head]
 		head += 1
-		var c := world.p_controller[x]
-		if c >= 0 and c != nid and world.war[nid * nc + c] == 1:
+		var c := ctrl[x]
+		if c >= 0 and c != nid and war[nid * nc + c] == 1:
 			return true
 		if int(seen[x]) >= depth:
 			continue
-		for k in range(world.adj_start[x], world.adj_start[x + 1]):
-			var y := world.adj_list[k]
-			if world.p_land[y] == 1 and not seen.has(y):
+		for k in range(a_start[x], a_start[x + 1]):
+			var y := a_list[k]
+			if land[y] == 1 and not seen.has(y):
 				seen[y] = int(seen[x]) + 1
 				q.append(y)
 	return false

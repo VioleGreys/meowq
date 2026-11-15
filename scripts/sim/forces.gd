@@ -616,7 +616,9 @@ static func daily_navy(world: World, rng: RandomNumberGenerator) -> void:
 	Prof.add("флот:сражения", _pt)
 	_pt = Time.get_ticks_usec()
 	Convoys.daily(world, rng)
+	var _pd := Time.get_ticks_usec()
 	Depots.daily(world)   # пункты снабжения: участки, склады за морем, подвоз снаряжения
+	Prof.add("флот:пункты", _pd)
 	_refresh_cache(world)
 	Prof.add("флот:торговля", _pt)
 
@@ -1275,7 +1277,9 @@ static func ai_transfers(world: World, n: int) -> void:
 	if nat.at_war.is_empty():
 		return
 	if nat.b("expedition") > 0.0 and world.p_comp.size() == world.prov_count and nat.capital >= 0:
+		var _q := Time.get_ticks_usec()
 		_exp_transfers(world, n)
+		Prof.add("пер:экспедиция", _q)
 		return
 	var exp_share := clampf(nat.b("expedition"), 0.0, 0.95)
 	# провинции, связанные со столицей по суше
@@ -1472,10 +1476,12 @@ static func _exp_transfers(world: World, n: int) -> void:
 		var o := own[i]
 		if o != n and ally[n * nc + o] != 1:
 			continue
-		var d: World.Division = world.divisions[i]
 		var c: int = comp[dprov[i]]
-		if tr[i] != 0 and d.transfer and d.transit_target >= 0:
-			c = comp[d.transit_target]
+		var d: World.Division = null
+		if tr[i] != 0:
+			d = world.divisions[i]
+			if d.transfer and d.transit_target >= 0:
+				c = comp[d.transit_target]
 		if o != n:
 			allied[c] = int(allied.get(c, 0)) + 1
 			continue
@@ -1485,6 +1491,7 @@ static func _exp_transfers(world: World, n: int) -> void:
 			at_home += 1
 		if nxt[i] >= 0 or tr[i] != 0 or inv[i] >= 0 or resv[i] >= day or bt[i] != 0:
 			continue
+		d = world.divisions[i]
 		if home[dprov[i]] == 1:
 			if is_port(world, dprov[i]) and ctrl[dprov[i]] == n and not _at_front(world, d):
 				if not home_src.has(dprov[i]):

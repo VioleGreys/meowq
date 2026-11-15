@@ -568,7 +568,9 @@ static func _apply(r: Array, c: World.Commander, cls: int, k: float) -> void:
 ## После Climate.daily: множители на действующие атаку, оборону, скорость
 ## (командиры, их способности, опыт дивизий); опыт за бои командирам и дивизиям.
 static func daily(world: World) -> void:
+	var _q := Time.get_ticks_usec()
 	refresh(world)
+	Prof.add("ком:refresh", _q); _q = Time.get_ticks_usec()
 	var ae := world.d_atk_eff
 	var de := world.d_def_eff
 	var se := world.d_spd_eff
@@ -592,11 +594,16 @@ static func daily(world: World) -> void:
 	for nat in world.nations:
 		gain[nat.id] = DIV_XP_DAY * maxf(0.0, 1.0 + nat.b("xp_div"))
 	var xp := {}
+	var amemo := {}
 	for s in n:
 		if alive[s] == 0:
 			continue
 		var x := dx[s]
-		var lv := div_bonus(x)
+		var lv := -0.25   # = div_bonus(x), без вызова
+		if x >= 0.5:
+			lv = 0.75 if x >= 0.75 else 0.50
+		elif x >= 0.1:
+			lv = 0.25 if x >= 0.3 else 0.0
 		if bt[s] != 0:
 			dx[s] = minf(1.0, x + gain[own[s]])
 		elif x < DIV_XP_NEW:
@@ -611,15 +618,28 @@ static func daily(world: World) -> void:
 			kd *= ldf[s]
 			ks *= ls[s]
 			if not act.is_empty():
-				var ag: Variant = act.get(g) if g >= 0 else null
-				var am: Variant = act.get(m) if m >= 0 else null
-				if am != null and ag != null and cmd_ability(world, g) == cmd_ability(world, m):
-					am = null   # одна и та же способность генерала и маршала — один раз
-				for v in [ag, am]:
-					if v != null:
-						ka *= 1.0 + float(v[0])
-						kd *= 1.0 + float(v[1])
-						ks *= 1.0 + float(v[2])
+				# множители способностей пары «генерал, маршал» — один раз на пару;
+				# применяются по одному в том же порядке (округление то же)
+				var akey := (g + 1) * 65536 + m + 1
+				var fv: Variant = amemo.get(akey)
+				if fv == null:
+					var ag: Variant = act.get(g) if g >= 0 else null
+					var am: Variant = act.get(m) if m >= 0 else null
+					if am != null and ag != null and cmd_ability(world, g) == cmd_ability(world, m):
+						am = null   # одна и та же способность генерала и маршала — один раз
+					var fl := PackedFloat64Array()
+					for v in [ag, am]:
+						if v != null:
+							fl.append(1.0 + float(v[0]))
+							fl.append(1.0 + float(v[1]))
+							fl.append(1.0 + float(v[2]))
+					amemo[akey] = fl
+					fv = fl
+				var f: PackedFloat64Array = fv
+				for j in range(0, f.size(), 3):
+					ka *= f[j]
+					kd *= f[j + 1]
+					ks *= f[j + 2]
 			if bt[s] != 0:
 				if g >= 0:
 					xp[g] = float(xp.get(g, 0.0)) + 1.0 / ARMY_MAX
@@ -635,12 +655,15 @@ static func daily(world: World) -> void:
 	world.d_def_eff = de
 	world.d_spd_eff = se
 	world.d_xp = dx
+	Prof.add("ком:цикл", _q); _q = Time.get_ticks_usec()
 	var ids := xp.keys()
 	ids.sort()
 	for cid in ids:
 		_gain(world, world.commanders[cid], minf(1.0, xp[cid]))
+	Prof.add("ком:опыт", _q); _q = Time.get_ticks_usec()
 	if world.day % AI_ABILITY_DAYS == 0:
 		ai_abilities(world)
+	Prof.add("ком:способности", _q)
 
 
 ## Массив опыта по числу дивизий (сохранения без него — всем «Начинающие»).

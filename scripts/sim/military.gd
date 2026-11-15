@@ -524,22 +524,45 @@ static func ai_retrain(world: World, nat: World.Nation) -> int:
 		return 0
 	var budget := maxi(1, int(nat.division_count * AI_RETRAIN_SHARE))
 	var done := 0
-	for d in world.divisions:
+	var memo := {}   # шаблон → шаблон с нынешними ротами (with_support перебирает все шаблоны)
+	# отбор — по плоским массивам (свойства Division идут через геттеры); индекс
+	# в world.divisions = slot. retrain пишет только в дивизию i — чтение i до записи
+	var alive := world.d_alive
+	var owner := world.d_owner
+	var battle := world.d_battle
+	var transit := world.d_transit
+	var war := not nat.at_war.is_empty()
+	for i in world.divisions.size():
 		if done >= budget:
 			break
-		if not d.alive or d.owner != nat.id or d.in_battle or d.transit_days > 0:
+		if alive[i] == 0 or owner[i] != nat.id or battle[i] == 1 or transit[i] > 0:
 			continue
-		if not nat.at_war.is_empty() and _at_front(world, d):
+		var tp := world.d_tpl[i]
+		var t: int = memo.get(tp, -2)
+		if t == tp:
+			continue   # уже на нынешнем шаблоне — фронт не проверяем
+		if war and _at_front_p(world, world.d_prov[i], nat.id):
 			continue   # на войне — только не стоящие у фронта (организация падает)
-		var old: Dictionary = world.templates[d.tpl]
-		if int(old["owner"]) >= 0:
-			continue   # свои шаблоны игрока ИИ не трогает
-		var t := with_support(world, base_of(world, d.tpl), sup)
-		if t == d.tpl:
+		if t == -2:
+			if int(world.templates[tp]["owner"]) >= 0:
+				t = tp   # свои шаблоны игрока ИИ не трогает
+			else:
+				t = with_support(world, base_of(world, tp), sup)
+			memo[tp] = t
+		if t == tp:
 			continue
-		if retrain(world, d, t):
+		if retrain(world, world.divisions[i], t):
 			done += 1
 	return done
+
+
+static func _at_front_p(world: World, p: int, owner: int) -> bool:
+	var nc := world.nation_count
+	for k in range(world.adj_start[p], world.adj_start[p + 1]):
+		var c := world.p_controller[world.adj_list[k]]
+		if c >= 0 and world.war[owner * nc + c] == 1:
+			return true
+	return false
 
 
 static func _at_front(world: World, d: World.Division) -> bool:
