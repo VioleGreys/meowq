@@ -528,7 +528,7 @@ static func _is_key(fd: Dictionary) -> bool:
 	for e in fd.get("effects", []):
 		if e.get("t", "") in ["event", "war", "annex", "transfer", "release", "faction", "join_faction_of",
 				"pact", "break_pact", "guarantee", "peace", "peace_all", "civil_war", "later", "leader", "ideology", "rep", "concede",
-				"offensive", "landing", "landing_area", "seize", "fort", "war_limit", "attack_limit", "hold", "hub"]:
+				"offensive", "landing", "landing_area", "disband_abroad", "seize", "fort", "war_limit", "attack_limit", "hold", "hub"]:
 			return true
 	return false
 
@@ -1246,6 +1246,19 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				if nat.spirits.has(String(e["id"])):
 					nat.spirits[String(e["id"])] = float(nat.spirits[String(e["id"])]) * float(e.get("v", 0.5))
 					world.recalc_spirits(nat)
+			"disband_abroad":
+				# войска за пределами страны разоружены (операция «Ось» после
+				# перемирия Италии): распускаются дивизии вне своей земли, связанной
+				# по суше со столицей (чужие провинции, колонии, острова)
+				var nd := 0
+				var reach: PackedByteArray = Forces.own_reach(world, who, nat.capital)[0] if nat.capital >= 0 else PackedByteArray()
+				for d in world.divisions:
+					if d.alive and d.owner == who and (reach.is_empty() or reach[d.prov] == 0 or world.p_owner[d.prov] != who):
+						d.alive = false
+						nd += 1
+				if nd > 0:
+					world.rebuild_prov_divs()
+					world.log_event("%s: разоружено %d дивизий за пределами страны" % [nat.name, nd])
 			"org_hit":
 				# внезапный удар: дивизии страны теряют часть организации
 				for d in world.divisions:
@@ -1979,6 +1992,8 @@ static func effects_text(world: World, effects: Array) -> String:
 				parts.append("%sснять черту «%s»" % [who, world.spirit_defs.get(e["id"], {}).get("name", e["id"])])
 			"spirit_scale":
 				parts.append("%sчерта «%s» ×%s" % [who, world.spirit_defs.get(e["id"], {}).get("name", e["id"]), str(e.get("v", 0.5))])
+			"disband_abroad":
+				parts.append("%sвойска за пределами страны разоружены" % who)
 			"org_hit":
 				parts.append("%sорганизация дивизий −%d %%" % [who, roundi(100 * float(e.get("v", 0.5)))])
 			"trade":

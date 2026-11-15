@@ -1235,8 +1235,9 @@ static func sea_transfer(world: World, divs: Array, target: int) -> String:
 	for d in divs:
 		if d.prov != port:
 			return "для переправы дивизии должны стоять в одном порту"
-	if not is_port(world, port) or world.p_controller[port] != n:
-		return "отправка только из своего порта"
+	var pc0 := world.p_controller[port]
+	if not is_port(world, port) or pc0 < 0 or (pc0 != n and world.ally[n * world.nation_count + pc0] != 1):
+		return "отправка только из своего или союзного порта"
 	var dist := _sea_distance(world, port, target)
 	if dist < 0:
 		return "нет морского пути"
@@ -1271,6 +1272,9 @@ const EXP_MIN_ZONE := 3
 static func ai_transfers(world: World, n: int) -> void:
 	var nat: World.Nation = world.nations[n]
 	if nat.at_war.is_empty():
+		return
+	if nat.b("expedition") > 0.0 and world.p_comp.size() == world.prov_count and nat.capital >= 0:
+		_exp_transfers(world, n)
 		return
 	var exp_share := clampf(nat.b("expedition"), 0.0, 0.95)
 	# провинции, связанные со столицей по суше
@@ -1386,6 +1390,231 @@ static func ai_transfers(world: World, n: int) -> void:
 			break
 	if sent > 0 and (Diplomacy.is_major(world, n) or nat.is_player):
 		world.log_event("%s: переправа %d див. на заморский фронт" % [nat.name, sent])
+
+
+
+## Экспедиция по участкам фронта (World.p_comp — связная земля своей стороны):
+## участку за морем нужно ~EXP_PER_FRONT дивизий на провинцию фронта, за вычетом
+## своих (и плывущих туда) и половины союзных, но не меньше EXP_FOE на дивизию
+## врага у его фронта (немцы стягивали во Францию 60–70 дивизий, союзники
+## переставали слать войска), не больше ёмкости снабжения.
+## Источники — тыловые порты метрополии (пока дома больше (1 − доля) армии) и
+## участки без фронта (Северная Африка после «Факела»): оттуда, кроме
+## EXP_KEEP, — к ближайшему порту участка (до EXP_WALK переходов) и морем.
+const EXP_PER_FRONT := 3
+const EXP_FOE := 1.5     # на вражескую дивизию у фронта участка
+const EXP_KEEP := 2
+const EXP_WALK := 8
+
+static func _exp_transfers(world: World, n: int) -> void:
+	var nat: World.Nation = world.nations[n]
+	var exp_share := clampf(nat.b("expedition"), 0.0, 0.95)
+	var home: PackedByteArray = own_reach(world, n, nat.capital)[0]
+	var comp := world.p_comp
+	var ctrl := world.p_controller
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	var war := world.war
+	var ally := world.ally
+	var nc := world.nation_count
+	var hc: int = comp[nat.capital]
+	var front := {}     # участок → провинций фронта
+	var size := {}      # участок → провинций своей стороны
+	var cap := {}       # участок → ёмкость снабжения
+	var ports := {}     # участок → [[у фронта, ёмкость, порт]]
+	var foes := {}      # участок → вражеских дивизий у его фронта
+	var foe_seen := {}
+	for p in world.prov_count:
+		var c: int = comp[p]
+		if c < 0 or world.p_land[p] == 0 or ctrl[p] < 0 or (ctrl[p] != n and ally[n * nc + ctrl[p]] != 1):
+			continue
+		size[c] = int(size.get(c, 0)) + 1
+		var sc := float(world.p_supcap[p]) if p < world.p_supcap.size() else 0.0
+		cap[c] = float(cap.get(c, 0.0)) + sc
+		var fr := 0
+		for k in range(a_start[p], a_start[p + 1]):
+			var q := a_list[k]
+			var e := ctrl[q]
+			if e >= 0 and e != n and war[n * nc + e] == 1:
+				fr = 1
+				if not foe_seen.has(q):
+					foe_seen[q] = true
+					var h := world.pl_head[q]
+					while h >= 0:
+						var fo := world.d_owner[h]
+						if fo >= 0 and fo != n and war[n * nc + fo] == 1:
+							foes[c] = int(foes.get(c, 0)) + 1
+						h = world.d_nx[h]
+		front[c] = int(front.get(c, 0)) + fr
+		if is_port(world, p):
+			if not ports.has(c):
+				ports[c] = []
+			ports[c].append([fr, sc, p])
+	var mine := {}
+	var allied := {}
+	var own := world.d_owner
+	var dprov := world.d_prov
+	var alive := world.d_alive
+	var nxt := world.d_next
+	var tr := world.d_transit
+	var inv := world.d_inv
+	var resv := world.d_resv
+	var bt := world.d_battle
+	var day := world.day
+	var at_home := 0
+	var total := 0
+	var home_src := {}   # порт → [дивизии]
+	var idle_src := {}   # участок без фронта → [дивизии]
+	for i in own.size():
+		if alive[i] == 0 or own[i] < 0:
+			continue
+		var o := own[i]
+		if o != n and ally[n * nc + o] != 1:
+			continue
+		var d: World.Division = world.divisions[i]
+		var c: int = comp[dprov[i]]
+		if tr[i] != 0 and d.transfer and d.transit_target >= 0:
+			c = comp[d.transit_target]
+		if o != n:
+			allied[c] = int(allied.get(c, 0)) + 1
+			continue
+		mine[c] = int(mine.get(c, 0)) + 1
+		total += 1
+		if home[dprov[i]] == 1:
+			at_home += 1
+		if nxt[i] >= 0 or tr[i] != 0 or inv[i] >= 0 or resv[i] >= day or bt[i] != 0:
+			continue
+		if home[dprov[i]] == 1:
+			if is_port(world, dprov[i]) and ctrl[dprov[i]] == n and not _at_front(world, d):
+				if not home_src.has(dprov[i]):
+					home_src[dprov[i]] = []
+				home_src[dprov[i]].append(d)
+		elif c >= 0 and c != hc and int(front.get(c, 0)) == 0:
+			if not idle_src.has(c):
+				idle_src[c] = []
+			idle_src[c].append(d)
+	# участки за морем, которым не хватает войск
+	var dests: Array = []   # [нужно, участок]
+	var keys := front.keys()
+	keys.sort()
+	for c in keys:
+		if c == hc or int(front[c]) == 0 or int(size.get(c, 0)) < EXP_MIN_ZONE or not ports.has(c):
+			continue
+		var m := int(mine.get(c, 0))
+		var al := int(allied.get(c, 0))
+		var want := maxi(int(front[c]) * EXP_PER_FRONT, int(ceil(EXP_FOE * float(foes.get(c, 0)))))
+		var need := mini(want - m - al / 2, int(cap.get(c, 0.0)) - m - al)
+		if need > 0:
+			dests.append([need, c])
+	if dests.is_empty():
+		return
+	dests.sort_custom(func(x, y): return x[0] > y[0] or (x[0] == y[0] and x[1] < y[1]))
+	for c in ports:
+		ports[c].sort_custom(func(x, y): return x[0] > y[0] or (x[0] == y[0] and (x[1] > y[1] or (x[1] == y[1] and x[2] < y[2]))))
+	# источники: [порт, дивизии]
+	var groups: Array = []
+	var walked := false
+	var ic := idle_src.keys()
+	ic.sort()
+	for c in ic:
+		var lst: Array = idle_src[c]
+		if lst.size() <= EXP_KEEP:
+			continue
+		lst = lst.slice(EXP_KEEP)
+		# к ближайшему порту участка (своему или союзному)
+		var by_port := {}
+		for d in lst:
+			var port := _near_port(world, n, d.prov, EXP_WALK)
+			if port < 0:
+				continue
+			if not by_port.has(port):
+				by_port[port] = []
+			by_port[port].append(d)
+		var pk := by_port.keys()
+		pk.sort()
+		for port in pk:
+			groups.append([port, by_port[port], false])
+	var spare := at_home - int(ceil(float(total) * (1.0 - exp_share)))
+	var hp := home_src.keys()
+	hp.sort()
+	for port in hp:
+		groups.append([port, home_src[port], true])
+	# у тыла и у простаивающих участков — свои пределы
+	var budget := EXP_BATCH * 2
+	var home_budget := mini(EXP_BATCH, spare)
+	var idle_budget := EXP_BATCH
+	var sent := 0
+	for dd in dests:
+		var c: int = dd[1]
+		var need: int = dd[0]
+		var dps: Array = ports[c]
+		var di := 0
+		for g in groups:
+			if need <= 0 or budget <= 0:
+				break
+			var lst: Array = g[1]
+			if lst.is_empty() or (g[2] and home_budget <= 0) or (not g[2] and idle_budget <= 0):
+				continue
+			var k := mini(mini(need, budget), EXP_PORT)
+			k = mini(k, home_budget if g[2] else idle_budget)
+			var group: Array = lst.slice(0, k)
+			var dest: int = dps[di % dps.size()][2]
+			di += 1
+			var port: int = g[0]
+			var moved: Array = []
+			for d in group:
+				if d.prov != port:
+					moved.append([d, d.prov])
+					d.prov = port
+			if moved.size() > 0:
+				walked = true
+			if sea_transfer(world, group, dest) == "":
+				# путь до порта по суше — +2 дн.
+				for mv in moved:
+					var dv: World.Division = mv[0]
+					dv.transit_days += 2
+					dv.transit_total += 2
+				g[1] = lst.slice(k)
+				need -= k
+				budget -= k
+				sent += k
+				if g[2]:
+					home_budget -= k
+				else:
+					idle_budget -= k
+			else:
+				for mv in moved:
+					mv[0].prov = mv[1]
+	if walked:
+		world.rebuild_prov_divs()
+	if sent > 0 and (Diplomacy.is_major(world, n) or nat.is_player):
+		world.log_event("%s: переправа %d див. на заморский фронт" % [nat.name, sent])
+
+
+## Ближайший к p порт своей стороны по своей и союзной земле (до limit переходов); −1 — нет.
+static func _near_port(world: World, n: int, p: int, limit: int) -> int:
+	if is_port(world, p):
+		return p
+	var seen := {p: 0}
+	var queue: Array = [p]
+	var head := 0
+	while head < queue.size():
+		var x: int = queue[head]
+		head += 1
+		var dx: int = seen[x]
+		if dx >= limit:
+			continue
+		for q in world.p_adj[x]:
+			if seen.has(q) or world.p_land[q] == 0:
+				continue
+			var c := world.p_controller[q]
+			if c < 0 or (c != n and world.ally[n * world.nation_count + c] != 1):
+				continue
+			if is_port(world, q):
+				return q
+			seen[q] = dx + 1
+			queue.append(q)
+	return -1
 
 
 static func _own_divs(world: World, n: int, p: int) -> int:

@@ -1293,7 +1293,8 @@
    "army": {
     "inf": 4
    },
-   "techs": []
+   "techs": [],
+   "spirits": ["can_overseas"]
   },
   "MEX": {
    "full_name": "Мексиканские Соединённые Штаты",
