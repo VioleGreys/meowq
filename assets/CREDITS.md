@@ -7,7 +7,8 @@
 |---|---|---|---|
 | Спутниковый снимок «Whole world — land and oceans» (Blue Marble) | подложка рельефа карты, `data/world1936/terrain.jpg.bin` (перепроецирован `tools/build_terrain.py`) | NASA / Goddard Space Flight Center, Visible Earth; копия на Викискладе | общественное достояние |
 | Границы, реки, озёра, города, акватории | карта (`tools/build_map.py`) | Natural Earth | общественное достояние |
-| Цвет природных зон NE1_HR_LC, отмывка рельефа SR_HR, рельеф дна OB_LR (Tom Patterson) | подложка карты: `data/world1936/terrain.jpg.bin`, `shade.jpg.bin` (`tools/build_terrain_ne.py`) | Natural Earth, naturalearthdata.com | общественное достояние |
+| Цвет природных зон NE1_HR_LC (Tom Patterson) | цвет местности карты, `assets/map/colormap.jpg` (`tools/build_map_art.py`) | Natural Earth, naturalearthdata.com | общественное достояние |
+| Рельеф суши и дна ETOPO1 Ice Surface | свет рельефа (`assets/map/normal.png`) и глубины моря (канал r `relief.png.bin`), `tools/build_map_art.py` | NOAA National Centers for Environmental Information | общественное достояние |
 | Текстуры Grass004, Rock030, Ground054, Snow006 | фактура местности вблизи, `data/world1936/detail.png.bin` (`tools/build_detail.py`) | ambientCG.com | CC0 |
 | Шрифт Oswald | заголовки, кнопки, подписи стран | Vernon Adams и др., Google Fonts | SIL Open Font License 1.1 (`fonts/OFL-Oswald.txt`) |
 | Иконки родов войск, флота, авиации, меню (21 шт., список — `tools/build_icons.py`) | фишки на карте, боковое меню, `assets/icons/icons.json` | game-icons.net (авторы — Lorc, Delapouite и др.), через npm-пакет @iconify-json/game-icons | CC BY 3.0 — указать авторов на экране «Авторы» |

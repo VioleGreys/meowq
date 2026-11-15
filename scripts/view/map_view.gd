@@ -26,6 +26,8 @@ var ctrl_img: Image
 var owner_img: Image
 var ctrl_tex: ImageTexture
 var owner_tex: ImageTexture
+const ART_COLOR := "res://assets/map/colormap.jpg"
+const ART_NORMAL := "res://assets/map/normal.png"
 var front_img: Image          # фронты армий игрока: rgb — цвет армии, a — роль (шейдер front_tex)
 var front_tex: ImageTexture
 var _front_hash := 0
@@ -159,11 +161,13 @@ func setup(w: World) -> void:
 		mat.set_shader_parameter("has_terrain", true)
 	else:
 		mat.set_shader_parameter("has_terrain", false)
-	if world.shade_image != null:
-		mat.set_shader_parameter("shade_tex", ImageTexture.create_from_image(world.shade_image))
-		mat.set_shader_parameter("has_shade", true)
-	else:
-		mat.set_shader_parameter("has_shade", false)
+	# графика карты в полном разрешении (tools/build_map_art.py; импорт Godot со
+	# сжатием в видеопамяти): цвет природных зон и нормали рельефа суши и дна
+	var art := world.width == 5632 and ResourceLoader.exists(ART_COLOR) and ResourceLoader.exists(ART_NORMAL)
+	if art:
+		mat.set_shader_parameter("color_tex", load(ART_COLOR))
+		mat.set_shader_parameter("normal_tex", load(ART_NORMAL))
+	mat.set_shader_parameter("has_art", art)
 	if world.detail_image != null:
 		mat.set_shader_parameter("detail_tex", ImageTexture.create_from_image(world.detail_image))
 		mat.set_shader_parameter("has_detail", true)

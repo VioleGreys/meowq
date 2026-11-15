@@ -25,7 +25,7 @@ const QUIT := "quit"             # сохранение при выходе/св
 # поля World, которые не пишутся: картинки карты, номер фоновой группы и
 # неизменяемые описания из файлов игры (деревья фокусов, события, области,
 # черты — 40 % объёма; после обновления игры партия берёт новые тексты и правки)
-const SKIP_WORLD := {"id_image": true, "height_image": true, "terrain_image": true, "shade_image": true, "detail_image": true, "spec_gid": true,
+const SKIP_WORLD := {"id_image": true, "height_image": true, "terrain_image": true, "detail_image": true, "spec_gid": true,
 	"focus_trees": true, "focus_index": true, "event_defs": true, "areas": true, "spirit_defs": true}
 # у дивизии пишутся только собственные поля: остальное — обёртки над World.d_*
 const DIV_FIELDS := ["slot", "id", "group", "transit_total", "transit_from", "transit_target", "transfer", "_path", "lead"]
