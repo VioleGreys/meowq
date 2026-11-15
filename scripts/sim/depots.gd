@@ -578,14 +578,21 @@ static func pools(world: World) -> Array:
 			if float(nat.conv_safe[p]) > 0.0 and world.p_controller[int(p)] == nat.id:
 				sea[nat.id * pc + world.p_comp[int(p)]] = true
 	var comp := world.p_comp
+	var downer := world.d_owner
+	var dprov := world.d_prov
+	var dalive := world.d_alive
+	var home := PackedInt32Array()
+	home.resize(nc)
+	for nat in world.nations:
+		home[nat.id] = nat.dep_home
 	for i in n:
-		var o := world.d_owner[i]
-		var p := world.d_prov[i]
-		if world.d_alive[i] == 0 or o < 0 or p < 0:
+		var o := downer[i]
+		var p := dprov[i]
+		if dalive[i] == 0 or o < 0 or p < 0:
 			pool[i] = o
 			continue
 		var cpv := comp[p]
-		if cpv >= 0 and cpv == world.nations[o].dep_home:
+		if cpv >= 0 and cpv == home[o]:
 			pool[i] = o
 		else:
 			var key := o * pc + cpv

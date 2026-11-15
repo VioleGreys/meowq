@@ -24,11 +24,17 @@ extends RefCounted
 static func start(world: World) -> void:
 	finish(world)
 	var jobs: Array = []
+	var _pt := Time.get_ticks_usec()
 	Economy.spec(world, jobs)
+	Prof.add("уп:торговля", _pt); _pt = Time.get_ticks_usec()
 	Relations.spec(world, jobs)
+	Prof.add("уп:отношения", _pt); _pt = Time.get_ticks_usec()
 	Military.spec(world, jobs)
+	Prof.add("уп:заводы", _pt); _pt = Time.get_ticks_usec()
 	Supply.spec(world, jobs)
+	Prof.add("уп:снабжение", _pt); _pt = Time.get_ticks_usec()
 	Forces.spec(world, jobs)
+	Prof.add("уп:соседи", _pt)
 	if jobs.is_empty():
 		return
 	world.spec_gid = Parallel.start(jobs.size(), func(i: int): (jobs[i] as Callable).call(), "упреждение", 2)

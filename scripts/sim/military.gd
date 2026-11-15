@@ -1149,13 +1149,28 @@ static func _produces(nat: World.Nation, eq: Array) -> bool:
 
 ## Общий шаблон base с ротами sup (ИИ): заводится при первой надобности,
 ## скрыт из списка игрока; без рот — сам base.
+static var _ws_memo := {}        # ключ шаблона с ротами → номер
+static var _ws_tpls: Array = []  # для какого списка шаблонов (мир, загрузка)
+
+
 static func with_support(world: World, base: int, sup: Array) -> int:
 	if sup.is_empty():
 		return base
 	var key := "%d:%s" % [base, ",".join(sup)]
+	# шаблоны только добавляются: запомненный номер — по-прежнему первый с
+	# этим ключом, пока список тот же и там тот же шаблон
+	if not is_same(_ws_tpls, world.templates):
+		_ws_tpls = world.templates
+		_ws_memo = {}
+	var mi: int = _ws_memo.get(key, -1)
+	if mi >= 0 and mi < world.templates.size():
+		var tm: Dictionary = world.templates[mi]
+		if int(tm["owner"]) < 0 and String(tm.get("key", "")) == key:
+			return mi
 	for i in world.templates.size():
 		var t: Dictionary = world.templates[i]
 		if int(t["owner"]) < 0 and String(t.get("key", "")) == key:
+			_ws_memo[key] = i
 			return i
 	var b: Dictionary = world.templates[base]
 	var nt := make_template(String(b["name"]) + " с ротами", b["short"], b["bat"], -1, sup)

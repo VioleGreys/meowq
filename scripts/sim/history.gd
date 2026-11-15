@@ -121,6 +121,22 @@ static func check(world: World, n: int, cond: Dictionary, ahead: int = 0) -> Str
 	return ""
 
 
+static var _pidx := {}
+static var _pidx_of := 0
+
+
+## Номер провинции по названию (первая с таким названием; −1 — нет) — по
+## указателю, а не поиском по всем названиям.
+static func prov_of(world: World, name: String) -> int:
+	if _pidx.is_empty() or _pidx_of != world.get_instance_id():
+		_pidx = {}
+		for p in world.p_name.size():
+			if not _pidx.has(world.p_name[p]):
+				_pidx[world.p_name[p]] = p
+		_pidx_of = world.get_instance_id()
+	return int(_pidx.get(name, -1))
+
+
 ## Условие «not_capitulated»: страна жива и не сдалась (не в оккупации до мира).
 static func _free(world: World, tag: String) -> bool:
 	var t := tag_id(world, tag)
@@ -133,11 +149,10 @@ static func _lost_ok(world: World, c: Dictionary) -> bool:
 	var t := tag_id(world, String(c.get("tag", "")))
 	if t < 0:
 		return false
-	var names := Array(world.p_name)
 	var need := int(c.get("n", 1))
 	var got := 0
 	for city in c.get("provs", []):
-		var p := names.find(String(city))
+		var p := prov_of(world, String(city))
 		if p < 0:
 			continue
 		var ctl := world.p_controller[p]
@@ -324,16 +339,20 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 		if not nat.is_player and nat.prep_day < 0:
 			_ai_prepare(world, nat.id)
 		Prof.add("ист:подготовка", _pt)
-	# события, автоматически срабатывающие по дате
+	# события, автоматически срабатывающие по дате (что уже в очереди — по
+	# множеству, а не проходом очереди на каждое событие)
+	var _pq := Time.get_ticks_usec()
+	var queued := {}
+	for q in world.event_queue:
+		queued[q[0]] = true
 	for id in world.event_defs:
 		var ev: Dictionary = world.event_defs[id]
 		if ev.get("auto", false) and not world.events_fired.has(id):
-			var already := false
-			for q in world.event_queue:
-				if q[0] == id:
-					already = true
-			if not already:
+			if not queued.has(id):
+				queued[id] = true
 				world.event_queue.append([id, -1, 0])
+	Prof.add("ист:авто", _pq)
+	_pq = Time.get_ticks_usec()
 	# очередь событий: срабатывают, когда выполнены условия
 	var keep: Array = []
 	for q in world.event_queue:
@@ -366,6 +385,7 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 		else:
 			choose_option(world, id, _ai_answer(world, id, ev, rng), rng)
 	world.event_queue = keep
+	Prof.add("ист:очередь", _pq)
 	_answer_overdue(world, rng)
 
 
@@ -1136,7 +1156,7 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 								continue
 							var regs: Array = []
 							for city in spk[tg]:
-								var cp := Array(world.p_name).find(String(city))
+								var cp := prov_of(world, String(city))
 								if cp >= 0 and world.p_region[cp] >= 0:
 									regs.append(world.p_region[cp])
 							pick[pn] = regs
@@ -1199,14 +1219,14 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				# рядом с городом, а штурмует его только assault дней из каждых period
 				# (в эти дни город — направление удара с весом weight)
 				for city in e.get("provs", []):
-					var sp := Array(world.p_name).find(String(city))
+					var sp := prov_of(world, String(city))
 					if sp >= 0:
 						nat.siege[sp] = [int(e.get("n", 2)), maxi(1, int(e.get("period", 60))), int(e.get("assault", 10)),
 							clampi(int(e.get("weight", 60)), 1, 100), world.day]
 			"siege_end":
 				if e.has("provs"):
 					for city in e["provs"]:
-						nat.siege.erase(Array(world.p_name).find(String(city)))
+						nat.siege.erase(prov_of(world, String(city)))
 				else:
 					nat.siege.clear()
 			"war_limit":
@@ -1261,7 +1281,7 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				# гарнизон: ИИ держит на участке фронта не меньше n дивизий, сколько бы
 				# ни выходило по раздаче (Ленинград 1941–43 гг.); n = 0 — снять
 				for city in e.get("provs", []):
-					var hp := Array(world.p_name).find(String(city))
+					var hp := prov_of(world, String(city))
 					if hp >= 0:
 						if int(e.get("n", 0)) > 0:
 							nat.hold[hp] = int(e["n"])
@@ -1271,24 +1291,24 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				# временный узел снабжения в своей провинции (как плацдарм высадки):
 				# «Дорога жизни» по льду Ладоги в блокадный Ленинград
 				for city in e.get("provs", []):
-					var bp := Array(world.p_name).find(String(city))
+					var bp := prov_of(world, String(city))
 					if bp >= 0:
 						world.beachheads[bp] = world.day + int(e.get("days", 365))
 			"landing":
 				# цель высадки по истории (название провинции): ИИ готовит десант туда,
 				# пока её не возьмёт, не глядя на перевес армий
-				var lp := Array(world.p_name).find(String(e.get("prov", "")))
+				var lp := prov_of(world, String(e.get("prov", "")))
 				nat.landing_goal = lp
 			"seize":
 				# провинции врага (названия) сразу под наш контроль — войска, стоявшие
 				# в них по договору (японский гарнизон в Тяньцзине); вражеские
 				# дивизии отходят в соседнюю свою провинцию
 				for city in e.get("provs", []):
-					seize(world, who, Array(world.p_name).find(String(city)))
+					seize(world, who, prov_of(world, String(city)))
 			"fort":
 				# укрепления (названия провинций): добавка к обороне, v < 0 — снять
 				for city in e.get("provs", []):
-					var fp := Array(world.p_name).find(String(city))
+					var fp := prov_of(world, String(city))
 					if fp >= 0:
 						world.p_fort[fp] = maxf(0.0, world.p_fort[fp] + float(e.get("v", 0.5)))
 				world._def_month = -1
@@ -1324,7 +1344,7 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 				# себе источник снабжения — иначе котёл стоял год
 				var wp := PackedInt32Array()
 				for city in e.get("provs", []):
-					var cp := Array(world.p_name).find(String(city))
+					var cp := prov_of(world, String(city))
 					if cp >= 0:
 						wp.append(cp)
 				if nat.capital >= 0 and not wp.is_empty():

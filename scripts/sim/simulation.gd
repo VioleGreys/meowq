@@ -1448,7 +1448,9 @@ func _phase_planning() -> void:
 
 func _phase_recovery() -> void:
 	var nc := world.nation_count
+	var _pt := Time.get_ticks_usec()
 	var pr := Depots.pools(world)   # пул дивизии: метрополия или склад участка за морем
+	Prof.add("вс:пулы", _pt); _pt = Time.get_ticks_usec()
 	var dep: PackedInt32Array = pr[1]
 	var stock := PackedFloat32Array()
 	stock.resize((nc + dep.size()) * 8)
@@ -1467,8 +1469,11 @@ func _phase_recovery() -> void:
 		manpower[nat.id] = nat.manpower
 		rbonus[nat.id] = nat.b("reinforce")
 	var str_before := world.d_str.duplicate()
+	Prof.add("вс:запасы", _pt); _pt = Time.get_ticks_usec()
 	var r := world.k_recovery(stock, manpower, rbonus, pr[0])
+	Prof.add("вс:ядро", _pt); _pt = Time.get_ticks_usec()
 	Leaders.dilute(world, str_before)   # пополнение разбавляет опыт дивизий
+	Prof.add("вс:опыт", _pt); _pt = Time.get_ticks_usec()
 	stock = r[0]
 	manpower = r[1]
 	for j in dep.size():

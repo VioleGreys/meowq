@@ -164,13 +164,22 @@ static func scale_mods(s: float, w: float) -> Dictionary:
 	return m
 
 
+static var _mods_memo := {}   # страна (объект) → [стабильность, поддержка, бонусы]
+
+
 static func _refresh_mods(world: World, nat: World.Nation) -> void:
+	# шкалы не сдвинулись — бонусы те же (scale_mods зависит только от них)
+	var key := nat.get_instance_id()
+	var mm: Array = _mods_memo.get(key, [])
+	if not mm.is_empty() and mm[0] == nat.stability and mm[1] == nat.war_support and is_same(mm[2], nat.pol_bonus):
+		return
 	var m := scale_mods(nat.stability, nat.war_support)
 	if m != nat.pol_bonus:
 		# характеристики дивизий пересчитываются, только если сдвинулись атака и оборона
 		if float(m["attack"]) != float(nat.pol_bonus.get("attack", 0.0)) or float(m["defense"]) != float(nat.pol_bonus.get("defense", 0.0)):
 			nat.stats_dirty = true
 		nat.pol_bonus = m
+	_mods_memo[key] = [nat.stability, nat.war_support, nat.pol_bonus]
 
 
 ## Товары народного потребления: доля всех фабрик (гражданских и военных),
