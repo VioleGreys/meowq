@@ -304,6 +304,11 @@ static func refresh_blockade(world: World) -> Dictionary:
 		transit[x] = PackedInt32Array(ks)
 	Prof.add("бл:порты", _pb)
 	_pb = Time.get_ticks_usec()
+	if Native.core != null and Native.core.has_method("blockade"):
+		# C++ — MeowqCore.blockade (trade.cpp), тот же расчёт
+		_blockade_native(world, zones, transit, open_by)
+		Prof.add("бл:страны", _pb)
+		return open_by
 	# у каждого флота — округа: зоны в пределах BLOCK_RANGE и вес силы в них
 	var reach: Array = []
 	for f in world.fleets:
@@ -457,6 +462,85 @@ static func refresh_blockade(world: World) -> Dictionary:
 				world.trade_block[b * nc + s] = 1
 	Prof.add("бл:страны", _pb)
 	return open_by
+
+
+## Округа флотов и открытые зоны воюющих стран в ядре C++: снимок в плоские
+## массивы (флоты округи — по порядку world.fleets, флоты зон — по
+## World.zone_fleets), итог — trade_block и open_by.
+static func _blockade_native(world: World, zones: Array, transit: Array, open_by: Dictionary) -> void:
+	var nc := world.nation_count
+	var pc := world.prov_count
+	var z_start := PackedInt32Array([0])
+	var z_list := PackedInt32Array()
+	var tr_start := PackedInt32Array([0])
+	var tr_list := PackedInt32Array()
+	for x in nc:
+		z_list.append_array(zones[x])
+		z_start.append(z_list.size())
+		tr_list.append_array(transit[x])
+		tr_start.append(tr_list.size())
+	var fr_owner := PackedInt32Array()
+	var fr_zone := PackedInt32Array()
+	var fr_pw := PackedFloat64Array()
+	for f in world.fleets:
+		if not f.alive or f.owner < 0:
+			continue
+		var pw := Forces.combat_power(f)
+		if pw <= 0.0:
+			continue
+		fr_owner.append(f.owner)
+		fr_zone.append(f.zone)
+		fr_pw.append(pw)
+	var zf := world.zone_fleets
+	var zf_start := PackedInt32Array()
+	zf_start.resize(pc + 1)
+	var zf_owner := PackedInt32Array()
+	var zf_alive := PackedByteArray()
+	var zf_port := PackedByteArray()
+	var zf_pw := PackedFloat64Array()
+	for z in pc:
+		zf_start[z] = zf_owner.size()
+		if zf.has(z):
+			for f in zf[z]:
+				zf_owner.append(f.owner)
+				zf_alive.append(1 if f.alive else 0)
+				zf_port.append(1 if f.mission == "port" else 0)
+				zf_pw.append(Forces.combat_power(f))
+	zf_start[pc] = zf_owner.size()
+	var n_alive := PackedByteArray()
+	n_alive.resize(nc)
+	var n_war := PackedByteArray()
+	n_war.resize(nc)
+	var n_cap := PackedInt32Array()
+	n_cap.resize(nc)
+	for nat in world.nations:
+		n_alive[nat.id] = 1 if nat.alive else 0
+		n_war[nat.id] = 0 if nat.at_war.is_empty() else 1
+		n_cap[nat.id] = nat.capital
+	var tm_keys := PackedInt32Array()
+	var tm_start := PackedInt32Array([0])
+	var tm_list := PackedInt32Array()
+	for key in world.trade_mass:
+		tm_keys.append(int(key))
+		tm_list.append_array(world.trade_mass[key])
+		tm_start.append(tm_list.size())
+	var t := {"nc": nc, "pc": pc, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
+		"war": world.war, "ally": world.ally, "z_start": z_start, "z_list": z_list, "tr_start": tr_start, "tr_list": tr_list,
+		"fr_owner": fr_owner, "fr_zone": fr_zone, "fr_pw": fr_pw, "zf_start": zf_start, "zf_owner": zf_owner,
+		"zf_alive": zf_alive, "zf_port": zf_port, "zf_pw": zf_pw, "n_alive": n_alive, "n_war": n_war, "n_cap": n_cap,
+		"p_mass": world.p_mass if world.p_mass.size() == pc else PackedInt32Array(),
+		"tm_keys": tm_keys, "tm_start": tm_start, "tm_list": tm_list,
+		"k": PackedFloat64Array([BLOCK_RANGE, BLOCK_FALL, BLOCK_SHARE, BLOCK_OPEN])}
+	var r: Array = Native.core.call("blockade", t)
+	world.trade_block = r[0]
+	var ob_n: PackedInt32Array = r[1]
+	var ob_s: PackedInt32Array = r[2]
+	var ob_l: PackedInt32Array = r[3]
+	for i in ob_n.size():
+		var open := {}
+		for j in range(ob_s[i], ob_s[i + 1]):
+			open[ob_l[j]] = true
+		open_by[ob_n[i]] = open
 
 
 static func _zone_open(world: World, b: int, z: int, zf: Dictionary, near: Dictionary,

@@ -268,11 +268,26 @@ static func _role_name(role: String) -> String:
 
 ## ИИ (и стартовые проекты игрока): собрать лучшие проекты по нынешним
 ## технологиям и поставить в производство, если они лучше текущих.
+static var _upd_memo := {}   # страна (объект) → ключ последней сборки
+
+
 static func ai_update(world, nat) -> void:
 	# пересобирать, только если с прошлого раза изучены новые технологии
 	if nat.design_techs == nat.techs.size() and nat.air_design[0] >= 0:
 		return
 	nat.design_techs = nat.techs.size()
+	# итог сборки зависит только от открытых корпусов и модулей, роли
+	# бомбардировщиков и нынешних проектов: всё как при прошлой сборке —
+	# она ничего не меняет (проекты уже лучшие), пропускаем
+	var bits := PackedByteArray()
+	for h in HULLS:
+		bits.append(1 if has_tech(nat, h[2]) else 0)
+	for m in MODS:
+		bits.append(1 if has_tech(nat, m[2]) else 0)
+	var key := [bits, role_for_bombers(nat), nat.air_design[0], nat.air_design[1]]
+	var mk: int = nat.get_instance_id()
+	if _upd_memo.get(mk) == key:
+		return
 	for role in ["fighter", role_for_bombers(nat)]:
 		var hm := auto(nat, role)
 		if String(hm[0]) == "":
@@ -286,6 +301,7 @@ static func ai_update(world, nat) -> void:
 				continue
 		var nm := "%s %s-%d" % [_role_name(role), nat.tag, world.plane_designs.size()]
 		set_production(world, nat, add(world, nat.id, nm, hm[0], hm[1]))
+	_upd_memo[mk] = [bits, role_for_bombers(nat), nat.air_design[0], nat.air_design[1]]
 
 
 ## Проект крыла: свой, иначе нынешний в производстве у владельца.

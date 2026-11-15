@@ -410,13 +410,20 @@ static func _by_land(world: World, b: int) -> PackedByteArray:
 	var seen := {start: true}
 	var q := PackedInt32Array([start])
 	var h := 0
+	var war := world.war
+	var tm := world.trade_mass
+	var base := b * nc
+	var alive := PackedByteArray()
+	alive.resize(nc)
+	for nat in world.nations:
+		alive[nat.id] = 1 if nat.alive else 0
 	while h < q.size():
 		var key := q[h]
 		h += 1
-		var nb: PackedInt32Array = world.trade_mass.get(key, PackedInt32Array())
+		var nb: PackedInt32Array = tm.get(key, PackedInt32Array())
 		for k2 in nb:
 			var y := k2 % nc
-			if seen.has(k2) or world.war[b * nc + y] == 1 or not world.nations[y].alive:
+			if seen.has(k2) or war[base + y] == 1 or alive[y] == 0:
 				continue
 			seen[k2] = true
 			res[y] = 1
@@ -446,24 +453,27 @@ static func _bfs(world: World, src: Array, open, links: Array = []) -> Array:
 	var h := 0
 	var extra: Dictionary = links[0] if not links.is_empty() else {}
 	var cut: Dictionary = links[1] if not links.is_empty() else {}
+	var has_open := open != null
+	var has_cut := not cut.is_empty()
+	var has_extra := not extra.is_empty()
 	while h < q.size():
 		var z := q[h]
 		h += 1
-		var nbs: Array = []
+		# соседи по карте бассейнов, потом связи проливов (тот же порядок)
 		for k in range(a_start[z], a_start[z + 1]):
-			nbs.append(a_list[k])
-		if extra.has(z):
-			nbs.append_array(extra[z])
-		for y in nbs:
-			if par[y] >= 0:
-				continue
-			if open != null and not open.has(y):
-				continue
-			if not cut.is_empty() and cut.has(z * nb + y):
+			var y := a_list[k]
+			if par[y] >= 0 or (has_open and not open.has(y)) or (has_cut and cut.has(z * nb + y)):
 				continue
 			par[y] = z
 			dist[y] = dist[z] + 1
 			q.append(y)
+		if has_extra and extra.has(z):
+			for y in extra[z]:
+				if par[y] >= 0 or (has_open and not open.has(y)) or (has_cut and cut.has(z * nb + y)):
+					continue
+				par[y] = z
+				dist[y] = dist[z] + 1
+				q.append(y)
 	return [par, dist]
 
 
