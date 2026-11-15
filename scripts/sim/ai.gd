@@ -1010,8 +1010,9 @@ static func hold_table(world: World) -> PackedByteArray:
 		# важные города, как Москва, держать на крайний случай; столица могла переехать)
 		var caps: Array = []
 		for c in big:
-			# только свой по праву (не захваченные: Германия держала бы Париж, Прагу, Рим)
-			if world.p_controller[c] == nat.id and world.p_owner[c] == nat.id and _enemy_near(world, nat.id, c, CAP_NEAR):
+			# только своя национальная земля (Claims): не захваченные и не переданные —
+			# Германия держала бы Париж, Прагу и Рим после перемирия Италии
+			if world.p_controller[c] == nat.id and Claims.is_core(world, nat.id, c) and _enemy_near(world, nat.id, c, CAP_NEAR):
 				caps.append(c)
 		if nat.hold.is_empty() and nat.siege.is_empty() and caps.is_empty():
 			continue
