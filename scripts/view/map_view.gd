@@ -181,6 +181,18 @@ func setup(w: World) -> void:
 	else:
 		mat.set_shader_parameter("has_detail", false)
 	mat.set_shader_parameter("map_size", Vector2(world.width, world.height))
+	# карта провинций для отрисовки вдвое подробнее (tools/build_ids2x.py):
+	# границы стран, областей и берег — по векторным контурам, а не лесенкой
+	var ids := _ids2() if world.width == 5632 else []
+	mat.set_shader_parameter("has_ids2", not ids.is_empty())
+	mat.set_shader_parameter("id_k", 2.0 if not ids.is_empty() else 1.0)
+	if not ids.is_empty():
+		var tw: ImageTexture = ids[0]
+		mat.set_shader_parameter("id_w", ids[0])
+		mat.set_shader_parameter("id_e", ids[1])
+		mat.set_shader_parameter("map_size", Vector2(world.width * 2, world.height * 2))
+		mat.set_shader_parameter("ids_half", world.width)
+		mat.set_shader_parameter("ids_off", world.width - (tw.get_width() - world.width))
 
 	camera = Camera2D.new()
 	add_child(camera)
@@ -222,6 +234,28 @@ func center_on(p: int) -> void:
 func set_selected(prov: int) -> void:
 	mat.set_shader_parameter("selected_id", prov)
 	redraw()
+
+
+static var _ids2_cache: Array = []
+
+
+## Половины карты провинций 2× (data/world1936/ids2_*.png.bin) как RG8 —
+## грузятся один раз за запуск; пусто — файлов нет.
+static func _ids2() -> Array:
+	if not _ids2_cache.is_empty():
+		return _ids2_cache
+	var res: Array = []
+	for k in ["w", "e"]:
+		var path := "res://data/world1936/ids2_%s.png.bin" % k
+		if not FileAccess.file_exists(path):
+			return []
+		var img := Image.new()
+		if img.load_png_from_buffer(FileAccess.get_file_as_bytes(path)) != OK:
+			return []
+		img.convert(Image.FORMAT_RG8)
+		res.append(ImageTexture.create_from_image(img))
+	_ids2_cache = res
+	return res
 
 
 ## Фронты армий игрока на карте: провинция -> [роль, цвет] (роль — биты:

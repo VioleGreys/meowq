@@ -7,7 +7,16 @@ uniform sampler2D id_tex : filter_nearest;
 uniform sampler2D ctrl_tex : filter_nearest;   // rgb — цвет контролёра/режима, a — (нация+1)/255, 0 = море
 uniform sampler2D owner_tex : filter_nearest;  // rgb — цвет владельца, a — (нация+1)/255
 uniform sampler2D height_tex : filter_linear;  // r — высота (0.5 = уровень моря), g — реки
-uniform vec2 map_size = vec2(800.0, 500.0);
+uniform vec2 map_size = vec2(800.0, 500.0);   // сетка карты провинций (с ids2 — вдвое подробнее)
+// карта провинций для отрисовки вдвое подробнее (tools/build_ids2x.py), половинами
+// запад/восток: восточная — со сдвигом ids_off; id_k — во сколько раз сетка
+// подробнее пикселя карты (узоры и толщины линий — в пикселях карты)
+uniform sampler2D id_w : filter_nearest;
+uniform sampler2D id_e : filter_nearest;
+uniform bool has_ids2 = false;
+uniform int ids_half = 5632;
+uniform int ids_off = 5600;
+uniform float id_k = 1.0;
 uniform int selected_id = -1;
 uniform int highlight_nation = -1;
 uniform bool show_occupation = true;
@@ -55,7 +64,12 @@ float lw_min(float w) {
 
 int pid(ivec2 p) {
 	p = clamp(p, ivec2(0), ivec2(map_size) - 1);
-	vec4 c = texelFetch(id_tex, p, 0);
+	vec4 c;
+	if (has_ids2) {
+		c = p.x < ids_half ? texelFetch(id_w, p, 0) : texelFetch(id_e, p - ivec2(ids_off, 0), 0);
+	} else {
+		c = texelFetch(id_tex, p, 0);
+	}
 	return int(c.r * 255.0 + 0.5) + int(c.g * 255.0 + 0.5) * 256;
 }
 
@@ -109,7 +123,7 @@ void fragment() {
 		uid[0] = pid(ip);
 		uw[0] = 1.0;
 	} else {
-	bool far = zoom * 2.0 < 1.2 || quality < 2;
+	bool far = zoom * 2.0 / id_k < 1.2 || quality < 2;
 	vec4 wx;
 	vec4 wy;
 	vec4 bx = vec4(0.0, 1.0 - tf.x, tf.x, 0.0);   // билинейные веса (перевес ближних)
@@ -279,7 +293,7 @@ void fragment() {
 			}
 			col = mix(vec3(0.22, 0.42, 0.50), vec3(0.07, 0.15, 0.25), pow(depth, 0.45));
 		}
-		float wave = sin(px.x * 0.21 + sin(px.y * 0.13) * 2.0);   // рябь (неподвижная: карта рисуется по изменениям)
+		float wave = sin(px.x / id_k * 0.21 + sin(px.y / id_k * 0.13) * 2.0);   // рябь (неподвижная: карта рисуется по изменениям)
 		col += vec3(0.015) * wave * (1.0 - depth * 0.5);
 		// сетка широт и долгот через 15° — как на штабной карте
 		float s_px = map_size.x / 6.2831853;
@@ -296,7 +310,7 @@ void fragment() {
 		mediump vec3 base = cc.rgb;
 		int own = nation(oc);
 		if (show_occupation && own != ctrl) {
-			float s = step(0.5, fract((px.x + px.y) * 0.28));
+			float s = step(0.5, fract((px.x + px.y) / id_k * 0.28));
 			base = mix(base, oc.rgb, s * 0.75);
 		}
 		if (has_art) {
@@ -317,7 +331,7 @@ void fragment() {
 				// вблизи — фактура местности: веса по цвету природной зоны и крутизне
 				float dk = smoothstep(1.2, 3.0, zoom);
 				if (dk > 0.0) {
-					mediump vec4 dt = texture(detail_tex, px / DETAIL_TILE);
+					mediump vec4 dt = texture(detail_tex, px / (DETAIL_TILE * id_k));
 					mediump float sat = max(terr.r, max(terr.g, terr.b)) - min(terr.r, min(terr.g, terr.b));
 					mediump float w_snow = smoothstep(0.80, 0.90, tl) * (1.0 - smoothstep(0.06, 0.14, sat));
 					mediump float w_rock = smoothstep(0.15, 0.45, slope) * (1.0 - w_snow);
@@ -350,8 +364,8 @@ void fragment() {
 			col *= 0.97 + 0.03 * fract(sin(dot(vec2(ip), vec2(12.9898, 78.233))) * 43758.5453);
 		} else {
 			// плавный шум (билинейно между узлами) — без квадратиков вблизи
-			vec2 g = floor(px * 0.5);
-			vec2 f = smoothstep(0.0, 1.0, fract(px * 0.5));
+			vec2 g = floor(px / id_k * 0.5);
+			vec2 f = smoothstep(0.0, 1.0, fract(px / id_k * 0.5));
 			float n00 = fract(sin(dot(g, vec2(12.9898, 78.233))) * 43758.5453);
 			float n10 = fract(sin(dot(g + vec2(1.0, 0.0), vec2(12.9898, 78.233))) * 43758.5453);
 			float n01 = fract(sin(dot(g + vec2(0.0, 1.0), vec2(12.9898, 78.233))) * 43758.5453);
@@ -368,7 +382,8 @@ void fragment() {
 	// против воды, граница стран — своя страна против лучшей чужой, граница
 	// провинций — победитель против второго в своей стране. Так на стыке
 	// двух провинций и моря берег не пропадает.
-	float texel_px = zoom * 2.0 * res_k;                        // тексель карты на экране (масштаб спрайта 2)
+	float texel_px = zoom * 2.0 * res_k / id_k;                        // тексель сетки провинций на экране (масштаб спрайта 2)
+	float map_px = texel_px * id_k;                                  // пиксель карты на экране: толщины линий — в нём
 	float w_land = 0.0;
 	float w_water = 0.0;
 	float w_mine = 0.0;      // страна победителя
@@ -463,20 +478,22 @@ void fragment() {
 	} else if (cov > 0.01 && cov < 0.99) {
 		// береговая линия по векторной доле суши
 		float dp = d0 / max(fw0, 0.5 / texel_px) * 0.5;
-		float w = max(lw_min(0.75), 0.2 * texel_px);
+		float w = max(lw_min(0.75), min(0.2 * map_px, 0.3 * texel_px + 0.5));
 		col = mix(col, vec3(0.10, 0.13, 0.17), (1.0 - smoothstep(w - 0.8, w + 0.8, dp)) * 0.8);
 	}
 	land = land && !sea_px;
 	if (land && !wide_land && w_other > 0.0) {
 		float dp = d1 / max(fw1, 0.5 / texel_px) * 0.5;
-		float w = max(lw_min(1.1), 0.45 * texel_px);
+		// вблизи — не толще ~полутекселя сетки провинций: оценка расстояния до
+		// границы верна только в пределах окна, толще — проступают ступени
+		float w = max(lw_min(1.1), min(0.45 * map_px, 0.5 * texel_px + 0.8));
 		col = mix(col, vec3(0.07, 0.06, 0.06), (1.0 - smoothstep(w - 0.9, w + 0.9, dp)) * 0.9);
 		// мягкий тон своей страны вдоль границы — как цветная кайма на картах
-		col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 3.0 + texel_px, dp)) * 0.18);
+		col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 2.0 + texel_px, dp)) * 0.18);
 	}
 	if (land && !wide_land && w_prov2 > 0.0) {
 		float dp = d2 / max(fw2, 0.5 / texel_px) * 0.5;
-		float w = max(lw_min(0.6), 0.14 * texel_px);
+		float w = max(lw_min(0.6), 0.14 * map_px);
 		float a2 = smoothstep(0.45, 1.3, zoom);
 		col = mix(col, col * 0.6, (1.0 - smoothstep(w - 0.7, w + 0.7, dp)) * a2);
 	}
@@ -497,7 +514,7 @@ void fragment() {
 		// линия фронта: тёмная кайма и цвет армии — толще границы стран
 		mediump vec3 fc = pal(front_tex, uid[fo_j]).rgb;
 		float dp = d3 / max(fw3, 0.5 / texel_px) * 0.5;
-		float w = min(max(lw_min(2.3 * res_k), 0.55 * texel_px), 7.0 * res_k);
+		float w = min(max(lw_min(2.3 * res_k), 0.55 * map_px), 7.0 * res_k);
 		col = mix(col, vec3(0.05, 0.04, 0.03), (1.0 - smoothstep(w + 0.4, w + 1.6, dp)) * 0.85);
 		col = mix(col, fc, 1.0 - smoothstep(w - 0.8, w + 0.4, dp));
 	}
