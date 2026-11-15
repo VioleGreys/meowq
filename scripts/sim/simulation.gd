@@ -88,10 +88,28 @@ func tick() -> void:
 			for nat in world.nations:
 				dn[nat.id] = 1 if nat.stats_dirty else 0
 			var own := world.d_owner
+			var tpl := world.d_tpl
 			var divs := world.divisions
+			# итог refresh_division зависит только от страны и шаблона — один
+			# расчёт на пару, остальным те же значения
+			var memo := {}
 			for i in divs.size():
 				if dn[own[i]] == 1:
-					Military.refresh_division(world, divs[i])
+					var d: World.Division = divs[i]
+					var key := own[i] * 65536 + tpl[i]
+					var mv: Variant = memo.get(key)
+					if mv == null:
+						Military.refresh_division(world, d)
+						memo[key] = PackedFloat64Array([d.atk, d.def, d.max_org, d.spd, d.hard, d.armor, d.pierce])
+					else:
+						var v: PackedFloat64Array = mv
+						d.atk = v[0]
+						d.def = v[1]
+						d.max_org = v[2]
+						d.spd = v[3]
+						d.hard = v[4]
+						d.armor = v[5]
+						d.pierce = v[6]
 		for nat in world.nations:
 			nat.stats_dirty = false
 		Prof.add("подг:дивизии", _pt)

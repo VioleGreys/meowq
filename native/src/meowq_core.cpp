@@ -27,6 +27,9 @@ void MeowqCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("sea_bfs", "adj_start", "adj_list", "land", "from"), &MeowqCore::sea_bfs);
 	ClassDB::bind_method(D_METHOD("sea_path", "adj_start", "adj_list", "land", "from", "to"), &MeowqCore::sea_path);
 	ClassDB::bind_method(D_METHOD("own_reach", "adj_start", "adj_list", "land", "ctrl", "n", "start", "nation_count"), &MeowqCore::own_reach);
+	ClassDB::bind_method(D_METHOD("leaders_daily", "alive", "dx", "bt", "own", "gain", "gen", "mar", "la", "ldf", "ls", "ae", "de", "se",
+			"act", "code", "fac", "has_act", "ncmd", "xp_new", "xp_drill", "xp_g", "xp_m"), &MeowqCore::leaders_daily);
+	ClassDB::bind_method(D_METHOD("land_components", "ctrl", "land", "ally", "adj_start", "adj_list", "waste", "nc"), &MeowqCore::land_components);
 	ClassDB::bind_method(D_METHOD("place_factory", "owner", "ctrl", "civ", "mil", "pop", "terrain", "nid", "max_factories", "t_urban"), &MeowqCore::place_factory);
 	ClassDB::bind_method(D_METHOD("combat", "provs", "att_start", "att_list", "seeds", "str", "org", "eq", "def", "atk", "ent", "landing", "sup", "tpl", "hard", "owner", "battle", "pl_head", "d_nx", "war", "nc", "def_mult", "terrain", "region", "cas", "tmul", "prov", "tpl_width", "fw", "armor", "pierce", "armor_cut", "tpl_sc", "coord"), &MeowqCore::combat);
 	ClassDB::bind_method(D_METHOD("income", "ctrl", "owner", "civ", "mil", "manpower", "nc"), &MeowqCore::income);

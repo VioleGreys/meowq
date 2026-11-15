@@ -972,3 +972,115 @@ Array MeowqCore::climate(const Dictionary &t) const {
 	r.push_back(cm_a);
 	return r;
 }
+
+
+// Участки суши сторон (Depots.components): обход в ширину от каждой провинции
+// по соседям той же стороны (своя или союзная провинции-семени); безлюдная
+// пустыня связь не передаёт. Номера участков — в порядке провинций-семян.
+PackedInt32Array MeowqCore::land_components(const PackedInt32Array &ctrl, const PackedByteArray &land, const PackedByteArray &ally,
+		const PackedInt32Array &adj_start, const PackedInt32Array &adj_list, const PackedByteArray &waste, int nc) const {
+	const int pc = int(land.size());
+	PackedInt32Array comp;
+	comp.resize(pc);
+	int32_t *cm = comp.ptrw();
+	for (int i = 0; i < pc; i++) cm[i] = -1;
+	const int32_t *ct = ctrl.ptr(), *as = adj_start.ptr(), *al = adj_list.ptr();
+	const uint8_t *ld = land.ptr();
+	const bool has_ally = ally.size() == int64_t(nc) * nc;
+	const uint8_t *alp = has_ally ? ally.ptr() : nullptr;
+	const bool has_waste = waste.size() == pc;
+	const uint8_t *ws = has_waste ? waste.ptr() : nullptr;
+	std::vector<int32_t> q;
+	q.reserve(pc);
+	int32_t next = 0;
+	for (int p0 = 0; p0 < pc; p0++) {
+		if (ld[p0] == 0 || cm[p0] >= 0 || ct[p0] < 0) continue;
+		const int32_t c0 = ct[p0];
+		cm[p0] = next;
+		q.clear();
+		q.push_back(p0);
+		for (size_t h = 0; h < q.size(); h++) {
+			const int32_t p = q[h];
+			if (has_waste && ws[p] == 1) continue;
+			for (int32_t k = as[p]; k < as[p + 1]; k++) {
+				const int32_t y = al[k];
+				if (cm[y] >= 0 || ld[y] == 0) continue;
+				const int32_t o = ct[y];
+				if (o < 0 || (o != c0 && (!has_ally || alp[int64_t(c0) * nc + o] != 1))) continue;
+				cm[y] = next;
+				q.push_back(y);
+			}
+		}
+		next++;
+	}
+	return comp;
+}
+
+
+// Командиры за день (Leaders.daily, двойник на GDScript): опыт дивизий, множители
+// генерала и маршала и их способностей на действующие атаку, оборону и скорость,
+// опыт командиров за бои. fac — по 3 множителя способности на командира (act = 1 —
+// действует), code — номер способности (одна и та же у генерала и маршала — раз).
+// [ae, de, se, dx, опыт командиров].
+Array MeowqCore::leaders_daily(const PackedByteArray &alive, const PackedFloat64Array &dx, const PackedByteArray &bt,
+		const PackedInt32Array &own, const PackedFloat64Array &gain, const PackedInt32Array &gen, const PackedInt32Array &mar,
+		const PackedFloat64Array &la, const PackedFloat64Array &ldf, const PackedFloat64Array &ls,
+		const PackedFloat64Array &ae, const PackedFloat64Array &de, const PackedFloat64Array &se,
+		const PackedByteArray &act, const PackedInt32Array &code, const PackedFloat64Array &fac,
+		bool has_act, int ncmd, double xp_new, double xp_drill, double xp_g, double xp_m) const {
+	const int n = int(ae.size());
+	PackedFloat64Array ae_o = ae, de_o = de, se_o = se, dx_o = dx;
+	PackedFloat64Array xp;
+	xp.resize(ncmd);
+	double *xw = xp.ptrw();
+	for (int i = 0; i < ncmd; i++) xw[i] = 0.0;
+	double *aw = ae_o.ptrw(), *dw = de_o.ptrw(), *sw = se_o.ptrw(), *xd = dx_o.ptrw();
+	const uint8_t *al = alive.ptr(), *b = bt.ptr(), *ac = act.ptr();
+	const int32_t *ow = own.ptr(), *gn = gen.ptr(), *mr = mar.ptr(), *cd = code.ptr();
+	const double *gaw = gain.ptr(), *lap = la.ptr(), *ldp = ldf.ptr(), *lsp = ls.ptr(), *fc = fac.ptr();
+	for (int s = 0; s < n; s++) {
+		if (al[s] == 0) continue;
+		const double x = xd[s];
+		double lv = -0.25;
+		if (x >= 0.5) lv = x >= 0.75 ? 0.75 : 0.50;
+		else if (x >= 0.1) lv = x >= 0.3 ? 0.25 : 0.0;
+		if (b[s] != 0) xd[s] = std::min(1.0, x + gaw[ow[s]]);
+		else if (x < xp_new) xd[s] = std::min(xp_new, x + xp_drill);
+		const int32_t g = gn[s], m = mr[s];
+		double ka = 1.0 + lv, kd = 1.0 + lv, ks = 1.0;
+		if (g >= 0 || m >= 0) {
+			ka *= lap[s];
+			kd *= ldp[s];
+			ks *= lsp[s];
+			if (has_act) {
+				bool ag = g >= 0 && g < ncmd && ac[g] == 1;
+				bool am = m >= 0 && m < ncmd && ac[m] == 1;
+				if (ag && am && cd[g] == cd[m]) am = false;
+				if (ag) {
+					ka *= fc[g * 3];
+					kd *= fc[g * 3 + 1];
+					ks *= fc[g * 3 + 2];
+				}
+				if (am) {
+					ka *= fc[m * 3];
+					kd *= fc[m * 3 + 1];
+					ks *= fc[m * 3 + 2];
+				}
+			}
+			if (b[s] != 0) {
+				if (g >= 0 && g < ncmd) xw[g] += xp_g;
+				if (m >= 0 && m < ncmd) xw[m] += xp_m;
+			}
+		}
+		if (ka != 1.0) aw[s] *= ka;
+		if (kd != 1.0) dw[s] *= kd;
+		if (ks != 1.0) sw[s] *= ks;
+	}
+	Array r;
+	r.push_back(ae_o);
+	r.push_back(de_o);
+	r.push_back(se_o);
+	r.push_back(dx_o);
+	r.push_back(xp);
+	return r;
+}

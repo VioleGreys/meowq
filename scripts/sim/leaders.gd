@@ -594,6 +594,51 @@ static func daily(world: World) -> void:
 	for nat in world.nations:
 		gain[nat.id] = DIV_XP_DAY * maxf(0.0, 1.0 + nat.b("xp_div"))
 	var xp := {}
+	if Native.core != null and Native.core.has_method("leaders_daily"):
+		# C++ — MeowqCore.leaders_daily: тот же порядок умножений и сложений
+		var ncmd: int = world.commanders.size()
+		var acts := PackedByteArray()
+		acts.resize(ncmd)
+		var code := PackedInt32Array()
+		code.resize(ncmd)
+		var fac := PackedFloat64Array()
+		fac.resize(ncmd * 3)
+		var ab_ids: Array = ABILITIES.keys()
+		for cid in act:
+			var v: Array = act[cid]
+			acts[cid] = 1
+			code[cid] = ab_ids.find(world.commanders[cid].ability)
+			fac[cid * 3] = 1.0 + float(v[0])
+			fac[cid * 3 + 1] = 1.0 + float(v[1])
+			fac[cid * 3 + 2] = 1.0 + float(v[2])
+		var r: Array = Native.core.call("leaders_daily", alive, dx, bt, own, gain, gen, mar, la, ldf, ls, ae, de, se,
+				acts, code, fac, not act.is_empty(), ncmd, DIV_XP_NEW, DIV_XP_DRILL, 1.0 / ARMY_MAX, 1.0 / (ARMY_MAX * FRONT_MAX))
+		world.d_atk_eff = r[0]
+		world.d_def_eff = r[1]
+		world.d_spd_eff = r[2]
+		world.d_xp = r[3]
+		var xa: PackedFloat64Array = r[4]
+		for cid in ncmd:
+			if xa[cid] > 0.0:
+				xp[cid] = xa[cid]
+	else:
+		_daily_gd(world, n, gain, gen, mar, la, ldf, ls, bt, alive, own, dx, act, ae, de, se, xp)
+	Prof.add("ком:цикл", _q); _q = Time.get_ticks_usec()
+	var ids := xp.keys()
+	ids.sort()
+	for cid in ids:
+		_gain(world, world.commanders[cid], minf(1.0, xp[cid]))
+	Prof.add("ком:опыт", _q); _q = Time.get_ticks_usec()
+	if world.day % AI_ABILITY_DAYS == 0:
+		ai_abilities(world)
+	Prof.add("ком:способности", _q)
+
+
+## Цикл Leaders.daily на GDScript (двойник MeowqCore.leaders_daily).
+static func _daily_gd(world: World, n: int, gain: PackedFloat64Array, gen: PackedInt32Array, mar: PackedInt32Array,
+		la: PackedFloat64Array, ldf: PackedFloat64Array, ls: PackedFloat64Array, bt: PackedByteArray, alive: PackedByteArray,
+		own: PackedInt32Array, dx: PackedFloat64Array, act: Dictionary, ae: PackedFloat64Array, de: PackedFloat64Array,
+		se: PackedFloat64Array, xp: Dictionary) -> void:
 	var amemo := {}
 	for s in n:
 		if alive[s] == 0:
@@ -655,15 +700,6 @@ static func daily(world: World) -> void:
 	world.d_def_eff = de
 	world.d_spd_eff = se
 	world.d_xp = dx
-	Prof.add("ком:цикл", _q); _q = Time.get_ticks_usec()
-	var ids := xp.keys()
-	ids.sort()
-	for cid in ids:
-		_gain(world, world.commanders[cid], minf(1.0, xp[cid]))
-	Prof.add("ком:опыт", _q); _q = Time.get_ticks_usec()
-	if world.day % AI_ABILITY_DAYS == 0:
-		ai_abilities(world)
-	Prof.add("ком:способности", _q)
 
 
 ## Массив опыта по числу дивизий (сохранения без него — всем «Начинающие»).

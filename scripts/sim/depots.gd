@@ -131,6 +131,20 @@ static func components(world: World) -> void:
 	var waste := world.p_waste
 	var has_waste := waste.size() == pc
 	var comp := PackedInt32Array()
+	if Native.core != null and Native.core.has_method("land_components"):
+		# C++ — MeowqCore.land_components, тот же обход и номера
+		comp = Native.core.call("land_components", ctrl, land, ally, a_start, a_list, waste, nc)
+	else:
+		comp = _components_gd(pc, nc, ctrl, land, ally, has_ally, a_start, a_list, waste, has_waste)
+	world.p_comp = comp
+	for nat in world.nations:
+		var cp: int = nat.capital
+		nat.dep_home = comp[cp] if nat.alive and cp >= 0 and cp < pc and ctrl[cp] == nat.id else -1
+
+
+static func _components_gd(pc: int, nc: int, ctrl: PackedInt32Array, land: PackedByteArray, ally: PackedByteArray,
+		has_ally: bool, a_start: PackedInt32Array, a_list: PackedInt32Array, waste: PackedByteArray, has_waste: bool) -> PackedInt32Array:
+	var comp := PackedInt32Array()
 	comp.resize(pc)
 	comp.fill(-1)
 	var next := 0
@@ -158,10 +172,7 @@ static func components(world: World) -> void:
 				comp[y] = next
 				q.append(y)
 		next += 1
-	world.p_comp = comp
-	for nat in world.nations:
-		var cp: int = nat.capital
-		nat.dep_home = comp[cp] if nat.alive and cp >= 0 and cp < pc and ctrl[cp] == nat.id else -1
+	return comp
 
 
 ## За морем ли провинция для страны n (не на участке её столицы).
@@ -213,20 +224,24 @@ static func daily(world: World) -> void:
 	var downer := world.d_owner
 	var total := PackedInt32Array()
 	total.resize(nc)
+	var home := PackedInt32Array()
+	home.resize(nc)
+	for nat in world.nations:
+		home[nat.id] = nat.dep_home
 	for i in alive.size():
 		if alive[i] == 0 or dprov[i] < 0:
 			continue
 		var o := downer[i]
 		total[o] += 1
 		var cpv := comp[dprov[i]]
-		if cpv >= 0 and cpv != world.nations[o].dep_home:
+		if cpv >= 0 and cpv != home[o]:
 			var key := o * pc + cpv
 			divs[key] = int(divs.get(key, 0)) + 1
 	var by_nat: Array = []   # страна -> участок -> пункты (по возрастанию номера)
 	by_nat.resize(nc)
 	for p in pc:
 		var c := ctrl[p]
-		if c < 0 or dmask[p] == 0 or comp[p] < 0 or comp[p] == world.nations[c].dep_home:
+		if c < 0 or dmask[p] == 0 or comp[p] < 0 or comp[p] == home[c]:
 			continue
 		if by_nat[c] == null:
 			by_nat[c] = {}
