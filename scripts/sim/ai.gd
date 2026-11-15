@@ -191,6 +191,21 @@ static func axes_tables(world: World) -> Array:
 	return [start, lst, st_start, st_list]
 
 
+## Осаждённые города (эффект siege у врага): prov_count, 1 — гарнизон (hold) не
+## уходит на отдых и смену ниже заданного (иначе город пустеет под штурмом).
+static func besieged_table(world: World) -> PackedByteArray:
+	var t := PackedByteArray()
+	for nat in world.nations:
+		if nat.siege.is_empty() or not nat.alive:
+			continue
+		for sp in nat.siege:
+			if siege_on(world, nat, sp):
+				if t.is_empty():
+					t.resize(world.prov_count)
+				t[int(sp)] = 1
+	return t
+
+
 ## Аргументы plan_job из opts (главный поток): всё, что план читает у страны.
 static func military_args(world: World, nid: int, divs: PackedInt32Array, opts: Dictionary) -> Array:
 	var nat: World.Nation = world.nations[nid]
@@ -263,6 +278,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var atk_base := nid * prov_count if atklim.size() == nc * prov_count else -1
 	var holdt: PackedByteArray = tb.get("hold", PackedByteArray())
 	var hold_base := nid * prov_count if holdt.size() == nc * prov_count else -1
+	var besieged: PackedByteArray = tb.get("besieged", PackedByteArray())
 	var has_cap := supcap.size() == prov_count
 	# снабжение дивизий и климат (акклиматизация страны) — для выбора целей атаки
 	var dv_sup: PackedFloat64Array = tb.get("dv_sup", PackedFloat64Array())
@@ -598,10 +614,14 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 						cnt += 1
 				ours_left[pv] = cnt
 			var go := false
+			# гарнизон (hold) осаждённого города не уходит ниже заданного
+			var hn := 0
+			if hold_base >= 0 and besieged.size() == prov_count and besieged[pv] == 1:
+				hn = int(holdt[hold_base + pv])
 			if o < REGROUP_ORG:
-				go = true
+				go = hn == 0 or int(ours_left[pv]) > hn
 			elif o < ROTATE_ORG:
-				go = int(ours_left[pv]) > 1
+				go = int(ours_left[pv]) > maxi(1, hn)
 			elif hold_base < 0 or holdt[hold_base + pv] == 0:   # гарнизон не отходит
 				if not hopeless.has(pv):
 					hopeless[pv] = _hopeless(tb, nid, pv)
@@ -890,7 +910,7 @@ static func _power(world: World, nid: int) -> float:
 ## Таблицы мира для нативного планировщика (одни на всю пачку заданий ИИ).
 static func ai_tables(world: World) -> Dictionary:
 	var axt := axes_tables(world)
-	return {"ax_start": axt[0], "ax_list": axt[1], "st_start": axt[2], "st_list": axt[3], "ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
+	return {"ax_start": axt[0], "ax_list": axt[1], "st_start": axt[2], "st_list": axt[3], "besieged": besieged_table(world), "ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
 		"war": world.war, "ally": world.ally, "pass": world.pass_table(), "nc": world.nation_count, "def": world.p_def_mult, "vp": world.vp_ai(),
 		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,

@@ -75,6 +75,10 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	const PackedByteArray hold_a = tables.has("hold") ? PackedByteArray(tables["hold"]) : PackedByteArray();
 	const int64_t hold_base = hold_a.size() == int64_t(nc) * int64_t(land_a.size()) ? int64_t(nid) * int64_t(land_a.size()) : -1;
 	const uint8_t *holdt = hold_a.ptr();
+	// осаждённые города (как ai.gd besieged_table): гарнизон не уходит ниже hold
+	const PackedByteArray besieged_a = tables.has("besieged") ? PackedByteArray(tables["besieged"]) : PackedByteArray();
+	const bool has_besieged = besieged_a.size() == land_a.size();
+	const uint8_t *besieged = besieged_a.ptr();
 	const float *supcap = supcap_a.ptr();
 	auto capd = [&](int32_t p) { return std::max(1, int(std::floor(double(supcap[p])))); };
 	// снабжение дивизий и климат (акклиматизация страны) — для выбора целей атаки
@@ -466,8 +470,10 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 				ours_left[pv] = cnt;
 			}
 			bool go = false;
-			if (o < REGROUP_ORG) go = true;
-			else if (o < ROTATE_ORG) go = ours_left[pv] > 1;
+			// гарнизон (hold) осаждённого города не уходит ниже заданного
+			const int hn = (hold_base >= 0 && has_besieged && besieged[pv] == 1) ? int(holdt[hold_base + pv]) : 0;
+			if (o < REGROUP_ORG) go = hn == 0 || ours_left[pv] > hn;
+			else if (o < ROTATE_ORG) go = ours_left[pv] > std::max(1, hn);
 			else if (hold_base < 0 || holdt[hold_base + pv] == 0) go = is_hopeless(pv);   // гарнизон не отходит
 			if (!go) continue;
 			int32_t rear = -1;

@@ -889,6 +889,13 @@ func _offensive_step(nat: World.Nation) -> void:
 func _siege_step(nat: World.Nation) -> void:
 	for sp in nat.siege:
 		if not AIPlanner.siege_assault(world, nat, sp):
+			# срок штурма кончился — атаки на город по старым приказам прекращаются
+			# (иначе штурм шёл ещё неделю и брал город уже вне срока)
+			if AIPlanner.siege_on(world, nat, sp) and not nat.is_player:
+				for k in range(world.adj_start[sp], world.adj_start[sp + 1]):
+					for d in world.divs_in(world.adj_list[k]):
+						if d.owner == nat.id and not d.path.is_empty() and d.path[0] == sp:
+							d.path = PackedInt32Array()
 			continue
 		var sg: Array = nat.siege[sp]
 		var period: int = sg[1]
