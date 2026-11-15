@@ -30,6 +30,7 @@ void MeowqCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("leaders_daily", "alive", "dx", "bt", "own", "gain", "gen", "mar", "la", "ldf", "ls", "ae", "de", "se",
 			"act", "code", "fac", "has_act", "ncmd", "xp_new", "xp_drill", "xp_g", "xp_m"), &MeowqCore::leaders_daily);
 	ClassDB::bind_method(D_METHOD("blockade", "t"), &MeowqCore::blockade);
+	ClassDB::bind_method(D_METHOD("conv_routes", "t"), &MeowqCore::conv_routes);
 	ClassDB::bind_method(D_METHOD("overseas_slots", "alive", "prov", "owner", "comp", "home", "nc"), &MeowqCore::overseas_slots);
 	ClassDB::bind_method(D_METHOD("breakout_bfs", "comp", "ctrl", "land", "adj_start", "adj_list", "c", "nid", "home", "steps"), &MeowqCore::breakout_bfs);
 	ClassDB::bind_method(D_METHOD("exp_scan", "comp", "land", "ctrl", "supcap", "adj_start", "adj_list", "war", "ally", "pl_head", "d_nx", "d_owner", "is_port", "n", "nc"), &MeowqCore::exp_scan);

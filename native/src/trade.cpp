@@ -4,6 +4,7 @@
 // float32, как PackedFloat32Array), тот же порядок обходов.
 #include "meowq_core.h"
 
+#include <algorithm>
 #include <cmath>
 #include <unordered_map>
 #include <vector>
@@ -443,5 +444,233 @@ PackedInt32Array MeowqCore::side_slots(const PackedByteArray &alive, const Packe
 	r.resize(int64_t(out.size()));
 	int32_t *rp = r.ptrw();
 	for (size_t k = 0; k < out.size(); k++) rp[k] = out[k];
+	return r;
+}
+
+
+// Пути конвоев (Convoys.refresh_routes, двойник на GDScript): для каждой
+// страны — обход бассейнов от её бассейнов (открытые — по блокаде; связи и
+// закрытия проливов), путь по суше (граф «материк × страна» через невоюющих),
+// пути к продавцам (по возрастанию номера) и к заморским пунктам (по порядку).
+// → [страна, вид (0 — торговля, 1 — порт), цель, начала путей, бассейны путей].
+Array MeowqCore::conv_routes(const Dictionary &t) const {
+	const int nc = int(t["nc"]), nb = int(t["nb"]);
+	const PackedInt32Array bs_a = t["bas_start"], bl_a = t["bas_list"], as_a = t["adj_start"], al_a = t["adj_list"], zb_a = t["zb"];
+	const PackedByteArray land_a = t["land"], war_a = t["war"], nal_a = t["n_alive"], ndo_a = t["n_do"], ophas_a = t["op_has"];
+	const PackedInt32Array sta_a = t["st_a"], stb_a = t["st_b"], stt_a = t["st_t"];
+	const PackedByteArray stc_a = t["st_closed"];
+	const PackedInt32Array sel_s = t["sel_s"], sel_l = t["sel_l"], op_s = t["op_s"], op_l = t["op_l"];
+	const PackedInt32Array st_key = t["start_key"], tmk_a = t["tm_keys"], tms_a = t["tm_start"], tml_a = t["tm_list"];
+	const PackedInt32Array pts_a = t["points"], ctrl_a = t["ctrl"], comp_a = t["comp"], dhome_a = t["dhome"];
+	const PackedByteArray dmask_a = t["dmask"];
+	const int32_t *bs = bs_a.ptr(), *bl = bl_a.ptr(), *as = as_a.ptr(), *al = al_a.ptr(), *zb = zb_a.ptr();
+	const uint8_t *land = land_a.ptr(), *war = war_a.ptr(), *nal = nal_a.ptr(), *ndo = ndo_a.ptr(), *ophas = ophas_a.ptr();
+	const int nst = int(sta_a.size());
+	const int32_t *sta = sta_a.ptr(), *stb = stb_a.ptr(), *stt = stt_a.ptr();
+	const uint8_t *stc = stc_a.ptr();
+	const int32_t *tmk = tmk_a.ptr(), *tms = tms_a.ptr(), *tml = tml_a.ptr();
+	std::unordered_map<int32_t, int32_t> tm_idx;
+	for (int i = 0; i < int(tmk_a.size()); i++) tm_idx[tmk[i]] = i;
+
+	// бассейны у портов стран (все и метрополии), заморские пункты снабжения —
+	// по морским пунктам (Depots.sea_points), как в GDScript
+	std::vector<std::vector<int32_t>> zl(nc), zh(nc), over(nc), transit(nc);
+	{
+		std::vector<uint8_t> zl_m(size_t(nc) * nb), zh_m(size_t(nc) * nb);
+		const int32_t *pts = pts_a.ptr(), *ct = ctrl_a.ptr(), *cm = comp_a.ptr(), *dh = dhome_a.ptr();
+		const uint8_t *dm = dmask_a.ptr();
+		for (int i = 0; i < int(pts_a.size()); i++) {
+			const int p = pts[i];
+			const int c = ct[p];
+			if (c < 0) continue;
+			const bool home = !(dh[c] < 0 || cm[p] != dh[c]);
+			if (!home && dm[p] == 1) over[c].push_back(p);
+			for (int32_t k = as[p]; k < as[p + 1]; k++) {
+				const int32_t y = al[k];
+				if (land[y] != 0) continue;
+				const int32_t z = zb[y];
+				if (!zl_m[size_t(c) * nb + z]) { zl_m[size_t(c) * nb + z] = 1; zl[c].push_back(z); }
+				if (home && !zh_m[size_t(c) * nb + z]) { zh_m[size_t(c) * nb + z] = 1; zh[c].push_back(z); }
+			}
+		}
+		// транзит: страны-соседи по суше (узлы графа trade_mass)
+		std::vector<uint8_t> tr_m(size_t(nc) * nc);
+		for (int i = 0; i < int(tmk_a.size()); i++) {
+			const int x = tmk[i] % nc;
+			for (int32_t k = tms[i]; k < tms[i + 1]; k++) {
+				const int y = tml[k] % nc;
+				if (!tr_m[size_t(x) * nc + y]) { tr_m[size_t(x) * nc + y] = 1; transit[x].push_back(y); }
+			}
+		}
+	}
+
+	PackedInt32Array r_nat, r_kind, r_tgt, r_start, r_list;
+	r_start.push_back(0);
+	std::vector<std::vector<int32_t>> extra(nb);
+	std::vector<uint8_t> cut(size_t(nb) * nb), open(nb);
+	std::vector<int32_t> par(nb), dist(nb), par2(nb), dist2(nb), q;
+	std::vector<uint8_t> by_land(nc);
+
+	// обход бассейнов (Convoys._bfs): use_open — с открытыми, use_cut — с закрытыми проливами
+	auto bfs = [&](int b, bool use_open, bool use_cut, std::vector<int32_t> &pr, std::vector<int32_t> &ds) {
+		std::fill(pr.begin(), pr.end(), -1);
+		std::fill(ds.begin(), ds.end(), 0);
+		std::vector<int32_t> ss = zh[b].empty() ? zl[b] : zh[b];
+		std::sort(ss.begin(), ss.end());
+		q.clear();
+		for (int32_t z : ss) {
+			if (!use_open || open[z]) {
+				pr[z] = z;
+				ds[z] = 1;
+				q.push_back(z);
+			}
+		}
+		for (size_t h = 0; h < q.size(); h++) {
+			const int32_t z = q[h];
+			auto visit = [&](int32_t y) {
+				if (pr[y] >= 0 || (use_open && !open[y]) || (use_cut && cut[size_t(z) * nb + y])) return;
+				pr[y] = z;
+				ds[y] = ds[z] + 1;
+				q.push_back(y);
+			};
+			for (int32_t k = bs[z]; k < bs[z + 1]; k++) visit(bl[k]);
+			for (int32_t y : extra[z]) visit(y);
+		}
+	};
+	// путь до ближайшего из целевых (Convoys._route)
+	auto route = [&](const std::vector<int32_t> &pr, const std::vector<int32_t> &ds, const std::vector<int32_t> &tz,
+			std::vector<int32_t> &out) {
+		out.clear();
+		int best = -1, best_len = 1 << 30;
+		for (int32_t z : tz) {
+			if (pr[z] < 0) continue;
+			const int l = ds[z];
+			if (l < best_len || (l == best_len && z < best)) {
+				best_len = l;
+				best = z;
+			}
+		}
+		if (best < 0) return;
+		out.resize(best_len);
+		int x = best;
+		for (int i = best_len - 1; i >= 0; i--) {
+			out[i] = x;
+			x = pr[x];
+		}
+	};
+	auto emit = [&](int b, int kind, int tgt, const std::vector<int32_t> &path) {
+		r_nat.push_back(b);
+		r_kind.push_back(kind);
+		r_tgt.push_back(tgt);
+		for (int32_t z : path) r_list.push_back(z);
+		r_start.push_back(int32_t(r_list.size()));
+	};
+
+	std::vector<int32_t> tz, path;
+	std::vector<uint8_t> seen_k;
+	std::vector<int32_t> qn;
+	for (int b = 0; b < nc; b++) {
+		if (ndo[b] == 0 || (sel_s[b + 1] == sel_s[b] && over[b].empty()) || (zl[b].empty() && zh[b].empty())) continue;
+		const int64_t bb = int64_t(b) * nc;
+		// путь по суше (Convoys._by_land)
+		std::fill(by_land.begin(), by_land.end(), 0);
+		by_land[b] = 1;
+		if (st_key[b] >= 0) {
+			seen_k.assign(tmk_a.size(), 0);
+			std::vector<int32_t> seen_x;
+			auto was = [&](int32_t key) -> bool {
+				auto it = tm_idx.find(key);
+				if (it != tm_idx.end()) return seen_k[it->second] != 0;
+				for (int32_t s : seen_x) if (s == key) return true;
+				return false;
+			};
+			auto mark = [&](int32_t key) {
+				auto it = tm_idx.find(key);
+				if (it != tm_idx.end()) seen_k[it->second] = 1;
+				else seen_x.push_back(key);
+			};
+			qn.clear();
+			mark(st_key[b]);
+			qn.push_back(st_key[b]);
+			for (size_t h = 0; h < qn.size(); h++) {
+				auto it = tm_idx.find(qn[h]);
+				if (it == tm_idx.end()) continue;
+				for (int32_t k = tms[it->second]; k < tms[it->second + 1]; k++) {
+					const int32_t k2 = tml[k];
+					const int y = k2 % nc;
+					if (was(k2) || war[bb + y] == 1 || nal[y] == 0) continue;
+					mark(k2);
+					by_land[y] = 1;
+					qn.push_back(k2);
+				}
+			}
+		}
+		// проливы (Convoys._strait_links)
+		for (auto &e : extra) e.clear();
+		std::fill(cut.begin(), cut.end(), 0);
+		bool any_cut = false;
+		for (int i = 0; i < nst; i++) {
+			const int a = sta[i], c = stb[i];
+			if (stc[int64_t(b) * nst + i]) {
+				cut[size_t(a) * nb + c] = 1;
+				cut[size_t(c) * nb + a] = 1;
+				any_cut = true;
+			} else if (stt[i] == 1) {
+				extra[a].push_back(c);
+				extra[c].push_back(a);
+			}
+		}
+		const bool has_open = ophas[b] != 0;
+		std::fill(open.begin(), open.end(), 0);
+		if (has_open)
+			for (int32_t i = op_s[b]; i < op_s[b + 1]; i++) open[zb[op_l[i]]] = 1;   // зона открыта → её бассейн
+		bfs(b, has_open, true, par, dist);
+		bool have_all = false;
+		// продавцы
+		for (int32_t i = sel_s[b]; i < sel_s[b + 1]; i++) {
+			const int s = sel_l[i];
+			if (by_land[s] == 1) continue;
+			tz = zl[s];
+			if (tz.empty()) {
+				for (int y : transit[s]) tz.insert(tz.end(), zl[y].begin(), zl[y].end());
+			}
+			route(par, dist, tz, path);
+			if (path.empty() && has_open) {
+				if (!have_all) {
+					bfs(b, false, true, par2, dist2);
+					have_all = true;
+				}
+				route(par2, dist2, tz, path);
+			}
+			if (path.empty()) continue;
+			emit(b, 0, s, path);
+		}
+		// заморские пункты
+		for (int p : over[b]) {
+			tz.clear();
+			for (int32_t k = as[p]; k < as[p + 1]; k++) {
+				const int32_t y = al[k];
+				if (land[y] != 0) continue;
+				const int32_t z = zb[y];
+				if (std::find(tz.begin(), tz.end(), z) == tz.end()) tz.push_back(z);
+			}
+			route(par, dist, tz, path);
+			if (path.empty() && !has_open) {
+				if (!any_cut) continue;   // до порта не дойти (нет общей воды)
+				std::vector<int32_t> p3(nb), d3(nb), path3;
+				bfs(b, false, false, p3, d3);
+				route(p3, d3, tz, path3);
+				if (path3.empty()) continue;
+				// иначе путь закрыт проливом — порт отрезан (пустой путь)
+			}
+			emit(b, 1, p, path);
+		}
+	}
+	Array r;
+	r.push_back(r_nat);
+	r.push_back(r_kind);
+	r.push_back(r_tgt);
+	r.push_back(r_start);
+	r.push_back(r_list);
 	return r;
 }

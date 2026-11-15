@@ -278,6 +278,19 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 		return
 	var _t0 := Time.get_ticks_usec()
 	build_basins(world)
+	if Native.core != null and Native.core.has_method("conv_routes") and world.p_comp.size() == world.prov_count:
+		# C++ — MeowqCore.conv_routes: бассейны у портов, транзит, обходы и пути
+		var sel: Array = []
+		sel.resize(nc)
+		for x in nc:
+			sel[x] = {}
+		for c in world.contracts:
+			sel[int(c[0])][int(c[1])] = float(sel[int(c[0])].get(int(c[1]), 0.0)) + float(c[3])
+		Prof.add("кв:подготовка", _t0)
+		_t0 = Time.get_ticks_usec()
+		_routes_native(world, open_by, sel)
+		Prof.add("кв:пути", _t0)
+		return
 	var zb := world.z_basin
 	# бассейны у портов: все и у портов метрополии
 	var zl: Array = []
@@ -337,9 +350,9 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 			transit[x][int(k2) % nc] = true
 	# связные части графа «материк × страна» по живым странам — для стран без
 	# войн путь по суше = их часть (граф симметричен: соседство провинций)
-	var cc := _mass_components(world)
 	Prof.add("кв:подготовка", _t0)
 	_t0 = Time.get_ticks_usec()
+	var cc := _mass_components(world)
 	for b in nc:
 		var bn: World.Nation = world.nations[b]
 		bn.conv_routes = []
@@ -405,6 +418,115 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 			for j in range(world.bas_zone_start[bi], world.bas_zone_start[bi + 1]):
 				bn.conv_zone_set[world.bas_zone_list[j]] = true
 	Prof.add("кв:пути", _t0)
+
+
+## Пути конвоев в ядре C++ (MeowqCore.conv_routes): снимок в плоские массивы,
+## итог — conv_routes, conv_trade_need, conv_basins, conv_zone_set стран.
+static func _routes_native(world: World, open_by: Dictionary, sellers: Array) -> void:
+	var nc := world.nation_count
+	var nb := world.basin_name.size()
+	var zb := world.z_basin
+	var n_do := PackedByteArray()
+	n_do.resize(nc)
+	var start_key := PackedInt32Array()
+	start_key.resize(nc)
+	var sel_s := PackedInt32Array([0])
+	var sel_l := PackedInt32Array()
+	var op_has := PackedByteArray()
+	op_has.resize(nc)
+	var op_s := PackedInt32Array([0])
+	var op_l := PackedInt32Array()
+	var dhome := PackedInt32Array()
+	dhome.resize(nc)
+	# проливы: только связывающие разные бассейны; закрыты ли — по странам
+	# (держатели пролива — один раз на пролив)
+	var st_a := PackedInt32Array()
+	var st_b := PackedInt32Array()
+	var st_t := PackedInt32Array()
+	var st_hold: Array = []
+	for st in world.straits:
+		var a: int = zb[int(st[0])]
+		var b2: int = zb[int(st[1])]
+		if a < 0 or b2 < 0 or a == b2:
+			continue
+		st_a.append(a)
+		st_b.append(b2)
+		st_t.append(int(st[2]))
+		st_hold.append(strait_holders(world, st))
+	var nst := st_hold.size()
+	var st_closed := PackedByteArray()
+	st_closed.resize(nc * nst)
+	var war := world.war
+	for b in nc:
+		var bn: World.Nation = world.nations[b]
+		bn.conv_routes = []
+		bn.conv_safe = {}
+		bn.conv_zone_set = {}
+		bn.conv_basins = {}
+		bn.conv_trade_need = 0.0
+		dhome[b] = bn.dep_home
+		if bn.alive:
+			n_do[b] = 1
+			var hmb := home_mass(world, b)
+			start_key[b] = hmb * nc + b if hmb >= 0 else -1
+			for i in nst:
+				for h in st_hold[i]:   # = strait_closed(world, st, b)
+					if war[h * nc + b] == 1:
+						st_closed[b * nst + i] = 1
+						break
+			if open_by.has(b):
+				op_has[b] = 1
+				op_l.append_array(PackedInt32Array(open_by[b].keys()))
+			var ks: Array = sellers[b].keys()
+			ks.sort()
+			sel_l.append_array(PackedInt32Array(ks))
+		else:
+			start_key[b] = -1
+		op_s.append(op_l.size())
+		sel_s.append(sel_l.size())
+	var tm_keys := PackedInt32Array()
+	var tm_start := PackedInt32Array([0])
+	var tm_list := PackedInt32Array()
+	for key in world.trade_mass:
+		tm_keys.append(int(key))
+		tm_list.append_array(world.trade_mass[key])
+		tm_start.append(tm_list.size())
+	var t := {"nc": nc, "nb": nb, "bas_start": world.bas_adj_start, "bas_list": world.bas_adj_list,
+		"adj_start": world.adj_start, "adj_list": world.adj_list, "zb": zb, "land": world.p_land, "war": war,
+		"n_alive": n_do, "n_do": n_do, "op_has": op_has, "st_a": st_a, "st_b": st_b, "st_t": st_t,
+		"st_closed": st_closed, "sel_s": sel_s, "sel_l": sel_l, "op_s": op_s, "op_l": op_l,
+		"start_key": start_key, "tm_keys": tm_keys, "tm_start": tm_start, "tm_list": tm_list,
+		"points": Depots.sea_points(world), "ctrl": world.p_controller, "comp": world.p_comp, "dhome": dhome,
+		"dmask": Depots.mask(world)}
+	var r: Array = Native.core.call("conv_routes", t)
+	var r_nat: PackedInt32Array = r[0]
+	var r_kind: PackedInt32Array = r[1]
+	var r_tgt: PackedInt32Array = r[2]
+	var r_start: PackedInt32Array = r[3]
+	var r_list: PackedInt32Array = r[4]
+	for i in r_nat.size():
+		var b := r_nat[i]
+		var bn: World.Nation = world.nations[b]
+		var route := r_list.slice(r_start[i], r_start[i + 1])
+		if r_kind[i] == 0:
+			var s2 := r_tgt[i]
+			var need: float = float(sellers[b][s2]) * (PER_UNIT + PER_BASIN * float(route.size()))
+			bn.conv_routes.append([0, s2, route, need])
+			bn.conv_trade_need += need
+		else:
+			bn.conv_routes.append([1, r_tgt[i], route, 0.0])
+	# зоны бассейнов путей — для рейдеров противника и своих охотников
+	for bn: World.Nation in world.nations:
+		if bn.conv_routes.is_empty():
+			continue
+		for rt in bn.conv_routes:
+			for bi in rt[2]:
+				bn.conv_basins[bi] = true
+		var bks: Array = bn.conv_basins.keys()
+		bks.sort()
+		for bi in bks:
+			for j in range(world.bas_zone_start[bi], world.bas_zone_start[bi + 1]):
+				bn.conv_zone_set[world.bas_zone_list[j]] = true
 
 
 ## Узел графа World.trade_mass → номер связной части (по живым странам) и
