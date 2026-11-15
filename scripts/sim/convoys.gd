@@ -293,18 +293,25 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 	over.resize(nc)
 	for x in nc:
 		over[x] = []
+	var dmask := Depots.mask(world)   # = Depots.is_depot по всем провинциям
+	var comp := world.p_comp
+	var has_comp := comp.size() == world.prov_count
+	var dhome := PackedInt32Array()
+	dhome.resize(nc)
+	for nat in world.nations:
+		dhome[nat.id] = nat.dep_home
 	for p in Depots.sea_points(world):   # порты и столицы колоний на побережье
 		var c := ctrl[p]
 		if c < 0:
 			continue
 		var home: bool
-		if world.p_comp.size() == world.prov_count:
-			home = not Depots.overseas(world, c, p)
+		if has_comp:
+			home = not (dhome[c] < 0 or comp[p] != dhome[c])   # = not Depots.overseas
 		else:
 			if hl[c] == null:
 				hl[c] = home_land(world, c)
 			home = hl[c][p] == 1
-		if not home and Depots.is_depot(world, p):
+		if not home and dmask[p] == 1:
 			over[c].append(p)   # конвои снабжения — только в пункты снабжения (Depots)
 		for k in range(a_start[p], a_start[p + 1]):
 			var q := a_list[k]
@@ -328,6 +335,9 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 		var x: int = int(key) % nc
 		for k2 in world.trade_mass[key]:
 			transit[x][int(k2) % nc] = true
+	# связные части графа «материк × страна» по живым странам — для стран без
+	# войн путь по суше = их часть (граф симметричен: соседство провинций)
+	var cc := _mass_components(world)
 	Prof.add("кв:подготовка", _t0)
 	_t0 = Time.get_ticks_usec()
 	for b in nc:
@@ -342,7 +352,7 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 		var sl: Dictionary = sellers[b]
 		if sl.is_empty() and over[b].is_empty():
 			continue
-		var by_land := _by_land(world, b)
+		var by_land := _by_land_cc(world, b, cc) if _no_war(world, b) else _by_land(world, b)
 		var src: Array = zh[b].keys() if not zh[b].is_empty() else zl[b].keys()
 		if src.is_empty():
 			continue
@@ -395,6 +405,70 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 			for j in range(world.bas_zone_start[bi], world.bas_zone_start[bi + 1]):
 				bn.conv_zone_set[world.bas_zone_list[j]] = true
 	Prof.add("кв:пути", _t0)
+
+
+## Узел графа World.trade_mass → номер связной части (по живым странам) и
+## страны каждой части: [{узел: часть}, [PackedByteArray по странам]].
+static func _mass_components(world: World) -> Array:
+	var nc := world.nation_count
+	var alive := PackedByteArray()
+	alive.resize(nc)
+	for nat in world.nations:
+		alive[nat.id] = 1 if nat.alive else 0
+	var tm := world.trade_mass
+	var comp := {}
+	var members: Array = []
+	var keys: Array = tm.keys()
+	keys.sort()
+	for k0 in keys:
+		var s0: int = k0
+		if comp.has(s0) or alive[s0 % nc] == 0:
+			continue
+		var ci := members.size()
+		var mem := PackedByteArray()
+		mem.resize(nc)
+		comp[s0] = ci
+		mem[s0 % nc] = 1
+		var q := PackedInt32Array([s0])
+		var h := 0
+		while h < q.size():
+			var key := q[h]
+			h += 1
+			var nb: PackedInt32Array = tm.get(key, PackedInt32Array())
+			for k2 in nb:
+				if comp.has(k2) or alive[k2 % nc] == 0:
+					continue
+				comp[k2] = ci
+				mem[k2 % nc] = 1
+				q.append(k2)
+		members.append(mem)
+	return [comp, members]
+
+
+## Страна ни с кем не воюет (строка матрицы войн пуста).
+static func _no_war(world: World, b: int) -> bool:
+	var nc := world.nation_count
+	var war := world.war
+	for y in nc:
+		if war[b * nc + y] == 1:
+			return false
+	return true
+
+
+## _by_land для страны без войн: страны её связной части графа.
+static func _by_land_cc(world: World, b: int, cc: Array) -> PackedByteArray:
+	var nc := world.nation_count
+	var hmb := home_mass(world, b)
+	if hmb >= 0:
+		var ci = cc[0].get(hmb * nc + b)
+		if ci != null:
+			var res: PackedByteArray = cc[1][int(ci)].duplicate()
+			res[b] = 1
+			return res
+	var res0 := PackedByteArray()
+	res0.resize(nc)
+	res0[b] = 1
+	return res0
 
 
 ## Страны, до которых путь по суше (материк столицы, через невоюющих с b).

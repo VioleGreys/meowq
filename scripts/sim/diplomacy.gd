@@ -727,11 +727,13 @@ static func reachable_neighbours(world: World, n: int) -> Dictionary:
 
 ## Белый мир: война без продвижения больше года между странами ИИ.
 static func check_stalemates(world: World) -> void:
+	var any := false
 	for nat in world.nations:
 		if not nat.alive or nat.is_player or nat.capitulated or nat.at_war.is_empty():
 			continue
 		if world.day - nat.war_activity_day < 365:
 			continue
+		any = true
 		for e in nat.at_war.keys():
 			var ne: World.Nation = world.nations[e]
 			if ne.is_player or ne.capitulated or world.day - ne.war_activity_day < 365:
@@ -751,10 +753,15 @@ static func check_stalemates(world: World) -> void:
 			world.war[nat.id * world.nation_count + e] = 0
 			world.war[e * world.nation_count + nat.id] = 0
 			world.log_event("%s и %s заключают белый мир" % [nat.name, ne.name])
+	# оккупированное возвращается владельцам, если войны между ними больше нет.
+	# Один проход после всех белых миров — то же, что проход после каждой
+	# страны: войны здесь только кончаются, возвращённое остаётся у владельца
+	if any:
+		var owner := world.p_owner
+		var ctrl := world.p_controller
 		for p in world.prov_count:
-			# оккупированное возвращается владельцам, если войны между ними больше нет
-			var o := world.p_owner[p]
-			var c := world.p_controller[p]
+			var o := owner[p]
+			var c := ctrl[p]
 			if o >= 0 and c != o and not world.is_at_war(o, c):
 				world.p_controller[p] = o
 				world.palette_dirty = true
