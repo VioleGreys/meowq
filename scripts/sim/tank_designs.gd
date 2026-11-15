@@ -64,6 +64,29 @@ static func module(id: String) -> Array:
 	return _mod.get(id, [])
 
 
+static var _reqs := PackedStringArray()
+
+
+## Ключ пересборки: сколько изучено технологий шасси и модулей (+100000 — не
+## спутать с прежним числом всех технологий); другие автосборку не меняют.
+static func tech_key(nat) -> int:
+	if _reqs.is_empty():
+		var seen := {}
+		for h in HULLS:
+			if String(h[2]) != "" and not seen.has(h[2]):
+				seen[h[2]] = true
+				_reqs.append(h[2])
+		for m in MODS:
+			if String(m[2]) != "" and not seen.has(m[2]):
+				seen[m[2]] = true
+				_reqs.append(m[2])
+	var k := 100000
+	for t in _reqs:
+		if nat.techs.has(t):
+			k += 1
+	return k
+
+
 static func has_tech(nat, req: String) -> bool:
 	return req == "" or nat.techs.has(req)
 
@@ -202,9 +225,10 @@ static func set_production(world, nat, did: int) -> void:
 ## ИИ (и стартовый проект игрока): лучший проект по нынешним технологиям —
 ## в производство, если он лучше текущего.
 static func ai_update(world, nat) -> void:
-	if nat.tank_techs == nat.techs.size() and nat.tank_design >= 0:
+	var key := tech_key(nat)
+	if nat.tank_techs == key and nat.tank_design >= 0:
 		return
-	nat.tank_techs = nat.techs.size()
+	nat.tank_techs = key
 	var hm := auto(nat)
 	if String(hm[0]) == "":
 		return

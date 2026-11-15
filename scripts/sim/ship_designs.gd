@@ -88,6 +88,31 @@ static var _hull := {}
 static var _mod := {}
 
 
+static var _reqs := PackedStringArray()
+
+
+## Ключ пересборки: сколько изучено технологий, открывающих корпуса и модули
+## (+100000 — не спутать с прежним числом всех технологий из старых
+## сохранений). Другие новые технологии автосборку не меняют: её итог тот же,
+## и прежний проект роли остаётся — пересобирать незачем.
+static func tech_key(nat) -> int:
+	if _reqs.is_empty():
+		var seen := {}
+		for h in HULLS:
+			if String(h[3]) != "" and not seen.has(h[3]):
+				seen[h[3]] = true
+				_reqs.append(h[3])
+		for m in MODS:
+			if String(m[3]) != "" and not seen.has(m[3]):
+				seen[m[3]] = true
+				_reqs.append(m[3])
+	var k := 100000
+	for t in _reqs:
+		if nat.techs.has(t):
+			k += 1
+	return k
+
+
 static func _ensure() -> void:
 	if not _hull.is_empty():
 		return
@@ -273,9 +298,10 @@ static func _auto_name(world, nat, role: int) -> String:
 ## ИИ (и стартовые проекты игрока): собрать лучшие проекты ролей по нынешним
 ## технологиям; лучше прежнего — становится основным проектом роли.
 static func ai_update(world, nat) -> void:
-	if nat.ship_techs == nat.techs.size() and nat.ship_role[0] >= 0:
+	var key := tech_key(nat)
+	if nat.ship_techs == key and nat.ship_role[0] >= 0:
 		return
-	nat.ship_techs = nat.techs.size()
+	nat.ship_techs = key
 	for role in ROLES.size():
 		var hm := auto(nat, role)
 		if String(hm[0]) == "":
