@@ -124,8 +124,8 @@ def despeckle(out):
     return int(_despeckle(src, out))
 
 
-SNAP_NEAR = 1.6    # у реки ближе стольких пикселей карты — провинция своего берега
-SNAP_SIDE = 2.6     # берег пробуем на таком расстоянии от осевой линии
+SNAP_FAR = 3.2      # у реки ближе стольких пикселей карты — провинция своего берега
+SNAP_SIDE = 4.2     # свой берег пробуем на таком расстоянии от осевой линии
 
 
 def snap_rivers(out, land_of):
@@ -138,8 +138,12 @@ def snap_rivers(out, land_of):
     if not os.path.exists(path):
         return
     rv = np.asarray(Image.open(path).convert("RGB")).astype(np.float32)
-    vec = (rv[..., :2] - 128.0) / 127.0 * 4.0          # RMAX build_rivers
-    has = rv[..., 2] > 0
+    # сила реки — в канале g relief.png.bin; вектор в поле приведённый (делён
+    # на относительную ширину реки) — вернуть в пиксели карты
+    stg = np.asarray(Image.open(os.path.join(DATA, "relief.png.bin")).convert("RGB"))[..., 1]
+    wk = np.where(stg >= 255, 1.0, np.where(stg >= 170, 0.32 / 0.42, 0.24 / 0.42)).astype(np.float32)
+    vec = (rv[..., :2] - 128.0) / 127.0 * 4.0 * wk[..., None]          # RMAX build_rivers
+    has = stg > 0
     H2, W2 = out.shape
     H, W = has.shape
     src = out.copy()
@@ -161,7 +165,7 @@ def snap_rivers(out, land_of):
              + vec[iy + 1, ix] * (1 - tx) * ty + vec[iy + 1, ix + 1] * tx * ty)
         hh = has[iy, ix] | has[iy, ix + 1] | has[iy + 1, ix] | has[iy + 1, ix + 1]
         d = np.sqrt((v ** 2).sum(-1))
-        m = hh & (d < SNAP_NEAR) & (d > 1e-3)
+        m = hh & (d < SNAP_FAR) & (d > 1e-3)
         if not m.any():
             continue
         yy, xx = np.nonzero(m)
@@ -172,15 +176,27 @@ def snap_rivers(out, land_of):
         ry = gy[yy, xx] + vv[:, 1]
         sx = np.clip(((rx - n[:, 0] * SNAP_SIDE) * SCALE).astype(np.int64), 0, W2 - 1)
         sy = np.clip(((ry - n[:, 1] * SNAP_SIDE) * SCALE).astype(np.int64), 0, H2 - 1)
-        ox = np.clip(((rx + n[:, 0] * SNAP_SIDE) * SCALE).astype(np.int64), 0, W2 - 1)
-        oy = np.clip(((ry + n[:, 1] * SNAP_SIDE) * SCALE).astype(np.int64), 0, H2 - 1)
         ps = src[sy, sx]
-        po = src[oy, ox]
         cur = src[y0 + yy, xx]
-        ok = (ps != po) & (land_of[ps] == 1) & (land_of[po] == 1) & (land_of[cur] == 1) & (ps != cur)
+        # пиксель берёт провинцию, лежащую прямо от реки на его стороне: и
+        # у реки-раздела (полоска провинции того берега на этом), и у границы
+        # районов (geoBoundaries), смещённой от линии Natural Earth на 1–3
+        # пикс., — иначе вдоль берега тянулась отдельная линия или «крючок»;
+        # линии провинций подходят к реке поперёк
+        ok = (ps != cur) & (land_of[ps] == 1) & (land_of[cur] == 1)
         out[y0 + yy[ok], xx[ok]] = ps[ok]
         changed += int(ok.sum())
-    print(f"Пикселей 2× у рек отдано своему берегу: {changed}")
+    # узкая провинция у реки (полоса между рукавами) не должна исчезнуть с
+    # карты отрисовки: потерявшей больше 40 % пикселей возвращаем её пиксели
+    n = int(max(src.max(), out.max())) + 1
+    before = np.bincount(src.ravel(), minlength=n)
+    after = np.bincount(out.ravel(), minlength=n)
+    lost = (after < before * 0.6) & (before > 0)
+    if lost.any():
+        back = lost[src] & (out != src)
+        out[back] = src[back]
+        changed -= int(back.sum())
+    print(f"Пикселей 2× у рек отдано своему берегу: {changed} (провинций сохранено от поглощения: {int(lost.sum())})")
 
 
 def main():

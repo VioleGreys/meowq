@@ -345,6 +345,7 @@ func set_selected(prov: int) -> void:
 
 
 static var _ids2_cache: Array = []
+static var _ids2_imgs: Array = []   # те же половины как Image (для каймы)
 
 
 ## Половины карты провинций 2× (data/world1936/ids2_*.png.bin) как RG8 —
@@ -361,6 +362,7 @@ static func _ids2() -> Array:
 		if img.load_png_from_buffer(FileAccess.get_file_as_bytes(path)) != OK:
 			return []
 		img.convert(Image.FORMAT_RG8)
+		_ids2_imgs.append(img)
 		res.append(ImageTexture.create_from_image(img))
 	_ids2_cache = res
 	return res
@@ -376,12 +378,30 @@ var band_tex: ImageTexture
 static var _id_bytes := PackedByteArray()
 
 
+## Карта провинций 1× из очищенной 2× (tools/build_ids2x.py: у рек провинция
+## своего берега, без осколков) — иначе кайма страны строится по исходной 1×,
+## где у рек остались полоски чужих провинций, и у берега темнеет пятно.
+func _ids1_from_2x() -> Image:
+	if _ids2().is_empty() or _ids2_imgs.size() != 2 or world.width != 5632:
+		return null
+	var half := world.width   # половина сетки 2× — столько же столбцов, сколько у 1×
+	var pad: int = (_ids2_imgs[0] as Image).get_width() - half
+	var out := Image.create(world.width, world.height, false, Image.FORMAT_RG8)
+	for k in 2:
+		var src := (_ids2_imgs[k] as Image).get_region(Rect2i(0 if k == 0 else pad, 0, half, world.height * 2))
+		src.resize(half / 2, world.height, Image.INTERPOLATE_NEAREST)
+		out.blit_rect(src, Rect2i(0, 0, half / 2, world.height), Vector2i(k * half / 2, 0))
+	return out
+
+
 func _update_band() -> void:
 	if Native.core == null or not Native.core.has_method("border_band") or world.id_image == null:
 		mat.set_shader_parameter("has_band", false)
 		return
 	if _id_bytes.size() != world.width * world.height * 3:
-		var img := world.id_image.duplicate() as Image
+		var img := _ids1_from_2x()
+		if img == null:
+			img = world.id_image.duplicate() as Image
 		img.convert(Image.FORMAT_RGB8)
 		_id_bytes = img.get_data()
 	var bw := world.width / BAND_STEP
