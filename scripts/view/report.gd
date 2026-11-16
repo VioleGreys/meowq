@@ -6,10 +6,26 @@ extends RefCounted
 
 const KEEP := 30   # секунд истории замеров
 
-# история: каждую секунду — [FPS, тик, логика, фишки, ГП карта, дн/с]
+# история: каждую секунду — [FPS, тик, логика, фишки, ГП карта, дн/с, худший кадр,
+# полных перерисовок карты, частичных]
 static var _hist: Array = []
 static var _last_msec := 0
-const FIELDS := ["FPS", "тик, мс", "логика, мс", "фишки, мс", "ГП карта, мс", "дн/с"]
+const FIELDS := ["FPS", "тик, мс", "логика, мс", "фишки, мс", "ГП карта, мс", "дн/с",
+	"худший кадр за с, мс", "полных перерисовок карты за с", "частичных перерисовок за с"]
+static var _frame_max := 0.0
+static var _rd_full := 0
+static var _rd_part := 0
+
+
+## Каждый кадр (MapView._process): худший кадр и перерисовки карты за секунду.
+static func frame(dt: float, full_redraws: int, part_redraws: int) -> void:
+	_frame_max = maxf(_frame_max, dt * 1000.0)
+	_rd_full = full_redraws
+	_rd_part = part_redraws
+
+
+static var _rd_full_prev := 0
+static var _rd_part_prev := 0
 
 
 static func sample(fps: float, tick_ms: float, logic_ms: float, units_ms: float, gpu_map_ms: float, dps: float) -> void:
@@ -17,7 +33,11 @@ static func sample(fps: float, tick_ms: float, logic_ms: float, units_ms: float,
 	if now - _last_msec < 1000:
 		return
 	_last_msec = now
-	_hist.append([fps, tick_ms, logic_ms, units_ms, gpu_map_ms, dps])
+	_hist.append([fps, tick_ms, logic_ms, units_ms, gpu_map_ms, dps, _frame_max,
+		float(_rd_full - _rd_full_prev), float(_rd_part - _rd_part_prev)])
+	_frame_max = 0.0
+	_rd_full_prev = _rd_full
+	_rd_part_prev = _rd_part
 	while _hist.size() > KEEP:
 		_hist.pop_front()
 

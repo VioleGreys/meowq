@@ -516,6 +516,7 @@ var p_center := PackedVector2Array()
 var p_pixels := PackedInt32Array()
 var p_adj: Array = []                   # Array[PackedInt32Array]
 var p_terrain := PackedByteArray()
+var p_bbox := PackedInt32Array()     # рамки провинций x0,y0,x1,y1 (пикс. 1×) — частичная перерисовка карты
 var p_owner := PackedInt32Array()
 var p_controller := PackedInt32Array()
 var p_vp := PackedInt32Array()

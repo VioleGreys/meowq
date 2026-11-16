@@ -244,11 +244,47 @@ func _auto_screenshot(path: String) -> void:
 	world_unlock()
 	await get_tree().process_frame
 	await get_tree().process_frame
+	if "--parttest" in OS.get_cmdline_user_args():
+		await _part_test(path)
 	get_viewport().get_texture().get_image().save_png(path)
 	if "--report" in OS.get_cmdline_user_args():
 		print(Report.build(self))
 	_shutdown()
 	get_tree().quit()
+
+
+## Проверка частичной перерисовки карты (-- --parttest): сменить владельца у
+## провинций у центра экрана, дать нарисовать только их область, сохранить буфер
+## карты (*_part.png); затем перерисовать целиком (*_full.png) — должны совпасть.
+func _part_test(path: String) -> void:
+	for i in 4:
+		await get_tree().process_frame
+	map_view.map_vp.get_texture().get_image().save_png(path.replace(".png", "_before.png"))
+	var c := map_view.screen_to_world(get_viewport().get_visible_rect().size * 0.5) / MapView.SCALE
+	world_lock()
+	var near: Array = []
+	for p in world.prov_count:
+		if world.p_land[p] == 1 and world.p_center[p].distance_to(c) < 60.0:
+			near.append(p)
+	var to := world.p_controller[near[0]] if near.size() > 0 else 0
+	for p in near:
+		if world.p_controller[p] != world.p_controller[near[near.size() - 1]]:
+			to = world.p_controller[p]
+	for p in near.slice(0, near.size() / 2):
+		world.p_controller[p] = world.p_controller[near[near.size() - 1]]
+		world.p_owner[p] = world.p_owner[near[near.size() - 1]]
+	world.palette_dirty = true
+	map_view.update_palette()
+	world_unlock()
+	print("parttest: провинций ", near.size() / 2, ", частичных перерисовок до: ", map_view.part_redraws)
+	for i in 4:
+		await get_tree().process_frame
+	print("parttest: частичных после: ", map_view.part_redraws)
+	map_view.map_vp.get_texture().get_image().save_png(path.replace(".png", "_part.png"))
+	map_view.redraw()
+	for i in 4:
+		await get_tree().process_frame
+	map_view.map_vp.get_texture().get_image().save_png(path.replace(".png", "_full.png"))
 
 
 func _auto_screenshot_locked() -> void:

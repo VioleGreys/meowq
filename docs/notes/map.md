@@ -70,7 +70,7 @@ map.json; население современное, поэтому «милли
   ADM2, где нет — ADM1; 201 страна, лицензии ODbL/CC BY — `assets/CREDITS.md`),
   затем `python3 tools/build_map.py --ne NE --adm2 папка_adm2 --geonames cities1000.txt`
   (GeoNames cities1000, CC BY 4.0 — названия) → map.json, provinces.png.bin; дальше
-  `build_resources.py`, `build_ids2x.py --ne NE`, `build_sdf.py`. relief.png.bin
+  `build_resources.py`, `build_ids2x.py --ne NE`, `build_bbox.py` (рамки провинций для частичной перерисовки), `build_sdf.py`. relief.png.bin
   build_map переписывает — после неё `build_map_art.py` (глубины моря) или вернуть
   прежний файл (рельеф от нарезки не зависит); реки (канал g) — `build_rivers.py`.
   Сейчас build_map запускается с `--etopo ETOPO1_Ice_g_geotiff.tif` (см. «Горы»).

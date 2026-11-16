@@ -52,6 +52,7 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	world.land_count = int(meta["land_count"])
 	world.p_land.resize(n)
 	world.p_terrain.resize(n)
+	world.p_bbox.resize(n * 4)
 	world.p_center.resize(n)
 	world.p_pixels.resize(n)
 	world.p_owner.resize(n)
@@ -148,6 +149,9 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		world.p_land[i] = 1 if land else 0
 		world.p_terrain[i] = int(p["terrain"])
 		world.p_center[i] = Vector2(float(p["x"]), float(p["y"]))
+		var bb: Array = p.get("bb", [p["x"], p["y"], p["x"], p["y"]])
+		for k in 4:
+			world.p_bbox[i * 4 + k] = int(bb[k])
 		world.p_pixels[i] = int(p["px"])
 		world.p_name[i] = p["name"]
 		world.p_vp[i] = int(p["vp"])

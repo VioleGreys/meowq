@@ -58,6 +58,7 @@ uniform vec2 cam_pos = vec2(0.0);
 uniform float cam_tilt = 0.0;
 uniform float cam_f = 1000.0;
 uniform vec2 scr_size = vec2(1280.0, 720.0);
+uniform vec4 q_rect = vec4(0.0, 0.0, 1.0, 1.0);
 uniform vec2 world_size = vec2(11264.0, 5250.0);
 const float RELIEF_H = 6.0;   // высота самых высоких гор при наклоне, единиц мира
 uniform float res_k = 1.0;   // пикселей буфера карты на логический пиксель экрана
@@ -179,7 +180,9 @@ vec4 tex_bicubic(sampler2DArray t, vec2 uv, float layer, vec2 ts, vec2 gx, vec2 
 
 void fragment() {
 	// луч из пикселя экрана до плоскости карты (см. cam_*)
-	vec2 sc = UV * scr_size - scr_size * 0.5;
+	// прямоугольник буфера, который рисуется (доли: смещение, размер) — частичная
+	// перерисовка после смены владельцев (MapView.redraw_provs); целиком — (0, 0, 1, 1)
+	vec2 sc = (q_rect.xy + UV * q_rect.zw) * scr_size - scr_size * 0.5;
 	float st = sin(cam_tilt);
 	float ct = cos(cam_tilt);
 	float dist = cam_f / cam_zoom;
@@ -272,8 +275,17 @@ void fragment() {
 	int uid[NS] = int[](-1, -1, -1, -1, -1, -1, -1, -1);
 	float uw[NS] = float[](0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
 	bool win_bl = true;   // окно 2×2 (билинейные веса) — для border_tx
+	// сколько разных провинций в окне: все циклы по провинциям — до un (а не NS):
+	// у большинства пикселей одна провинция, полный перебор массивов дорог на ГП телефона
+	int un = 1;
 	if (quality == 0) {
 		// низкое качество: провинция ближайшего текселя, без сглаживания (1 выборка)
+		uid[0] = pid(ip);
+		uw[0] = 1.0;
+	} else if (has_sdf && sdf_tx > 1.98) {
+		// быстрый путь (ноябрь 2026, оптимизация для телефона): до сглаженной
+		// границы не меньше 2 текселей (поле насыщено) — в окне одна провинция,
+		// перебор окна 4×4 с массивами (дорог на мобильных ГП) не нужен
 		uid[0] = pid(ip);
 		uw[0] = 1.0;
 	} else {
@@ -304,14 +316,14 @@ void fragment() {
 	}
 	int o0 = far ? 1 : 0;
 	int o1 = far ? 3 : 4;
-	int un = 0;
+	un = 0;
 	for (int oy = o0; oy < o1; oy++) {
 		for (int ox = o0; ox < o1; ox++) {
 			int cidv = pid(i0 + ivec2(ox - 1, oy - 1));
 			float w = wx[ox] * wy[oy];
 			int k = -1;
-			for (int j = 0; j < NS; j++) {
-				if (j < un && uid[j] == cidv) {
+			for (int j = 0; j < un; j++) {
+				if (uid[j] == cidv) {
 					k = j;
 				}
 			}
@@ -327,13 +339,13 @@ void fragment() {
 	}
 	}
 	int top = 0;
-	for (int j = 1; j < NS; j++) {
+	for (int j = 1; j < un; j++) {
 		if (uw[j] > uw[top]) {
 			top = j;
 		}
 	}
 	int sec = -1;
-	for (int j = 0; j < NS; j++) {
+	for (int j = 0; j < un; j++) {
 		if (j != top && uid[j] >= 0 && (sec < 0 || uw[j] > uw[sec])) {
 			sec = j;
 		}
@@ -345,15 +357,15 @@ void fragment() {
 	// уровень 0.5 даёт настоящую плавную линию берега. Если победила провинция не той
 	// стихии — берём лучшего соперника нужной (суша) или рисуем воду.
 	float cov = quality > 0 ? textureLod(base_tex, vec3(muv, 0.0), 0.0).b : 0.5;
-	int nat_c[NS];
-	for (int j = 0; j < NS; j++) {
+	int nat_c[NS] = int[](-2, -2, -2, -2, -2, -2, -2, -2);
+	for (int j = 0; j < un; j++) {
 		nat_c[j] = uid[j] >= 0 ? nation(pal(0, uid[j])) : -2;
 	}
 	bool wide_land = false;   // суша найдена вне окна — границ стран/провинций тут не рисуем
 	bool cov_land = quality > 0 ? cov >= 0.5 : nation(pal(0, uid[top])) >= 0;
 	if (cov_land && nat_c[top] < 0) {
 		int bl = -1;
-		for (int j = 0; j < NS; j++) {
+		for (int j = 0; j < un; j++) {
 			if (nat_c[j] >= 0 && (bl < 0 || uw[j] > uw[bl])) {
 				bl = j;
 			}
@@ -761,7 +773,7 @@ void fragment() {
 	float w_mine = 0.0;      // страна победителя
 	float w_other = 0.0;     // лучшая другая страна (суша)
 	float w_prov2 = 0.0;     // лучшая другая провинция той же страны
-	for (int j = 0; j < NS; j++) {
+	for (int j = 0; j < un; j++) {
 		if (uid[j] < 0) {
 			continue;
 		}
@@ -777,10 +789,10 @@ void fragment() {
 			}
 		}
 	}
-	for (int j = 0; j < NS; j++) {
+	for (int j = 0; j < un; j++) {
 		if (uid[j] >= 0 && nat_c[j] >= 0 && nat_c[j] != ctrl) {
 			float s2 = 0.0;
-			for (int k = 0; k < NS; k++) {
+			for (int k = 0; k < un; k++) {
 				if (uid[k] >= 0 && nat_c[k] == nat_c[j]) {
 					s2 += uw[k];
 				}
@@ -794,7 +806,7 @@ void fragment() {
 	if (has_states) {
 		vec4 sc0 = pal(2, uid[top]);
 		int st_top = int(sc0.r * 255.0 + 0.5) + int(sc0.g * 255.0 + 0.5) * 256;
-		for (int j = 0; j < NS; j++) {
+		for (int j = 0; j < un; j++) {
 			if (uid[j] >= 0 && nat_c[j] == ctrl) {
 				vec4 scj = pal(2, uid[j]);
 				int stj = int(scj.r * 255.0 + 0.5) + int(scj.g * 255.0 + 0.5) * 256;
@@ -812,7 +824,7 @@ void fragment() {
 	int fo_j = -1;
 	int role_top = 0;
 	if (front_on) {
-		for (int j = 0; j < NS; j++) {
+		for (int j = 0; j < un; j++) {
 			if (uid[j] < 0) {
 				continue;
 			}
@@ -889,7 +901,7 @@ void fragment() {
 		int sel_st = int(ss.r * 255.0 + 0.5) + int(ss.g * 255.0 + 0.5) * 256;
 		float w_in = 0.0;
 		float w_out = 0.0;
-		for (int j = 0; j < NS; j++) {
+		for (int j = 0; j < un; j++) {
 			if (uid[j] >= 0 && nat_c[j] >= 0) {
 				vec4 scj = pal(2, uid[j]);
 				int stj = int(scj.r * 255.0 + 0.5) + int(scj.g * 255.0 + 0.5) * 256;

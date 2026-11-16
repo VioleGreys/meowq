@@ -59,6 +59,7 @@ var _lite_cam := Vector2.ZERO
 var _lite_zoom := 1.0
 var _lite_size := Vector2.ONE
 var _fading_in := false
+var _full_q := -1
 var res_scale := 1.0
 var _dirty := true
 # Пока карту двигают, она рисуется упрощённо (низкое качество, 50%), а через
@@ -84,6 +85,11 @@ var _pinch_dist := 0.0
 
 
 func setup(w: World) -> void:
+	if _band_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_band_task)
+		_band_task = -1
+	_band_pending = PackedInt32Array()
+	_band_again = false
 	world = w
 	_pal_ctrl.clear()
 	_pal_own.clear()
@@ -99,6 +105,10 @@ func setup(w: World) -> void:
 	map_vp.disable_3d = true
 	map_vp.transparent_bg = false
 	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	# буфер не очищается: после смены владельцев перерисовывается только область
+	# изменившихся провинций поверх прежнего кадра (redraw_provs). CLEAR_MODE_NEVER
+	# в Compatibility (GLES3) не показывался на экране — ONCE (очистка только при создании)
+	map_vp.render_target_clear_mode = SubViewport.CLEAR_MODE_ONCE
 	add_child(map_vp)
 	map_vp.add_child(quad)
 	var layer := CanvasLayer.new()
@@ -245,6 +255,11 @@ func setup(w: World) -> void:
 		mat.set_shader_parameter("sdf_tex", sdf[0])
 		mat.set_shader_parameter("sdf_wd", float(sdf[1]))
 
+	# замеры: -- --mapoff=art,rivers,sdf,... — выключить части шейдера (has_*)
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--mapoff="):
+			for k in arg.split("=")[1].split(","):
+				mat.set_shader_parameter("has_" + k, false)
 	camera = Camera2D.new()
 	add_child(camera)
 	camera.make_current()
@@ -417,6 +432,54 @@ func _ids1_from_2x() -> Image:
 	return out
 
 
+# Кайма после смены владельцев — в фоновом потоке (на телефоне расчёт по всей
+# сетке занимал главный поток десятки мс): область перерисовывается, когда
+# кайма готова, — цвет и кайма меняются вместе.
+var _band_task := -1
+var _band_out := PackedByteArray()
+var _band_pending := PackedInt32Array()   # провинции, ждущие перерисовки
+var _band_again := false
+
+
+func _band_job(ctrl: PackedInt32Array) -> void:
+	_band_out = Native.core.border_band(_id_bytes, world.width, world.height, BAND_STEP, ctrl, BAND_PX)
+
+
+func _band_async(provs: PackedInt32Array) -> void:
+	_band_pending.append_array(provs)
+	if Native.core == null or not Native.core.has_method("border_band") or _id_bytes.size() != world.width * world.height * 3:
+		_update_band()
+		redraw_provs(_band_pending)
+		_band_pending = PackedInt32Array()
+		return
+	if _band_task >= 0:
+		_band_again = true   # посчитаем ещё раз по свежим владельцам, когда этот закончит
+		return
+	_band_task = WorkerThreadPool.add_task(_band_job.bind(world.p_controller.duplicate()))
+
+
+func _band_poll() -> void:
+	if _band_task < 0 or not WorkerThreadPool.is_task_completed(_band_task):
+		return
+	WorkerThreadPool.wait_for_task_completion(_band_task)
+	_band_task = -1
+	var bw := world.width / BAND_STEP
+	var bh := world.height / BAND_STEP
+	if _band_out.size() == bw * bh:
+		var bimg := Image.create_from_data(bw, bh, false, Image.FORMAT_L8, _band_out)
+		if band_tex == null or band_tex.get_width() != bw:
+			band_tex = ImageTexture.create_from_image(bimg)
+			mat.set_shader_parameter("band_tex", band_tex)
+		else:
+			band_tex.update(bimg)
+		mat.set_shader_parameter("has_band", true)
+	redraw_provs(_band_pending)
+	_band_pending = PackedInt32Array()
+	if _band_again:
+		_band_again = false
+		_band_task = WorkerThreadPool.add_task(_band_job.bind(world.p_controller.duplicate()))
+
+
 func _update_band() -> void:
 	if Native.core == null or not Native.core.has_method("border_band") or world.id_image == null:
 		mat.set_shader_parameter("has_band", false)
@@ -508,6 +571,50 @@ func redraw() -> void:
 	_dirty = true
 
 
+# --- Частичная перерисовка (оптимизация для телефона, ноябрь 2026) -------------
+# После смены владельцев (война, ускоренное время) меняются только изменившиеся
+# провинции и их окрестность (линии, кайма до BAND_PX·BAND_STEP пикселей карты):
+# рисуем только экранную рамку этих провинций поверх прежнего кадра — тот же
+# шейдер, та же картинка, в разы меньше пикселей. Целиком — если камера с прошлой
+# полной перерисовки сдвинулась или область велика.
+const PART_MARGIN := 26.0      # запас вокруг рамки, пикселей карты 1× (кайма 20 + линии)
+const PART_MAX := 0.55         # доля буфера, больше — рисуем целиком
+var _part_dirty := false
+var _part_rect := Rect2()      # область экрана (логические пиксели)
+var part_redraws := 0          # для замеров: сколько было частичных перерисовок
+
+
+## Перерисовать только область провинций provs (если можно; иначе — целиком).
+func redraw_provs(provs: PackedInt32Array) -> void:
+	if provs.is_empty():
+		return
+	if world.p_bbox.size() != world.prov_count * 4:
+		redraw()
+		return
+	var x0 := INF
+	var y0 := INF
+	var x1 := -INF
+	var y1 := -INF
+	for p in provs:
+		x0 = minf(x0, world.p_bbox[p * 4])
+		y0 = minf(y0, world.p_bbox[p * 4 + 1])
+		x1 = maxf(x1, world.p_bbox[p * 4 + 2])
+		y1 = maxf(y1, world.p_bbox[p * 4 + 3])
+	# рамка в единицах мира (пиксель карты 1× = SCALE), с запасом
+	var a := Vector2(x0 - PART_MARGIN, y0 - PART_MARGIN) * SCALE
+	var b := Vector2(x1 + 1.0 + PART_MARGIN, y1 + 1.0 + PART_MARGIN) * SCALE
+	var r := Rect2(world_to_screen(a), Vector2.ZERO)
+	for c in [Vector2(b.x, a.y), Vector2(a.x, b.y), b]:
+		r = r.expand(world_to_screen(c))
+	# при наклоне горы «встают» (параллакс до RELIEF_H единиц мира) — запас вверх и вниз
+	var lift := 6.0 * camera.zoom.x * 1.5 if tilt() > 0.0 else 0.0
+	r = r.grow_individual(2.0, 2.0 + lift, 2.0, 2.0 + lift)
+	if _part_dirty:
+		r = r.merge(_part_rect)
+	_part_rect = r
+	_part_dirty = true
+
+
 ## Разрешение буфера карты: доля пикселей экрана (0.5–1); 0 — авто: после
 ## каждой полной перерисовки подстраивается так, чтобы карта рисовалась на
 ## видеокарте за ~AUTO_TARGET_MS (масштаб разрешения — самое действенное
@@ -558,7 +665,41 @@ func _auto_adjust(dt: float) -> void:
 		res_scale = old
 
 
+## Частичная перерисовка _part_rect поверх прежнего полного кадра — только если
+## он нарисован с той же камерой и качеством и сейчас на экране целиком.
+func _draw_part() -> void:
+	var logical := get_viewport_rect().size
+	var phys := Vector2(get_window().size)
+	var size := Vector2i(maxi(1, int(phys.x * res_scale)), maxi(1, int(phys.y * res_scale)))
+	var same := not _lite_drawn and _moving <= 0.0 and _full_alpha >= 1.0 and not _fading_in \
+		and Vector2(size) == _full_size and map_vp.size == size and _full_q == quality \
+		and camera.position == _full_cam and is_equal_approx(camera.zoom.x, _full_zoom) \
+		and is_equal_approx(tilt(), _full_tilt)
+	var k := Vector2(size) / logical   # пикселей буфера на логический
+	var r := Rect2(_part_rect.position * k, _part_rect.size * k)
+	r = r.intersection(Rect2(Vector2.ZERO, Vector2(size)))
+	if not same or r.size.x * r.size.y > PART_MAX * size.x * size.y:
+		redraw()
+		return
+	if r.size.x < 1.0 or r.size.y < 1.0:
+		return   # область вне экрана — рисовать нечего
+	# целые пиксели: края прямоугольника совпадают с пикселями буфера
+	var p0 := r.position.floor()
+	var p1 := (r.position + r.size).ceil()
+	r = Rect2(p0, p1 - p0)
+	mat.set_shader_parameter("quality", quality)
+	mat.set_shader_parameter("res_k", float(size.x) / maxf(1.0, logical.x))
+	_cam_uniforms(logical)
+	mat.set_shader_parameter("q_rect", Vector4(r.position.x / size.x, r.position.y / size.y, r.size.x / size.x, r.size.y / size.y))
+	quad.position = r.position
+	quad.size = r.size
+	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	redraws += 1
+	part_redraws += 1
+
+
 func _process(dt: float) -> void:
+	Report.frame(dt, redraws - part_redraws, part_redraws)
 	if res_auto and map_vp != null:
 		_auto_adjust(dt)
 	if _moving > 0.0:
@@ -567,8 +708,14 @@ func _process(dt: float) -> void:
 			_dirty = true   # остановились — перерисовать в полном качестве
 	if map_vp == null:
 		return
+	_band_poll()
+	if _part_dirty and not _dirty:
+		_part_dirty = false
+		_draw_part()
 	if _dirty:
 		_dirty = false
+		_part_dirty = false
+		mat.set_shader_parameter("q_rect", Vector4(0.0, 0.0, 1.0, 1.0))
 		var lite := motion_lite and _moving > 0.0 and (quality > 0 or res_scale > 0.5)
 		var was_lite := _lite_drawn
 		_lite_drawn = lite
@@ -580,6 +727,7 @@ func _process(dt: float) -> void:
 		var rk := float(size.x) / maxf(1.0, logical.x)  # пикселей буфера на логический
 		mat.set_shader_parameter("res_k", rk)
 		_cam_uniforms(logical)
+		quad.position = Vector2.ZERO
 		if lite:
 			if lite_vp.size != size:
 				lite_vp.size = size
@@ -599,6 +747,7 @@ func _process(dt: float) -> void:
 			_full_zoom = camera.zoom.x
 			_full_size = Vector2(size)
 			_full_tilt = tilt()
+			_full_q = quality
 			if was_lite:
 				_full_alpha = 0.0   # после движения — проявляем новый кадр плавно
 				_fading_in = true
@@ -715,11 +864,14 @@ func update_palette() -> void:
 	var pc := world.p_controller
 	var po := world.p_owner
 	var changed := 0
+	var ch_list := PackedInt32Array()
 	for p in world.prov_count:
 		if incremental:
 			if _pal_ctrl[p] == pc[p] and _pal_own[p] == po[p]:
 				continue
 		changed += 1
+		if incremental:
+			ch_list.append(p)
 		if map_mode == MapMode.POLITICAL:
 			_pal_ctrl[p] = pc[p]
 			_pal_own[p] = po[p]
@@ -783,9 +935,12 @@ func update_palette() -> void:
 		return   # владельцы не менялись — ни текстуры, ни перерисовки
 	pal_img.blit_rect(ctrl_img, Rect2i(0, 0, 64, _pal_rows), Vector2i(0, 0))
 	_pal_push(1, owner_img)
-	_update_band()
 	palette_version += 1
-	redraw()
+	if incremental:
+		_band_async(ch_list)
+	else:
+		_update_band()
+		redraw()
 
 
 
