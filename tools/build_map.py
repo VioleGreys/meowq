@@ -440,6 +440,104 @@ AREA_RECTS = [
 ]
 
 
+# Карта 8 тыс. провинций (решение пользователя, ноябрь 2026): провинции из
+# районов geoBoundaries и рек (tools/provinces8k.py); густота — как прежние зоны,
+# площадь провинции × AREA_SCALE (3,3 тыс. → ~8 тыс. провинций суши)
+AREA_SCALE = 0.365
+NAME_KM = 90.0             # провинция без города — по ближайшему посёлку не дальше
+RIVER_BORDER_RANK = 5      # реки до этого scalerank — границы провинций
+RIVER_LARGE_RANK = 3       # до этого — крупные (штраф больше)
+
+
+_RU_ONLY = set("абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ -’'")
+_TRANSLIT = [("sch", "ш"), ("tsch", "ч"), ("sz", "ш"), ("cz", "ч"), ("ch", "х"), ("sh", "ш"), ("zh", "ж"),
+             ("ts", "ц"), ("ya", "я"), ("yu", "ю"), ("ei", "ай"), ("eu", "ой"), ("ie", "и"),
+             ("a", "а"), ("b", "б"), ("c", "к"), ("d", "д"), ("e", "е"), ("f", "ф"), ("g", "г"), ("h", "х"),
+             ("i", "и"), ("j", "й"), ("k", "к"), ("l", "л"), ("m", "м"), ("n", "н"), ("o", "о"), ("p", "п"),
+             ("q", "к"), ("r", "р"), ("s", "с"), ("t", "т"), ("u", "у"), ("v", "в"), ("w", "в"), ("x", "кс"),
+             ("y", "и"), ("z", "з")]
+_geonames_cache = None
+
+
+def _translit(s):
+    import unicodedata
+    s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+    out = []
+    low = s.lower()
+    i = 0
+    while i < len(low):
+        for a, b in _TRANSLIT:
+            if low.startswith(a, i):
+                out.append(b[0].upper() + b[1:] if s[i].isupper() else b)
+                i += len(a)
+                break
+        else:
+            out.append(s[i])
+            i += 1
+    return "".join(out)
+
+
+def load_geonames(path):
+    """GeoNames cities1000 (CC BY 4.0): [(x, y, население, русское название)].
+    Русское — первый кириллический вариант без нерусских букв, иначе транслит."""
+    global _geonames_cache
+    if _geonames_cache is not None:
+        return _geonames_cache
+    res = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            c = line.rstrip("\n").split("\t")
+            if len(c) < 15:
+                continue
+            try:
+                lat, lon, pop = float(c[4]), float(c[5]), int(c[14] or 0)
+            except ValueError:
+                continue
+            ru = ""
+            for a in c[3].split(","):
+                a = a.strip()
+                if a and any("а" <= ch.lower() <= "я" for ch in a) and all(ch in _RU_ONLY for ch in a):
+                    ru = a
+                    break
+            if not ru:
+                ru = _translit(c[2] or c[1])
+            x, y = project(lon, lat)
+            res.append((float(x), float(y), pop, ru))
+    _geonames_cache = res
+    return res
+
+
+def rasterize_adm2(folder):
+    """Районы geoBoundaries (GEO-XXX.geojson) — растр номеров (0 — нет); пробелы
+    между районами — ближайшему району."""
+    img = Image.new("I", (WIDTH, HEIGHT), 0)
+    d = ImageDraw.Draw(img)
+    nid = 0
+    for fn in sorted(os.listdir(folder)):
+        if not fn.startswith("GEO-") or not fn.endswith(".geojson"):
+            continue
+        try:
+            feats = load(os.path.join(folder, fn))["features"]
+        except Exception:  # noqa: BLE001
+            print(f"  не прочитан {fn}")
+            continue
+        for f in feats:
+            if not f.get("geometry"):
+                continue
+            nid += 1
+            for r in rings_of(f["geometry"]):
+                if in_window(r):
+                    pts = poly_px(r)
+                    if len(pts) >= 3:
+                        d.polygon(pts, fill=nid)
+    a = np.array(img, dtype=np.int64)
+    if (a == 0).any():
+        idx = ndimage.distance_transform_edt(a == 0, return_distances=False, return_indices=True)
+        a = a[idx[0], idx[1]]
+    print(f"  районов: {nid}", flush=True)
+    return a
+
+
 def province_area_km2(lon, lat, region, region_info, land):
     n_reg = len(region_info)
     base = np.full(n_reg, float(WORLD_DEFAULT_AREA), np.float32)
@@ -740,6 +838,8 @@ def main():
     ap.add_argument("--ne", required=True, help="папка с GeoJSON Natural Earth")
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "data", "world1936"))
     ap.add_argument("--preview", default="", help="сохранить PNG-превью сюда")
+    ap.add_argument("--geonames", default="", help="cities1000.txt GeoNames (CC BY 4.0): названия провинций без крупного города")
+    ap.add_argument("--adm2", default="", help="папка районов geoBoundaries (tools/fetch_adm2.py): провинции по районам и рекам")
     args = ap.parse_args()
     ne = args.ne
     out = os.path.abspath(args.out)
@@ -857,6 +957,23 @@ def main():
                 rd.line(pts, fill=255 if sr <= 4 else 170, width=2 if sr <= 3 else 1)
     rivers = np.array(rivers_img)
     rivers[~land] = 0
+    # реки — границы провинций (разрез): крупные (scalerank ≤ 3) и средние (≤ 5)
+    cut_img = Image.new("L", (WIDTH, HEIGHT), 0)
+    cd = ImageDraw.Draw(cut_img)
+    for f in load(os.path.join(ne, "ne_10m_rivers_lake_centerlines.geojson"))["features"]:
+        sr = _rank(f["properties"].get("scalerank"))
+        if sr > RIVER_BORDER_RANK:
+            continue
+        for line in lines_of(f["geometry"]):
+            arr = np.asarray(line)
+            x, y = project(arr[:, 0], arr[:, 1])
+            if np.abs(np.diff(x)).max(initial=0) > WIDTH * 0.5:
+                continue
+            pts = list(zip(x.tolist(), y.tolist()))
+            if len(pts) >= 2:
+                cd.line(pts, fill=2 if sr <= RIVER_LARGE_RANK else 1, width=1)
+    river_cls = np.array(cut_img)
+    river_cls[~land] = 0
 
     # --- 4. Провинции суши ------------------------------------------------------
     py_all, px_all = np.mgrid[0:HEIGHT, 0:WIDTH]
@@ -866,8 +983,16 @@ def main():
 
     prov = np.full(region.shape, -1, np.int32)
     next_id = 0
+    state_of_prov = None
+    if args.adm2:
+        import provinces8k
+        adm2 = rasterize_adm2(args.adm2)
+        adm2[~land] = 0
+        prov, state_of_prov, n_land = provinces8k.build(
+            owner, region, land, area_px * AREA_SCALE, river_cls > 0, river_cls, adm2, np.asarray(px_km(lat_all[:, 0])), rng)
+        next_id = n_land
     # мелкий остров ближе 300 км к своей стране — к ней (в пикселях своей широты)
-    for t in range(len(tags)):
+    for t in (range(len(tags)) if not args.adm2 else []):
         mask = owner == t
         if not mask.any():
             continue
@@ -899,7 +1024,8 @@ def main():
                 else:
                     prov[ys, xs] = next_id
                     next_id += 1
-    n_land = next_id
+    if not args.adm2:
+        n_land = next_id
     print(f"Провинций суши: {n_land}")
 
     # --- 5. Морские зоны --------------------------------------------------------
@@ -1097,10 +1223,22 @@ def main():
             adj[u].append(v)
             adj[v].append(u)
 
+    # реки на границах соседних провинций суши: доля общей границы вдоль реки
+    river_adj = {}
+    if state_of_prov is not None:
+        import provinces8k
+        for cls in (1, 2):
+            uu, vv, ln, rl = provinces8k._edge_table(prov, n_prov, river_cls >= cls)
+            for a_, b_, l_, r_ in zip(uu.tolist(), vv.tolist(), ln.tolist(), rl.tolist()):
+                if a_ < n_land and b_ < n_land and r_ > 0.35 * l_:
+                    river_adj[(a_, b_)] = cls
+        print(f"Рёбер соседства через реку: {len(river_adj)} (крупных {sum(1 for c in river_adj.values() if c == 2)})")
+
     # --- 7. Города, названия, очки победы ---------------------------------------
     places = load(os.path.join(ne, "ne_10m_populated_places.geojson"))["features"]
     city_best = {}
     city_pop = np.zeros(n_prov)
+    all_places = []
     for f in places:
         p = f["properties"]
         lon, lat = f["geometry"]["coordinates"][:2]
@@ -1114,6 +1252,48 @@ def main():
         name = CITY_1936.get(p.get("NAME_EN") or "", CITY_1936.get(p.get("NAME") or "", p.get("NAME_RU") or p.get("NAME")))
         if pop > city_best.get(pid, (-1, ""))[0]:
             city_best[pid] = (pop, name)
+        all_places.append((x, y, name))
+
+    # провинция без своего города — по ближайшему незанятому городу или посёлку
+    # (как в жанре: провинции названы по городам), не дальше NAME_KM от центра;
+    # с GeoNames (--geonames) — по крупнейшему городку внутри провинции
+    alt_name = {}
+    if args.geonames:
+        used_names = {nm for _, nm in city_best.values()}
+        best_gn = {}
+        for gx, gy, gpop, gname in load_geonames(args.geonames):
+            xi, yi = int(gx), int(gy)
+            if not (0 <= xi < WIDTH and 0 <= yi < HEIGHT) or not land[yi, xi]:
+                continue
+            pid = int(prov[yi, xi])
+            if pid in city_best or pid >= n_land:
+                continue
+            best_gn.setdefault(pid, []).append((gpop, gname))
+        for pid, lst in best_gn.items():
+            for gpop, gname in sorted(lst, reverse=True):
+                if gname not in used_names:
+                    alt_name[pid] = gname
+                    used_names.add(gname)
+                    break
+        all_places += [(gx, gy, gname) for gx, gy, gpop, gname in load_geonames(args.geonames)]
+    if all_places:
+        ptree = cKDTree(np.array([(px_, py_) for px_, py_, _ in all_places]))
+        used_names = {nm for _, nm in city_best.values()} | set(alt_name.values())
+        for i in range(n_land):
+            if i in city_best or i in alt_name:
+                continue
+            kk = min(12, len(all_places))
+            dd, jj = ptree.query([cx[i], cy[i]], k=kk)
+            _, lat_i = unproject(cx[i], cy[i])
+            lim = NAME_KM / float(px_km(float(lat_i)))
+            for d_, j_ in zip(np.atleast_1d(dd), np.atleast_1d(jj)):
+                nm = all_places[int(j_)][2]
+                if d_ > lim:
+                    break
+                if nm and nm not in used_names:
+                    alt_name[i] = nm
+                    used_names.add(nm)
+                    break
 
 
     capitals = {}
@@ -1137,7 +1317,7 @@ def main():
         if p_land[i]:
             r = region_info[p_region[i]] if p_region[i] > 0 else {"name_ru": "?", "adm0": ""}
             pop, cname = city_best.get(i, (0, ""))
-            name = cname if cname else r["name_ru"]
+            name = cname if cname else alt_name.get(i, r["name_ru"])
             used[name] = used.get(name, 0) + 1
             mm = float(mount_mean[i])
             terrain = 0
@@ -1186,10 +1366,49 @@ def main():
                 "px": int(counts[i]), "terrain": 5, "vp": 0, "pop": 0,
                 "lat": round(lat, 2), "lon": round(lon, 2), "region": "", "adj": sorted(adj[i]),
             })
+    # области (районы): название — регион admin-1, у которого больше всего
+    # провинций области; если регион поделён на несколько областей — с городом
+    if state_of_prov is not None:
+        n_st = int(state_of_prov.max()) + 1
+        st_reg = {}
+        st_city = {}
+        for i in range(n_land):
+            st = int(state_of_prov[i])
+            rn = provinces[i]["region"]
+            st_reg.setdefault(st, {})
+            st_reg[st][rn] = st_reg[st].get(rn, 0) + int(counts[i])
+            pop, cname = city_best.get(i, (0, ""))
+            if cname and pop > st_city.get(st, (-1, ""))[0]:
+                st_city[st] = (pop, cname)
+        base = {st: max(d.items(), key=lambda kv: kv[1])[0] for st, d in st_reg.items()}
+        times = {}
+        for st, b in base.items():
+            times[b] = times.get(b, 0) + 1
+        st_name = {}
+        seen_n = {}
+        for st in range(n_st):
+            if st not in base:
+                continue   # область осталась без провинций (обрезки склеены с соседями)
+            b = base[st]
+            nm = b
+            if times[b] > 1:
+                c = st_city.get(st, (0, ""))[1]
+                nm = f"{b} ({c})" if c else b
+            if nm in seen_n:
+                seen_n[nm] += 1
+                nm = f"{nm} {seen_n[nm]}"
+            else:
+                seen_n[nm] = 1
+            st_name[st] = nm
+        for i in range(n_land):
+            provinces[i]["region"] = st_name[int(state_of_prov[i])]
+        for i, pr in enumerate(provinces):
+            pr["adj_river"] = [river_adj.get((min(i, j), max(i, j)), 0) for j in pr["adj"]]
+        print(f"Областей: {n_st}")
     # повторяющиеся названия: добавляем область
     seen = {}
     for p in provinces:
-        if p["land"] and used.get(p["name"], 0) > 1 and p["name"] == p["region"]:
+        if p["land"] and used.get(p["name"], 0) > 1:
             seen[p["name"]] = seen.get(p["name"], 0) + 1
             p["name"] = f"{p['name']} {seen[p['name']]}"
 

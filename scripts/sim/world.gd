@@ -539,6 +539,8 @@ var nation_count := 0
 var war := PackedByteArray()          # nation_count^2, 1 = война
 var adj_start := PackedInt32Array()   # CSR-соседство: adj_list[adj_start[p] .. adj_start[p+1])
 var adj_list := PackedInt32Array()
+var p_adj_river: Array = []             # Array[PackedByteArray], как p_adj: река на границе (0/1 малая/2 крупная)
+var adj_river := PackedByteArray()      # то же по CSR (рядом с adj_list)
 var p_move_mult := PackedFloat32Array()  # копии констант местности по провинциям:
 var p_def_mult := PackedFloat32Array()   # оборона провинции: местность + укрепления + зима (refresh_def_mult)
 var p_fort := PackedFloat32Array()       # укрепления провинции (forts.json): добавка к обороне
@@ -973,6 +975,14 @@ func build_caches() -> void:
 		adj_start[p] = adj_list.size()
 		adj_list.append_array(p_adj[p])
 	adj_start[prov_count] = adj_list.size()
+	adj_river = PackedByteArray()
+	adj_river.resize(adj_list.size())
+	if p_adj_river.size() == prov_count:
+		for p in prov_count:
+			var rv: PackedByteArray = p_adj_river[p]
+			var s0 := adj_start[p]
+			for k in mini(rv.size(), adj_start[p + 1] - s0):
+				adj_river[s0 + k] = rv[k]
 	p_move_mult.resize(prov_count)
 	p_def_mult.resize(prov_count)
 	if p_fort.size() != prov_count:
@@ -1836,14 +1846,14 @@ func k_supply(side_of: PackedInt32Array, dist: PackedInt32Array) -> void:
 ## идущих дивизий. Возвращает [пути сброшены (нельзя войти), атакующие по
 ## порядку, идущие по порядку].
 func k_march() -> Array:
+	var spd_e := _river_speed(_eff(d_spd_eff, d_spd))
 	if Native.core != null:
-		var r: Array = Native.core.call("march", d_alive, d_transit, d_next, d_owner, d_prov, d_prog, _eff(d_spd_eff, d_spd), d_org,
+		var r: Array = Native.core.call("march", d_alive, d_transit, d_next, d_owner, d_prov, d_prog, spd_e, d_org,
 				d_morg, d_sup, p_land, p_controller, war, nation_count, p_move_mult, pass_table())
 		d_battle.fill(0)
 		d_prog = r[0]
 		d_next = r[1]
 		return [r[2], r[3], r[4]]
-	var spd_e := _eff(d_spd_eff, d_spd)
 	var pm := pass_table()
 	d_battle.fill(0)
 	var n := d_id.size()
@@ -1965,6 +1975,19 @@ func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: Pa
 		atk = atk.duplicate()
 		for i in att_list:
 			atk[i] = atk[i] * (1.0 + plan_max * d_plan[i])
+	# атака через реку (как в жанре): малая −20 %, крупная −40 % (World.RIVER_ATK)
+	if adj_river.size() == adj_list.size() and not adj_river.is_empty():
+		var copied := plan_max > 0.0 and d_plan.size() == d_atk.size()
+		for b in provs.size():
+			var p := provs[b]
+			for k in range(att_start[b], att_start[b + 1]):
+				var i := att_list[k]
+				var rc := river_between(d_prov[i], p)
+				if rc > 0:
+					if not copied:
+						atk = atk.duplicate()
+						copied = true
+					atk[i] = atk[i] * (RIVER_ATK_BIG if rc == 2 else RIVER_ATK_SMALL)
 	# координация стран (как в жанре): доля урона стороны — по одной цели
 	var coord := PackedFloat64Array()
 	coord.resize(nation_count)
@@ -2238,3 +2261,40 @@ func recalc_spirits(nat: Nation) -> void:
 	for key in law:
 		nat.spirit_bonus[key] = float(nat.spirit_bonus.get(key, 0.0)) + float(law[key])
 	nat.stats_dirty = true
+
+
+# --- Реки на границах провинций (решение пользователя, ноябрь 2026: как в жанре) ---
+const RIVER_ATK_SMALL := 0.8    # атака через малую реку
+const RIVER_ATK_BIG := 0.6      # через крупную
+const RIVER_MOVE_SMALL := 0.75  # скорость перехода через малую реку
+const RIVER_MOVE_BIG := 0.5     # через крупную
+
+
+## Река на границе провинций a и b: 0 — нет, 1 — малая, 2 — крупная.
+func river_between(a: int, b: int) -> int:
+	if a < 0 or b < 0 or a >= prov_count or adj_river.size() != adj_list.size():
+		return 0
+	for k in range(adj_start[a], adj_start[a + 1]):
+		if adj_list[k] == b:
+			return adj_river[k]
+	return 0
+
+
+## Скорость дивизий с учётом перехода через реку (d_prov → d_next): копия, если
+## кто-то переходит реку; иначе тот же массив. Одна и та же для ядер GDScript и C++.
+func _river_speed(spd: PackedFloat64Array) -> PackedFloat64Array:
+	if adj_river.is_empty() or adj_river.size() != adj_list.size():
+		return spd
+	var out := spd
+	var copied := false
+	for i in d_next.size():
+		var t := d_next[i]
+		if t < 0 or d_transit[i] > 0:
+			continue
+		var rc := river_between(d_prov[i], t)
+		if rc > 0:
+			if not copied:
+				out = spd.duplicate()
+				copied = true
+			out[i] = out[i] * (RIVER_MOVE_BIG if rc == 2 else RIVER_MOVE_SMALL)
+	return out

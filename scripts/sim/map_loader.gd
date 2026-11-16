@@ -69,6 +69,8 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	world.p_name.resize(n)
 	world.p_adj = []
 	world.p_adj.resize(n)
+	world.p_adj_river = []
+	world.p_adj_river.resize(n)
 
 	var tag_index := {}
 	var nations_meta: Array = meta["nations"]
@@ -147,6 +149,13 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		world.p_name[i] = p["name"]
 		world.p_vp[i] = int(p["vp"])
 		world.p_adj[i] = PackedInt32Array(p["adj"])
+		# река на границе с соседом (tools/build_map.py): 0 — нет, 1 — малая, 2 — крупная
+		var ar: Array = p.get("adj_river", [])
+		var rv := PackedByteArray()
+		rv.resize(world.p_adj[i].size())
+		for k in mini(ar.size(), rv.size()):
+			rv[k] = int(ar[k])
+		world.p_adj_river[i] = rv
 		var owner: int = tag_index.get(p["owner"], -1) if land else -1
 		world.p_owner[i] = owner
 		world.p_controller[i] = owner

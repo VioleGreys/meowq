@@ -167,6 +167,7 @@ void fragment() {
 	vec2 rv = vec2(0.0, rv3.b);
 	float rv_d = length((rv3.rg * 255.0 - 128.0) / 127.0) * RIVER_MAX;
 	float rv_fw = max(fwidth(rv_d), 1e-4);
+	float river_m = 0.0;   // доля ленты реки в пикселе (под ней линию провинций не рисуем)
 	// поле расстояний до границ провинций (текселей сетки; без поля — далеко)
 	float sdf_tx = 1e4;
 	if (has_sdf) {
@@ -451,10 +452,29 @@ void fragment() {
 		}
 		float river;
 		if (has_rivers) {
-			// полуширина: крупные шире; не тоньше ~0,6 пикселя экрана
-			float hw = max(rv.g > 0.9 ? 0.42 : (rv.g > 0.5 ? 0.32 : 0.24), 0.8 * rv_fw);
-			river = (1.0 - smoothstep(hw - 0.6 * rv_fw, hw + 0.6 * rv_fw, rv_d)) * step(0.01, rv.g);
-			river *= rv.g > 0.5 ? 1.0 : smoothstep(0.7, 1.4, zoom);   // малые — только вблизи
+			// Как в жанре: вдали — тонкая линия, вблизи — лента воды с берегами
+			// (шире к приближению, в пикселях карты); река сама — граница
+			// провинций: линию провинций под ней не рисуем (river_m)
+			float base = rv.g > 0.9 ? 0.42 : (rv.g > 0.5 ? 0.32 : 0.24);
+			float nk = smoothstep(1.4, 4.0, zoom);
+			float hw = max(base * mix(1.0, 3.2, nk), 0.8 * rv_fw);
+			float aa = 0.6 * rv_fw;
+			float has = step(0.01, rv.g) * (rv.g > 0.5 ? 1.0 : smoothstep(0.7, 1.4, zoom));   // малые — только вблизи
+			river = (1.0 - smoothstep(hw - aa, hw + aa, rv_d)) * has;
+			float bw = (0.16 * base / 0.42 + 0.06) * nk + 0.7 * rv_fw * nk;           // берег
+			float bank = (1.0 - smoothstep(hw + bw - aa, hw + bw + aa, rv_d)) * has - river;
+			river_m = river;
+			// вода: темнее у берега, светлее к середине; рябь — нормали волн
+			float mid = clamp(1.0 - rv_d / max(hw, 1e-3), 0.0, 1.0);
+			vec3 rw = mix(vec3(0.20, 0.30, 0.38), vec3(0.42, 0.52, 0.60), mid * mid * nk);
+			if (has_water && nk > 0.0) {
+				vec2 wn = textureGrad(water_tex, wv_uv * 3.0, wv_gx * 3.0, wv_gy * 3.0).rg - 0.5;
+				rw *= 1.0 + (wn.x - wn.y) * 0.35 * nk;
+			}
+			rw = mix(vec3(0.22, 0.42, 0.58), rw, nk);
+			col = mix(col, vec3(0.40, 0.31, 0.20) * (0.8 + 0.3 * light), bank * 0.85 * nk);
+			col = mix(col, rw, river * mix(0.75, 1.0, nk) * smoothstep(0.35, 0.9, zoom));
+			river = 0.0;
 		} else {
 			river = smoothstep(0.25, 0.8, texture(height_tex, muv).g);
 		}
@@ -603,9 +623,13 @@ void fragment() {
 		col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 2.0 + texel_px, dp)) * 0.18);
 	}
 	if (land && !wide_land && w_prov2 > 0.0) {
-		float dp = has_sdf ? sdf_px : d2 / max(fw2, 0.5 / texel_px) * 0.5;
+		// поле расстояний между центрами текселей до нуля не доходит (билинейно —
+		// минимум ~полтекселя): вблизи тонкая линия провинций пропадала. У самой
+		// границы точнее оценка по весам окна (ноль ровно на границе заливки)
+		float dpw = d2 / max(fw2, 0.5 / texel_px) * 0.5;
+		float dp = has_sdf ? min(sdf_px, dpw) : dpw;
 		float w = max(lw_min(0.6), 0.14 * map_px);
-		float a2 = smoothstep(0.45, 1.3, zoom);
+		float a2 = smoothstep(0.45, 1.3, zoom) * (1.0 - smoothstep(0.15, 0.6, river_m));
 		col = mix(col, col * 0.6, (1.0 - smoothstep(w - 0.7, w + 0.7, dp)) * a2);
 	}
 

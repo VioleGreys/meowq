@@ -21,6 +21,7 @@
 | Шрифт IBM Plex Mono | машинописный текст интерфейса | IBM, Google Fonts | SIL OFL 1.1 (`fonts/OFL-IBMPlexMono.txt`) |
 | Портреты лидеров (`assets/portraits/`, список и источники — `assets/art_credits.json`) | карточки стран, папки | Википедия/Викисклад, Библиотека Конгресса США, Europeana, поиск картинок | у части — ВРЕМЕННО, лицензия не проверена (`"temporary": true`) — заменить до выпуска |
 | Шрифты PT Sans, PT Serif | текст интерфейса, события | ParaType, Google Fonts | SIL Open Font License 1.1 (`fonts/OFL-PTSans.txt`, `fonts/OFL-PTSerif.txt`) |
+| Административные районы (ADM2, где нет — ADM1) 201 страны | границы провинций карты (`tools/fetch_adm2.py`, `tools/provinces8k.py`) | geoBoundaries (gbOpen), Runfola D. et al. (2020) «geoBoundaries: A global database of political administrative boundaries», PLoS ONE 15(4): e0231866; источники по странам — в ответе API | ODbL 1.0 / CC BY 4.0 и др. открытые (по стране) — указать авторство |
 
 Решение пользователя: допускаются общественное достояние, CC0, CC BY (с
 указанием автора) и некоммерческие лицензии (NC) — но тогда игру нельзя
