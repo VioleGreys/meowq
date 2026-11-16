@@ -489,7 +489,7 @@ void fragment() {
 			// ~6–8, у максимума ~25): полуширина 0,8·e^(0,68·(масштаб−1)) для крупной
 			float nk = smoothstep(2.8, 4.6, zoom);
 			float mp = zoom * 2.0 * res_k;   // пикселей буфера на пиксель карты
-			float hw_px = (base / 0.42) * max(1.2 * exp(0.58 * (zoom - 1.0)), 1.6) * res_k;
+			float hw_px = (base / 0.42) * max(1.2 * exp(0.58 * (zoom - 1.0)), 1.3) * res_k;
 			float hw = clamp(hw_px / mp, 1.3 * rv_fw, RIVER_MAX - 0.8);
 			float aa = 0.6 * rv_fw;
 			float has = step(0.01, rv.g) * (rv.g > 0.5 ? 1.0 : smoothstep(0.4, 0.9, zoom));   // малые — тоньше, с масштаба ~0,5
@@ -506,8 +506,8 @@ void fragment() {
 				vec2 wn = textureGrad(water_tex, wv_uv * 3.0, wv_gx * 3.0, wv_gy * 3.0).rg - 0.5;
 				rw *= 1.0 + (wn.x - wn.y) * 0.35 * nk;
 			}
-			rw = mix(vec3(0.16, 0.33, 0.54), rw, nk);   // вдали — насыщенная синяя линия, заметная на любой суше
-			col = mix(col, mix(col * 0.62, vec3(0.56, 0.49, 0.36) * (0.85 + 0.25 * light), nk), bank * mix(0.4, 0.5, nk));   // вдали — тёмная кромка, вблизи — берег
+			rw = mix(vec3(0.27, 0.43, 0.60), rw, nk);   // вдали — спокойная синяя линия
+			col = mix(col, mix(col * 0.62, vec3(0.56, 0.49, 0.36) * (0.85 + 0.25 * light), nk), bank * mix(0.18, 0.5, nk));   // вдали — едва заметная кромка, вблизи — берег
 			col = mix(col, rw, river * smoothstep(0.3, 0.7, zoom));
 			river = 0.0;
 		} else {
