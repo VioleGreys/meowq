@@ -588,6 +588,10 @@ DESERT_BOXES = [(-17, 15, 35, 34), (35, 12, 60, 32), (90, 38, 118, 46), (75, 36,
                 (118, -32, 145, -18), (12, -28, 26, -18), (-71, -27, -68, -18), (-118, 30, -106, 37)]
 JUNGLE_BOXES = [(-75, -12, -48, 5), (10, -5, 30, 5), (95, -8, 125, 20), (-92, 7, -77, 18),
                 (130, -10, 151, 0)]
+# местность по рельефу (--etopo): средний уклон провинции, м/км. Альпы, Кавказ,
+# Пиренеи, Балканы — 35–75; Карпаты, Шварцвальд — 20–30; равнины — до 6
+MOUNT_SLOPE = 28.0
+HILL_SLOPE = 13.0
 PLATEAU_BOXES = [(78, 28, 102, 37), (-70, -22, -66, -15)]
 
 
@@ -839,6 +843,7 @@ def main():
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "data", "world1936"))
     ap.add_argument("--preview", default="", help="сохранить PNG-превью сюда")
     ap.add_argument("--geonames", default="", help="cities1000.txt GeoNames (CC BY 4.0): названия провинций без крупного города")
+    ap.add_argument("--etopo", default="", help="ETOPO1_Ice_g_geotiff.tif (NOAA): горы и холмы по уклону, высота суши")
     ap.add_argument("--adm2", default="", help="папка районов geoBoundaries (tools/fetch_adm2.py): провинции по районам и рекам")
     args = ap.parse_args()
     ne = args.ne
@@ -942,6 +947,13 @@ def main():
     coast_dist = ndimage.distance_transform_edt(~land)
     sea_depth = np.clip(coast_dist / 45.0, 0, 1)
     height = np.where(land, 0.5 + 0.5 * land_h, 0.5 - 0.45 * sea_depth)
+    slope_px = None
+    if args.etopo:
+        # настоящий рельеф (тот же, что светит карту): высота суши и уклон
+        import etopo
+        elev_px, slope_px = etopo.load(args.etopo, WIDTH, HEIGHT)
+        height = np.where(land, etopo.height_channel(elev_px), height)
+        del elev_px
 
     rivers_img = Image.new("L", (WIDTH, HEIGHT), 0)
     rd = ImageDraw.Draw(rivers_img)
@@ -1200,6 +1212,7 @@ def main():
     for pid, (c, rid) in best.items():
         p_region[pid] = rid
     mount_mean = ndimage.mean(mount, labels=prov, index=np.arange(n_prov))
+    slope_mean = ndimage.mean(slope_px, labels=prov, index=np.arange(n_prov)) if slope_px is not None else None
 
     # соседство
     a = prov[:, :-1].ravel(); b = prov[:, 1:].ravel()
@@ -1333,12 +1346,17 @@ def main():
             pop, cname = city_best.get(i, (0, ""))
             name = cname if cname else alt_name.get(i, r["name_ru"])
             used[name] = used.get(name, 0) + 1
-            mm = float(mount_mean[i])
             terrain = 0
-            if mm > 0.55:
-                terrain = 3
-            elif mm > 0.25:
-                terrain = 2
+            if slope_mean is not None:
+                # решение пользователя (ноябрь 2026): горы и холмы — там, где они на
+                # рельефе карты (средний уклон провинции по ETOPO1, м/км)
+                sm = float(slope_mean[i])
+                terrain = 3 if sm >= MOUNT_SLOPE else 2 if sm >= HILL_SLOPE else 0
+            else:
+                mm = float(mount_mean[i])
+                terrain = 3 if mm > 0.55 else 2 if mm > 0.25 else 0
+            if terrain:
+                pass   # горы и холмы важнее леса, пустыни и болот
             elif (r["adm0"] in REMOTE_ADM0 and lat < 34.5) or _in_boxes(lon, lat, DESERT_BOXES):
                 terrain = 6   # пустыня
             elif 23.5 < lon < 30.5 and 51.3 < lat < 52.5:

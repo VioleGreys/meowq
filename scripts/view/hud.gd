@@ -1249,6 +1249,14 @@ func _province_text(p: int) -> String:
 		s += " (оккупирована: %s)" % ctrl.name
 	if w.p_colony[p] == 1:
 		s += " · колония"
+	var ter: int = w.p_terrain[p]
+	var t_def: float = World.TERRAIN_DEFENSE[ter]
+	var t_mov: float = World.TERRAIN_MOVE[ter]
+	if t_def > 0.0 or t_mov < 1.0:
+		# штраф местности (как в бою: атака × (1 − 0,6 × оборона), World.refresh_def_mult)
+		s += "\nМестность: атака сюда −%d%%, скорость ×%s" % [roundi(t_def * 60.0), String.num(t_mov, 2)]
+		if ter == World.T_MOUNTAIN:
+			s += " · горные стрелки сильнее, танки и артиллерия слабее"
 	if p < w.p_hot.size() and (w.p_hot[p] > 0.0 or w.p_cold[p] > 0.0):
 		var cl: Array = []
 		if w.p_hot[p] > 0.0:

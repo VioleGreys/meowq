@@ -106,6 +106,14 @@ int pid(ivec2 p) {
 	return int(c.r * 255.0 + 0.5) + int(c.g * 255.0 + 0.5) * 256;
 }
 
+// широта точки карты (проекция Миллера, как tools/build_map.py), градусы
+float lat_at(vec2 px) {
+	float s_px = map_size.x / 6.2831853;
+	float y_top = 1.25 * log(tan(0.78539816 + 0.4 * radians(lat_top)));
+	float yy = y_top - px.y / s_px;
+	return degrees(2.5 * atan(exp(0.8 * yy)) - 1.9634954);
+}
+
 vec4 pal(sampler2D t, int id) {
 	return texelFetch(t, ivec2(id % 64, id / 64), 0);
 }
@@ -385,6 +393,9 @@ void fragment() {
 	float near_k = smoothstep(0.35, 1.6, zoom);
 	mediump float rf = 1.0;
 	mediump float slope = 0.0;
+	float elev_m = 0.0;          // высота суши, м
+	mediump float mnt = 0.0;     // доля «горы»: скалы
+	mediump float snow = 0.0;    // доля снега
 	// половина подложки и производные координат (до ветвлений по пикселю)
 	float ax = muv.x * art_geom.x;
 	bool a_east = ax >= art_geom.x * 0.5;
@@ -403,7 +414,15 @@ void fragment() {
 		slope = length(nxy);
 		vec3 nn = normalize(vec3(nxy * mix(0.7, 1.3, near_k), sqrt(max(0.0, 1.0 - dot(nxy, nxy)))));
 		vec3 ld = normalize(vec3(-0.55, -0.65, 0.75));
-		rf = clamp(mix(1.0, dot(nn, ld) / ld.z, mix(0.55, 0.8, near_k)), 0.42, 1.35);
+		// горы (как в жанре): высота суши ETOPO1 (relief.r = 0.5 + 0.5·√(h/6000 м)),
+		// скалы — крутые склоны выше предгорий, снег — выше снеговой линии по широте;
+		// в горах светотень сильнее
+		elev_m = pow(max(h - 0.5, 0.0) * 2.0, 2.0) * 6000.0;
+		mnt = smoothstep(0.10, 0.36, slope) * smoothstep(200.0, 1100.0, elev_m);
+		rf = clamp(mix(1.0, dot(nn, ld) / ld.z, mix(0.55, 0.8, near_k) + 0.2 * mnt), 0.36, 1.4);
+		float sline = mix(4300.0, 400.0, smoothstep(10.0, 70.0, abs(lat_at(px))));
+		// граница снега: выше на солнечных и крутых гранях (рисунок по рельефу, не по текселям)
+		snow = smoothstep(sline - 350.0, sline + 250.0, elev_m - (rf - 1.0) * 1100.0 - slope * 400.0);
 	}
 	mediump vec3 col;   // цвет — в половинной точности (дешевле на мобильных ГП)
 	// мелкие озёра входят в провинции суши, но по высоте ниже уровня моря — вода
@@ -446,9 +465,7 @@ void fragment() {
 		// сетка широт и долгот через 15° — как на штабной карте
 		float s_px = map_size.x / 6.2831853;
 		float lon = degrees(px.x / s_px) + lon_min;
-		float y_top = 1.25 * log(tan(0.78539816 + 0.4 * radians(lat_top)));
-		float yy = y_top - px.y / s_px;
-		float lat = degrees(2.5 * atan(exp(0.8 * yy)) - 1.9634954);
+		float lat = lat_at(px);
 		float gl = abs(fract(lon / 15.0 + 0.5) - 0.5) * 15.0;
 		float ga = abs(fract(lat / 15.0 + 0.5) - 0.5) * 15.0;
 		float pxdeg = 360.0 / map_size.x;   // градусов долготы в пикселе карты
@@ -468,11 +485,17 @@ void fragment() {
 			mediump vec3 terr = a_east ? textureGrad(color_e, auv, agx, agy).rgb : textureGrad(color_w, auv, agx, agy).rgb;
 			mediump float tl = dot(terr, vec3(0.299, 0.587, 0.114));
 			terr = clamp(vec3(tl) + (terr - vec3(tl)) * 1.35, 0.0, 1.0) * 0.96;
+			// горы: серо-бурые скалы и белый снег поверх природных зон
+			mediump vec3 rock = vec3(0.53, 0.49, 0.44) * (0.85 + 0.3 * tl);
+			terr = mix(terr, rock, mnt * 0.8);
+			terr = mix(terr, vec3(0.94, 0.95, 0.97), snow);
 			if (terrain_mode) {
 				col = terr * 0.95 * rf;
 			} else {
 				mediump vec3 far_c = base * (0.9 + 0.14 * (tl - 0.75));
-				mediump vec3 near_c = mix(terr * 0.92, base, 0.45);
+				far_c = mix(far_c, mix(base, rock * 1.1, 0.35), mnt * 0.5);
+				far_c = mix(far_c, mix(base, vec3(0.95), 0.7), snow * 0.7);
+				mediump vec3 near_c = mix(terr * 0.92, base, 0.45 * (1.0 - 0.8 * snow) * (1.0 - 0.5 * mnt));
 				col = mix(far_c, near_c, near_k) * rf;
 			}
 			if (has_detail && quality == 2) {
@@ -481,12 +504,12 @@ void fragment() {
 				if (dk > 0.0) {
 					mediump vec4 dt = texture(detail_tex, px / (DETAIL_TILE * id_k));
 					mediump float sat = max(terr.r, max(terr.g, terr.b)) - min(terr.r, min(terr.g, terr.b));
-					mediump float w_snow = smoothstep(0.80, 0.90, tl) * (1.0 - smoothstep(0.06, 0.14, sat));
-					mediump float w_rock = smoothstep(0.15, 0.45, slope) * (1.0 - w_snow);
+					mediump float w_snow = max(snow, smoothstep(0.80, 0.90, tl) * (1.0 - smoothstep(0.06, 0.14, sat)));
+					mediump float w_rock = max(smoothstep(0.15, 0.45, slope), mnt) * (1.0 - w_snow);
 					mediump float w_sand = smoothstep(0.0, 0.06, terr.r - terr.g) * (1.0 - w_snow - w_rock);
 					mediump float w_grass = max(0.0, 1.0 - w_snow - w_rock - w_sand);
 					mediump float d = dt.r * w_grass + dt.g * w_rock + dt.b * w_sand + dt.a * w_snow;
-					col *= 1.0 + (d - 0.5) * 0.22 * dk;
+					col *= 1.0 + (d - 0.5) * (0.22 + 0.14 * mnt) * dk;
 				}
 			}
 		} else if (has_terrain) {
