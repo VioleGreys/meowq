@@ -34,7 +34,17 @@ uniform float sdf_wd = 5664.0;   // ширина половины
 uniform int selected_id = -1;
 uniform int highlight_nation = -1;
 uniform bool show_occupation = true;
-uniform float zoom = 1.0;
+uniform float cam_zoom = 1.0;   // масштаб в центре экрана (пикселей экрана на единицу мира)
+// Камера (MapView.screen_to_world — та же формула): плоскость карты под
+// перспективной камерой с наклоном cam_tilt (рад, 0 — сверху); центр экрана
+// смотрит на cam_pos (единицы мира: пиксель карты × 2); cam_f — фокус, пикс.
+// экрана; scr_size — логический размер экрана. Каждый пиксель — луч до плоскости.
+uniform vec2 cam_pos = vec2(0.0);
+uniform float cam_tilt = 0.0;
+uniform float cam_f = 1000.0;
+uniform vec2 scr_size = vec2(1280.0, 720.0);
+uniform vec2 world_size = vec2(11264.0, 5250.0);
+const float RELIEF_H = 6.0;   // высота самых высоких гор при наклоне, единиц мира
 uniform float res_k = 1.0;   // пикселей буфера карты на логический пиксель экрана
 uniform sampler2D terrain_tex : filter_linear;  // спутниковая подложка (NASA Blue Marble), только суша
 uniform bool has_terrain = false;
@@ -116,7 +126,30 @@ vec4 tex_bicubic(sampler2D t, vec2 uv, vec2 ts, vec2 gx, vec2 gy) {
 }
 
 void fragment() {
-	vec2 px = UV * map_size;
+	// луч из пикселя экрана до плоскости карты (см. cam_*)
+	vec2 sc = UV * scr_size - scr_size * 0.5;
+	float st = sin(cam_tilt);
+	float ct = cos(cam_tilt);
+	float dist = cam_f / cam_zoom;
+	float den = ct + st * sc.y / cam_f;
+	float tr = dist * ct / max(den, 1e-4);           // глубина точки (вдоль взгляда)
+	vec2 wp = vec2(cam_pos.x + tr * sc.x / cam_f,
+		cam_pos.y + dist * st + tr * (-st + ct * sc.y / cam_f));
+	// рельеф при наклоне: луч встречает возвышенность раньше плоскости — сдвиг
+	// выборки навстречу камере на высоту × наклон луча (параллакс, «подъём» гор)
+	if (cam_tilt > 0.001) {
+		float hh = max(texture(height_tex, wp / world_size).r - 0.5, 0.0) * 2.0;
+		vec2 ray = vec2(sc.x / cam_f, -st + ct * sc.y / cam_f) / max(den, 1e-4);
+		wp -= ray * hh * RELIEF_H;
+	}
+	vec2 muv = wp / world_size;
+	// масштаб в этой точке экрана (вдали — мельче): по нему все приближения
+	float zoom = cam_zoom * dist / tr;
+	// вне карты — фон (без discard до производных: на GLES они тогда не определены)
+	bool outside = den <= 1e-4 || muv.x < 0.0 || muv.x > 1.0 || muv.y < 0.0 || muv.y > 1.0;
+	muv = clamp(muv, vec2(0.0), vec2(1.0));
+	float haze = clamp((tr / dist - 1.0) * 0.35, 0.0, 0.22) * smoothstep(0.05, 0.5, cam_tilt);
+	vec2 px = muv * map_size;
 	ivec2 ip = ivec2(floor(px));
 	// координаты волн и их производные (до ветвлений по пикселю)
 	vec2 wv_uv = px / (WATER_TILE * id_k);
@@ -126,9 +159,9 @@ void fragment() {
 	float sdf_tx = 1e4;
 	if (has_sdf) {
 		bool s_east = px.x >= float(ids_half);
-		vec2 suv = vec2((s_east ? px.x - float(ids_off) : px.x) / sdf_wd, UV.y);
-		vec2 sgx = vec2(dFdx(px.x) / sdf_wd, dFdx(UV.y));
-		vec2 sgy = vec2(dFdy(px.x) / sdf_wd, dFdy(UV.y));
+		vec2 suv = vec2((s_east ? px.x - float(ids_off) : px.x) / sdf_wd, muv.y);
+		vec2 sgx = vec2(dFdx(px.x) / sdf_wd, dFdx(muv.y));
+		vec2 sgy = vec2(dFdy(px.x) / sdf_wd, dFdy(muv.y));
 		float sd = s_east ? textureGrad(sdf_e, suv, sgx, sgy).r : textureGrad(sdf_w, suv, sgx, sgy).r;
 		sdf_tx = sd * 2.0;
 	}
@@ -217,7 +250,7 @@ void fragment() {
 	// Берег — по доле суши из векторных контуров (канал b рельефа, tools/build_map.py):
 	// уровень 0.5 даёт настоящую плавную линию берега. Если победила провинция не той
 	// стихии — берём лучшего соперника нужной (суша) или рисуем воду.
-	float cov = quality > 0 ? texture(height_tex, UV).b : 0.5;
+	float cov = quality > 0 ? texture(height_tex, muv).b : 0.5;
 	int nat_c[NS];
 	for (int j = 0; j < NS; j++) {
 		nat_c[j] = uid[j] >= 0 ? nation(pal(ctrl_tex, uid[j])) : -2;
@@ -264,11 +297,11 @@ void fragment() {
 	bool sea_px = !cov_land && land;   // суша по провинции, но по контуру — уже вода
 
 	vec2 t = 1.0 / map_size;
-	float h = texture(height_tex, UV).r;
-	float h_r = texture(height_tex, UV + vec2(t.x, 0.0)).r;
-	float h_l = texture(height_tex, UV - vec2(t.x, 0.0)).r;
-	float h_d = texture(height_tex, UV + vec2(0.0, t.y)).r;
-	float h_u = texture(height_tex, UV - vec2(0.0, t.y)).r;
+	float h = texture(height_tex, muv).r;
+	float h_r = texture(height_tex, muv + vec2(t.x, 0.0)).r;
+	float h_l = texture(height_tex, muv - vec2(t.x, 0.0)).r;
+	float h_d = texture(height_tex, muv + vec2(0.0, t.y)).r;
+	float h_u = texture(height_tex, muv - vec2(0.0, t.y)).r;
 	if (quality > 0) {
 		// у берега растровая высота резко падает к морю — светотень рисовала бы
 		// ступенчатый силуэт пикселей; берег уже дан векторным контуром
@@ -285,11 +318,11 @@ void fragment() {
 	mediump float rf = 1.0;
 	mediump float slope = 0.0;
 	// половина подложки и производные координат (до ветвлений по пикселю)
-	float ax = UV.x * art_geom.x;
+	float ax = muv.x * art_geom.x;
 	bool a_east = ax >= art_geom.x * 0.5;
-	vec2 auv = vec2((a_east ? ax - art_geom.y : ax) / art_geom.z, UV.y);
-	vec2 agx = vec2(dFdx(UV.x) * art_geom.x / art_geom.z, dFdx(UV.y));
-	vec2 agy = vec2(dFdy(UV.x) * art_geom.x / art_geom.z, dFdy(UV.y));
+	vec2 auv = vec2((a_east ? ax - art_geom.y : ax) / art_geom.z, muv.y);
+	vec2 agx = vec2(dFdx(muv.x) * art_geom.x / art_geom.z, dFdx(muv.y));
+	vec2 agy = vec2(dFdy(muv.x) * art_geom.x / art_geom.z, dFdy(muv.y));
 	vec2 ats = art_geom.zw;
 	if (has_art) {
 		vec2 g;
@@ -389,7 +422,7 @@ void fragment() {
 				}
 			}
 		} else if (has_terrain) {
-			mediump vec3 terr = texture(terrain_tex, UV).rgb;
+			mediump vec3 terr = texture(terrain_tex, muv).rgb;
 			mediump float tl = dot(terr, vec3(0.299, 0.587, 0.114));
 			if (terrain_mode) {
 				col = terr * (0.85 + 0.35 * light);
@@ -404,7 +437,7 @@ void fragment() {
 		} else {
 			col = base * (0.70 + 0.48 * light);
 		}
-		float river = texture(height_tex, UV).g;
+		float river = texture(height_tex, muv).g;
 		col = mix(col, vec3(0.22, 0.42, 0.58), smoothstep(0.25, 0.8, river) * 0.75 * smoothstep(0.35, 0.9, zoom));
 		// лёгкая «бумажная» зернистость
 		if (quality == 0) {
@@ -421,7 +454,7 @@ void fragment() {
 		}
 		if (has_band && !terrain_mode) {
 			// кайма: цвет страны гуще у её границы и мягко сходит внутрь (как в жанре)
-			mediump float bd = texture(band_tex, UV).r;
+			mediump float bd = texture(band_tex, muv).r;
 			col = mix(col, cc.rgb * 0.82, bd * bd * 0.42);
 		}
 		if (highlight_nation >= 0 && ctrl != highlight_nation) {
@@ -580,5 +613,7 @@ void fragment() {
 	if (id == selected_id && land) {
 		col = mix(col, vec3(1.0, 0.96, 0.8), 0.3);
 	}
-	COLOR = vec4(col, 1.0);
+	// дымка вдали при наклоне камеры (как воздушная перспектива)
+	col = mix(col, vec3(0.80, 0.84, 0.86), haze);
+	COLOR = outside ? vec4(0.302, 0.302, 0.302, 1.0) : vec4(col, 1.0);
 }

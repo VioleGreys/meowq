@@ -312,6 +312,8 @@ func _auto_screenshot_locked() -> void:
 			elif selected_group >= 0:
 				start_front_edit(selected_group)
 		hud.on_tick()
+		if "--notilt" in OS.get_cmdline_user_args():
+			map_view.set_tilt_enabled(false)
 		if _arg("zoom") != "":
 			map_view.camera.zoom = Vector2.ONE * float(_arg("zoom"))
 			map_view.center_on(world.nations[me].capital)

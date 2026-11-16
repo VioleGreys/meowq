@@ -142,6 +142,7 @@ static func _rr_img(w: int, h: int, rad: float, bw: float, fill: Color, border: 
 # список отрисовки; бои пульсируют — тогда не чаще 12 раз в секунду.
 var _dirty := true
 var _last_xf := Transform2D()
+var _last_vv := -1
 var _has_battles := false
 var _anim_msec := 0
 
@@ -151,8 +152,10 @@ func _process(_dt: float) -> void:
 	if map != null and map.camera != null:
 		xf = map.get_viewport().get_canvas_transform()
 	var now := Time.get_ticks_msec()
-	if xf != _last_xf:
+	var vv: int = map.view_version if map != null else 0
+	if xf != _last_xf or vv != _last_vv:
 		_last_xf = xf
+		_last_vv = vv
 		_dirty = true
 	if _dirty:
 		_dirty = false
@@ -429,7 +432,7 @@ func _draw() -> void:
 	for it in items:
 		match it[0]:
 			LABEL:
-				_draw_label(it, z)
+				_draw_label(it, map.local_zoom(it[1]))
 			ARROW:
 				if not it[5] and z < 1.4:
 					continue

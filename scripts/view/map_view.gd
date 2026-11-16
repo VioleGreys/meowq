@@ -19,7 +19,8 @@ const RES_COLORS := [Color(0.18, 0.15, 0.12), Color(0.36, 0.45, 0.58), Color(0.7
 	Color(0.25, 0.6, 0.3), Color(0.55, 0.35, 0.7), Color(0.85, 0.55, 0.2)]
 
 var world: World
-var sprite: Sprite2D
+var id_texture: ImageTexture   # карта провинций 1× (id в RG) — для шейдера
+var quad: ColorRect            # прямоугольник во весь буфер: шейдер сам считает проекцию камеры
 var camera: Camera2D
 var mat: ShaderMaterial
 var ctrl_img: Image
@@ -41,10 +42,9 @@ var map_mode := MapMode.POLITICAL
 # сдвиг, масштаб, новый день (палитра), выбор. В остальные кадры экран
 # просто показывает готовую картинку — шейдер не пересчитывает каждый пиксель.
 var map_vp: SubViewport
-var sub_cam: Camera2D
 var view_sprite: Sprite2D
 var lite_vp: SubViewport
-var lite_cam: Camera2D
+var lite_quad: ColorRect
 var lite_sprite: Sprite2D
 const FADE_OUT := 0.35        # за сколько растворяется сдвигаемый полный кадр, с
 const FADE_IN := 0.25         # за сколько проявляется новый полный кадр, с
@@ -52,6 +52,7 @@ var _full_alpha := 1.0
 var _full_cam := Vector2.ZERO  # камера (позиция, масштаб), с которой нарисован буфер
 var _full_zoom := 1.0
 var _full_size := Vector2.ONE
+var _full_tilt := 0.0
 var _lite_cam := Vector2.ZERO
 var _lite_zoom := 1.0
 var _lite_size := Vector2.ONE
@@ -67,6 +68,7 @@ var _moving := 0.0           # сколько ещё считать карту �
 var _lite_drawn := false
 var _wheel := false          # масштаб колесом/жестом тачпада — тоже движение     # последний кадр карты нарисован упрощённо
 var redraws := 0             # сколько раз перерисована карта (для замеров)
+var view_version := 0        # растёт при каждом изменении вида (сдвиг, масштаб, наклон)
 var palette_version := 0     # растёт при каждом обновлении палитры (смена владельцев)
 var _pal_ctrl := PackedInt32Array()   # чем покрашена провинция в палитре (политическая карта)
 var _pal_own := PackedInt32Array()
@@ -85,23 +87,18 @@ func setup(w: World) -> void:
 	_pal_mode = -1
 	for c in get_children():
 		c.queue_free()
-	sprite = Sprite2D.new()
-	sprite.centered = false
-	sprite.texture = ImageTexture.create_from_image(world.id_image)
-	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	sprite.scale = Vector2(SCALE, SCALE)
+	id_texture = ImageTexture.create_from_image(world.id_image)
 	mat = ShaderMaterial.new()
 	mat.shader = load("res://shaders/map.gdshader")
-	sprite.material = mat
+	quad = ColorRect.new()
+	quad.material = mat
+	quad.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	map_vp = SubViewport.new()
 	map_vp.disable_3d = true
 	map_vp.transparent_bg = false
 	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	add_child(map_vp)
-	map_vp.add_child(sprite)
-	sub_cam = Camera2D.new()
-	map_vp.add_child(sub_cam)
-	sub_cam.make_current()
+	map_vp.add_child(quad)
 	var layer := CanvasLayer.new()
 	layer.layer = -1
 	add_child(layer)
@@ -113,16 +110,10 @@ func setup(w: World) -> void:
 	lite_vp.transparent_bg = false
 	lite_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	add_child(lite_vp)
-	var lite_map := Sprite2D.new()
-	lite_map.centered = false
-	lite_map.texture = sprite.texture
-	lite_map.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	lite_map.scale = sprite.scale
-	lite_map.material = mat
-	lite_vp.add_child(lite_map)
-	lite_cam = Camera2D.new()
-	lite_vp.add_child(lite_cam)
-	lite_cam.make_current()
+	lite_quad = ColorRect.new()
+	lite_quad.material = mat
+	lite_quad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lite_vp.add_child(lite_quad)
 	lite_sprite = Sprite2D.new()
 	lite_sprite.centered = false
 	lite_sprite.texture = lite_vp.get_texture()
@@ -142,6 +133,8 @@ func setup(w: World) -> void:
 	set_res_scale(Settings.RES_SCALES[Settings.map_res()])
 	Settings.apply_fps_cap()
 	motion_lite = Settings.motion_lite()
+	tilt_enabled = Settings.map_tilt()
+	mat.set_shader_parameter("world_size", Vector2(world.width, world.height) * SCALE)
 
 	var rows := int(ceil(world.prov_count / 64.0))
 	ctrl_img = Image.create(64, rows, false, Image.FORMAT_RGBA8)
@@ -153,7 +146,7 @@ func setup(w: World) -> void:
 	_front_hash = 0
 	mat.set_shader_parameter("front_tex", front_tex)
 	mat.set_shader_parameter("front_on", false)
-	mat.set_shader_parameter("id_tex", sprite.texture)
+	mat.set_shader_parameter("id_tex", id_texture)
 	mat.set_shader_parameter("ctrl_tex", ctrl_tex)
 	mat.set_shader_parameter("owner_tex", owner_tex)
 	mat.set_shader_parameter("height_tex", ImageTexture.create_from_image(world.height_image))
@@ -232,12 +225,89 @@ func province_world_pos(p: int) -> Vector2:
 	return world.p_center[p] * SCALE
 
 
+# --- Камера: перспектива с наклоном при приближении ---------------------------
+# Плоскость карты (единицы мира) под перспективной камерой: центр экрана смотрит
+# на camera.position, масштаб в центре — camera.zoom (как у плоской карты), наклон
+# от вертикали растёт с приближением (tilt()). Камера южнее точки взгляда и
+# смотрит на север. Шейдер карты считает ту же проекцию для каждого пикселя
+# (shaders/map.gdshader, cam_*), фишки и стрелки — через world_to_screen.
+const TILT_MAX := deg_to_rad(40.0)
+const TILT_Z0 := 1.0          # наклон начинается с этого масштаба
+const TILT_Z1 := 4.0          # и доходит до TILT_MAX здесь
+const FOV_V := deg_to_rad(34.0)   # угол обзора по вертикали
+var tilt_enabled := true
+
+
+func set_tilt_enabled(v: bool) -> void:
+	tilt_enabled = v
+	if camera != null:
+		_on_view_changed()
+
+
+## Наклон камеры (рад) при масштабе z: 0 — вид сверху.
+func tilt_at(z: float) -> float:
+	if not tilt_enabled:
+		return 0.0
+	var t := clampf((z - TILT_Z0) / (TILT_Z1 - TILT_Z0), 0.0, 1.0)
+	return TILT_MAX * t * t * (3.0 - 2.0 * t)
+
+
+func tilt() -> float:
+	return tilt_at(camera.zoom.x) if camera != null else 0.0
+
+
+## Фокусное расстояние, логических пикселей экрана.
+func cam_focal() -> float:
+	return get_viewport_rect().size.y * 0.5 / tan(FOV_V * 0.5)
+
+
 func world_to_screen(p: Vector2) -> Vector2:
-	return get_viewport().get_canvas_transform() * p
+	var th := tilt()
+	var half := get_viewport_rect().size * 0.5
+	var z := camera.zoom.x
+	if th <= 0.0:
+		return (p - camera.position) * z + half
+	var f := cam_focal()
+	var d := f / z
+	var st := sin(th)
+	var ct := cos(th)
+	# v = p − C, C = цель + d·(0, sin, cos); глубина — вдоль взгляда (0, −sin, −cos)
+	var vx := p.x - camera.position.x
+	var vy := p.y - camera.position.y - d * st
+	var vz := -d * ct
+	# за камерой (далеко на юге) — глубина ограничена: точка уходит вниз за
+	# край экрана в своём направлении (линии маршрутов не перечёркивают карту)
+	var depth := maxf(-vy * st - vz * ct, d * 0.05)
+	var up := -vy * ct + vz * st     # проекция на «верх» экрана (0, −cos, sin)
+	return Vector2(half.x + f * vx / depth, half.y - f * up / depth)
 
 
 func screen_to_world(p: Vector2) -> Vector2:
-	return get_viewport().get_canvas_transform().affine_inverse() * p
+	var th := tilt()
+	var half := get_viewport_rect().size * 0.5
+	var z := camera.zoom.x
+	if th <= 0.0:
+		return (p - half) / z + camera.position
+	var sc := p - half
+	var f := cam_focal()
+	var d := f / z
+	var st := sin(th)
+	var ct := cos(th)
+	var den := maxf(ct + st * sc.y / f, 1e-4)
+	var tr := d * ct / den
+	return Vector2(camera.position.x + tr * sc.x / f, camera.position.y + d * st + tr * (-st + ct * sc.y / f))
+
+
+## Масштаб (пикселей экрана на единицу мира) в точке мира: при наклоне вдали мельче.
+func local_zoom(p: Vector2) -> float:
+	var th := tilt()
+	var z := camera.zoom.x
+	if th <= 0.0:
+		return z
+	var d := cam_focal() / z
+	var vy := p.y - camera.position.y - d * sin(th)
+	var depth := -vy * sin(th) + d * cos(th) * cos(th)
+	return z * d / maxf(depth, d * 0.05)
 
 
 func zoom_level() -> float:
@@ -431,11 +501,11 @@ func _process(dt: float) -> void:
 		var size := Vector2i(maxi(1, int(phys.x * rs)), maxi(1, int(phys.y * rs)))
 		var rk := float(size.x) / maxf(1.0, logical.x)  # пикселей буфера на логический
 		mat.set_shader_parameter("res_k", rk)
+		_cam_uniforms(logical)
 		if lite:
 			if lite_vp.size != size:
 				lite_vp.size = size
-			lite_cam.position = camera.position
-			lite_cam.zoom = camera.zoom * rk
+			lite_quad.size = Vector2(size)
 			lite_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 			_lite_cam = camera.position
 			_lite_zoom = camera.zoom.x
@@ -445,12 +515,12 @@ func _process(dt: float) -> void:
 		else:
 			if map_vp.size != size:
 				map_vp.size = size
-			sub_cam.position = camera.position
-			sub_cam.zoom = camera.zoom * rk
+			quad.size = Vector2(size)
 			map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 			_full_cam = camera.position
 			_full_zoom = camera.zoom.x
 			_full_size = Vector2(size)
+			_full_tilt = tilt()
 			if was_lite:
 				_full_alpha = 0.0   # после движения — проявляем новый кадр плавно
 				_fading_in = true
@@ -458,8 +528,10 @@ func _process(dt: float) -> void:
 			_drawn_last = true
 		redraws += 1
 	# прозрачность полного кадра: при движении растворяется, после — проявляется
+	# (при наклоне старый кадр сдвигом не совместить с перспективой — сразу)
 	if _lite_drawn and _moving > 0.0:
-		_full_alpha = maxf(0.0, _full_alpha - dt / FADE_OUT)
+		var fo := FADE_OUT if tilt() <= 0.0 and _full_tilt <= 0.0 else 0.0001
+		_full_alpha = maxf(0.0, _full_alpha - dt / fo)
 	elif _fading_in:
 		_full_alpha = minf(1.0, _full_alpha + dt / FADE_IN)
 		if _full_alpha >= 1.0:
@@ -472,6 +544,14 @@ func _process(dt: float) -> void:
 	_place(view_sprite, _full_cam, _full_zoom, _full_size)
 	if lite_sprite.visible:
 		_place(lite_sprite, _lite_cam, _lite_zoom, _lite_size)
+
+
+func _cam_uniforms(logical: Vector2) -> void:
+	mat.set_shader_parameter("cam_pos", camera.position)
+	mat.set_shader_parameter("cam_zoom", camera.zoom.x)
+	mat.set_shader_parameter("cam_tilt", tilt())
+	mat.set_shader_parameter("cam_f", cam_focal())
+	mat.set_shader_parameter("scr_size", logical)
 
 
 ## Показ буфера, нарисованного с камеры (c_b, z_b), при текущей камере: старый
@@ -651,7 +731,7 @@ func _unhandled_input(event: InputEvent) -> void:
 					_paint_at(_paint_last + seg * float(i + 1) / steps, false)
 				_paint_last = event.position
 			elif not paint_mode:
-				camera.position -= (event.position - prev) / camera.zoom.x
+				camera.position += screen_to_world(prev) - screen_to_world(event.position)
 				_on_view_changed()
 		elif _touches.size() >= 2:
 			var d := _pinch_distance()
@@ -659,7 +739,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_zoom_at(_pinch_center(), d / _pinch_dist)
 			_pinch_dist = d
 			# двумя пальцами карта и сдвигается (в режиме кисти — только так)
-			camera.position -= (event.position - prev) * 0.5 / camera.zoom.x
+			camera.position += (screen_to_world(prev) - screen_to_world(event.position)) * 0.5
 			_on_view_changed()
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.pressed:
@@ -722,9 +802,16 @@ func _on_view_changed() -> void:
 	var lo := Vector2(minf(half.x, ws.x * 0.5), minf(half.y, ws.y * 0.5))
 	var hi := Vector2(maxf(ws.x - half.x, ws.x * 0.5), maxf(ws.y - half.y, ws.y * 0.5))
 	camera.position = camera.position.clamp(lo, hi)
-	mat.set_shader_parameter("zoom", camera.zoom.x)
+	# при наклоне верх экрана смотрит дальше на север: не заглядывать за край карты
+	if tilt() > 0.0:
+		for _i in 2:
+			var top := screen_to_world(Vector2(half.x * camera.zoom.x, 0.0))
+			if top.y >= 0.0:
+				break
+			camera.position.y = minf(camera.position.y - top.y, hi.y)
 	if not _touches.is_empty() or _wheel:
 		_moving = MOTION_SETTLE
 	_wheel = false
+	view_version += 1
 	redraw()
 	view_changed.emit()

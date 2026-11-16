@@ -60,6 +60,16 @@ static func set_motion_lite(v: bool) -> void:
 	_cfg.save(PATH)
 
 
+## Наклон камеры при приближении (перспектива, как в стратегиях жанра). По умолчанию — да.
+static func map_tilt() -> bool:
+	return bool(_load().get_value("graphics", "map_tilt", true))
+
+
+static func set_map_tilt(v: bool) -> void:
+	_load().set_value("graphics", "map_tilt", v)
+	_cfg.save(PATH)
+
+
 ## Ограничение кадров: 0 — 30, 1 — 60, 2 — без ограничения (по частоте экрана).
 ## На экранах 90–120 Гц лишние кадры только греют телефон.
 static func fps_cap() -> int:

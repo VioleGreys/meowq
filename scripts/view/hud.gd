@@ -4446,6 +4446,13 @@ func _build_settings() -> void:
 		game.map_view.motion_lite = v)
 	popup_body.add_child(lite)
 	popup_body.add_child(_label("Пока карту двигают, она рисуется упрощённо и плавно переходит в выбранное качество после остановки.", 15, Color(0.75, 0.75, 0.7)))
+	var tl := CheckButton.new()
+	tl.text = "Наклон камеры вблизи"
+	tl.button_pressed = Settings.map_tilt()
+	tl.toggled.connect(func(v: bool):
+		Settings.set_map_tilt(v)
+		game.map_view.set_tilt_enabled(v))
+	popup_body.add_child(tl)
 	var snd := CheckButton.new()
 	snd.text = "Звук нажатия кнопок"
 	snd.button_pressed = Settings.ui_sound()
