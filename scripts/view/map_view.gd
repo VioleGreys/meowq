@@ -196,6 +196,17 @@ func setup(w: World) -> void:
 			wimg.generate_mipmaps()
 			mat.set_shader_parameter("water_tex", ImageTexture.create_from_image(wimg))
 	mat.set_shader_parameter("has_water", has_w)
+	# поле расстояний до рек (tools/build_rivers.py) — реки гладкие вблизи
+	var rpath := "res://data/world1936/rivers.png.bin"
+	var has_r := world.width == 5632 and FileAccess.file_exists(rpath)
+	if has_r:
+		var rimg := Image.new()
+		has_r = rimg.load_png_from_buffer(FileAccess.get_file_as_bytes(rpath)) == OK
+		if has_r:
+			rimg.convert(Image.FORMAT_RGB8)
+			rimg.generate_mipmaps()
+			mat.set_shader_parameter("river_tex", ImageTexture.create_from_image(rimg))
+	mat.set_shader_parameter("has_rivers", has_r)
 	# поле расстояний до границ провинций (tools/build_sdf.py) — линии границ гладкие
 	var sdf := _sdf2() if not ids.is_empty() else []
 	mat.set_shader_parameter("has_sdf", not sdf.is_empty())

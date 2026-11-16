@@ -29,6 +29,12 @@ uniform bool has_band = false;
 // нормали волн (tools/build_water.py, свои): бесшовный тайл, блики и рябь вблизи
 uniform sampler2D water_tex : filter_linear_mipmap, repeat_enable;
 uniform bool has_water = false;
+// поле рек (tools/build_rivers.py): rg — вектор до ближайшей точки реки
+// (пикселей карты, ±RIVER_MAX), b — сила реки. Билинейный вектор → точное
+// расстояние и между текселями: река гладкая на любом приближении
+uniform sampler2D river_tex : filter_linear_mipmap;
+uniform bool has_rivers = false;
+const float RIVER_MAX = 4.0;
 const float WATER_TILE = 90.0;   // пикселей карты на тайл
 uniform float sdf_wd = 5664.0;   // ширина половины
 uniform int selected_id = -1;
@@ -155,6 +161,12 @@ void fragment() {
 	vec2 wv_uv = px / (WATER_TILE * id_k);
 	vec2 wv_gx = dFdx(wv_uv);
 	vec2 wv_gy = dFdy(wv_uv);
+	// реки: расстояние до осевой линии (пикселей карты) и его изменение на пиксель
+	// экрана — до ветвлений (fwidth)
+	vec3 rv3 = has_rivers ? texture(river_tex, muv).rgb : vec3(1.0, 1.0, 0.0);
+	vec2 rv = vec2(0.0, rv3.b);
+	float rv_d = length((rv3.rg * 255.0 - 128.0) / 127.0) * RIVER_MAX;
+	float rv_fw = max(fwidth(rv_d), 1e-4);
 	// поле расстояний до границ провинций (текселей сетки; без поля — далеко)
 	float sdf_tx = 1e4;
 	if (has_sdf) {
@@ -437,8 +449,16 @@ void fragment() {
 		} else {
 			col = base * (0.70 + 0.48 * light);
 		}
-		float river = texture(height_tex, muv).g;
-		col = mix(col, vec3(0.22, 0.42, 0.58), smoothstep(0.25, 0.8, river) * 0.75 * smoothstep(0.35, 0.9, zoom));
+		float river;
+		if (has_rivers) {
+			// полуширина: крупные шире; не тоньше ~0,6 пикселя экрана
+			float hw = max(rv.g > 0.9 ? 0.42 : (rv.g > 0.5 ? 0.32 : 0.24), 0.8 * rv_fw);
+			river = (1.0 - smoothstep(hw - 0.6 * rv_fw, hw + 0.6 * rv_fw, rv_d)) * step(0.01, rv.g);
+			river *= rv.g > 0.5 ? 1.0 : smoothstep(0.7, 1.4, zoom);   // малые — только вблизи
+		} else {
+			river = smoothstep(0.25, 0.8, texture(height_tex, muv).g);
+		}
+		col = mix(col, vec3(0.22, 0.42, 0.58), river * 0.75 * smoothstep(0.35, 0.9, zoom));
 		// лёгкая «бумажная» зернистость
 		if (quality == 0) {
 			col *= 0.97 + 0.03 * fract(sin(dot(vec2(ip), vec2(12.9898, 78.233))) * 43758.5453);
