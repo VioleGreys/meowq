@@ -489,12 +489,12 @@ void fragment() {
 			// ~6–8, у максимума ~25): полуширина 0,8·e^(0,68·(масштаб−1)) для крупной
 			float nk = smoothstep(2.8, 4.6, zoom);
 			float mp = zoom * 2.0 * res_k;   // пикселей буфера на пиксель карты
-			float hw_px = (base / 0.42) * 0.8 * exp(0.68 * (zoom - 1.0)) * res_k;
-			float hw = clamp(hw_px / mp, 0.8 * rv_fw, RIVER_MAX - 0.8);
+			float hw_px = (base / 0.42) * max(1.2 * exp(0.58 * (zoom - 1.0)), 1.6) * res_k;
+			float hw = clamp(hw_px / mp, 1.3 * rv_fw, RIVER_MAX - 0.8);
 			float aa = 0.6 * rv_fw;
-			float has = step(0.01, rv.g) * (rv.g > 0.5 ? 1.0 : smoothstep(0.7, 1.4, zoom));   // малые — только вблизи
+			float has = step(0.01, rv.g) * (rv.g > 0.5 ? 1.0 : smoothstep(0.4, 0.9, zoom));   // малые — тоньше, с масштаба ~0,5
 			river = (1.0 - smoothstep(hw - aa, hw + aa, rv_d)) * has;
-			float bw = (0.08 * base / 0.42 + 0.03) * nk + 0.35 * rv_fw * nk;          // берег: узкая мягкая кромка (как в жанре)
+			float bw = (0.08 * base / 0.42 + 0.03) * nk + 0.35 * rv_fw * nk + 0.9 * rv_fw * (1.0 - nk);          // берег: узкая мягкая кромка (как в жанре)
 			float bank = (1.0 - smoothstep(hw + bw - aa, hw + bw + aa, rv_d)) * has - river;
 			river_m = river + max(bank, 0.0);   // лента вместе с берегами
 			river_out = (hw + bw) * step(0.5, has);
@@ -506,9 +506,9 @@ void fragment() {
 				vec2 wn = textureGrad(water_tex, wv_uv * 3.0, wv_gx * 3.0, wv_gy * 3.0).rg - 0.5;
 				rw *= 1.0 + (wn.x - wn.y) * 0.35 * nk;
 			}
-			rw = mix(vec3(0.50, 0.58, 0.64), rw, nk);   // вдали — бледная серо-голубая линия, как в жанре
-			col = mix(col, vec3(0.56, 0.49, 0.36) * (0.85 + 0.25 * light), bank * 0.5 * nk);
-			col = mix(col, rw, river * mix(0.75, 1.0, nk) * smoothstep(0.35, 0.9, zoom));
+			rw = mix(vec3(0.16, 0.33, 0.54), rw, nk);   // вдали — насыщенная синяя линия, заметная на любой суше
+			col = mix(col, mix(col * 0.62, vec3(0.56, 0.49, 0.36) * (0.85 + 0.25 * light), nk), bank * mix(0.4, 0.5, nk));   // вдали — тёмная кромка, вблизи — берег
+			col = mix(col, rw, river * smoothstep(0.3, 0.7, zoom));
 			river = 0.0;
 		} else {
 			river = smoothstep(0.25, 0.8, texture(height_tex, muv).g);
