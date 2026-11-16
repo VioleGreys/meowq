@@ -29,6 +29,8 @@ STATE_PROVS = 9.5       # провинций суши в области (как 
 STATE_MERGE_BELOW = 0.85  # область мельче (доля целевой) — склеить с соседней
 STATE_MERGE_MAX = 2.0     # если вместе не крупнее (доля целевой)
 STATE_SPLIT = 1.6         # крупнее — делить на части по столько
+ELONG = 3.0              # отношение главных осей куска больше — «полоса», резать поперёк
+THIN_FRAC = 0.8          # доля пикселей у края больше — «тонкий» кусок (полоска)
 ISLAND_UNITS = 0.33       # остров меньше (доля провинции) — к провинции ближнего берега
 ISLAND_KM = 300.0         # не дальше
 
@@ -171,23 +173,33 @@ def build(owner, region, land, area_px, river_cut, river_cls, adm2, lat_px_km, r
     a_reg = np.zeros(n_atoms, np.int64); a_reg[flat[ok]] = region.ravel()[ok]
     a_tgt = np.bincount(flat[ok], weights=area_px.ravel()[ok], minlength=n_atoms) / np.maximum(cnt, 1)
 
-    # крошечные атомы — в соседа той же страны и области с самой длинной границей
-    for _ in range(3):
+    # крошечные и тонкие атомы (полоски по стыку контуров Natural Earth и
+    # geoBoundaries: 1–2 пикс. шириной, длинные) — в соседа той же страны (лучше
+    # той же области) с самой длинной общей границей
+    for _ in range(8):
         u, v, ln, _ = _edge_table(lab, n_atoms)
-        small = cnt < MIN_ATOM
+        thin = _edge_count(lab, n_atoms) > THIN_FRAC * cnt
+        small = (cnt < MIN_ATOM) | thin
         if not small.any():
             break
         best = {}
         for a, b, l in zip(u.tolist(), v.tolist(), ln.tolist()):
-            for s, t in ((a, b), (b, a)):
-                if small[s] and not small[t] and a_own[s] == a_own[t] and a_reg[s] == a_reg[t]:
-                    if l > best.get(s, (0, -1))[0]:
-                        best[s] = (l, t)
+            for s_, t in ((a, b), (b, a)):
+                if small[s_] and a_own[s_] == a_own[t]:
+                    key = (1 if a_reg[s_] == a_reg[t] else 0, 0 if small[t] else 1, l)
+                    if key > best.get(s_, ((-1, -1, 0), -1))[0]:
+                        best[s_] = (key, t)
         if not best:
             break
         remap = np.arange(n_atoms)
-        for s, (l, t) in best.items():
-            remap[s] = t
+        done = set()
+        for s_ in sorted(best, key=lambda q: cnt[q]):
+            t = best[s_][1]
+            if s_ in done or t in done:
+                continue
+            remap[s_] = t
+            done.add(s_)
+            done.add(t)
         lab = np.where(lab >= 0, remap[np.maximum(lab, 0)], -1)
         lab, _ = _relabel_keep_neg(lab)
         n_atoms = int(lab.max()) + 1
@@ -200,7 +212,9 @@ def build(owner, region, land, area_px, river_cut, river_cls, adm2, lat_px_km, r
         a_tgt = np.bincount(flat[ok], weights=area_px.ravel()[ok], minlength=n_atoms) / np.maximum(cnt, 1)
 
     # атомы крупнее 1,4 провинции — режем k-средними по пикселям (тайга, пустыни)
-    big = np.nonzero(cnt > 1.4 * a_tgt)[0]
+    # и вытянутые (полосы наискось: отношение главных осей > ELONG) крупнее 0,7 провинции
+    elg = _elongation(lab, n_atoms, xx, yy, cnt)
+    big = np.nonzero((cnt > 1.4 * a_tgt) | ((elg > ELONG) & (cnt > 0.7 * a_tgt)))[0]
     if big.size:
         objs = ndimage.find_objects(lab + 1)
         nxt = n_atoms
@@ -209,6 +223,8 @@ def build(owner, region, land, area_px, river_cut, river_cls, adm2, lat_px_km, r
             sub = lab[sl] == a
             ys, xs = np.nonzero(sub)
             k = int(round(cnt[a] / a_tgt[a]))
+            if elg[a] > ELONG:
+                k = max(k, 2, int(round(elg[a] / 2.0)))
             if k < 2:
                 continue
             pts = np.stack([xs, ys], 1).astype(np.float64)
@@ -387,9 +403,78 @@ def build(owner, region, land, area_px, river_cut, river_cls, adm2, lat_px_km, r
     # части могли выйти несвязными (через ребро другой страны) — куски к соседу
     prov, prov_state = _fix_disconnected(prov, np.array(prov_state), owner)
     prov, prov_state = _merge_small(prov, prov_state, owner, area_px)
+    prov, prov_state = _split_elongated(prov, prov_state, area_px)
     n_pr = int(prov.max()) + 1
     print(f"  провинций суши: {n_pr}", flush=True)
     return prov, prov_state, n_pr
+
+
+def _elongation(lab, n, xx, yy, cnt):
+    """Вытянутость каждой метки: корень отношения собственных чисел ковариации
+    координат пикселей (полоса наискось ловится, в отличие от рамки)."""
+    f = lab.ravel()
+    ok = f >= 0
+    f = f[ok]
+    x = xx.ravel()[ok].astype(np.float64)
+    y = yy.ravel()[ok].astype(np.float64)
+    c = np.maximum(cnt, 1.0)
+    mx = np.bincount(f, x, n) / c
+    my = np.bincount(f, y, n) / c
+    sxx = np.bincount(f, x * x, n) / c - mx * mx
+    syy = np.bincount(f, y * y, n) / c - my * my
+    sxy = np.bincount(f, x * y, n) / c - mx * my
+    tr = sxx + syy
+    det = sxx * syy - sxy * sxy
+    disc = np.sqrt(np.maximum(tr * tr / 4 - det, 0))
+    l1 = tr / 2 + disc
+    l2 = np.maximum(tr / 2 - disc, 0.08)
+    return np.sqrt(l1 / l2)
+
+
+def _split_elongated(prov, prov_state, area_px):
+    """Провинции-полосы (вытянутость > ELONG_PROV, не меньше целевой) — пополам
+    поперёк длинной оси (по медиане проекции)."""
+    H, W = prov.shape
+    yy, xx = np.mgrid[0:H, 0:W]
+    n = int(prov.max()) + 1
+    flat = prov.ravel()
+    ok = flat >= 0
+    cnt = np.bincount(flat[ok], minlength=n).astype(np.float64)
+    tgt = np.bincount(flat[ok], weights=area_px.ravel()[ok], minlength=n) / np.maximum(cnt, 1)
+    elg = _elongation(prov, n, xx, yy, cnt)
+    cand = np.nonzero((elg > ELONG_PROV) & (cnt > 1.0 * tgt))[0]
+    if cand.size == 0:
+        return prov, prov_state
+    objs = ndimage.find_objects(prov + 1)
+    nxt = n
+    extra = []
+    for i in cand.tolist():
+        sl = objs[i]
+        sub = prov[sl] == i
+        ys, xs = np.nonzero(sub)
+        pts = np.stack([xs, ys], 1).astype(np.float64)
+        pts -= pts.mean(0)
+        _, _, vt = np.linalg.svd(pts, full_matrices=False)
+        proj = pts @ vt[0]
+        half = proj > np.median(proj)
+        prov[ys[half] + sl[0].start, xs[half] + sl[1].start] = nxt
+        extra.append(prov_state[i])
+        nxt += 1
+    print(f"  провинций-полос разрезано: {len(extra)}", flush=True)
+    return prov, np.concatenate([prov_state, np.array(extra, prov_state.dtype)])
+
+
+def _edge_count(lab, n):
+    """Сколько пикселей каждой метки лежит у края (сосед по 4-связности — другая метка)."""
+    e = np.zeros(lab.shape, bool)
+    d = lab[:, 1:] != lab[:, :-1]
+    e[:, 1:] |= d
+    e[:, :-1] |= d
+    d = lab[1:, :] != lab[:-1, :]
+    e[1:, :] |= d
+    e[:-1, :] |= d
+    m = e & (lab >= 0)
+    return np.bincount(lab[m], minlength=n).astype(np.float64)
 
 
 def _relabel_keep_neg(lab):
@@ -458,6 +543,8 @@ def _fix_disconnected(prov, prov_state, owner):
 
 MIN_FRAC = 0.4     # провинция меньше этой доли целевой площади — склеить с соседом
 MIN_PX = 30        # и в любом случае не меньше стольких пикселей карты
+ELONG_PROV = 3.2   # провинция вытянутее — пополам поперёк
+THIN_PROV = 0.7    # провинция-полоска (почти вся у края) — тоже склеить
 
 
 def _merge_small(prov, prov_state, owner, area_px):
@@ -471,7 +558,7 @@ def _merge_small(prov, prov_state, owner, area_px):
         tgt = np.bincount(flat[ok], weights=area_px.ravel()[ok], minlength=n) / np.maximum(cnt, 1)
         own = np.full(n, -1, np.int64)
         own[flat[ok]] = owner.ravel()[ok]
-        small = (cnt < MIN_FRAC * tgt) | (cnt < MIN_PX)
+        small = (cnt < MIN_FRAC * tgt) | (cnt < MIN_PX) | (_edge_count(prov, n) > THIN_PROV * cnt)
         if not small.any():
             break
         u, v, ln, _ = _edge_table(prov, n)

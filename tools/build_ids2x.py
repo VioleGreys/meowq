@@ -68,7 +68,63 @@ def bspline(f: np.ndarray):
     return [w[i] + b[i] * 0.35 for i in range(4)]
 
 
-SNAP_NEAR = 1.6     # у реки ближе стольких пикселей карты — провинция своего берега
+import numba  # noqa: E402
+
+SPECK_MIN = 9       # своих пикселей в окне 5×5 меньше — осколок
+
+
+@numba.njit(parallel=True, cache=True)
+def _despeckle(src, out):
+    H, W = src.shape
+    changed = np.zeros(H, np.int64)
+    for y in numba.prange(2, H - 2):
+        labs = np.empty(25, np.int64)
+        cnts = np.empty(25, np.int64)
+        for x in range(2, W - 2):
+            c = src[y, x]
+            if (src[y, x - 1] == c and src[y, x + 1] == c and src[y - 1, x] == c and src[y + 1, x] == c):
+                continue
+            n = 0
+            own = 0
+            for dy in range(-2, 3):
+                for dx in range(-2, 3):
+                    v = src[y + dy, x + dx]
+                    if v == c:
+                        own += 1
+                    k = -1
+                    for i in range(n):
+                        if labs[i] == v:
+                            k = i
+                            break
+                    if k < 0:
+                        labs[n] = v
+                        cnts[n] = 1
+                        n += 1
+                    else:
+                        cnts[k] += 1
+            if own >= SPECK_MIN:
+                continue
+            best = -1
+            bc = -1
+            for i in range(n):
+                if labs[i] != c and cnts[i] > bc:
+                    bc = cnts[i]
+                    best = labs[i]
+            if best >= 0:
+                out[y, x] = best
+                changed[y] += 1
+    return changed.sum()
+
+
+def despeckle(out):
+    """Осколки провинций в 2–3 пикселя (после сглаживания и привязки к рекам)
+    — преобладающей вокруг провинции: иначе каждый обводится и виден тёмной
+    точкой или крошечной петлёй."""
+    src = out.copy()
+    return int(_despeckle(src, out))
+
+
+SNAP_NEAR = 1.6    # у реки ближе стольких пикселей карты — провинция своего берега
 SNAP_SIDE = 2.6     # берег пробуем на таком расстоянии от осевой линии
 
 
@@ -186,6 +242,11 @@ def main():
         k = np.argmax(score, -1)
         out[y0:y1] = np.take_along_axis(L, k[..., None], -1)[..., 0]
     snap_rivers(out, land_of)
+    for _ in range(8):
+        n = despeckle(out)
+        print(f"Осколков провинций убрано (пикс. 2×): {n}")
+        if n == 0:
+            break
     os.makedirs(OUT_DIR, exist_ok=True)
     half = W2 // 2
     for nm, a in (("w", out[:, : half + PAD]), ("e", out[:, half - PAD:])):
