@@ -575,10 +575,31 @@ void fragment() {
 			float dry = 1.0 - texture(height_tex, muv).a;
 			mediump float des = smoothstep(0.55, 0.9, dry);
 			mediump float stp = smoothstep(0.2, 0.5, dry) * (1.0 - des);
-			mediump float erg = 1.0 - smoothstep(0.06, 0.28, slope);
-			mediump vec3 sand = mix(vec3(0.88, 0.74, 0.50), vec3(0.95, 0.85, 0.62), dnw.r);
-			mediump vec3 hamada = mix(vec3(0.60, 0.44, 0.31), vec3(0.73, 0.59, 0.43), rock_v);
-			mediump vec3 des_c = mix(hamada, sand, erg) * (0.92 + 0.16 * tl);
+			// разнообразие (решение пользователя: не один узор на всю пустыню):
+			// крупно — песчаные моря (эрги) и щебнистые равнины (реги) пятнами, тон
+			// песка от светлого до оранжево-красного; на склонах — хамада
+			vec2 qd = px / id_k;
+			mediump float ergf = 0.0;
+			mediump vec3 des_c = terr;
+			if (des > 0.0) {
+				float f1 = vnoise(qd / 95.0) * 0.65 + vnoise(qd / 33.0 + vec2(7.1, 3.3)) * 0.35;
+				ergf = smoothstep(0.30, 0.52, f1);
+				float tn = vnoise(qd / 140.0 + vec2(19.0, 2.0)) * 0.7 + vnoise(qd / 45.0 + vec2(5.0, 31.0)) * 0.3;
+				mediump vec3 sand = tn < 0.5
+					? mix(vec3(0.95, 0.88, 0.68), vec3(0.91, 0.76, 0.50), smoothstep(0.2, 0.5, tn))
+					: mix(vec3(0.91, 0.76, 0.50), vec3(0.85, 0.59, 0.37), smoothstep(0.5, 0.82, tn));
+				// рег: серо-бурый щебень с тёмными пятнами «пустынного загара»
+				// мелкие пятна — только вблизи (издали шум 3,5 пикс. давал квадратную рябь)
+				float sp = mix(0.5, vnoise(qd / 3.5 + vec2(2.3, 8.1)), smoothstep(1.4, 2.6, zoom));
+				float sp2 = vnoise(qd / 18.0 + vec2(12.3, 4.1));
+				mediump vec3 reg = mix(vec3(0.84, 0.72, 0.55), vec3(0.76, 0.62, 0.47), sp2);
+				reg = mix(reg, vec3(0.60, 0.49, 0.39), smoothstep(0.5, 0.85, sp) * 0.6);
+				mediump vec3 hamada = mix(vec3(0.60, 0.44, 0.31), vec3(0.73, 0.59, 0.43), rock_v);
+				des_c = mix(reg, sand, ergf);
+				des_c = mix(hamada, des_c, 1.0 - smoothstep(0.06, 0.28, slope));
+				des_c = mix(des_c, terr, 0.15) * (0.92 + 0.16 * tl);
+			}
+			mediump float erg = (1.0 - smoothstep(0.06, 0.28, slope)) * ergf;
 			terr = mix(terr, terr * vec3(1.06, 0.98, 0.80) + vec3(0.03, 0.02, 0.0), stp * 0.55);
 			terr = mix(terr, des_c, des * 0.85);
 			terr = mix(terr, rock, max(mnt * 0.8, alp * 0.85));
@@ -588,31 +609,63 @@ void fragment() {
 			} else {
 				mediump vec3 far_c = base * (0.9 + 0.14 * (tl - 0.75));
 				far_c = mix(far_c, mix(base, rock * 1.1, 0.35), mnt * 0.5);
-				far_c = mix(far_c, mix(base, sand, 0.3), des * 0.45);
+				far_c = mix(far_c, mix(base, des_c, 0.3), des * 0.45);
 				far_c = mix(far_c, mix(base, vec3(0.95), 0.7), snow * 0.7);
 				mediump vec3 near_c = mix(terr * 0.92, base, 0.45 * (1.0 - 0.8 * snow) * (1.0 - 0.7 * max(mnt, alp)) * (1.0 - 0.65 * des));
 				col = mix(far_c, near_c, near_k) * rf;
 			}
-			if (quality == 2 && des * erg > 0.01) {
+			if (quality == 2 && des > 0.01) {
 				// гряды дюн вблизи (эрги): пологий наветренный склон светлее, крутой
 				// подветренный — тень
 				float dkd = smoothstep(1.0, 2.4, zoom);
 				if (dkd > 0.0) {
 					vec2 q = px / id_k;
-					// гряды поперёк преобладающего ветра (направление общее: поворот угла по
-					// шуму внутри dot(q, …) с большой q давал замкнутые «кольца»); извилистость
-					// гребней — сдвиг координат плавным шумом (две шкалы), мелкая рябь наискосок
+					// три типа дюн, плавно сменяющих друг друга по крупному шуму (весами, без
+					// поворота угла внутри dot(q, …) — тот давал замкнутые «кольца»):
+					// поперечные гряды (барханные цепи), сейфы — длинные острые гряды вдоль
+					// ветра, звёздчатые — бугры на пересечении двух волн; извилистость — сдвиг
+					// координат плавным шумом; сила рисунка тоже меняется по местности
 					float n1 = vnoise(q / 23.0);
 					float n2 = vnoise(q / 23.0 + vec2(41.7, 9.3));
 					float n3 = vnoise(q / 6.0 + vec2(3.7, 11.9));
 					vec2 qq = q + vec2(n1 - 0.5, n2 - 0.5) * 7.0 + (n3 - 0.5) * 1.2;
-					const vec2 WIND = vec2(0.80, 0.60);
-					float ph = dot(qq, WIND) * 6.2831853 / 2.8;
-					float ph2 = dot(qq, vec2(-0.45, 0.89)) * 6.2831853 / 1.1;
-					float wv = fract(ph / 6.2831853);
-					float dune = wv < 0.72 ? smoothstep(0.0, 0.72, wv) : 1.0 - smoothstep(0.72, 1.0, wv);   // пологий наветренный, крутой подветренный
-					float rip = sin(ph2) * smoothstep(1.8, 3.5, zoom);
-					col *= 1.0 + ((dune - 0.55) * 0.24 + rip * 0.04) * des * erg * dkd * (1.0 - snow);
+					float tsel = vnoise(q / 110.0 + vec2(13.0, 77.0));
+					float w_tr = 1.0 - smoothstep(0.35, 0.5, tsel);
+					float w_st = smoothstep(0.62, 0.75, tsel);
+					float w_sf = max(0.0, 1.0 - w_tr - w_st);
+					float sh = 0.0;
+					if (w_tr > 0.0) {
+						// гребни рвутся на отдельные барханы
+						// (сила вдоль гребня — шум, вытянутый поперёк ветра)
+						// (переменный шаг в делителе фазы давал муар-«кольца»: фаза ∝ координате;
+						// неровный шаг — сдвиг вдоль ветра плавным шумом)
+						float wv = fract((dot(qq, vec2(0.80, 0.60)) + (vnoise(q / 9.0 + vec2(3.0, 60.0)) - 0.5) * 3.0) / 2.8);
+						float d = wv < 0.72 ? smoothstep(0.0, 0.72, wv) : 1.0 - smoothstep(0.72, 1.0, wv);   // пологий наветренный, крутой подветренный
+						vec2 qa = vec2(dot(qq, vec2(0.80, 0.60)) / 2.0, dot(qq, vec2(-0.60, 0.80)) / 7.0);
+						float seg = 0.25 + 0.95 * smoothstep(0.3, 0.7, vnoise(qa + vec2(5.5, 1.5)));
+						sh += (d - 0.55) * seg * w_tr;
+					}
+					if (w_sf > 0.0) {
+						// сейф: гребень острый, склоны освещены по разные стороны
+						float a = dot(qq + vec2(n2 - 0.5) * 5.0, vec2(-0.55, 0.83)) * 6.2831853 / 4.6;
+						float c = pow(1.0 - abs(sin(a * 0.5)), 2.0);
+						sh += ((c - 0.3) * 0.9 + sign(cos(a * 0.5)) * 0.18 * c) * w_sf;
+					}
+					if (w_st > 0.0) {
+						vec2 qs = qq + vec2(vnoise(q / 9.0 + vec2(4.0, 2.0)), vnoise(q / 9.0 + vec2(8.0, 5.0))) * 4.0;
+						float b1 = sin(dot(qs, vec2(0.97, 0.26)) * 6.2831853 / 3.6);
+						float b2 = sin(dot(qs, vec2(-0.26, 0.97)) * 6.2831853 / 3.1);
+						float b3 = sin(dot(qs, vec2(0.62, -0.78)) * 6.2831853 / 4.2);
+						// неровные по величине и не по сетке: волны сдвинуты шумом, высота — шумом
+						float st = (b1 + b2 + b3) / 3.0 * (0.4 + 1.2 * vnoise(q / 4.5 + vec2(1.7, 6.2)));
+						sh += (smoothstep(0.05, 0.7, st) - 0.2) * 0.8 * w_st;
+					}
+					float amp = 0.12 + 0.18 * vnoise(q / 40.0 + vec2(9.0, 4.0));
+					float rip = sin(dot(qq, vec2(-0.45, 0.89)) * 6.2831853 / 1.1) * smoothstep(1.8, 3.5, zoom);
+					col *= 1.0 + (sh * amp * 1.6 + rip * 0.035) * des * erg * dkd * (1.0 - snow);
+					// реги вблизи — мелкий щебень
+					float grit = vnoise(q * 1.7) - 0.5;
+					col *= 1.0 + grit * 0.06 * des * (1.0 - erg) * dkd;
 				}
 			}
 			if (has_detail && quality == 2) {
