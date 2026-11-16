@@ -116,6 +116,150 @@ def _despeckle(src, out):
     return changed.sum()
 
 
+@numba.njit(parallel=True, cache=True)
+def _thin_assign(src, out, mask, land_of):
+    H, W = src.shape
+    changed = np.zeros(H, np.int64)
+    for y in numba.prange(1, H - 1):
+        labs = np.empty(9, np.int64)
+        cnts = np.empty(9, np.int64)
+        for x in range(1, W - 1):
+            if not mask[y, x]:
+                continue
+            c = src[y, x]
+            n = 0
+            for dy in range(-1, 2):
+                for dx in range(-1, 2):
+                    v = src[y + dy, x + dx]
+                    if v == c or land_of[v] != 1:
+                        continue
+                    k = -1
+                    for i in range(n):
+                        if labs[i] == v:
+                            k = i
+                            break
+                    if k < 0:
+                        labs[n] = v
+                        cnts[n] = 1
+                        n += 1
+                    else:
+                        cnts[k] += 1
+            best = -1
+            bc = 0
+            for i in range(n):
+                if cnts[i] > bc:
+                    bc = cnts[i]
+                    best = labs[i]
+            if best >= 0:
+                out[y, x] = best
+                changed[y] += 1
+    return changed.sum()
+
+
+@numba.njit(cache=True)
+def _find(par, i):
+    while par[i] != i:
+        par[i] = par[par[i]]
+        i = par[i]
+    return i
+
+
+@numba.njit(cache=True)
+def _regions(ids, mask):
+    """Связные куски одинаковых номеров (4-соседство) среди mask; -1 вне mask."""
+    H, W = ids.shape
+    par = np.arange(H * W, dtype=np.int64)
+    for y in range(H):
+        for x in range(W):
+            if not mask[y, x]:
+                continue
+            i = y * W + x
+            if x > 0 and mask[y, x - 1] and ids[y, x - 1] == ids[y, x]:
+                a = _find(par, i)
+                b = _find(par, i - 1)
+                if a != b:
+                    par[max(a, b)] = min(a, b)
+            if y > 0 and mask[y - 1, x] and ids[y - 1, x] == ids[y, x]:
+                a = _find(par, i)
+                b = _find(par, i - W)
+                if a != b:
+                    par[max(a, b)] = min(a, b)
+    out = np.full((H, W), -1, np.int64)
+    for y in range(H):
+        for x in range(W):
+            if mask[y, x]:
+                out[y, x] = _find(par, y * W + x)
+    return out
+
+
+PIECE_FRAC = 0.3   # кусок провинции за рекой меньше такой доли провинции…
+PIECE_MAX = 300     # …и меньше стольких пикселей 2× — отдать окружающей
+
+
+def river_pieces(out, land_of, near):
+    """Куски провинции, отрезанные от её основной части только рекой (граница
+    страны или района из одних данных пересекает реку не там, где линия реки
+    из других: на том берегу остаётся «карман» провинции, обведённый
+    границей), отходят окружающей провинции. Связность — без пикселей ленты
+    реки (near), иначе карман «соединён» с телом под лентой."""
+    reg = _regions(out, ~near & (land_of[out] == 1))
+    ok = reg >= 0
+    r = reg[ok]
+    p = out[ok]
+    ur, inv, cnt = np.unique(r, return_inverse=True, return_counts=True)
+    prov_of = np.zeros(len(ur), np.int64)
+    prov_of[inv] = p
+    tot = np.bincount(prov_of, weights=cnt, minlength=len(land_of))
+    big = np.zeros(len(land_of))
+    np.maximum.at(big, prov_of, cnt)
+    # только куски, примыкающие к осевой линии реки (не острова и не анклавы)
+    from scipy import ndimage
+    touch = ndimage.binary_dilation(near, iterations=2)[ok]
+    has_t = np.zeros(len(ur), bool)
+    has_t[inv[touch]] = True
+    small = (cnt < PIECE_FRAC * tot[prov_of]) & (cnt < PIECE_MAX) & (cnt < big[prov_of]) & has_t
+    if not small.any():
+        return 0
+    bad = np.zeros(out.shape, bool)
+    bad[ok] = small[inv]
+    # провинцию пикселя куска берём у ближайшего пикселя вне куска (суши)
+    src = ~bad & (land_of[out] == 1)
+    _, (iy, ix) = ndimage.distance_transform_edt(~src, return_indices=True)
+    out[bad] = out[iy[bad], ix[bad]]
+    return int(bad.sum())
+
+
+THIN_CLUSTER = 4   # полоска из стольких «тонких» пикселей 2× и больше — убрать
+
+
+def thin_strips(out, land_of):
+    """Полоски провинций шириной 1–2 пикселя 2× (ни одного своего квадрата
+    3×3): две границы по бокам сливаются в одно тёмное пятно («наложение
+    обводок»). Пиксели такой полоски (связный кусок от THIN_CLUSTER) отходят
+    соседней провинции суши, которой вокруг больше."""
+    from scipy import ndimage
+    H, W = out.shape
+    c = out[1:-1, 1:-1]
+    full = np.ones((H - 2, W - 2), bool)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            full &= out[1 + dy:H - 1 + dy, 1 + dx:W - 1 + dx] == c
+    cov = np.zeros((H, W), bool)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            cov[1 + dy:H - 1 + dy, 1 + dx:W - 1 + dx] |= full
+    del full
+    thin = ~cov & (land_of[out] == 1)
+    del cov
+    lab, n = ndimage.label(thin, structure=np.ones((3, 3), bool))
+    sz = np.bincount(lab.ravel())
+    sz[0] = 0
+    mask = sz[lab] >= THIN_CLUSTER
+    del lab
+    src = out.copy()
+    return int(_thin_assign(src, out, mask, land_of.astype(np.int8)))
+
+
 def despeckle(out):
     """Осколки провинций в 2–3 пикселя (после сглаживания и привязки к рекам)
     — преобладающей вокруг провинции: иначе каждый обводится и виден тёмной
@@ -144,6 +288,8 @@ def snap_rivers(out, land_of):
     wk = np.where(stg >= 255, 1.0, np.where(stg >= 170, 0.32 / 0.42, 0.24 / 0.42)).astype(np.float32)
     vec = (rv[..., :2] - 128.0) / 127.0 * 4.0 * wk[..., None]          # RMAX build_rivers
     has = stg > 0
+    d1 = np.sqrt((vec ** 2).sum(-1))   # расстояние до реки у текселя 1×, пикс. карты
+    d1[~has] = 99.0
     H2, W2 = out.shape
     H, W = has.shape
     src = out.copy()
@@ -174,9 +320,23 @@ def snap_rivers(out, land_of):
         n = vv / dd
         rx = gx[yy, xx] + vv[:, 0]
         ry = gy[yy, xx] + vv[:, 1]
-        sx = np.clip(((rx - n[:, 0] * SNAP_SIDE) * SCALE).astype(np.int64), 0, W2 - 1)
-        sy = np.clip(((ry - n[:, 1] * SNAP_SIDE) * SCALE).astype(np.int64), 0, H2 - 1)
-        ps = src[sy, sx]
+        # проба не должна перескочить через изгиб реки на тот берег (внутренняя
+        # сторона излучины): если точка пробы снова у реки — проба ближе
+        ps = None
+        okp = np.zeros(len(yy), bool)
+        for side in (SNAP_SIDE, 2.6, 1.8):
+            qx = rx - n[:, 0] * side
+            qy = ry - n[:, 1] * side
+            q1x = np.clip(qx.astype(np.int64), 0, W - 1)
+            q1y = np.clip(qy.astype(np.int64), 0, H - 1)
+            dq = d1[q1y, q1x]
+            good = ~okp & (dq > side * 0.6)
+            sx = np.clip((qx * SCALE).astype(np.int64), 0, W2 - 1)
+            sy = np.clip((qy * SCALE).astype(np.int64), 0, H2 - 1)
+            cand = src[sy, sx]
+            ps = cand if ps is None else np.where(good, cand, ps)
+            okp |= good
+        ps = np.where(okp, ps, src[y0 + yy, xx])
         cur = src[y0 + yy, xx]
         # пиксель берёт провинцию, лежащую прямо от реки на его стороне: и
         # у реки-раздела (полоска провинции того берега на этом), и у границы
@@ -197,6 +357,11 @@ def snap_rivers(out, land_of):
         out[back] = src[back]
         changed -= int(back.sum())
     print(f"Пикселей 2× у рек отдано своему берегу: {changed} (провинций сохранено от поглощения: {int(lost.sum())})")
+    # барьер для поиска кусков за рекой — вся видимая лента у крупного плана
+    # (приведённое расстояние < 1,3: полуширина крупной реки 1,22 + берег):
+    # кусок провинции, отрезанный лентой от тела, на карте выглядит обрывком
+    near = np.repeat(np.repeat((d1 / wk < 1.3) & has, SCALE, 0), SCALE, 1)
+    return near[:H2, :W2]
 
 
 def main():
@@ -257,12 +422,24 @@ def main():
         score = tot + 4.0 * (is_land == ld) + 2.0 * (is_land & ld & (reg_of[L] == rg))
         k = np.argmax(score, -1)
         out[y0:y1] = np.take_along_axis(L, k[..., None], -1)[..., 0]
-    snap_rivers(out, land_of)
+    near = snap_rivers(out, land_of)
+    if near is not None:
+        print(f"Пикселей кусков провинций за рекой отдано окружающим (пикс. 2×): {river_pieces(out, land_of, near)}")
+    for _ in range(4):
+        n = thin_strips(out, land_of)
+        print(f"Пикселей тонких полосок отдано соседям (пикс. 2×): {n}")
+        if n == 0:
+            break
     for _ in range(8):
         n = despeckle(out)
         print(f"Осколков провинций убрано (пикс. 2×): {n}")
         if n == 0:
             break
+    if near is not None:
+        # чистка полосок и осколков могла отдать куску за рекой пиксели из-под
+        # ленты — ещё раз (и осколки после неё)
+        print(f"Пикселей кусков за рекой (второй проход): {river_pieces(out, land_of, near)}")
+        print(f"Осколков провинций убрано (пикс. 2×): {despeckle(out)}")
     os.makedirs(OUT_DIR, exist_ok=True)
     half = W2 // 2
     for nm, a in (("w", out[:, : half + PAD]), ("e", out[:, half - PAD:])):
