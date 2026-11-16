@@ -83,9 +83,15 @@ func _ready() -> void:
 		Parallel.enabled = false   # --no-parallel: фоновый поток есть, задачи внутри дня — нет
 	if not single_thread:
 		sim_thread = Thread.new()
-		sim_thread.start(_sim_loop)
+		# на телефоне — пониже главного потока: кадры важнее, запас по дням есть
+		sim_thread.start(_sim_loop, Thread.PRIORITY_LOW if OS.has_feature("mobile") else Thread.PRIORITY_NORMAL)
 	# инструменты (скриншот, замер) идут сразу к выбору страны, игрок — в главное меню
 	var tool := _arg("screenshot") != "" or _arg("bench_rt") != ""
+	# кадр рисуется, только когда на экране что-то изменилось (решение
+	# пользователя, ноябрь 2026: телефон меньше греется — дольше держит частоты);
+	# в инструментах — только с -- --lowproc
+	_lowproc = not tool or "--lowproc" in OS.get_cmdline_user_args()
+	OS.low_processor_usage_mode = _lowproc
 	await new_world(randi() % 100000 if _arg("seed") == "" else int(_arg("seed")), "select" if tool else "menu")
 	if _arg("screenshot") != "":
 		_auto_screenshot(_arg("screenshot"))
@@ -104,6 +110,9 @@ func _arg(name: String) -> String:
 ## Замер в реальном времени: игра на максимальной скорости, время кадра главного
 ## потока (без отрисовки) и дни в секунду. -- --bench_rt=15 [--nation=GER] [--from=1939-09-01]
 var _rt_cpu := 0.0
+var _drawn0 := 0
+var _lowproc := false   # «не рисовать без изменений»: включено, пока карта стоит
+var _dbg_noui := false
 var _rt_gpu := 0.0
 
 
@@ -138,7 +147,16 @@ func _bench_realtime(seconds: float) -> void:
 	if "--pan" in OS.get_cmdline_user_args():
 		for i in 60:   # карта стоит секунду (как в игре до первого сдвига): кэш движения строится
 			await get_tree().process_frame
+	_dbg_noui = "--noui" in OS.get_cmdline_user_args()
+	if "--nounitproc" in OS.get_cmdline_user_args():
+		unit_layer.set_process(false)
+	if "--nomapproc" in OS.get_cmdline_user_args():
+		map_view.set_process(false)
+	if "--nomeasure" in OS.get_cmdline_user_args():
+		RenderingServer.viewport_set_measure_render_time(map_view.map_vp.get_viewport_rid(), false)
+		RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), false)
 	var start_day := ticks_done
+	_drawn0 = Engine.get_frames_drawn()
 	var t0 := Time.get_ticks_msec()
 	var frames := 0
 	var worst := 0
@@ -156,7 +174,7 @@ func _bench_realtime(seconds: float) -> void:
 		# действие игрока каждые 10 кадров: по очереди — прежним способом
 		# (ждать мир под замком) и через очередь act; копим, сколько стоял
 		# главный поток и через сколько действие выполнилось
-		if frames % 10 == 0:
+		if frames % 10 == 0 and not "--noact" in OS.get_cmdline_user_args():
 			var ta := Time.get_ticks_usec()
 			if (frames / 10) % 2 == 0:
 				world_lock()
@@ -169,9 +187,10 @@ func _bench_realtime(seconds: float) -> void:
 				_act_block.append(Time.get_ticks_usec() - ta)
 		await get_tree().process_frame
 		var ft := Time.get_ticks_usec() - f0
-		var vrid := get_viewport().get_viewport_rid()
-		_rt_cpu += RenderingServer.viewport_get_measured_render_time_cpu(vrid)
-		_rt_gpu += RenderingServer.viewport_get_measured_render_time_gpu(vrid)
+		if not "--nomeasure" in OS.get_cmdline_user_args():
+			var vrid := get_viewport().get_viewport_rid()
+			_rt_cpu += RenderingServer.viewport_get_measured_render_time_cpu(vrid)
+			_rt_gpu += RenderingServer.viewport_get_measured_render_time_gpu(vrid)
 		frames += 1
 		total += ft
 		worst = maxi(worst, ft)
@@ -204,6 +223,7 @@ func _bench_realtime(seconds: float) -> void:
 	var names := ["панели дня", "палитра", "список фишек", "верхняя строка"]
 	for i in 4:
 		print("  %s: всего %.0f мс за прогон, худшее %.1f мс" % [names[i], ui_prof_sum[i] / 1000.0, ui_prof_max[i] / 1000.0])
+	print("  кадров нарисовано движком: %d из %d" % [Engine.get_frames_drawn() - _drawn0, frames])
 	print("  кэш движения: рисовался %d раз; карта целиком %d, частично %d, полосами %d" % [map_view.cache_draws,
 		map_view.redraws - map_view.part_redraws - map_view.strip_redraws, map_view.part_redraws, map_view.strip_redraws])
 	for l in Report.prof_lines():
@@ -353,7 +373,7 @@ func _part_test(path: String) -> void:
 ## Проверка кэша движения (-- --motiontest): кадр во время сдвига (из кэша)
 ## против точного кадра с той же камерой; сколько раз рисовался кэш и карта.
 func _motion_test(path: String) -> void:
-	unit_layer.visible = false
+	unit_layer.visible = "--units" in OS.get_cmdline_user_args()
 	hud.visible = false
 	map_view.motion_lite = not "--nolite" in OS.get_cmdline_user_args()
 	var grab := func(tag: String) -> void:
@@ -371,6 +391,7 @@ func _motion_test(path: String) -> void:
 	print("motiontest: кэш готов ", map_view._cache_front().valid, " размер ", map_view._cache_front().size, " масштаб ", map_view._cache_front().zoom, " / ", map_view.camera.zoom.x)
 	var r0 := map_view.redraws
 	var c0 := map_view.cache_draws
+	var u0 := unit_layer.draw_count
 	for i in 40:
 		map_view.camera.position += Vector2(7.3, 2.1) / map_view.camera.zoom.x
 		map_view._moving = 0.3
@@ -381,7 +402,8 @@ func _motion_test(path: String) -> void:
 	map_view._cache_front().vp.get_texture().get_image().save_png(path.replace(".png", "_cache.png"))
 	print("motiontest: камера ", map_view.camera.position, " кэш ", map_view._cache_front().cam, " окно ", map_view._cache_front().n)
 	print("motiontest: за 40 кадров сдвига — перерисовок карты ", map_view.redraws - r0, ", кэша ", map_view.cache_draws - c0,
-		", показан кэш ", map_view.cache_rect.visible, ", упрощённый ", map_view.lite_sprite.visible)
+		", показан кэш ", map_view.cache_rect.visible, ", упрощённый ", map_view.lite_sprite.visible,
+		", слой фишек рисовался ", unit_layer.draw_count - u0)
 	map_view._moving = 0.001
 	for i in 60:
 		await get_tree().process_frame
@@ -962,6 +984,14 @@ func _process(dt: float) -> void:
 			_run_cmds()
 			sim_mutex.unlock()
 		return
+	if _dbg_noui:
+		return
+	if _lowproc:
+		# в этом режиме движок спит ~7 мс после каждого шага — пока карту двигают,
+		# режим выключен (кадры идут подряд), стоит — включён
+		var still: bool = map_view._moving <= 0.0 and map_view._touches.is_empty()
+		if OS.low_processor_usage_mode != still:
+			OS.low_processor_usage_mode = still
 	var tp0 := Time.get_ticks_usec()
 	_note_camera()
 	# заказ дней фоновому потоку по выбранной скорости

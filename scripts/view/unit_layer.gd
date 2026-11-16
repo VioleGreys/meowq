@@ -62,7 +62,11 @@ var _battles: BattleMarks
 func _ready() -> void:
 	_battles = BattleMarks.new()
 	_battles.layer = self
+	_battles.use_parent_material = true
 	add_child(_battles)
+	_warp = ShaderMaterial.new()
+	_warp.shader = load("res://shaders/unit_warp.gdshader")
+	material = _warp
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	font = UiStyle.text_font()
 	bold = UiStyle.bold_font()
@@ -138,27 +142,63 @@ static func _rr_img(w: int, h: int, rad: float, bw: float, fill: Color, border: 
 	return img
 
 
-# Слой перерисовывается только при изменениях: сдвиг/масштаб карты, новый
-# список отрисовки; бои пульсируют — тогда не чаще 12 раз в секунду.
+# Слой перерисовывается только при изменениях данных (новый список, выделение)
+# и камеры. Сдвиг камеры (решение пользователя, ноябрь 2026: на телефоне
+# перерисовка слоя — ~7,5 мс на кадр): слой нарисован для опорной камеры, вершины
+# переносит под текущую шейдер unit_warp (без наклона — точно). Перерисовка —
+# если масштаб ушёл больше WARP_ZOOM, сдвиг больше запаса отрисовки (фишки за
+# краем рисуются с запасом DRAW_MARGIN), при наклоне — не чаще WARP_TILT_MSEC
+# (перспектива переносом точна не везде) и сразу после остановки камеры.
+# Бои пульсируют — их слой не чаще 12 раз в секунду.
+const WARP_ZOOM := 1.03
+const WARP_TILT_MSEC := 100
+const DRAW_MARGIN := 0.15          # запас отрисовки за краем экрана (доля большей стороны)
 var _dirty := true
-var _last_xf := Transform2D()
-var _last_vv := -1
 var _has_battles := false
 var _anim_msec := 0
+var _warp: ShaderMaterial
+var _r_pos := Vector2.ZERO          # опорная камера — с которой нарисован слой
+var _r_zoom := 1.0
+var _r_tilt := 0.0
+var _draw_msec := 0
+var _prev_pos := Vector2.ZERO       # камера прошлого кадра
+var _prev_zoom := 0.0
+var _prev_tilt := 0.0
+var redraw_skipped := 0             # для замеров: кадров со сдвигом без перерисовки
 
 
 func _process(_dt: float) -> void:
-	var xf := get_viewport().get_canvas_transform()
-	if map != null and map.camera != null:
-		xf = map.get_viewport().get_canvas_transform()
+	if map == null or map.camera == null:
+		if _dirty:
+			_dirty = false
+			queue_redraw()
+		return
 	var now := Time.get_ticks_msec()
-	var vv: int = map.view_version if map != null else 0
-	if xf != _last_xf or vv != _last_vv:
-		_last_xf = xf
-		_last_vv = vv
-		_dirty = true
+	var pos := map.camera.position
+	var z := map.camera.zoom.x
+	var th := map.tilt()
+	var same := pos == _r_pos and z == _r_zoom and th == _r_tilt
+	var moved_now := pos != _prev_pos or z != _prev_zoom or th != _prev_tilt
+	_prev_pos = pos
+	_prev_zoom = z
+	_prev_tilt = th
+	if not _dirty and not same:
+		var zr := z / maxf(1e-6, _r_zoom)
+		var half := get_viewport_rect().size * 0.5
+		var shift := (map.world_to_screen(_r_pos) - half).abs()
+		var m := maxf(half.x, half.y) * 2.0 * DRAW_MARGIN
+		if zr > WARP_ZOOM or zr < 1.0 / WARP_ZOOM or absf(th - _r_tilt) > 0.01 \
+				or shift.x > m or shift.y > m \
+				or (th > 0.0 and (now - _draw_msec >= WARP_TILT_MSEC or not moved_now)):
+			_dirty = true   # при наклоне после остановки — точный кадр
+		else:
+			redraw_skipped += 1
 	if _dirty:
 		_dirty = false
+		_r_pos = pos
+		_r_zoom = z
+		_r_tilt = th
+		_draw_msec = now
 		queue_redraw()
 		_battles.queue_redraw()
 		_anim_msec = now
@@ -166,6 +206,30 @@ func _process(_dt: float) -> void:
 		# пульс боёв — только маленький слой отметок, не весь слой фишек
 		_anim_msec = now
 		_battles.queue_redraw()
+	_set_warp(pos, z, th)
+
+
+## Перенос слоя под текущую камеру (вершинный шейдер).
+var _warp_key := []
+
+
+func _set_warp(pos: Vector2, z: float, th: float) -> void:
+	var on := not (pos == _r_pos and z == _r_zoom and th == _r_tilt)
+	var key := [on, pos, z, th, _r_pos, _r_zoom, _r_tilt]
+	if key == _warp_key:
+		return   # без изменений — не трогать материал (иначе кадр рисуется заново)
+	_warp_key = key
+	_warp.set_shader_parameter("on", on)
+	if not on:
+		return
+	_warp.set_shader_parameter("r_pos", _r_pos)
+	_warp.set_shader_parameter("r_zoom", _r_zoom)
+	_warp.set_shader_parameter("r_tilt", _r_tilt)
+	_warp.set_shader_parameter("c_pos", pos)
+	_warp.set_shader_parameter("c_zoom", z)
+	_warp.set_shader_parameter("c_tilt", th)
+	_warp.set_shader_parameter("cam_f", map.cam_focal())
+	_warp.set_shader_parameter("half_size", get_viewport_rect().size * 0.5)
 
 
 var edit_ids := {}                      # армии, чей участок правится кистью (main): id -> true
@@ -426,7 +490,8 @@ func _draw() -> void:
 	_texts.clear()
 	var z := map.zoom_level()
 	var vp := get_viewport_rect().size
-	var screen := Rect2(Vector2.ZERO, vp).grow(40)
+	# с запасом: при сдвиге слой не перерисовывается, пока запас не кончится
+	var screen := Rect2(Vector2.ZERO, vp).grow(40.0 + maxf(vp.x, vp.y) * DRAW_MARGIN)
 	var counter := Vector2(40, 22) * clampf(0.75 + z * 0.25, 0.8, 1.5)
 	var font_size := int(clampf(12 + z * 2, 12, 20))
 	for it in items:
@@ -603,7 +668,8 @@ func _draw_label(l: Array, z: float) -> void:
 		return
 	var pos := map.world_to_screen(l[1])
 	var vp := get_viewport_rect()
-	if pos.x + w * 0.5 < 0 or pos.x - w * 0.5 > vp.size.x or pos.y + size < 0 or pos.y - size > vp.size.y:
+	var mg := maxf(vp.size.x, vp.size.y) * DRAW_MARGIN   # запас — как у фишек
+	if pos.x + w * 0.5 < -mg or pos.x - w * 0.5 > vp.size.x + mg or pos.y + size < -mg or pos.y - size > vp.size.y + mg:
 		return
 	var alpha := clampf((1.6 - z) * 2.0, 0.0, 0.75)
 	var k := size / LBL_PX
@@ -787,7 +853,8 @@ func _draw_battles(ci: CanvasItem) -> void:
 		return
 	var z := map.zoom_level()
 	var vp := get_viewport_rect().size
-	var screen := Rect2(Vector2.ZERO, vp).grow(40)
+	# с запасом: при сдвиге слой не перерисовывается, пока запас не кончится
+	var screen := Rect2(Vector2.ZERO, vp).grow(40.0 + maxf(vp.x, vp.y) * DRAW_MARGIN)
 	var counter := Vector2(40, 22) * clampf(0.75 + z * 0.25, 0.8, 1.5)
 	var r := 10.0 + sin(Time.get_ticks_msec() * 0.008) * 1.5
 	var btex := UiStyle.icon("battle", 64)

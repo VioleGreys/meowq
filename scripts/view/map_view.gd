@@ -164,6 +164,8 @@ func setup(w: World) -> void:
 	cache_rect.visible = false
 	layer.add_child(cache_rect)
 	_c_build_n = 0
+	dmat.set_shader_parameter("cache_tex", _cb[0].vp.get_texture())
+	_warm = 3
 	view_sprite = Sprite2D.new()
 	view_sprite.centered = false
 	view_sprite.texture = map_vp.get_texture()
@@ -802,6 +804,7 @@ var _c_build_n := 0              # постройка второго буфер�
 var _c_zoom_seen := 0.0
 var _c_still := 0                # кадров подряд без смены масштаба
 var cache_draws := 0             # для замеров: сколько раз рисовался кэш
+var _no_cache := "--nocache" in OS.get_cmdline_user_args()   # замеры: полный кадр при движении
 
 
 func _cache_front() -> CacheBuf:
@@ -897,6 +900,8 @@ func _cache_px(b: CacheBuf, r: Rect2) -> Rect2:
 ## Можно ли показать движение из готового буфера; если видимое вышло за окно —
 ## сдвинуть окно и дорисовать открывшиеся полосы (в этом же кадре).
 func _cache_usable() -> bool:
+	if _no_cache:
+		return false
 	var b := _cache_front()
 	if not b.valid or b.q != quality or absf(b.rk - _screen_rk()) > 1e-4:
 		return false
@@ -1150,11 +1155,30 @@ func _process(dt: float) -> void:
 		FrameProf.add("отрисовка движком (ЦП)", int(rcpu * 1000.0))
 
 
+var _warm := 0   # кадров прогрева шейдера вывода кэша
 var _c_redraws0 := 0   # перерисовок карты к началу кадра (кэш не строится в кадр с ними)
+
+
+## Камера сама обновляет вид каждый кадр — движок считает кадр изменённым и
+## рисует его заново даже без изменений (режим «не рисовать без изменений»,
+## low_processor_usage_mode): обновление камеры — только при её сдвиге.
+var _cam_seen := Vector3.INF
+
+
+func _camera_sync() -> void:
+	if camera.is_processing_internal():
+		camera.set_process_internal(false)
+		camera.set_physics_process_internal(false)
+	var k := Vector3(camera.position.x, camera.position.y, camera.zoom.x)
+	if k != _cam_seen:
+		_cam_seen = k
+		camera.force_update_scroll()
 
 
 func _process_map(dt: float) -> void:
 	_c_redraws0 = redraws
+	if camera != null:
+		_camera_sync()
 	Report.frame(dt, redraws - part_redraws, part_redraws)
 	if res_auto and map_vp != null:
 		_auto_adjust(dt)
@@ -1255,7 +1279,16 @@ func _process_map(dt: float) -> void:
 		cache_rect.visible = false
 	_cache_tick()
 	_cache_flush()
-	view_sprite.modulate.a = _full_alpha
+	# прогрев: шейдер вывода кэша компилируется при загрузке, а не при первом
+	# сдвиге (на телефоне первая компиляция — кадр до полсекунды)
+	if _warm > 0:
+		_warm -= 1
+		cache_rect.visible = _warm > 0
+		cache_rect.position = Vector2.ZERO
+		cache_rect.size = Vector2(2, 2)
+		cache_rect.self_modulate.a = 0.02 if _warm > 0 else 1.0
+	if view_sprite.modulate.a != _full_alpha:
+		view_sprite.modulate.a = _full_alpha
 	_place(view_sprite, _full_cam, _full_zoom, _full_size)
 	if lite_sprite.visible:
 		_place(lite_sprite, _lite_cam, _lite_zoom, _lite_size)
@@ -1285,8 +1318,14 @@ func _place(spr: Sprite2D, c_b: Vector2, z_b: float, size: Vector2) -> void:
 	var half := logical * 0.5
 	var z_n := camera.zoom.x
 	var r := z_n / maxf(1e-6, z_b)
-	spr.scale = logical / size * r
-	spr.position = half - half * r + (c_b - camera.position) * z_n
+	# только при изменении: иначе движок считает кадр изменённым и рисует его
+	# заново (режим «не рисовать без изменений», low_processor_usage_mode)
+	var sc := logical / size * r
+	var ps := half - half * r + (c_b - camera.position) * z_n
+	if spr.scale != sc:
+		spr.scale = sc
+	if spr.position != ps:
+		spr.position = ps
 
 
 ## Время отрисовки последнего кадра на видеокарте (мс): карта и весь экран.

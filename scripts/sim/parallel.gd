@@ -21,8 +21,23 @@ extends RefCounted
 static var enabled := true
 
 
+## На телефоне — на 2 меньше ядер (решение пользователя, ноябрь 2026): у
+## мобильных процессоров 1–2 быстрых ядра, а потоки симуляции на всех ядрах
+## вытесняли главный поток и отрисовку — кадры шли неровно. Результат от числа
+## потоков не зависит (sim_bench). -- --threads=N — для замеров.
+static var _threads := -1
+
+
 static func thread_count() -> int:
-	return maxi(1, OS.get_processor_count())
+	if _threads < 0:
+		_threads = OS.get_processor_count()
+		if OS.has_feature("mobile"):
+			_threads -= 2
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--threads="):
+				_threads = int(a.get_slice("=", 1))
+		_threads = maxi(1, _threads)
+	return _threads
 
 
 ## Фоновая группа задач (start/finish) занимает пул: пока она идёт, обычные

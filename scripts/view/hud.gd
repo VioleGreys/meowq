@@ -1157,11 +1157,18 @@ func show_top() -> void:
 	Report.sample(Engine.get_frames_per_second(), int(d["tick"]) / 1000.0,
 		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, game.unit_layer.draw_usec / 1000.0,
 		gpu.x, game.days_per_sec)
+	if not perf_label.is_visible_in_tree():
+		_toast_tick()
+		return   # строка замеров скрыта — не собирать её (и не перерисовывать экран)
 	phases += "\nкадр: логика %.1f · фишки %.1f · ГП карта %.1f (%d%%) · ГП экран %.1f мс · карта %d раз/с\nдень (макс. за с): панели %.1f · палитра %.1f · список %.1f · строка %.1f мс" % [
 		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, game.unit_layer.draw_usec / 1000.0,
 		gpu.x, int(game.map_view.res_scale * 100), gpu.y, _redraw_rate(), game.ui_prof[0] / 1000.0, game.ui_prof[1] / 1000.0,
 		game.ui_prof[2] / 1000.0, game.ui_prof[3] / 1000.0]
 	perf_label.text = "%s\n%d FPS · %s · ядер %d · %.1f дн/с · тик %.2f мс" % [phases.strip_edges(), Engine.get_frames_per_second(), "C++" if Native.available() else "GDScript", Parallel.thread_count(), game.days_per_sec, int(d["tick"]) / 1000.0]
+	_toast_tick()
+
+
+func _toast_tick() -> void:
 	if _toast_t > 0.0:
 		_toast_t -= get_process_delta_time()
 		toast_label.modulate.a = clampf(_toast_t, 0.0, 1.0)

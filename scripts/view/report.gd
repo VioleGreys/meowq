@@ -10,8 +10,9 @@ const KEEP := 30   # секунд истории замеров
 # полных перерисовок карты, частичных]
 static var _hist: Array = []
 static var _last_msec := 0
-const FIELDS := ["FPS", "тик, мс", "логика, мс", "фишки, мс", "ГП карта, мс", "дн/с",
-	"худший кадр за с, мс", "полных перерисовок карты за с", "частичных перерисовок за с"]
+const FIELDS := ["FPS (в покое кадры не рисуются — меньше нормально)", "тик, мс", "логика, мс", "фишки, мс", "ГП карта, мс", "дн/с",
+	"худший кадр за с, мс", "полных перерисовок карты за с", "частичных перерисовок за с",
+	"кадров нарисовано за с", "шагов игры за с"]
 static var _frame_max := 0.0
 static var _rd_full := 0
 static var _rd_part := 0
@@ -19,11 +20,14 @@ static var _rd_part := 0
 
 ## Каждый кадр (MapView._process): худший кадр и перерисовки карты за секунду.
 static var _frame_usec := 0
+static var _drawn_prev := 0
+static var _frames_iter := 0
 
 
 static func frame(_dt: float, full_redraws: int, part_redraws: int) -> void:
 	# по часам, а не по delta движка (её ограничивают сверху)
 	var now := Time.get_ticks_usec()
+	_frames_iter += 1
 	var dt_us := now - _frame_usec if _frame_usec > 0 else 0
 	_frame_usec = now
 	_frame_max = maxf(_frame_max, dt_us / 1000.0)
@@ -42,8 +46,12 @@ static func sample(fps: float, tick_ms: float, logic_ms: float, units_ms: float,
 		return
 	_last_msec = now
 	FrameProf.roll()
+	var drawn := Engine.get_frames_drawn()
+	var fps_drawn := float(drawn - _drawn_prev)
+	_drawn_prev = drawn
 	_hist.append([fps, tick_ms, logic_ms, units_ms, gpu_map_ms, dps, _frame_max,
-		float(_rd_full - _rd_full_prev), float(_rd_part - _rd_part_prev)])
+		float(_rd_full - _rd_full_prev), float(_rd_part - _rd_part_prev), fps_drawn, float(_frames_iter)])
+	_frames_iter = 0
 	_prof.append([FrameProf.last_sum, FrameProf.last_max])
 	while _prof.size() > KEEP:
 		_prof.pop_front()
@@ -66,7 +74,8 @@ static func build(game) -> String:
 	var scr := DisplayServer.screen_get_size()
 	L.append("Экран: %dx%d, %.0f Гц · окно %s" % [scr.x, scr.y, DisplayServer.screen_get_refresh_rate(),
 		str(DisplayServer.window_get_size())])
-	L.append("Ядро: %s · версия Godot %s" % ["C++" if Native.available() else "GDScript", Engine.get_version_info().string])
+	L.append("Ядро: %s · версия Godot %s · потоков симуляции %d" % ["C++" if Native.available() else "GDScript",
+		Engine.get_version_info().string, Parallel.thread_count()])
 	L.append("Настройки: качество %s · разрешение %s (сейчас %d%%) · кадры %s · упрощать при сдвиге %s" % [
 		Settings.QUALITY_NAMES[Settings.map_quality()], Settings.RES_NAMES[Settings.map_res()],
 		int(game.map_view.res_scale * 100), Settings.FPS_NAMES[Settings.fps_cap()],
