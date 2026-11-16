@@ -212,7 +212,7 @@ func setup(w: World) -> void:
 		var rimg := Image.new()
 		has_r = rimg.load_png_from_buffer(FileAccess.get_file_as_bytes(rpath)) == OK
 		if has_r:
-			rimg.convert(Image.FORMAT_RGB8)
+			rimg.convert(Image.FORMAT_RGBA8)
 			rimg.generate_mipmaps()
 			mat.set_shader_parameter("river_tex", ImageTexture.create_from_image(rimg))
 	mat.set_shader_parameter("has_rivers", has_r)

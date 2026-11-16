@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Поле рек для отрисовки: data/world1936/rivers.png.bin — RGB8 в сетке карты
+"""Поле рек для отрисовки: data/world1936/rivers.png.bin — RGBA8 в сетке карты
 1× (5632×2625), по осевым линиям рек Natural Earth
 (ne_10m_rivers_lake_centerlines, общественное достояние):
   r, g — вектор от центра пикселя до ближайшей точки реки, пикселей карты,
@@ -90,11 +90,14 @@ def main():
     stg = np.zeros((H, W), np.int32)
     vec = np.full((H, W, 2), RMAX, np.float64)
     _splat(segs, strength, W, H, RMAX, dist, stg, vec)
-    img = np.zeros((H, W, 3), np.uint8)
+    img = np.zeros((H, W, 4), np.uint8)
     img[..., :2] = np.clip(128.0 + vec / RMAX * 127.0 + 0.5, 0, 255).astype(np.uint8)
     img[..., 2] = np.where(dist < RMAX, stg, 0).astype(np.uint8)
+    # a — само расстояние (0…RMAX): между двумя реками билинейный вектор
+    # гасится (смотрят в разные стороны) и «находит» ложную реку — расстояние нет
+    img[..., 3] = np.clip(dist / RMAX * 255.0 + 0.5, 0, 255).astype(np.uint8)
     path = os.path.abspath(os.path.join(DATA, "rivers.png.bin"))
-    Image.fromarray(img, "RGB").save(path, "PNG", optimize=True)
+    Image.fromarray(img, "RGBA").save(path, "PNG", optimize=True)
     print(f"rivers {W}x{H}: {path} ({os.path.getsize(path) // 1024} КБ)")
 
 
