@@ -484,8 +484,13 @@ void fragment() {
 			// (шире к приближению, в пикселях карты); река сама — граница
 			// провинций: линию провинций под ней не рисуем (river_m)
 			float base = rv.g > 0.9 ? 0.42 : (rv.g > 0.5 ? 0.32 : 0.24);
-			float nk = smoothstep(1.4, 4.0, zoom);
-			float hw = max(base * mix(1.0, 3.2, nk), 0.8 * rv_fw);
+			// ширина — в пикселях экрана и растёт медленно, широкая лента — только у
+			// самого приближения (как в жанре: вдали 1–2 пикс., ближе узкая лента
+			// ~6–8, у максимума ~25): полуширина 0,8·e^(0,68·(масштаб−1)) для крупной
+			float nk = smoothstep(2.8, 4.6, zoom);
+			float mp = zoom * 2.0 * res_k;   // пикселей буфера на пиксель карты
+			float hw_px = (base / 0.42) * 0.8 * exp(0.68 * (zoom - 1.0)) * res_k;
+			float hw = clamp(hw_px / mp, 0.8 * rv_fw, RIVER_MAX - 0.8);
 			float aa = 0.6 * rv_fw;
 			float has = step(0.01, rv.g) * (rv.g > 0.5 ? 1.0 : smoothstep(0.7, 1.4, zoom));   // малые — только вблизи
 			river = (1.0 - smoothstep(hw - aa, hw + aa, rv_d)) * has;
