@@ -445,7 +445,7 @@ AREA_RECTS = [
 # площадь провинции × AREA_SCALE (3,3 тыс. → ~8 тыс. провинций суши)
 AREA_SCALE = 0.365
 NAME_KM = 90.0             # провинция без города — по ближайшему посёлку не дальше
-RIVER_BORDER_RANK = 5      # реки до этого scalerank — границы провинций
+RIVER_BORDER_RANK = 6      # реки до этого scalerank — границы провинций (все, что рисуются)
 RIVER_LARGE_RANK = 3       # до этого — крупные (штраф больше)
 
 
@@ -958,20 +958,34 @@ def main():
     rivers = np.array(rivers_img)
     rivers[~land] = 0
     # реки — границы провинций (разрез): крупные (scalerank ≤ 3) и средние (≤ 5)
+    # Разрез — по тем же линиям, что рисует шейдер (build_rivers: дотянутые
+    # концы, сглаживание σ 0,8), и со сдвигом −0,5: у PIL координата — центр
+    # пикселя, у нас центр пикселя x — x+0,5. Иначе на излучинах провинция
+    # выходила за нарисованную реку (обрывок на том берегу)
+    import build_rivers as br
     cut_img = Image.new("L", (WIDTH, HEIGHT), 0)
     cd = ImageDraw.Draw(cut_img)
+    clines = []
     for f in load(os.path.join(ne, "ne_10m_rivers_lake_centerlines.geojson"))["features"]:
         sr = _rank(f["properties"].get("scalerank"))
-        if sr > RIVER_BORDER_RANK:
+        if sr > 6:
             continue
         for line in lines_of(f["geometry"]):
             arr = np.asarray(line)
-            x, y = project(arr[:, 0], arr[:, 1])
-            if np.abs(np.diff(x)).max(initial=0) > WIDTH * 0.5:
+            if len(arr) < 2:
                 continue
-            pts = list(zip(x.tolist(), y.tolist()))
-            if len(pts) >= 2:
-                cd.line(pts, fill=2 if sr <= RIVER_LARGE_RANK else 1, width=1)
+            x, y = project(arr[:, 0], arr[:, 1])
+            clines.append([np.asarray(x, np.float64), np.asarray(y, np.float64), sr])
+    br.snap_ends(clines)
+    for x, y, sr in clines:
+        if sr > RIVER_BORDER_RANK:
+            continue
+        if np.abs(np.diff(x)).max(initial=0) > WIDTH * 0.5:
+            continue
+        x, y = br.smooth_line(x, y)
+        pts = list(zip((x - 0.5).tolist(), (y - 0.5).tolist()))
+        if len(pts) >= 2:
+            cd.line(pts, fill=2 if sr <= RIVER_LARGE_RANK else 1, width=1)
     river_cls = np.array(cut_img)
     river_cls[~land] = 0
 

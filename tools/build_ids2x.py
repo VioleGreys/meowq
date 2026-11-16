@@ -192,41 +192,100 @@ def _regions(ids, mask):
     return out
 
 
-PIECE_FRAC = 0.3   # кусок провинции за рекой меньше такой доли провинции…
-PIECE_MAX = 300     # …и меньше стольких пикселей 2× — отдать окружающей
-
-
-def river_pieces(out, land_of, near):
-    """Куски провинции, отрезанные от её основной части только рекой (граница
-    страны или района из одних данных пересекает реку не там, где линия реки
-    из других: на том берегу остаётся «карман» провинции, обведённый
-    границей), отходят окружающей провинции. Связность — без пикселей ленты
-    реки (near), иначе карман «соединён» с телом под лентой."""
-    reg = _regions(out, ~near & (land_of[out] == 1))
-    ok = reg >= 0
-    r = reg[ok]
-    p = out[ok]
-    ur, inv, cnt = np.unique(r, return_inverse=True, return_counts=True)
-    prov_of = np.zeros(len(ur), np.int64)
-    prov_of[inv] = p
-    tot = np.bincount(prov_of, weights=cnt, minlength=len(land_of))
-    big = np.zeros(len(land_of))
-    np.maximum.at(big, prov_of, cnt)
-    # только куски, примыкающие к осевой линии реки (не острова и не анклавы)
+def river_pieces(out, land_of, near, p1=None):
+    """Провинция не лежит на двух берегах (решение пользователя; в данных —
+    provinces8k._enforce_rivers). В карте отрисовки привязка к рекам и
+    сглаживание могли перетащить кусок провинции за реку. Барьер — лента
+    реки с берегом и запасом (near, расширенный на 3 пикс. 2×): каждый кусок
+    провинции, отрезанный барьером от тела (самого большого куска), отходит
+    провинции, которой прямо касается на своём берегу (без порогов размера;
+    без такого соседа — остаётся). Пиксели барьера — провинции ближайшего
+    пикселя вне барьера: барьер симметричен осевой линии, так что это свой
+    берег, и граница проходит точно по середине реки."""
     from scipy import ndimage
-    touch = ndimage.binary_dilation(near, iterations=2)[ok]
-    has_t = np.zeros(len(ur), bool)
-    has_t[inv[touch]] = True
-    small = (cnt < PIECE_FRAC * tot[prov_of]) & (cnt < PIECE_MAX) & (cnt < big[prov_of]) & has_t
-    if not small.any():
-        return 0
-    bad = np.zeros(out.shape, bool)
-    bad[ok] = small[inv]
-    # провинцию пикселя куска берём у ближайшего пикселя вне куска (суши)
-    src = ~bad & (land_of[out] == 1)
+    bar = ndimage.binary_dilation(near, iterations=3)
+    landm = land_of[out] == 1
+    orig = out.copy()
+    reg = _regions(out, ~bar & landm)
+    ok = reg >= 0
+    ur, inv, cnt = np.unique(reg[ok], return_inverse=True, return_counts=True)
+    nr = len(ur)
+    rid = np.full(out.shape, -1, np.int64)
+    rid[ok] = inv
+    prov_of = np.zeros(nr, np.int64)
+    prov_of[inv] = out[ok]
+    big = np.zeros(len(land_of), np.int64)
+    np.maximum.at(big, prov_of, cnt)
+    # тело провинции — первый из кусков максимального размера
+    main = np.full(len(land_of), -1, np.int64)
+    order = np.lexsort((np.arange(nr), -cnt))
+    for k in order.tolist():
+        if main[prov_of[k]] < 0:
+            main[prov_of[k]] = k
+    extra = np.nonzero(main[prov_of] != np.arange(nr))[0]
+    moved_px = 0
+    if extra.size:
+        # прямые соседства кусков (оба пикселя вне барьера) — свой берег
+        pairs = []
+        for a, b in ((rid[:, :-1], rid[:, 1:]), (rid[:-1, :], rid[1:, :])):
+            m = (a >= 0) & (b >= 0) & (a != b)
+            pairs.append(np.stack([a[m], b[m]], 1))
+        pr = np.concatenate(pairs)
+        pr = np.concatenate([pr, pr[:, ::-1]])
+        key = pr[:, 0] * nr + pr[:, 1]
+        uk, ln = np.unique(key, return_counts=True)
+        ea, eb = uk // nr, uk % nr
+        own_p = np.asarray(OWN_OF)[prov_of] if OWN_OF is not None else np.zeros(nr, np.int64)
+        new_p = prov_of.copy()
+        pending = set(extra.tolist())
+        is_extra = np.zeros(nr, bool)
+        is_extra[extra] = True
+        nb = {}
+        for a, b, l in zip(ea.tolist(), eb.tolist(), ln.tolist()):
+            if is_extra[a]:
+                nb.setdefault(a, []).append((b, l))
+        for _ in range(50):
+            done = []
+            for c in sorted(pending, key=lambda q: cnt[q]):
+                best = None
+                for t, l in nb.get(c, []):
+                    if t in pending or new_p[t] == prov_of[c]:
+                        continue
+                    kk = (1 if own_p[t] == own_p[c] else 0, l)
+                    if best is None or kk > best[0]:
+                        best = (kk, t)
+                if best is not None:
+                    new_p[c] = new_p[best[1]]
+                    done.append(c)
+            if not done:
+                break
+            pending -= set(done)
+        ch = new_p != prov_of
+        moved_px = int(cnt[ch].sum())
+        out[ok] = new_p[inv]
+    # пиксели барьера (суша) — провинции ближайшего пикселя вне барьера
+    src = ~bar & landm
     _, (iy, ix) = ndimage.distance_transform_edt(~src, return_indices=True)
-    out[bad] = out[iy[bad], ix[bad]]
-    return int(bad.sum())
+    fill = bar & landm
+    before = out[fill].copy()
+    out[fill] = out[iy[fill], ix[fill]]
+    changed = moved_px + int((before != out[fill]).sum())
+    # провинция уже барьера (островок, полоска между близкими руслами) или
+    # потерявшая больше 30 % площади — свои пиксели обратно: на карте она
+    # должна быть видна целиком
+    n = len(land_of)
+    b0 = np.bincount(orig.ravel(), minlength=n)
+    b1 = np.bincount(out.ravel(), minlength=n)
+    lost = (b1 < 0.7 * b0) & (b0 > 0)
+    if lost.any():
+        back = lost[orig] & (out != orig)
+        out[back] = orig[back]
+        changed -= int(back.sum())
+        print(f"  провинций сохранено от поглощения рекой: {int(lost.sum())}")
+    return changed
+
+
+OWN_OF = None   # страна провинции (main заполняет из map.json)
 
 
 THIN_CLUSTER = 4   # полоска из стольких «тонких» пикселей 2× и больше — убрать
@@ -358,9 +417,9 @@ def snap_rivers(out, land_of):
         changed -= int(back.sum())
     print(f"Пикселей 2× у рек отдано своему берегу: {changed} (провинций сохранено от поглощения: {int(lost.sum())})")
     # барьер для поиска кусков за рекой — вся видимая лента у крупного плана
-    # (приведённое расстояние < 1,3: полуширина крупной реки 1,22 + берег):
+    # (приведённое расстояние < 1,5: полуширина крупной реки 1,22 + берег):
     # кусок провинции, отрезанный лентой от тела, на карте выглядит обрывком
-    near = np.repeat(np.repeat((d1 / wk < 1.3) & has, SCALE, 0), SCALE, 1)
+    near = np.repeat(np.repeat((d1 / wk < 1.5) & has, SCALE, 0), SCALE, 1)
     return near[:H2, :W2]
 
 
@@ -374,6 +433,9 @@ def main():
     p1 = rgb[..., 0] + rgb[..., 1] * 256
     meta = json.load(open(os.path.join(DATA, "map.json")))
     land_of = np.array([pr["land"] for pr in meta["provinces"]], np.int8)
+    global OWN_OF
+    tags = {}
+    OWN_OF = np.array([tags.setdefault(pr.get("owner", ""), len(tags)) for pr in meta["provinces"]], np.int64)
     np_ = land_of.size
     # область каждой провинции суши — чаще всего встречающаяся на её пикселях (1×)
     r1 = regions(args.ne, 1)
@@ -424,7 +486,7 @@ def main():
         out[y0:y1] = np.take_along_axis(L, k[..., None], -1)[..., 0]
     near = snap_rivers(out, land_of)
     if near is not None:
-        print(f"Пикселей кусков провинций за рекой отдано окружающим (пикс. 2×): {river_pieces(out, land_of, near)}")
+        print(f"Пикселей кусков провинций за рекой отдано окружающим (пикс. 2×): {river_pieces(out, land_of, near, p1)}")
     for _ in range(4):
         n = thin_strips(out, land_of)
         print(f"Пикселей тонких полосок отдано соседям (пикс. 2×): {n}")
@@ -438,7 +500,7 @@ def main():
     if near is not None:
         # чистка полосок и осколков могла отдать куску за рекой пиксели из-под
         # ленты — ещё раз (и осколки после неё)
-        print(f"Пикселей кусков за рекой (второй проход): {river_pieces(out, land_of, near)}")
+        print(f"Пикселей кусков за рекой (второй проход): {river_pieces(out, land_of, near, p1)}")
         print(f"Осколков провинций убрано (пикс. 2×): {despeckle(out)}")
     os.makedirs(OUT_DIR, exist_ok=True)
     half = W2 // 2

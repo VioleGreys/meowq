@@ -23,7 +23,9 @@ import numpy as np
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
-RIVER_COST = 6.0        # во сколько раз дороже шаг через реку при росте частей
+RIVER_COST = 6.0        # во сколько раз дороже шаг через реку при росте областей
+RIVER_EDGE = 0.4        # граница по реке больше этой доли — «через реку»: провинции
+                        # реку не переходят (решение пользователя, ноябрь 2026)
 MIN_ATOM = 6            # атомы меньше (пикс.) вливаются в соседа
 STATE_PROVS = 9.5       # провинций суши в области (как в жанре: ~10 тыс. суши на ~1,1 тыс. областей)
 STATE_MERGE_BELOW = 0.85  # область мельче (доля целевой) — склеить с соседней
@@ -177,17 +179,18 @@ def build(owner, region, land, area_px, river_cut, river_cls, adm2, lat_px_km, r
     # geoBoundaries: 1–2 пикс. шириной, длинные) — в соседа той же страны (лучше
     # той же области) с самой длинной общей границей
     for _ in range(8):
-        u, v, ln, _ = _edge_table(lab, n_atoms)
+        u, v, ln, rl = _edge_table(lab, n_atoms, cut)
         thin = _edge_count(lab, n_atoms) > THIN_FRAC * cnt
         small = (cnt < MIN_ATOM) | thin
         if not small.any():
             break
         best = {}
-        for a, b, l in zip(u.tolist(), v.tolist(), ln.tolist()):
+        for a, b, l, r in zip(u.tolist(), v.tolist(), ln.tolist(), rl.tolist()):
             for s_, t in ((a, b), (b, a)):
                 if small[s_] and a_own[s_] == a_own[t]:
-                    key = (1 if a_reg[s_] == a_reg[t] else 0, 0 if small[t] else 1, l)
-                    if key > best.get(s_, ((-1, -1, 0), -1))[0]:
+                    # через реку — только если на своём берегу соседа нет
+                    key = (0 if r > RIVER_EDGE * l else 1, 1 if a_reg[s_] == a_reg[t] else 0, 0 if small[t] else 1, l)
+                    if key > best.get(s_, ((-1, -1, -1, 0), -1))[0]:
                         best[s_] = (key, t)
         if not best:
             break
@@ -255,12 +258,17 @@ def build(owner, region, land, area_px, river_cut, river_cls, adm2, lat_px_km, r
     # граф атомов: шаг через реку дороже
     u, v, ln, rl = _edge_table(lab, n_atoms, river_cut)
     nbr = [[] for _ in range(n_atoms)]
+    nbr_p = [[] for _ in range(n_atoms)]   # для провинций — без рёбер через реку
     for a, b, l, r in zip(u.tolist(), v.tolist(), ln.tolist(), rl.tolist()):
         if a_own[a] != a_own[b]:
             continue
-        mult = RIVER_COST if r > 0.4 * l else 1.0
+        across = r > RIVER_EDGE * l
+        mult = RIVER_COST if across else 1.0
         nbr[a].append((b, mult))
         nbr[b].append((a, mult))
+        if not across:
+            nbr_p[a].append((b, 1.0))
+            nbr_p[b].append((a, 1.0))
     # «вес» атома для роста частей — доля целевой провинции
     unit = cnt / np.maximum(a_tgt, 1.0)
 
@@ -312,6 +320,8 @@ def build(owner, region, land, area_px, river_cut, river_cls, adm2, lat_px_km, r
             a, b = best[1], best[2]
             nbr[a].append((b, 1.0))
             nbr[b].append((a, 1.0))
+            nbr_p[a].append((b, 1.0))   # остров — через море, не через реку
+            nbr_p[b].append((a, 1.0))
             rb = find(b)
             parent[rr] = rb
             c_units[rb] += c_units[rr]
@@ -388,22 +398,40 @@ def build(owner, region, land, area_px, river_cut, river_cls, adm2, lat_px_km, r
     n_pr = 0
     prov_state = []
     for s in range(n_st):
-        nodes = np.nonzero(st_of == s)[0].tolist()
-        k = max(1, int(round(st_units[s])))
-        k = min(k, len(nodes))
-        part = _grow(nodes, k, cx, cy, unit, nbr, rng)
-        used = sorted(set(part.values()))
-        remap = {j: n_pr + i for i, j in enumerate(used)}
-        for a, j in part.items():
-            pr_of[a] = remap[j]
-        for _ in used:
-            prov_state.append(s)
-        n_pr += len(used)
+        # провинция не переходит реку (решение пользователя): область делим на
+        # куски, связные без рёбер через реку, и растим провинции в каждом
+        left = set(np.nonzero(st_of == s)[0].tolist())
+        comps = []
+        while left:
+            a0 = left.pop()
+            comp = [a0]
+            stack = [a0]
+            while stack:
+                x = stack.pop()
+                for y, _ in nbr_p[x]:
+                    if y in left:
+                        left.remove(y)
+                        comp.append(y)
+                        stack.append(y)
+            comps.append(comp)
+        for nodes in comps:
+            cu = float(unit[nodes].sum())
+            k = max(1, int(round(cu)))
+            k = min(k, len(nodes))
+            part = _grow(nodes, k, cx, cy, unit, nbr_p, rng)
+            used = sorted(set(part.values()))
+            remap = {j: n_pr + i for i, j in enumerate(used)}
+            for a, j in part.items():
+                pr_of[a] = remap[j]
+            for _ in used:
+                prov_state.append(s)
+            n_pr += len(used)
     prov = np.where(lab >= 0, pr_of[np.maximum(lab, 0)], -1).astype(np.int32)
     # части могли выйти несвязными (через ребро другой страны) — куски к соседу
-    prov, prov_state = _fix_disconnected(prov, np.array(prov_state), owner)
-    prov, prov_state = _merge_small(prov, prov_state, owner, area_px)
+    prov, prov_state = _fix_disconnected(prov, np.array(prov_state), owner, cut)
+    prov, prov_state = _merge_small(prov, prov_state, owner, area_px, cut)
     prov, prov_state = _split_elongated(prov, prov_state, area_px)
+    prov, prov_state = _enforce_rivers(prov, prov_state, cut, owner, area_px)
     n_pr = int(prov.max()) + 1
     print(f"  провинций суши: {n_pr}", flush=True)
     return prov, prov_state, n_pr
@@ -502,7 +530,7 @@ def _components(mask, same_r, same_d):
     return out
 
 
-def _fix_disconnected(prov, prov_state, owner):
+def _fix_disconnected(prov, prov_state, owner, river=None):
     n = int(prov.max()) + 1
     lab, nc = ndimage.label(prov >= 0)
     # компоненты одной провинции: по 4-связности внутри провинции
@@ -522,16 +550,17 @@ def _fix_disconnected(prov, prov_state, owner):
             main[cprov[c]] = c
     extra = [c for c in range(nc) if main[cprov[c]] != c]
     if extra:
-        u, v, ln, _ = _edge_table(comp, nc)
+        u, v, ln, rl = _edge_table(comp, nc, river)
         c_own = np.full(nc, -1, np.int64); c_own[flat[ok]] = owner.ravel()[ok]
         best = {}
         ex = set(extra)
-        for a, b, l in zip(u.tolist(), v.tolist(), ln.tolist()):
+        for a, b, l, r in zip(u.tolist(), v.tolist(), ln.tolist(), rl.tolist()):
             for s, t in ((a, b), (b, a)):
-                if s in ex and t not in ex and c_own[s] == c_own[t] and l > best.get(s, (0, -1))[0]:
-                    best[s] = (l, t)
+                key = (0 if r > RIVER_EDGE * l else 1, l)   # сначала свой берег
+                if s in ex and t not in ex and c_own[s] == c_own[t] and key > best.get(s, ((-1, 0), -1))[0]:
+                    best[s] = (key, t)
         remap = cprov.copy()
-        for s, (l, t) in best.items():
+        for s, (key, t) in best.items():
             remap[s] = cprov[t]
         prov = np.where(comp >= 0, remap[np.maximum(comp, 0)], -1).astype(np.int32)
     # пустые номера — убрать
@@ -541,13 +570,96 @@ def _fix_disconnected(prov, prov_state, owner):
     return prov, prov_state[used]
 
 
+def _enforce_rivers(prov, prov_state, cut, owner, area_px):
+    """Запрет (решение пользователя): провинция не лежит на двух берегах.
+    Всё, что за рекой от тела провинции (самого большого куска; пиксели
+    разреза — не связь), — уже другая провинция: кусок отходит соседней
+    провинции на своём берегу (лучше той же страны, иначе чужой — с её
+    страной). Новых провинций не создаём, порогов размера нет. Пиксели
+    разреза — ближайшему куску. Соседи «по прямому касанию» — тот же берег."""
+    n = int(prov.max()) + 1
+    land = prov >= 0
+    free = land & ~cut
+    same_r = np.zeros(prov.shape, bool); same_d = np.zeros(prov.shape, bool)
+    same_r[:, :-1] = (prov[:, :-1] == prov[:, 1:]) & free[:, :-1] & free[:, 1:]
+    same_d[:-1, :] = (prov[:-1, :] == prov[1:, :]) & free[:-1, :] & free[1:, :]
+    comp = _components(free, same_r, same_d)
+    nc = int(comp.max()) + 1
+    flat = comp.ravel(); ok = flat >= 0
+    csize = np.bincount(flat[ok], minlength=nc)
+    cprov = np.full(nc, -1, np.int64); cprov[flat[ok]] = prov.ravel()[ok]
+    c_own = np.full(nc, -1, np.int64); c_own[flat[ok]] = owner.ravel()[ok]
+    main = np.full(n, -1, np.int64)
+    for c in np.argsort(-csize).tolist():
+        if main[cprov[c]] < 0:
+            main[cprov[c]] = c
+    new_of = cprov.copy()
+    extra = [c for c in range(nc) if main[cprov[c]] != c]
+    # соседи куска по прямому касанию (без разреза между ними) — свой берег;
+    # куски присоединяем цепочкой: сосед мог сам быть куском за рекой
+    u, v, ln, _ = _edge_table(comp, nc)
+    nb = {}
+    for a, b, l in zip(u.tolist(), v.tolist(), ln.tolist()):
+        nb.setdefault(a, []).append((b, l))
+        nb.setdefault(b, []).append((a, l))
+    moved = 0
+    pending = set(extra)
+    for _ in range(50):
+        if not pending:
+            break
+        done = []
+        for c in sorted(pending, key=lambda q: csize[q]):
+            best = None
+            for t, l in nb.get(c, []):
+                if t in pending:
+                    continue
+                if new_of[t] == cprov[c]:
+                    continue   # сосед — та же провинция за рекой (тело) — не она
+                key = (1 if c_own[c] == c_own[t] else 0, l)
+                if best is None or key > best[0]:
+                    best = (key, t)
+            if best is not None:
+                new_of[c] = new_of[best[1]]
+                done.append(c)
+        if not done:
+            break
+        pending -= set(done)
+        moved += len(done)
+    nxt = n
+    lab = np.where(comp >= 0, new_of[np.maximum(comp, 0)], -1)
+    # пиксели разреза — ближайшему куску
+    if (land & (lab < 0)).any():
+        idx = ndimage.distance_transform_edt(lab < 0, return_distances=False, return_indices=True)
+        lab = np.where(land & (lab < 0), lab[idx[0], idx[1]], lab)
+    lab = np.where(land, lab, -1)
+    # страна пикселя — страна провинции (крошка могла уйти соседу-чужаку)
+    pf = lab.ravel(); okp = pf >= 0
+    p_own = np.full(nxt, -1, np.int64)
+    big_own = np.zeros(nxt, np.int64)
+    oc = np.bincount(pf[okp] * 4096 + owner.ravel()[okp].astype(np.int64), minlength=0)
+    for key in np.nonzero(oc)[0].tolist():
+        q, o = divmod(key, 4096)
+        if oc[key] > big_own[q]:
+            big_own[q] = oc[key]
+            p_own[q] = o
+    fix = okp.copy(); fix[okp] = p_own[pf[okp]] != owner.ravel()[okp]
+    if fix.any():
+        ow = owner.ravel()
+        ow[fix] = p_own[pf[fix]]
+    used = np.unique(lab[lab >= 0])
+    m = np.full(nxt, -1, np.int64); m[used] = np.arange(used.size)
+    lab = np.where(lab >= 0, m[np.maximum(lab, 0)], -1).astype(np.int32)
+    print(f"  кусков провинций за рекой отдано провинциям своего берега: {moved} (без соседа: {len(pending)})", flush=True)
+    return lab, np.asarray(prov_state)[used]
+
+
 MIN_FRAC = 0.4     # провинция меньше этой доли целевой площади — склеить с соседом
 MIN_PX = 30        # и в любом случае не меньше стольких пикселей карты
 ELONG_PROV = 3.2   # провинция вытянутее — пополам поперёк
 THIN_PROV = 0.7    # провинция-полоска (почти вся у края) — тоже склеить
 
 
-def _merge_small(prov, prov_state, owner, area_px):
+def _merge_small(prov, prov_state, owner, area_px, river=None):
     """Обрезки (провинции в несколько пикселей) — к соседу той же области (иначе
     той же страны) с самой длинной общей границей; мельчайшие первыми."""
     for _ in range(6):
@@ -561,15 +673,16 @@ def _merge_small(prov, prov_state, owner, area_px):
         small = (cnt < MIN_FRAC * tgt) | (cnt < MIN_PX) | (_edge_count(prov, n) > THIN_PROV * cnt)
         if not small.any():
             break
-        u, v, ln, _ = _edge_table(prov, n)
+        u, v, ln, rl = _edge_table(prov, n, river)
         best = {}
-        for a, b, l in zip(u.tolist(), v.tolist(), ln.tolist()):
+        for a, b, l, r in zip(u.tolist(), v.tolist(), ln.tolist(), rl.tolist()):
             for s, t in ((a, b), (b, a)):
                 if not small[s] or own[s] != own[t]:
                     continue
                 same = prov_state[s] == prov_state[t]
-                key = (1 if same else 0, l)
-                if key > best.get(s, ((-1, 0), -1))[0]:
+                # через реку — только если на своём берегу соседа нет
+                key = (0 if r > RIVER_EDGE * l else 1, 1 if same else 0, l)
+                if key > best.get(s, ((-1, -1, 0), -1))[0]:
                     best[s] = (key, t)
         if not best:
             break
@@ -602,17 +715,25 @@ def _merge_small(prov, prov_state, owner, area_px):
     for sh in ((0, 1), (0, -1), (1, 0), (-1, 0)):
         nb = np.roll(sea, sh, (0, 1))
         wet[np.unique(prov[nb & (prov >= 0)])] = True
-    u, v, ln, _ = _edge_table(prov, n)
+    u, v, ln, rl = _edge_table(prov, n, river)
     same_nb = np.zeros(n, bool)
+    river_only = np.zeros(n, bool)   # своя страна — только за рекой
     best = {}
-    for a, b, l in zip(u.tolist(), v.tolist(), ln.tolist()):
+    for a, b, l, r in zip(u.tolist(), v.tolist(), ln.tolist(), rl.tolist()):
+        across = r > RIVER_EDGE * l
         for s, t in ((a, b), (b, a)):
             if own[s] == own[t]:
-                same_nb[s] = True
-            elif l > best.get(s, (0, -1))[0]:
+                if across:
+                    river_only[s] = True
+                else:
+                    same_nb[s] = True
+            elif not across and l > best.get(s, (0, -1))[0]:
                 best[s] = (l, t)
     for s, (l, t) in best.items():
-        if cnt[s] < MIN_PX / 3 and not same_nb[s] and not wet[s]:
+        # обрезок страны на чужом берегу (граница страны из одних данных
+        # пересекает реку не там, где линия реки из других) — тоже соседу
+        lim = MIN_PX if river_only[s] else MIN_PX / 3
+        if cnt[s] < lim and not same_nb[s] and not wet[s]:
             m = prov == s
             owner[m] = own[t]
             prov[m] = t
