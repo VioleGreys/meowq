@@ -59,6 +59,8 @@ uniform float cam_tilt = 0.0;
 uniform float cam_f = 1000.0;
 uniform vec2 scr_size = vec2(1280.0, 720.0);
 uniform vec4 q_rect = vec4(0.0, 0.0, 1.0, 1.0);
+uniform vec2 buf_size = vec2(1.0);   // размер буфера в пикселях (центры пикселей — одинаковые
+                                     // при полной и частичной перерисовке)
 uniform vec2 world_size = vec2(11264.0, 5250.0);
 const float RELIEF_H = 6.0;   // высота самых высоких гор при наклоне, единиц мира
 uniform float res_k = 1.0;   // пикселей буфера карты на логический пиксель экрана
@@ -182,7 +184,8 @@ void fragment() {
 	// луч из пикселя экрана до плоскости карты (см. cam_*)
 	// прямоугольник буфера, который рисуется (доли: смещение, размер) — частичная
 	// перерисовка после смены владельцев (MapView.redraw_provs); целиком — (0, 0, 1, 1)
-	vec2 sc = (q_rect.xy + UV * q_rect.zw) * scr_size - scr_size * 0.5;
+	vec2 bp = floor((q_rect.xy + UV * q_rect.zw) * buf_size) + 0.5;
+	vec2 sc = bp / buf_size * scr_size - scr_size * 0.5;
 	float st = sin(cam_tilt);
 	float ct = cos(cam_tilt);
 	float dist = cam_f / cam_zoom;

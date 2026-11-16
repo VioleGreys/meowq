@@ -48,6 +48,8 @@ var view_sprite: Sprite2D
 var lite_vp: SubViewport
 var lite_quad: ColorRect
 var lite_sprite: Sprite2D
+var snap_vp: SubViewport
+var snap_sprite: Sprite2D
 const FADE_OUT := 0.35        # за сколько растворяется сдвигаемый полный кадр, с
 const FADE_IN := 0.25         # за сколько проявляется новый полный кадр, с
 var _full_alpha := 1.0
@@ -137,6 +139,23 @@ func setup(w: World) -> void:
 	view_sprite.texture = map_vp.get_texture()
 	view_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	layer.add_child(view_sprite)
+	# снимок прежнего кадра на смену сезона: лежит поверх, пока новый кадр
+	# рисуется полосами под ним, потом плавно тает (см. set_day)
+	snap_vp = SubViewport.new()
+	snap_vp.disable_3d = true
+	snap_vp.transparent_bg = false
+	snap_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	add_child(snap_vp)
+	var snap_src := TextureRect.new()
+	snap_src.texture = map_vp.get_texture()
+	snap_src.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	snap_vp.add_child(snap_src)
+	snap_sprite = Sprite2D.new()
+	snap_sprite.centered = false
+	snap_sprite.texture = snap_vp.get_texture()
+	snap_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	snap_sprite.visible = false
+	layer.add_child(snap_sprite)
 	_full_alpha = 1.0
 	RenderingServer.viewport_set_measure_render_time(map_vp.get_viewport_rid(), true)
 	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
@@ -192,6 +211,12 @@ func setup(w: World) -> void:
 	mat.set_shader_parameter("has_art", art)
 	mat.set_shader_parameter("has_elev", art)
 	_winter = -1.0
+	_selected = -1
+	_front_marks = {}
+	strips = 4 if OS.has_feature("mobile") else 1
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--strips="):
+			strips = maxi(1, int(a.get_slice("=", 1)))
 	set_day(world.day)
 	mat.set_shader_parameter("map_size", Vector2(world.width, world.height))
 	# карта провинций для отрисовки вдвое подробнее (tools/build_ids2x.py):
@@ -374,9 +399,29 @@ func center_on(p: int) -> void:
 	_on_view_changed()
 
 
+var _selected := -1
+
+
+## Выбор провинции: перерисовать только прежнюю и новую выбранную с их областями
+## (обводка области — по границе области).
 func set_selected(prov: int) -> void:
 	mat.set_shader_parameter("selected_id", prov)
-	redraw()
+	var old := _selected
+	_selected = prov
+	if old == prov:
+		return
+	var sts := {}
+	var provs := PackedInt32Array()
+	for q in [old, prov]:
+		if q >= 0 and q < world.prov_count:
+			provs.append(q)
+			if world.p_state.size() == world.prov_count and world.p_state[q] >= 0:
+				sts[world.p_state[q]] = true
+	if not sts.is_empty():
+		for p in world.prov_count:
+			if sts.has(world.p_state[p]):
+				provs.append(p)
+	redraw_provs(provs)
 
 
 static var _ids2_cache: Array = []
@@ -543,6 +588,9 @@ static func _layers(imgs: Array) -> Texture2DArray:
 ## Фронты армий игрока на карте: провинция -> [роль, цвет] (роль — биты:
 ## 1 — наш участок, 2 — чужая сторона линии, 4 — выделено кистью, 8 — цель
 ## атаки). Текстура обновляется, только если отметки изменились.
+var _front_marks := {}
+
+
 func set_front(marks: Dictionary) -> void:
 	if front_img == null:
 		return
@@ -550,6 +598,16 @@ func set_front(marks: Dictionary) -> void:
 	if h == _front_hash:
 		return
 	_front_hash = h
+	# перерисовать только провинции, чья отметка сменилась (частичная перерисовка)
+	var changed := PackedInt32Array()
+	for p in _front_marks:
+		if not marks.has(p) or str(marks[p]) != str(_front_marks[p]):
+			changed.append(int(p))
+	for p in marks:
+		if not _front_marks.has(p):
+			changed.append(int(p))
+	var was_on := not _front_marks.is_empty()
+	_front_marks = marks.duplicate(true)
 	front_img.fill(Color(0, 0, 0, 0))
 	for p in marks:
 		var m: Array = marks[p]
@@ -558,7 +616,10 @@ func set_front(marks: Dictionary) -> void:
 		front_img.set_pixel(int(p) % 64, int(p) / 64, c)
 	_pal_push(3, front_img)
 	mat.set_shader_parameter("front_on", not marks.is_empty())
-	redraw()
+	if was_on != not marks.is_empty() or changed.size() > 400:
+		redraw()
+	else:
+		redraw_provs(changed)
 
 
 func set_highlight_nation(n: int) -> void:
@@ -613,6 +674,54 @@ func redraw_provs(provs: PackedInt32Array) -> void:
 		r = r.merge(_part_rect)
 	_part_rect = r
 	_part_dirty = true
+
+
+# --- Перерисовка полосами (оптимизация для телефона, ноябрь 2026) -------------
+# Полная перерисовка на высоком качестве на Adreno 619 — 100–150 мс одним кадром
+# (рывок). Где кадр можно не показывать сразу, рисуем его полосами по одной за
+# кадр (тот же шейдер, те же пиксели — частичная перерисовка через q_rect):
+#  - смена сезона (снег) — под снимком прежнего кадра, который потом тает;
+#  - кадр в полном качестве после сдвига — скрыт, пока виден упрощённый, и
+#    проявляется, когда готовы все полосы.
+# На ПК — одной полосой (как раньше); -- --strips=N — для замеров.
+var strips := 1
+var _strip_i := 0
+var _strip_n := 0              # 0 — полос нет
+var _strip_hidden := false     # кадр скрыт до последней полосы (после сдвига)
+var strip_redraws := 0         # для замеров
+
+
+## Следующая полоса кадра; если камера или размер с начала сменились — целиком.
+func _draw_strip() -> void:
+	var logical := get_viewport_rect().size
+	var phys := Vector2(get_window().size)
+	var size := Vector2i(maxi(1, int(phys.x * res_scale)), maxi(1, int(phys.y * res_scale)))
+	var same := _moving <= 0.0 and (_strip_hidden or (not _lite_drawn and _full_alpha >= 1.0 and not _fading_in)) \
+		and Vector2(size) == _full_size and map_vp.size == size and _full_q == quality \
+		and camera.position == _full_cam and is_equal_approx(camera.zoom.x, _full_zoom) \
+		and is_equal_approx(tilt(), _full_tilt)
+	if not same:
+		_strip_n = 0
+		redraw()
+		return
+	var y0 := floori(float(size.y) * _strip_i / _strip_n)
+	var y1 := floori(float(size.y) * (_strip_i + 1) / _strip_n)
+	mat.set_shader_parameter("quality", quality)
+	mat.set_shader_parameter("res_k", float(size.x) / maxf(1.0, logical.x))
+	mat.set_shader_parameter("buf_size", Vector2(size))
+	_cam_uniforms(logical)
+	mat.set_shader_parameter("q_rect", Vector4(0.0, float(y0) / size.y, 1.0, float(y1 - y0) / size.y))
+	quad.position = Vector2(0, y0)
+	quad.size = Vector2(size.x, y1 - y0)
+	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	redraws += 1
+	strip_redraws += 1
+	_strip_i += 1
+	if _strip_i >= _strip_n:
+		_strip_n = 0
+		if _strip_hidden:
+			_strip_hidden = false
+			_fading_in = true   # все полосы готовы — проявляем
 
 
 ## Разрешение буфера карты: доля пикселей экрана (0.5–1); 0 — авто: после
@@ -689,6 +798,7 @@ func _draw_part() -> void:
 	r = Rect2(p0, p1 - p0)
 	mat.set_shader_parameter("quality", quality)
 	mat.set_shader_parameter("res_k", float(size.x) / maxf(1.0, logical.x))
+	mat.set_shader_parameter("buf_size", Vector2(size))
 	_cam_uniforms(logical)
 	mat.set_shader_parameter("q_rect", Vector4(r.position.x / size.x, r.position.y / size.y, r.size.x / size.x, r.size.y / size.y))
 	quad.position = r.position
@@ -699,6 +809,12 @@ func _draw_part() -> void:
 
 
 func _process(dt: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	_process_map(dt)
+	FrameProf.add("карта", Time.get_ticks_usec() - t0)
+
+
+func _process_map(dt: float) -> void:
 	Report.frame(dt, redraws - part_redraws, part_redraws)
 	if res_auto and map_vp != null:
 		_auto_adjust(dt)
@@ -709,12 +825,17 @@ func _process(dt: float) -> void:
 	if map_vp == null:
 		return
 	_band_poll()
-	if _part_dirty and not _dirty:
+	_season_tick(dt)
+	if _strip_n > 0 and not _dirty:
+		_draw_strip()   # частичная — после полос: полосы уже рисуют с новой палитрой
+	elif _part_dirty and not _dirty:
 		_part_dirty = false
 		_draw_part()
 	if _dirty:
 		_dirty = false
 		_part_dirty = false
+		_strip_n = 0
+		_strip_hidden = false
 		mat.set_shader_parameter("q_rect", Vector4(0.0, 0.0, 1.0, 1.0))
 		var lite := motion_lite and _moving > 0.0 and (quality > 0 or res_scale > 0.5)
 		var was_lite := _lite_drawn
@@ -726,6 +847,7 @@ func _process(dt: float) -> void:
 		var size := Vector2i(maxi(1, int(phys.x * rs)), maxi(1, int(phys.y * rs)))
 		var rk := float(size.x) / maxf(1.0, logical.x)  # пикселей буфера на логический
 		mat.set_shader_parameter("res_k", rk)
+		mat.set_shader_parameter("buf_size", Vector2(size))
 		_cam_uniforms(logical)
 		quad.position = Vector2.ZERO
 		if lite:
@@ -751,8 +873,17 @@ func _process(dt: float) -> void:
 			if was_lite:
 				_full_alpha = 0.0   # после движения — проявляем новый кадр плавно
 				_fading_in = true
-			_auto_pending = true
-			_drawn_last = true
+				if strips > 1:
+					# кадр скрыт под упрощённым — рисуем его полосами, проявим в конце
+					_fading_in = false
+					_strip_hidden = true
+					_strip_n = strips
+					_strip_i = 0
+					_draw_strip()
+					redraws -= 1   # уже учтено как полоса
+			if _strip_n == 0 and not _strip_hidden:
+				_auto_pending = true
+				_drawn_last = true
 		redraws += 1
 	# прозрачность полного кадра: при движении растворяется, после — проявляется
 	# (при наклоне старый кадр сдвигом не совместить с перспективой — сразу)
@@ -801,19 +932,91 @@ func gpu_ms() -> Vector2:
 
 
 ## Качество карты: 0 — низкое, 1 — среднее, 2 — высокое (см. shaders/map.gdshader).
-## Сезон для снега в горах: зима северного полушария 0…1, пик ~10 февраля (снег
-## копится с запаздыванием), минимум ~10 августа. Перерисовка — при заметной смене.
+## Сезон для снега в горах (решение пользователя): два состояния — зима
+## северного полушария с 1 ноября по 30 апреля (winter = 1, в южном шейдер
+## меняет местами), иначе лето (0). Карта перерисовывается дважды в год: новый
+## кадр рисуется полосами под снимком прежнего, снимок плавно тает за SEASON_FADE.
+const SEASON_FADE := 1.5
+var _season_step := 0          # 0 — нет; 1 — снят снимок; 2 — полосы; 3 — тает
+var _season_w := 0.0
+
+
+static func winter_of(day: int) -> float:
+	var doy := fmod(float(day), 365.2425)   # день 0 — 1 января
+	return 1.0 if doy < 120.0 or doy >= 304.0 else 0.0
+
+
 func set_day(day: int) -> void:
 	if mat == null:
 		return
-	var doy := fmod(float(day), 365.2425)
-	var raw := 0.5 + 0.5 * cos(TAU * (doy - 41.0) / 365.2425)
-	var w := smoothstep(0.15, 0.85, raw)
-	if absf(w - _winter) < 0.03 and _winter >= 0.0:
+	var w := winter_of(day)
+	if w == _winter or (_season_step > 0 and w == _season_w):
 		return
-	_winter = w
-	mat.set_shader_parameter("winter", w)
-	redraw()
+	var shown := _winter >= 0.0 and not _dirty and _full_alpha >= 1.0 and not _lite_drawn \
+		and not _fading_in and _moving <= 0.0 and _strip_n == 0 and map_vp.size.x > 1
+	if not shown:
+		_season_end()
+		_winter = w
+		mat.set_shader_parameter("winter", w)
+		redraw()
+		return
+	# снимок видимого кадра (в этом кадре), сезон — со следующего
+	_season_w = w
+	_season_step = 1
+	snap_vp.size = map_vp.size
+	(snap_vp.get_child(0) as TextureRect).size = Vector2(map_vp.size)
+	snap_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	snap_sprite.modulate.a = 1.0
+	snap_sprite.visible = true
+	_snap_cam = _full_cam
+	_snap_zoom = _full_zoom
+	_snap_size = _full_size
+
+
+var _snap_cam := Vector2.ZERO
+var _snap_zoom := 1.0
+var _snap_size := Vector2.ONE
+
+
+func _season_end() -> void:
+	if _season_step == 0:
+		return
+	if _season_step == 1:
+		_winter = _season_w
+		mat.set_shader_parameter("winter", _season_w)
+		redraw()
+	_season_step = 0
+	snap_sprite.visible = false
+	snap_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+
+
+## Шаги смены сезона (из _process карты).
+func _season_tick(dt: float) -> void:
+	if _season_step == 0:
+		return
+	if _moving > 0.0 or _lite_drawn:
+		_season_end()   # пошёл сдвиг — новый кадр и так рисуется заново
+		return
+	match _season_step:
+		1:
+			_winter = _season_w
+			mat.set_shader_parameter("winter", _season_w)
+			_season_step = 2
+			if strips > 1:
+				_strip_i = 0
+				_strip_n = strips
+				_strip_hidden = false
+			else:
+				redraw()
+		2:
+			if _strip_n == 0 and not _dirty:
+				_season_step = 3
+		3:
+			snap_sprite.modulate.a = maxf(0.0, snap_sprite.modulate.a - dt / SEASON_FADE)
+			if snap_sprite.modulate.a <= 0.0:
+				_season_end()
+	if snap_sprite.visible:
+		_place(snap_sprite, _snap_cam, _snap_zoom, _snap_size)
 
 
 ## Раздел палитры в общую текстуру (0 контролёр, 1 владелец, 2 область, 3 фронт).

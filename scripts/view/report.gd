@@ -18,12 +18,20 @@ static var _rd_part := 0
 
 
 ## Каждый кадр (MapView._process): худший кадр и перерисовки карты за секунду.
-static func frame(dt: float, full_redraws: int, part_redraws: int) -> void:
-	_frame_max = maxf(_frame_max, dt * 1000.0)
+static var _frame_usec := 0
+
+
+static func frame(_dt: float, full_redraws: int, part_redraws: int) -> void:
+	# по часам, а не по delta движка (её ограничивают сверху)
+	var now := Time.get_ticks_usec()
+	var dt_us := now - _frame_usec if _frame_usec > 0 else 0
+	_frame_usec = now
+	_frame_max = maxf(_frame_max, dt_us / 1000.0)
 	_rd_full = full_redraws
 	_rd_part = part_redraws
 
 
+static var _prof: Array = []   # по секундам: [участок → мкс за с, участок → худший замер]
 static var _rd_full_prev := 0
 static var _rd_part_prev := 0
 
@@ -33,8 +41,12 @@ static func sample(fps: float, tick_ms: float, logic_ms: float, units_ms: float,
 	if now - _last_msec < 1000:
 		return
 	_last_msec = now
+	FrameProf.roll()
 	_hist.append([fps, tick_ms, logic_ms, units_ms, gpu_map_ms, dps, _frame_max,
 		float(_rd_full - _rd_full_prev), float(_rd_part - _rd_part_prev)])
+	_prof.append([FrameProf.last_sum, FrameProf.last_max])
+	while _prof.size() > KEEP:
+		_prof.pop_front()
 	_frame_max = 0.0
 	_rd_full_prev = _rd_full
 	_rd_part_prev = _rd_part
@@ -79,6 +91,7 @@ static func build(game) -> String:
 			hi = maxf(hi, v)
 			sum += v
 		L.append("  %s: %.1f / %.1f / %.1f" % [FIELDS[f], lo, sum / _hist.size(), hi])
+	L.append_array(prof_lines())
 	L.append("")
 	L.append("Ошибки в текущем журнале:")
 	L.append_array(_log_errors(_current_log(), 15))
@@ -88,6 +101,29 @@ static func build(game) -> String:
 		L.append("Конец прошлого журнала (%s) — если игра вылетела, причина здесь:" % prev.get_file())
 		L.append_array(_tail(prev, 25))
 	return "\n".join(L)
+
+
+## Главный поток по участкам: мс за секунду в среднем и худший одиночный замер.
+## main — весь _process игры (буфер, действия, интерфейс — его части); карта и
+## фишки — отдельно. Остаток кадра — отрисовка движком (на GLES не замерить).
+static func prof_lines() -> Array:
+	var out: Array = []
+	if _prof.is_empty():
+		return out
+	var tot := {}
+	var worst := {}
+	for row in _prof:
+		for k in row[0]:
+			tot[k] = int(tot.get(k, 0)) + int(row[0][k])
+		for k in row[1]:
+			worst[k] = maxi(int(worst.get(k, 0)), int(row[1][k]))
+	var keys: Array = tot.keys()
+	keys.sort_custom(func(a, b): return int(tot[a]) > int(tot[b]))
+	out.append("")
+	out.append("Главный поток, мс за секунду (сред) · худший раз, мс:")
+	for k in keys:
+		out.append("  %s: %.1f · %.1f" % [k, int(tot[k]) / 1000.0 / _prof.size(), int(worst[k]) / 1000.0])
+	return out
 
 
 static func _current_log() -> String:

@@ -524,6 +524,7 @@ func _draw() -> void:
 	for tx in _texts:
 		draw_string(bold, tx[0], tx[1], HORIZONTAL_ALIGNMENT_CENTER, tx[2], tx[3], Color(0.97, 0.95, 0.9))
 	draw_usec = Time.get_ticks_usec() - t0
+	FrameProf.add("фишки", draw_usec)
 	draw_count += 1
 	draw_total_usec += draw_usec
 

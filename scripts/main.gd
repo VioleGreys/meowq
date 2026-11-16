@@ -131,6 +131,10 @@ func _bench_realtime(seconds: float) -> void:
 	_fresh_count = 0
 	_fresh_gap = 0
 	_fresh_last = 0
+	if "--nounits" in OS.get_cmdline_user_args():
+		unit_layer.visible = false
+	if "--nohud" in OS.get_cmdline_user_args():
+		hud.visible = false
 	var start_day := ticks_done
 	var t0 := Time.get_ticks_msec()
 	var frames := 0
@@ -195,6 +199,8 @@ func _bench_realtime(seconds: float) -> void:
 	var names := ["панели дня", "палитра", "список фишек", "верхняя строка"]
 	for i in 4:
 		print("  %s: всего %.0f мс за прогон, худшее %.1f мс" % [names[i], ui_prof_sum[i] / 1000.0, ui_prof_max[i] / 1000.0])
+	for l in Report.prof_lines():
+		print(l)
 	speed = 0
 	_shutdown()
 	get_tree().quit()
@@ -257,34 +263,82 @@ func _auto_screenshot(path: String) -> void:
 ## провинций у центра экрана, дать нарисовать только их область, сохранить буфер
 ## карты (*_part.png); затем перерисовать целиком (*_full.png) — должны совпасть.
 func _part_test(path: String) -> void:
-	for i in 4:
-		await get_tree().process_frame
-	map_view.map_vp.get_texture().get_image().save_png(path.replace(".png", "_before.png"))
+	var shot := func(tag: String) -> void:
+		for i in 12:
+			await get_tree().process_frame
+		map_view.map_vp.get_texture().get_image().save_png(path.replace(".png", "_" + tag + ".png"))
+	var full := func(tag: String) -> void:
+		map_view.redraw()
+		await shot.call(tag)
+	await shot.call("before")
 	var c := map_view.screen_to_world(get_viewport().get_visible_rect().size * 0.5) / MapView.SCALE
 	world_lock()
 	var near: Array = []
 	for p in world.prov_count:
 		if world.p_land[p] == 1 and world.p_center[p].distance_to(c) < 60.0:
 			near.append(p)
-	var to := world.p_controller[near[0]] if near.size() > 0 else 0
-	for p in near:
-		if world.p_controller[p] != world.p_controller[near[near.size() - 1]]:
-			to = world.p_controller[p]
 	for p in near.slice(0, near.size() / 2):
 		world.p_controller[p] = world.p_controller[near[near.size() - 1]]
 		world.p_owner[p] = world.p_owner[near[near.size() - 1]]
 	world.palette_dirty = true
 	map_view.update_palette()
 	world_unlock()
-	print("parttest: провинций ", near.size() / 2, ", частичных перерисовок до: ", map_view.part_redraws)
-	for i in 4:
+	var r0 := map_view.part_redraws
+	await shot.call("part")
+	print("parttest: владельцы — провинций ", near.size() / 2, ", частичных ", map_view.part_redraws - r0)
+	await full.call("full")
+	# выбор провинции (обводка области)
+	r0 = map_view.part_redraws
+	map_view.set_selected(near[0])
+	await shot.call("selpart")
+	map_view.set_selected(near[near.size() - 1])
+	await shot.call("selpart")
+	print("parttest: выбор — частичных ", map_view.part_redraws - r0)
+	await full.call("selfull")
+	# фронт: отметки на части провинций, потом другие
+	r0 = map_view.part_redraws
+	var marks := {}
+	for p in near.slice(0, near.size() / 3):
+		marks[p] = [1, Color(0.9, 0.2, 0.2)]
+	for p in near.slice(near.size() / 3, near.size() / 2):
+		marks[p] = [2, Color(0.2, 0.2, 0.9)]
+	map_view.set_front(marks)
+	await full.call("front0")
+	var marks2 := marks.duplicate()
+	for p in near.slice(near.size() / 2, near.size() * 2 / 3):
+		marks2[p] = [8, Color(0.9, 0.8, 0.2)]
+	marks2.erase(near[0])
+	map_view.set_front(marks2)
+	await shot.call("frontpart")
+	print("parttest: фронт — частичных ", map_view.part_redraws - r0)
+	await full.call("frontfull")
+	# смена сезона полосами под снимком
+	map_view.strips = 4
+	var s0 := map_view.strip_redraws
+	map_view.set_day(world.day + 182)
+	for i in 200:
 		await get_tree().process_frame
-	print("parttest: частичных после: ", map_view.part_redraws)
-	map_view.map_vp.get_texture().get_image().save_png(path.replace(".png", "_part.png"))
-	map_view.redraw()
-	for i in 4:
+		if map_view._season_step == 0:
+			break
+	await shot.call("season")
+	print("parttest: сезон — полос ", map_view.strip_redraws - s0)
+	await full.call("seasonfull")
+	await full.call("full2")
+	# сдвиг с упрощённым кадром, потом скрытые полосы и проявление
+	map_view.motion_lite = true
+	s0 = map_view.strip_redraws
+	for i in 10:
+		map_view.camera.position += Vector2(3, 1)
+		map_view._moving = 0.2
+		map_view._on_view_changed()
 		await get_tree().process_frame
-	map_view.map_vp.get_texture().get_image().save_png(path.replace(".png", "_full.png"))
+	for i in 120:
+		await get_tree().process_frame
+		if map_view._full_alpha >= 1.0 and not map_view.lite_sprite.visible:
+			break
+	await shot.call("moved")
+	print("parttest: после сдвига — полос ", map_view.strip_redraws - s0, ", кадр виден ", map_view._full_alpha)
+	await full.call("movedfull")
 
 
 func _auto_screenshot_locked() -> void:
@@ -861,6 +915,7 @@ func _process(dt: float) -> void:
 			_run_cmds()
 			sim_mutex.unlock()
 		return
+	var tp0 := Time.get_ticks_usec()
 	_note_camera()
 	# заказ дней фоновому потоку по выбранной скорости
 	if speed > 0:
@@ -889,13 +944,19 @@ func _process(dt: float) -> void:
 		_rate_ticks = t
 		_rate_time = 0.0
 	# готовое от симуляции (верхняя строка, список фишек) — каждый кадр, без замка
+	var tp1 := Time.get_ticks_usec()
 	_take_frame()
+	var tp2 := Time.get_ticks_usec()
+	FrameProf.add("буфер", tp2 - tp1)
 	# интерфейс и список отрисовки — только когда мир не занят симуляцией
 	if sim_mutex.try_lock():
 		_ui_waiting = false
 		_run_cmds()
+		var tp3 := Time.get_ticks_usec()
+		FrameProf.add("действия", tp3 - tp2)
 		_ui_update()
 		sim_mutex.unlock()
+		FrameProf.add("интерфейс", Time.get_ticks_usec() - tp3)
 		var now := Time.get_ticks_usec()
 		if _ui_last > 0:
 			_ui_gap_max = maxi(_ui_gap_max, now - _ui_last)
@@ -904,6 +965,7 @@ func _process(dt: float) -> void:
 		_fresh_note()
 	elif Time.get_ticks_usec() - _ui_last > UI_MAX_GAP_USEC or pending_actions() > 0:
 		_ui_waiting = true   # давно не обновлялись или ждут действия — попросить окно у симуляции
+	FrameProf.add("main", Time.get_ticks_usec() - tp0)
 
 
 const PALETTE_MIN_MSEC := 500
@@ -981,7 +1043,11 @@ var ui_prof_sum := PackedInt64Array([0, 0, 0, 0])
 var ui_prof_max := PackedInt32Array([0, 0, 0, 0])
 
 
+const _UI_PROF_KEYS := ["панели дня", "палитра", "список фишек", "верхняя строка"]
+
+
 func _ui_prof_note(i: int, usec: int) -> void:
+	FrameProf.add(_UI_PROF_KEYS[i], usec)
 	_ui_prof_cur[i] = maxi(_ui_prof_cur[i], usec)
 	ui_prof_sum[i] += usec
 	ui_prof_max[i] = maxi(ui_prof_max[i], usec)
