@@ -484,7 +484,7 @@ void fragment() {
 			river = (1.0 - smoothstep(hw - aa, hw + aa, rv_d)) * has;
 			float bw = (0.16 * base / 0.42 + 0.06) * nk + 0.7 * rv_fw * nk;           // берег
 			float bank = (1.0 - smoothstep(hw + bw - aa, hw + bw + aa, rv_d)) * has - river;
-			river_m = river;
+			river_m = river + max(bank, 0.0);   // лента вместе с берегами
 			// вода: темнее у берега, светлее к середине; рябь — нормали волн
 			float mid = clamp(1.0 - rv_d / max(hw, 1e-3), 0.0, 1.0);
 			vec3 rw = mix(vec3(0.20, 0.30, 0.38), vec3(0.42, 0.52, 0.60), mid * mid * nk);
@@ -516,7 +516,7 @@ void fragment() {
 		if (has_band && !terrain_mode) {
 			// кайма: цвет страны гуще у её границы и мягко сходит внутрь (как в жанре)
 			mediump float bd = texture(band_tex, muv).r;
-			col = mix(col, cc.rgb * 0.82, bd * bd * 0.42);
+			col = mix(col, cc.rgb * 0.82, bd * bd * 0.42 * (1.0 - river_m));   // не поверх реки
 		}
 		if (highlight_nation >= 0 && ctrl != highlight_nation) {
 			col = mix(col, vec3(dot(col, vec3(0.33))), 0.55) * 0.8;
@@ -663,14 +663,14 @@ void fragment() {
 		float dp = mix(sdf_px, border_tx(ds, win_bl) * texel_px, near_b);
 		float w = max(lw_min(0.85), min(0.24 * map_px, mix(1.2, win_bl ? 0.35 : 0.75, near_b) * texel_px));
 		float a3 = smoothstep(0.3, 0.9, zoom);
-		col = mix(col, col * 0.4, (1.0 - smoothstep(w - 0.8, w + 0.8, dp)) * a3);
+		col = mix(col, col * 0.4, (1.0 - smoothstep(w - 0.8, w + 0.8, dp)) * a3 * (1.0 - smoothstep(0.15, 0.6, river_m)));
 	}
 	if (land && !wide_land && w_other > 0.0) {
 		float dp = mix(sdf_px, border_tx(d1, win_bl) * texel_px, near_b);
 		float w = max(lw_min(1.1), min(0.45 * map_px, mix(1.6, win_bl ? 0.4 : 1.1, near_b) * texel_px));
-		col = mix(col, vec3(0.07, 0.06, 0.06), (1.0 - smoothstep(w - 0.9, w + 0.9, dp)) * 0.9);
+		col = mix(col, vec3(0.07, 0.06, 0.06), (1.0 - smoothstep(w - 0.9, w + 0.9, dp)) * 0.9 * (1.0 - smoothstep(0.15, 0.6, river_m)));
 		// мягкий тон своей страны вдоль границы — как цветная кайма на картах
-		col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 2.0 + texel_px, dp)) * 0.18);
+		col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 2.0 + texel_px, dp)) * 0.18 * (1.0 - smoothstep(0.15, 0.6, river_m)));
 	}
 
 	if (front_on && land && role_top != 0) {
