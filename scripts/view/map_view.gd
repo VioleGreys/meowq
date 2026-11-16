@@ -162,11 +162,6 @@ func setup(w: World) -> void:
 	mat.set_shader_parameter("state_tex", ImageTexture.create_from_image(st_img))
 	mat.set_shader_parameter("has_states", has_st)
 	mat.set_shader_parameter("height_tex", ImageTexture.create_from_image(world.height_image))
-	if world.terrain_image != null:
-		mat.set_shader_parameter("terrain_tex", ImageTexture.create_from_image(world.terrain_image))
-		mat.set_shader_parameter("has_terrain", true)
-	else:
-		mat.set_shader_parameter("has_terrain", false)
 	# графика карты в полном разрешении (tools/build_map_art.py; импорт Godot со
 	# сжатием в видеопамяти): цвет природных зон и нормали рельефа суши и дна
 	# (вдвое подробнее карты, половинами запад/восток с перекрытием ART_PAD)
@@ -621,16 +616,15 @@ func gpu_ms() -> Vector2:
 
 
 ## Качество карты: 0 — низкое, 1 — среднее, 2 — высокое (см. shaders/map.gdshader).
-## Высоты вдвое подробнее (горы вблизи): ~40 МБ видеопамяти — грузим только при
+## Высоты в 1,45 раза подробнее карты (горы вблизи): ~30 МБ видеопамяти — грузим только при
 ## высоком качестве и только раз (assets/map/elev_*.png, tools/etopo.py).
 func _load_elev() -> void:
 	if _elev_loaded or not _art_ok or quality < 2 or mat == null:
 		return
-	if not (ResourceLoader.exists(ART_DIR + "elev_w.png") and ResourceLoader.exists(ART_DIR + "elev_e.png")):
+	if not ResourceLoader.exists(ART_DIR + "elev.png"):
 		return
 	_elev_loaded = true
-	mat.set_shader_parameter("elev_w", load(ART_DIR + "elev_w.png"))
-	mat.set_shader_parameter("elev_e", load(ART_DIR + "elev_e.png"))
+	mat.set_shader_parameter("elev_tex", load(ART_DIR + "elev.png"))
 	mat.set_shader_parameter("has_elev", true)
 
 

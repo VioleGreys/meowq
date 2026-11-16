@@ -55,8 +55,8 @@ uniform vec2 scr_size = vec2(1280.0, 720.0);
 uniform vec2 world_size = vec2(11264.0, 5250.0);
 const float RELIEF_H = 6.0;   // высота самых высоких гор при наклоне, единиц мира
 uniform float res_k = 1.0;   // пикселей буфера карты на логический пиксель экрана
-uniform sampler2D terrain_tex : filter_linear;  // спутниковая подложка (NASA Blue Marble), только суша
-uniform bool has_terrain = false;
+// спутниковая подложка (NASA Blue Marble) убрана из шейдера (ноябрь 2026): на телефоне
+// не хватало текстурных блоков (21 > лимита — карта не рисовалась), её заменила has_art
 uniform bool terrain_mode = false;              // режим «Местность»: подложка без цветов стран
 // графика карты в полном разрешении (tools/build_map_art.py): цвет природных
 // зон (Natural Earth NE1_HR_LC) и нормали рельефа суши и дна (ETOPO1)
@@ -74,8 +74,9 @@ uniform bool has_art = false;
 uniform sampler2D detail_tex : filter_linear_mipmap, repeat_enable;
 uniform bool has_detail = false;
 // высоты суши вдвое подробнее карты (вид вблизи, только высокое качество): √(h / 6000 м)
-uniform sampler2D elev_w : filter_linear_mipmap;
-uniform sampler2D elev_e : filter_linear_mipmap;
+// одна текстура (не половины): число текстур шейдера на телефоне ограничено —
+// не больше 19 (с 21 карта на телефоне не рисовалась); 8192 по ширине — предел телефонов
+uniform sampler2D elev_tex : filter_linear_mipmap;
 uniform bool has_elev = false;
 uniform float winter = 1.0;   // зима в северном полушарии 0…1 (MapView.set_day)
 const float DETAIL_TILE = 48.0;   // пикселей карты на тайл
@@ -444,7 +445,9 @@ void fragment() {
 		// издали — карта высот 1× и детали из нормалей и фактуры (решение пользователя)
 		float ek = (has_elev && quality == 2) ? smoothstep(0.9, 1.6, zoom) : 0.0;
 		if (ek > 0.0) {
-			float e2 = a_east ? textureGrad(elev_e, auv, agx, agy).r : textureGrad(elev_w, auv, agx, agy).r;
+			vec2 egx = dFdx(muv);
+			vec2 egy = dFdy(muv);
+			float e2 = textureGrad(elev_tex, muv, egx, egy).r;
 			elev_m = mix(elev_m, e2 * e2 * 6000.0, ek);
 		}
 		// крупный рельеф 1× в ±2 пикс.: гребни и долины (высота против средней) и
@@ -463,12 +466,11 @@ void fragment() {
 			rel_m = rel1;
 			if (ek > 0.0) {
 				// то же по подробной карте: ±2 текселя подложки (вдвое ближе)
-				vec2 o = 2.0 / ats;
-				float eb = a_east
-					? textureGrad(elev_e, auv + vec2(o.x, 0.0), agx, agy).r + textureGrad(elev_e, auv - vec2(o.x, 0.0), agx, agy).r
-						+ textureGrad(elev_e, auv + vec2(0.0, o.y), agx, agy).r + textureGrad(elev_e, auv - vec2(0.0, o.y), agx, agy).r
-					: textureGrad(elev_w, auv + vec2(o.x, 0.0), agx, agy).r + textureGrad(elev_w, auv - vec2(o.x, 0.0), agx, agy).r
-						+ textureGrad(elev_w, auv + vec2(0.0, o.y), agx, agy).r + textureGrad(elev_w, auv - vec2(0.0, o.y), agx, agy).r;
+				vec2 o = 2.0 / vec2(textureSize(elev_tex, 0));
+				vec2 egx = dFdx(muv);
+				vec2 egy = dFdy(muv);
+				float eb = textureGrad(elev_tex, muv + vec2(o.x, 0.0), egx, egy).r + textureGrad(elev_tex, muv - vec2(o.x, 0.0), egx, egy).r
+					+ textureGrad(elev_tex, muv + vec2(0.0, o.y), egx, egy).r + textureGrad(elev_tex, muv - vec2(0.0, o.y), egx, egy).r;
 				eb *= 0.25;
 				rel_m = mix(rel1, elev_m - eb * eb * 6000.0, ek);
 			}
@@ -681,19 +683,6 @@ void fragment() {
 					mediump float d = dt.r * w_grass + dt.g * w_rock + dt.b * w_sand + dt.a * w_snow;
 					col *= 1.0 + (d - 0.5) * (0.22 + 0.14 * mnt) * dk;
 				}
-			}
-		} else if (has_terrain) {
-			mediump vec3 terr = texture(terrain_tex, muv).rgb;
-			mediump float tl = dot(terr, vec3(0.299, 0.587, 0.114));
-			if (terrain_mode) {
-				col = terr * (0.85 + 0.35 * light);
-			} else {
-				// цвет страны поверх рельефа: яркость и фактура — от снимка, оттенок — от
-				// страны; вблизи местность проступает сильнее (как на картах жанра)
-				float k = smoothstep(0.6, 2.5, zoom);
-				col = base * (0.55 + 0.85 * tl);
-				col = mix(col, terr * (0.55 + 0.6 * base), 0.18 + 0.27 * k);
-				col *= 0.82 + 0.32 * light;
 			}
 		} else {
 			col = base * (0.70 + 0.48 * light);

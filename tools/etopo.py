@@ -50,7 +50,7 @@ def height_channel(elev: np.ndarray) -> np.ndarray:
 
 def main():
     """Высоты суши вдвое подробнее карты для вида вблизи (снег, скалы, гребни):
-    assets/map/elev_w.png, elev_e.png (L8: √(h / ELEV_MAX), море — 0). Половины — как у карты нормалей (build_map_art).
+    assets/map/elev.png (L8: √(h / ELEV_MAX), море — 0), 8192 по ширине. Половины — как у карты нормалей (build_map_art).
 
       python3 tools/etopo.py --etopo ETOPO1_Ice_g_geotiff.tif
     """
@@ -62,18 +62,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--etopo", required=True)
     args = ap.parse_args()
-    W2, H2 = bm.WIDTH * ba.SCALE, bm.HEIGHT * ba.SCALE
+    # одна текстура шириной 8192 (предел телефонов; половины — лишний текстурный
+    # блок шейдера, а их на телефоне не хватает)
+    W2 = 8192
+    H2 = int(round(bm.HEIGHT * W2 / bm.WIDTH))
     z = tifffile.imread(args.etopo).astype(np.float32)[:-1, :-1]
-    z2 = ba.reproject(z, W2, H2, 1.0 / ba.SCALE)
+    z2 = ba.reproject(z, W2, H2, bm.WIDTH / W2)
     del z
-    z2 = ndimage.gaussian_filter(z2, 1.3)   # как нормали: одна геометрия света и высот
+    z2 = ndimage.gaussian_filter(z2, 1.0)
     e = np.sqrt(np.clip(z2 / ELEV_MAX, 0.0, 1.0))
-    half = W2 // 2
-    for k, a in {"w": e[:, : half + ba.PAD], "e": e[:, half - ba.PAD:]}.items():
-        out = os.path.abspath(os.path.join(ba.OUT_DIR, f"elev_{k}.png"))
-        Image.fromarray((a * 255 + 0.5).astype(np.uint8), "L").save(out, "PNG", optimize=True)
-        print(f"elev_{k} {a.shape[1]}x{a.shape[0]}: {out} ({os.path.getsize(out) // 1024} КБ)")
-
+    out = os.path.abspath(os.path.join(ba.OUT_DIR, "elev.png"))
+    Image.fromarray((e * 255 + 0.5).astype(np.uint8), "L").save(out, "PNG", optimize=True)
+    print(f"elev {W2}x{H2}: {out} ({os.path.getsize(out) // 1024} КБ)")
 
 if __name__ == "__main__":
     main()

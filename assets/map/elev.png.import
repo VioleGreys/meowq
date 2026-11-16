@@ -2,9 +2,9 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dpgxj3r05pk55"
-path.s3tc="res://.godot/imported/elev_w.png-120345f13c4926495535b8ba669ec85b.s3tc.ctex"
-path.etc2="res://.godot/imported/elev_w.png-120345f13c4926495535b8ba669ec85b.etc2.ctex"
+uid="uid://cca7aefwc6a4e"
+path.s3tc="res://.godot/imported/elev.png-adba0c90a7970640edd0da2201fc9705.s3tc.ctex"
+path.etc2="res://.godot/imported/elev.png-adba0c90a7970640edd0da2201fc9705.etc2.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
@@ -12,8 +12,8 @@ metadata={
 
 [deps]
 
-source_file="res://assets/map/elev_w.png"
-dest_files=["res://.godot/imported/elev_w.png-120345f13c4926495535b8ba669ec85b.s3tc.ctex", "res://.godot/imported/elev_w.png-120345f13c4926495535b8ba669ec85b.etc2.ctex"]
+source_file="res://assets/map/elev.png"
+dest_files=["res://.godot/imported/elev.png-adba0c90a7970640edd0da2201fc9705.s3tc.ctex", "res://.godot/imported/elev.png-adba0c90a7970640edd0da2201fc9705.etc2.ctex"]
 
 [params]
 
