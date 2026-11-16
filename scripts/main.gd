@@ -239,6 +239,7 @@ func _auto_screenshot(path: String) -> void:
 		await get_tree().process_frame
 	world_lock()
 	hud.refresh_top()
+	map_view.set_day(world.day)
 	unit_layer.rebuild(selected_fleet, selected_wing)
 	world_unlock()
 	await get_tree().process_frame
@@ -911,6 +912,7 @@ func _ui_update() -> void:
 		_ticks_seen = ticks_done
 		_prune_selection()
 		hud.on_tick()
+		map_view.set_day(world.day)
 	var t1 := Time.get_ticks_usec()
 	# захваты перекрашивают карту не чаще двух раз в секунду: на высоком качестве
 	# полная перерисовка дорогая, а в войну владельцы меняются почти каждый день

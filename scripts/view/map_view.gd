@@ -63,6 +63,9 @@ var _dirty := true
 # MOTION_SETTLE после остановки — в выбранном качестве (Settings.map_motion_lite).
 const MOTION_SETTLE := 0.15
 var quality := 2
+var _art_ok := false
+var _elev_loaded := false
+var _winter := -1.0
 var motion_lite := true
 var _moving := 0.0           # сколько ещё считать карту «в движении», с
 var _lite_drawn := false
@@ -177,6 +180,10 @@ func setup(w: World) -> void:
 		var w2 := float(world.width * 2)
 		mat.set_shader_parameter("art_geom", Vector4(w2, w2 * 0.5 - ART_PAD, float(cw.get_width()), float(cw.get_height())))
 	mat.set_shader_parameter("has_art", art)
+	_art_ok = art
+	_load_elev()
+	_winter = -1.0
+	set_day(world.day)
 	if world.detail_image != null:
 		mat.set_shader_parameter("detail_tex", ImageTexture.create_from_image(world.detail_image))
 		mat.set_shader_parameter("has_detail", true)
@@ -614,8 +621,37 @@ func gpu_ms() -> Vector2:
 
 
 ## Качество карты: 0 — низкое, 1 — среднее, 2 — высокое (см. shaders/map.gdshader).
+## Высоты вдвое подробнее (горы вблизи): ~40 МБ видеопамяти — грузим только при
+## высоком качестве и только раз (assets/map/elev_*.png, tools/etopo.py).
+func _load_elev() -> void:
+	if _elev_loaded or not _art_ok or quality < 2 or mat == null:
+		return
+	if not (ResourceLoader.exists(ART_DIR + "elev_w.png") and ResourceLoader.exists(ART_DIR + "elev_e.png")):
+		return
+	_elev_loaded = true
+	mat.set_shader_parameter("elev_w", load(ART_DIR + "elev_w.png"))
+	mat.set_shader_parameter("elev_e", load(ART_DIR + "elev_e.png"))
+	mat.set_shader_parameter("has_elev", true)
+
+
+## Сезон для снега в горах: зима северного полушария 0…1, пик ~10 февраля (снег
+## копится с запаздыванием), минимум ~10 августа. Перерисовка — при заметной смене.
+func set_day(day: int) -> void:
+	if mat == null:
+		return
+	var doy := fmod(float(day), 365.2425)
+	var raw := 0.5 + 0.5 * cos(TAU * (doy - 41.0) / 365.2425)
+	var w := smoothstep(0.15, 0.85, raw)
+	if absf(w - _winter) < 0.03 and _winter >= 0.0:
+		return
+	_winter = w
+	mat.set_shader_parameter("winter", w)
+	redraw()
+
+
 func set_quality(q: int) -> void:
 	quality = clampi(q, 0, 2)
+	_load_elev()
 	if mat != null:
 		mat.set_shader_parameter("quality", quality)
 		redraw()

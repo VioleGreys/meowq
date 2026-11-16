@@ -46,3 +46,34 @@ def load(path: str, width: int, height: int):
 def height_channel(elev: np.ndarray) -> np.ndarray:
     """Высота суши → значение канала r (0.5…1)."""
     return 0.5 + 0.5 * np.sqrt(np.clip(elev / ELEV_MAX, 0.0, 1.0))
+
+
+def main():
+    """Высоты суши вдвое подробнее карты для вида вблизи (снег, скалы, гребни):
+    assets/map/elev_w.png, elev_e.png (L8: √(h / ELEV_MAX), море — 0). Половины — как у карты нормалей (build_map_art).
+
+      python3 tools/etopo.py --etopo ETOPO1_Ice_g_geotiff.tif
+    """
+    import argparse
+    import tifffile
+    from PIL import Image
+    import build_map as bm
+    import build_map_art as ba
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--etopo", required=True)
+    args = ap.parse_args()
+    W2, H2 = bm.WIDTH * ba.SCALE, bm.HEIGHT * ba.SCALE
+    z = tifffile.imread(args.etopo).astype(np.float32)[:-1, :-1]
+    z2 = ba.reproject(z, W2, H2, 1.0 / ba.SCALE)
+    del z
+    z2 = ndimage.gaussian_filter(z2, 1.3)   # как нормали: одна геометрия света и высот
+    e = np.sqrt(np.clip(z2 / ELEV_MAX, 0.0, 1.0))
+    half = W2 // 2
+    for k, a in {"w": e[:, : half + ba.PAD], "e": e[:, half - ba.PAD:]}.items():
+        out = os.path.abspath(os.path.join(ba.OUT_DIR, f"elev_{k}.png"))
+        Image.fromarray((a * 255 + 0.5).astype(np.uint8), "L").save(out, "PNG", optimize=True)
+        print(f"elev_{k} {a.shape[1]}x{a.shape[0]}: {out} ({os.path.getsize(out) // 1024} КБ)")
+
+
+if __name__ == "__main__":
+    main()

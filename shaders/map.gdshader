@@ -73,6 +73,11 @@ uniform bool has_art = false;
 // r — трава, g — скалы, b — песок, a — снег; среднее 0.5
 uniform sampler2D detail_tex : filter_linear_mipmap, repeat_enable;
 uniform bool has_detail = false;
+// высоты суши вдвое подробнее карты (вид вблизи, только высокое качество): √(h / 6000 м)
+uniform sampler2D elev_w : filter_linear_mipmap;
+uniform sampler2D elev_e : filter_linear_mipmap;
+uniform bool has_elev = false;
+uniform float winter = 1.0;   // зима в северном полушарии 0…1 (MapView.set_day)
 const float DETAIL_TILE = 48.0;   // пикселей карты на тайл
 // проекция Миллера для сетки широт и долгот (как tools/build_map.py)
 uniform float lon_min = -169.0;
@@ -396,6 +401,8 @@ void fragment() {
 	float elev_m = 0.0;          // высота суши, м
 	mediump float mnt = 0.0;     // доля «горы»: скалы
 	mediump float snow = 0.0;    // доля снега
+	float rel_m = 0.0;           // высота против окрестности, м (гребень +, долина −)
+	mediump float rock_v = 0.5;  // разброс цвета скал
 	// половина подложки и производные координат (до ветвлений по пикселю)
 	float ax = muv.x * art_geom.x;
 	bool a_east = ax >= art_geom.x * 0.5;
@@ -418,11 +425,56 @@ void fragment() {
 		// скалы — крутые склоны выше предгорий, снег — выше снеговой линии по широте;
 		// в горах светотень сильнее
 		elev_m = pow(max(h - 0.5, 0.0) * 2.0, 2.0) * 6000.0;
+		// вблизи (высокое качество) — высоты вдвое подробнее (elev_*, tools/etopo.py),
+		// издали — карта высот 1× и детали из нормалей и фактуры (решение пользователя)
+		float ek = (has_elev && quality == 2) ? smoothstep(0.9, 1.6, zoom) : 0.0;
+		if (ek > 0.0) {
+			float e2 = a_east ? textureGrad(elev_e, auv, agx, agy).r : textureGrad(elev_w, auv, agx, agy).r;
+			elev_m = mix(elev_m, e2 * e2 * 6000.0, ek);
+		}
 		mnt = smoothstep(0.10, 0.36, slope) * smoothstep(200.0, 1100.0, elev_m);
+		if (mnt > 0.0 || elev_m > 1500.0) {
+			// гребни и долины: высота против средней в ±2 пикс. (долины темнее, гребни светлее)
+			vec2 t2 = 2.0 / map_size;
+			float hb = 0.25 * (texture(height_tex, muv + vec2(t2.x, 0.0)).r + texture(height_tex, muv - vec2(t2.x, 0.0)).r
+				+ texture(height_tex, muv + vec2(0.0, t2.y)).r + texture(height_tex, muv - vec2(0.0, t2.y)).r);
+			float rel1 = pow(max(h - 0.5, 0.0) * 2.0, 2.0) * 6000.0 - pow(max(hb - 0.5, 0.0) * 2.0, 2.0) * 6000.0;
+			rel_m = rel1;
+			if (ek > 0.0) {
+				// то же по подробной карте: ±2 текселя подложки (вдвое ближе)
+				vec2 o = 2.0 / ats;
+				float eb = a_east
+					? textureGrad(elev_e, auv + vec2(o.x, 0.0), agx, agy).r + textureGrad(elev_e, auv - vec2(o.x, 0.0), agx, agy).r
+						+ textureGrad(elev_e, auv + vec2(0.0, o.y), agx, agy).r + textureGrad(elev_e, auv - vec2(0.0, o.y), agx, agy).r
+					: textureGrad(elev_w, auv + vec2(o.x, 0.0), agx, agy).r + textureGrad(elev_w, auv - vec2(o.x, 0.0), agx, agy).r
+						+ textureGrad(elev_w, auv + vec2(0.0, o.y), agx, agy).r + textureGrad(elev_w, auv - vec2(0.0, o.y), agx, agy).r;
+				eb *= 0.25;
+				rel_m = mix(rel1, elev_m - eb * eb * 6000.0, ek);
+			}
+		}
 		rf = clamp(mix(1.0, dot(nn, ld) / ld.z, mix(0.55, 0.8, near_k) + 0.2 * mnt), 0.36, 1.4);
-		float sline = mix(4300.0, 400.0, smoothstep(10.0, 70.0, abs(lat_at(px))));
-		// граница снега: выше на солнечных и крутых гранях (рисунок по рельефу, не по текселям)
-		snow = smoothstep(sline - 350.0, sline + 250.0, elev_m - (rf - 1.0) * 1100.0 - slope * 400.0);
+		rf *= 1.0 + clamp(rel_m / 1400.0, -0.22, 0.10) * smoothstep(0.0, 0.5, mnt);
+		float lat_d = lat_at(px);
+		// снеговая линия по широте и сезону (решение пользователя: зимой горы в снегу,
+		// летом снег только на высочайших вершинах — проступают скалы и гребни);
+		// в южном полушарии сезоны наоборот
+		float wint = lat_d >= 0.0 ? winter : 1.0 - winter;
+		float sline = mix(4800.0, 800.0, smoothstep(8.0, 72.0, abs(lat_d)))
+			- wint * mix(500.0, 2000.0, smoothstep(20.0, 62.0, abs(lat_d)));
+		// граница снега — по рельефу, не по текселям: выше на солнечных и крутых
+		// гранях, ниже на склонах к полюсу и в цирках; рваный край — по фактуре
+		// (две шкалы), на отвесных стенах снег не держится
+		mediump vec4 dn = has_detail ? texture(detail_tex, px / (DETAIL_TILE * id_k)) : vec4(0.5);
+		mediump vec4 dn2 = has_detail ? texture(detail_tex, px / (DETAIL_TILE * 4.7 * id_k) + vec2(0.37, 0.61)) : vec4(0.5);
+		float pole = lat_d >= 0.0 ? -nxy.y : nxy.y;
+		float e_eff = elev_m + rel_m * 0.7 + pole * 400.0 - (rf - 1.0) * 700.0 - slope * 300.0
+			+ ((dn.a - 0.5) * 450.0 * (1.0 - 0.6 * ek) + (dn2.g - 0.5) * 900.0);
+		snow = smoothstep(sline - 220.0, sline + 160.0, e_eff) * (1.0 - 0.45 * smoothstep(0.85, 1.0, slope));
+		// на ровных высоких плато (Тибет, Альтиплано) вечного снега нет — он на гребнях
+		// и склонах (зимой ложится и на плато); снег — только в горах, не на равнинах
+		snow *= mix(smoothstep(0.05, 0.2, slope + max(rel_m, 0.0) / 1200.0), 1.0, wint * 0.3);
+		snow *= smoothstep(350.0, 900.0, elev_m) * smoothstep(0.0, 0.35, mnt + max(rel_m, 0.0) / 900.0);
+		rock_v = dn.g * 0.6 + dn2.r * 0.4;
 	}
 	mediump vec3 col;   // цвет — в половинной точности (дешевле на мобильных ГП)
 	// мелкие озёра входят в провинции суши, но по высоте ниже уровня моря — вода
@@ -486,7 +538,8 @@ void fragment() {
 			mediump float tl = dot(terr, vec3(0.299, 0.587, 0.114));
 			terr = clamp(vec3(tl) + (terr - vec3(tl)) * 1.35, 0.0, 1.0) * 0.96;
 			// горы: серо-бурые скалы и белый снег поверх природных зон
-			mediump vec3 rock = vec3(0.53, 0.49, 0.44) * (0.85 + 0.3 * tl);
+			// скалы: от тёмно-серых до охристых осыпей, в тени долин темнее
+			mediump vec3 rock = mix(vec3(0.43, 0.41, 0.39), vec3(0.62, 0.55, 0.45), rock_v) * (0.85 + 0.3 * tl);
 			terr = mix(terr, rock, mnt * 0.8);
 			terr = mix(terr, vec3(0.94, 0.95, 0.97), snow);
 			if (terrain_mode) {
