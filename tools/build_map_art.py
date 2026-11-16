@@ -62,18 +62,22 @@ SCALE = 2          # подложка вдвое подробнее карты (
 PAD = 32           # перекрытие половин (бикубическая выборка и mipmap не видят шва)
 
 
-def save_halves(arr: np.ndarray, name: str, ext: str) -> None:
+def split_halves(arr: np.ndarray) -> dict:
     """Половины запад/восток с перекрытием PAD: шире 8192 текстуры есть не на
-    всех телефонах. Шейдер: запад — x < W2/2, восток — со сдвигом W2/2 − PAD."""
-    w2 = arr.shape[1]
-    half = w2 // 2
-    parts = {"w": arr[:, : half + PAD], "e": arr[:, half - PAD:]}
-    for k, a in parts.items():
+    всех телефонах. Игра собирает из них массив текстур из двух слоёв (одна
+    текстура шейдера вместо двух: на Adreno 619 шейдеру карты не хватало
+    текстурных блоков; импорт массивом Godot растягивает слои до 8192²).
+    Шейдер: запад — x < W2/2, восток — со сдвигом W2/2 − PAD."""
+    half = arr.shape[1] // 2
+    return {"w": arr[:, : half + PAD], "e": arr[:, half - PAD:]}
+
+
+def save_halves(arr: np.ndarray, name: str, ext: str) -> None:
+    for k, a in split_halves(arr).items():
         out = os.path.abspath(os.path.join(OUT_DIR, f"{name}_{k}.{ext}"))
-        mode = "RGB"
-        im = Image.fromarray((np.clip(a, 0, 1) * 255 + 0.5).astype(np.uint8), mode)
-        if ext == "jpg":
-            im.save(out, "JPEG", quality=94, optimize=True)
+        im = Image.fromarray((np.clip(a, 0, 1) * 255 + 0.5).astype(np.uint8), "RGB")
+        if ext == "webp":
+            im.save(out, "WEBP", quality=94, method=4)
         else:
             im.save(out, "PNG", optimize=True)
         print(f"{name}_{k} {a.shape[1]}x{a.shape[0]}: {out} ({os.path.getsize(out) // 1024} КБ)")
@@ -137,7 +141,7 @@ def main():
     # под морем — цвет ближайшей суши (берег рисует шейдер)
     _, (iy, ix) = ndimage.distance_transform_edt(~land2, return_indices=True)
     lc = lc[iy, ix]
-    save_halves(lc, "colormap", "jpg")
+    save_halves(lc, "colormap", "webp")   # прозрачный канал — высоты (tools/etopo.py)
     del lc
     # глубина моря (лог. шкала до 5500 м) — в канал r relief.png.bin
     t = np.clip(np.log1p(np.maximum(-zm, 0.0) / 60.0) / math.log1p(5500.0 / 60.0), 0, 1)

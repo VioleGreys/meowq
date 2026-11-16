@@ -2,9 +2,9 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dvwiyv7h8p2wc"
-path.s3tc="res://.godot/imported/colormap_e.jpg-65da757cf8671ba998209fa1b8cd8817.s3tc.ctex"
-path.etc2="res://.godot/imported/colormap_e.jpg-65da757cf8671ba998209fa1b8cd8817.etc2.ctex"
+uid="uid://dpatrjn6opwlk"
+path.s3tc="res://.godot/imported/colormap_w.webp-02d9e031e070c92cd6c5f7e5a7d94347.s3tc.ctex"
+path.etc2="res://.godot/imported/colormap_w.webp-02d9e031e070c92cd6c5f7e5a7d94347.etc2.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
@@ -12,8 +12,8 @@ metadata={
 
 [deps]
 
-source_file="res://assets/map/colormap_e.jpg"
-dest_files=["res://.godot/imported/colormap_e.jpg-65da757cf8671ba998209fa1b8cd8817.s3tc.ctex", "res://.godot/imported/colormap_e.jpg-65da757cf8671ba998209fa1b8cd8817.etc2.ctex"]
+source_file="res://assets/map/colormap_w.webp"
+dest_files=["res://.godot/imported/colormap_w.webp-02d9e031e070c92cd6c5f7e5a7d94347.s3tc.ctex", "res://.godot/imported/colormap_w.webp-02d9e031e070c92cd6c5f7e5a7d94347.etc2.ctex"]
 
 [params]
 

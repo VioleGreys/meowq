@@ -3,18 +3,25 @@ shader_type canvas_item;
 // берётся из палитры (64 x N) — смена владельца = обновление одного пикселя
 // палитры, без перерисовки всей карты.
 
-uniform sampler2D id_tex : filter_nearest;
-uniform sampler2D ctrl_tex : filter_nearest;   // rgb — цвет контролёра/режима, a — (нация+1)/255, 0 = море
-uniform sampler2D owner_tex : filter_nearest;  // rgb — цвет владельца, a — (нация+1)/255
-uniform sampler2D state_tex : filter_nearest;  // r + g·256 — область провинции + 1 (обводка областей)
+// ТЕКСТУР В ШЕЙДЕРЕ — НЕ БОЛЬШЕ 8 (ноябрь 2026): на Adreno 619 (Realme) с 19
+// шейдер не собирался («Sampler location … exceeds max allowed»), карта не
+// рисовалась; часть блоков занимает сам Godot. Половины запад/восток и
+// однотипные карты — массивами текстур (один блок), палитры — одной текстурой.
+// палитры провинций (64 в строке) одной текстурой, по pal_rows строк на раздел:
+// 0 — контролёр/режим (rgb цвет, a — (нация+1)/255, 0 = море), 1 — владелец,
+// 2 — область (r + g·256 = номер + 1), 3 — фронт (rgb цвет армии, a — роль)
+uniform sampler2D pal_tex : filter_nearest;
+uniform int pal_rows = 1;
 uniform bool has_states = false;
-uniform sampler2D height_tex : filter_linear;  // r — высота (0.5 = уровень моря), g — реки
+// слой 0 — рельеф (r — высота, 0.5 = уровень моря; g — сила реки; b — доля суши;
+// a — 1 − сухость), слой 1 — поле рек (tools/build_rivers.py). Рельеф — без
+// mipmap (textureLod 0, как было): с ними берег издали шёл ступеньками
+uniform sampler2DArray base_tex : filter_linear_mipmap;
 uniform vec2 map_size = vec2(800.0, 500.0);   // сетка карты провинций (с ids2 — вдвое подробнее)
 // карта провинций для отрисовки вдвое подробнее (tools/build_ids2x.py), половинами
 // запад/восток: восточная — со сдвигом ids_off; id_k — во сколько раз сетка
 // подробнее пикселя карты (узоры и толщины линий — в пикселях карты)
-uniform sampler2D id_w : filter_nearest;
-uniform sampler2D id_e : filter_nearest;
+uniform sampler2DArray ids_tex : filter_nearest;   // слои 0/1 — запад/восток (без 2× — оба слоя 1×)
 uniform bool has_ids2 = false;
 uniform int ids_half = 5632;
 uniform int ids_off = 5600;
@@ -22,20 +29,19 @@ uniform float id_k = 1.0;
 // поле расстояний до границ провинций (tools/build_sdf.py): L8, сетка 2×,
 // половинами как ids2; 0…1 → 0…2 текселя сетки. Линии стран и провинций —
 // по нему (билинейно — гладкие на любом приближении)
-uniform sampler2D sdf_w : filter_linear_mipmap;
-uniform sampler2D sdf_e : filter_linear_mipmap;
+uniform sampler2DArray sdf_tex : filter_linear_mipmap;   // слои 0/1 — запад/восток
 uniform bool has_sdf = false;
 // кайма границ стран (MapView._update_band): 1 у границы, 0 — внутри (L8, четверть карты)
 uniform sampler2D band_tex : filter_linear;
 uniform bool has_band = false;
 // нормали волн (tools/build_water.py, свои): бесшовный тайл, блики и рябь вблизи
-uniform sampler2D water_tex : filter_linear_mipmap, repeat_enable;
+// плитки: слой 0 — нормали волн (rg), слой 1 — фактура местности (трава, скалы, песок, снег)
+uniform sampler2DArray tile_tex : filter_linear_mipmap, repeat_enable;
 uniform bool has_water = false;
 // поле рек (tools/build_rivers.py): rg — приведённый вектор до ближайшей реки
 // (±RIVER_MAX), b — расстояние со слиянием соседних русел (крупный план), a — до
 // ближайшей; сила реки — в канале g рельефа. Билинейный вектор → точное
 // расстояние и между текселями: река гладкая на любом приближении
-uniform sampler2D river_tex : filter_linear_mipmap;
 uniform bool has_rivers = false;
 const float RIVER_MAX = 4.0;
 const float WATER_TILE = 90.0;   // пикселей карты на тайл
@@ -63,20 +69,16 @@ uniform bool terrain_mode = false;              // режим «Местност
 // вдвое подробнее карты, половинами запад/восток с перекрытием (шире 8192
 // текстуры есть не на всех телефонах); art_geom — ширина подложки, сдвиг
 // восточной половины, ширина половины, высота
-uniform sampler2D color_w : filter_linear_mipmap;
-uniform sampler2D color_e : filter_linear_mipmap;
-uniform sampler2D normal_w : hint_normal, filter_linear_mipmap;
-uniform sampler2D normal_e : hint_normal, filter_linear_mipmap;
+// графика карты, слои 0/1 — запад/восток: цвет природных зон (a — высота суши
+// √(h/6000 м), tools/etopo.py) и нормали рельефа (rg)
+uniform sampler2DArray color_tex : filter_linear_mipmap;
+uniform sampler2DArray normal_tex : filter_linear_mipmap;
 uniform vec4 art_geom = vec4(11264.0, 5600.0, 5664.0, 5250.0);
 uniform bool has_art = false;
 // детальные текстуры местности вблизи (ambientCG, tools/build_detail.py):
 // r — трава, g — скалы, b — песок, a — снег; среднее 0.5
-uniform sampler2D detail_tex : filter_linear_mipmap, repeat_enable;
 uniform bool has_detail = false;
 // высоты суши вдвое подробнее карты (вид вблизи, только высокое качество): √(h / 6000 м)
-// одна текстура (не половины): число текстур шейдера на телефоне ограничено —
-// не больше 19 (с 21 карта на телефоне не рисовалась); 8192 по ширине — предел телефонов
-uniform sampler2D elev_tex : filter_linear_mipmap;
 uniform bool has_elev = false;
 uniform float winter = 1.0;   // зима в северном полушарии 0…1 (MapView.set_day)
 const float DETAIL_TILE = 48.0;   // пикселей карты на тайл
@@ -90,7 +92,6 @@ uniform int quality = 2;
 // фронты армий игрока (MapView.set_front): rgb — цвет армии, a — роль/255:
 // 1 — наш участок фронта, 2 — чужая сторона линии, 4 — выделено кистью (правка
 // участка), 8 — цель атаки (штриховка)
-uniform sampler2D front_tex : filter_nearest;
 uniform bool front_on = false;
 
 const int NS = 8;
@@ -104,10 +105,8 @@ float lw_min(float w) {
 int pid(ivec2 p) {
 	p = clamp(p, ivec2(0), ivec2(map_size) - 1);
 	vec4 c;
-	if (has_ids2) {
-		c = p.x < ids_half ? texelFetch(id_w, p, 0) : texelFetch(id_e, p - ivec2(ids_off, 0), 0);
-	} else {
-		c = texelFetch(id_tex, p, 0);
+	{
+		c = p.x < ids_half ? texelFetch(ids_tex, ivec3(p, 0), 0) : texelFetch(ids_tex, ivec3(p - ivec2(ids_off, 0), 1), 0);
 	}
 	return int(c.r * 255.0 + 0.5) + int(c.g * 255.0 + 0.5) * 256;
 }
@@ -133,8 +132,8 @@ float lat_at(vec2 px) {
 	return degrees(2.5 * atan(exp(0.8 * yy)) - 1.9634954);
 }
 
-vec4 pal(sampler2D t, int id) {
-	return texelFetch(t, ivec2(id % 64, id / 64), 0);
+vec4 pal(int sec, int id) {
+	return texelFetch(pal_tex, ivec2(id % 64, id / 64 + sec * pal_rows), 0);
 }
 
 // Расстояние до границы (тексели сетки провинций) по «запасу» весов окна
@@ -160,7 +159,7 @@ int nation(vec4 c) {
 
 // бикубическая (B-сплайн) выборка 4 билинейными: вблизи — без ромбиков сетки
 // (с явными производными: выборка — в ветвлении по половине подложки)
-vec4 tex_bicubic(sampler2D t, vec2 uv, vec2 ts, vec2 gx, vec2 gy) {
+vec4 tex_bicubic(sampler2DArray t, vec2 uv, float layer, vec2 ts, vec2 gx, vec2 gy) {
 	vec2 st = uv * ts - 0.5;
 	vec2 i = floor(st);
 	vec2 f = st - i;
@@ -174,8 +173,8 @@ vec4 tex_bicubic(sampler2D t, vec2 uv, vec2 ts, vec2 gx, vec2 gy) {
 	vec2 g1 = w2 + w3;
 	vec2 p0 = (i - 0.5 + w1 / g0) / ts;
 	vec2 p1 = (i + 1.5 + w3 / g1) / ts;
-	return g0.y * (g0.x * textureGrad(t, vec2(p0.x, p0.y), gx, gy) + g1.x * textureGrad(t, vec2(p1.x, p0.y), gx, gy))
-		+ g1.y * (g0.x * textureGrad(t, vec2(p0.x, p1.y), gx, gy) + g1.x * textureGrad(t, vec2(p1.x, p1.y), gx, gy));
+	return g0.y * (g0.x * textureGrad(t, vec3(vec2(p0.x, p0.y), layer), gx, gy) + g1.x * textureGrad(t, vec3(vec2(p1.x, p0.y), layer), gx, gy))
+		+ g1.y * (g0.x * textureGrad(t, vec3(vec2(p0.x, p1.y), layer), gx, gy) + g1.x * textureGrad(t, vec3(vec2(p1.x, p1.y), layer), gx, gy));
 }
 
 void fragment() {
@@ -191,7 +190,7 @@ void fragment() {
 	// рельеф при наклоне: луч встречает возвышенность раньше плоскости — сдвиг
 	// выборки навстречу камере на высоту × наклон луча (параллакс, «подъём» гор)
 	if (cam_tilt > 0.001) {
-		float hh = max(texture(height_tex, wp / world_size).r - 0.5, 0.0) * 2.0;
+		float hh = max(textureLod(base_tex, vec3(wp / world_size, 0.0), 0.0).r - 0.5, 0.0) * 2.0;
 		vec2 ray = vec2(sc.x / cam_f, -st + ct * sc.y / cam_f) / max(den, 1e-4);
 		wp -= ray * hh * RELIEF_H;
 	}
@@ -211,10 +210,10 @@ void fragment() {
 	// реки: расстояние до осевой линии (пикселей карты) и его изменение на пиксель
 	// экрана — до ветвлений (fwidth)
 	// сила реки (1 — крупная, 0,67 — средняя, 0,39 — малая) — в канале g рельефа
-	vec2 rv = vec2(0.0, has_rivers ? texture(height_tex, muv).g : 0.0);
+	vec2 rv = vec2(0.0, has_rivers ? textureLod(base_tex, vec3(muv, 0.0), 0.0).g : 0.0);
 	// приведённые расстояния: до ближайшей реки и до реки «с другой стороны»
 	// (второе русло, угол слияния)
-	vec4 rv4 = has_rivers ? texture(river_tex, muv) : vec4(1.0, 1.0, 1.0, 1.0);
+	vec4 rv4 = has_rivers ? texture(base_tex, vec3(muv, 1.0)) : vec4(1.0, 1.0, 1.0, 1.0);
 	// вблизи — расстояние с гладким слиянием соседних русел (готово в данных)
 	float rv_ds = rv4.b * RIVER_MAX;
 	// длина билинейного вектора — точна у одной реки; между двумя реками векторы
@@ -224,12 +223,12 @@ void fragment() {
 	// (допуск 0,1, иначе вдоль средней линии тянется ложный «палец» воды)
 	float rv_slack = 0.75;
 	if (has_rivers) {
-		ivec2 rsz = textureSize(river_tex, 0);
+		ivec2 rsz = textureSize(base_tex, 0).xy;
 		ivec2 rc = ivec2(floor(muv * vec2(rsz) - 0.5));
 		vec2 rn[4];
 		float rl[4];
 		for (int k = 0; k < 4; k++) {
-			vec2 q = texelFetch(river_tex, clamp(rc + ivec2(k & 1, k >> 1), ivec2(0), rsz - 1), 0).rg * 255.0 - 128.0;
+			vec2 q = texelFetch(base_tex, ivec3(clamp(rc + ivec2(k & 1, k >> 1), ivec2(0), rsz - 1), 1), 0).rg * 255.0 - 128.0;
 			rl[k] = length(q) / 127.0 * RIVER_MAX;
 			rn[k] = q / max(length(q), 1e-3);
 		}
@@ -255,7 +254,7 @@ void fragment() {
 		vec2 suv = vec2((s_east ? px.x - float(ids_off) : px.x) / sdf_wd, muv.y);
 		vec2 sgx = vec2(dFdx(px.x) / sdf_wd, dFdx(muv.y));
 		vec2 sgy = vec2(dFdy(px.x) / sdf_wd, dFdy(muv.y));
-		float sd = s_east ? textureGrad(sdf_e, suv, sgx, sgy).r : textureGrad(sdf_w, suv, sgx, sgy).r;
+		float sd = textureGrad(sdf_tex, vec3(suv, s_east ? 1.0 : 0.0), sgx, sgy).r;
 		sdf_tx = sd * 2.0;
 	}
 	// Сглаженные границы: берём 4 ближайших текселя карты и выбираем провинцию с
@@ -345,13 +344,13 @@ void fragment() {
 	// Берег — по доле суши из векторных контуров (канал b рельефа, tools/build_map.py):
 	// уровень 0.5 даёт настоящую плавную линию берега. Если победила провинция не той
 	// стихии — берём лучшего соперника нужной (суша) или рисуем воду.
-	float cov = quality > 0 ? texture(height_tex, muv).b : 0.5;
+	float cov = quality > 0 ? textureLod(base_tex, vec3(muv, 0.0), 0.0).b : 0.5;
 	int nat_c[NS];
 	for (int j = 0; j < NS; j++) {
-		nat_c[j] = uid[j] >= 0 ? nation(pal(ctrl_tex, uid[j])) : -2;
+		nat_c[j] = uid[j] >= 0 ? nation(pal(0, uid[j])) : -2;
 	}
 	bool wide_land = false;   // суша найдена вне окна — границ стран/провинций тут не рисуем
-	bool cov_land = quality > 0 ? cov >= 0.5 : nation(pal(ctrl_tex, uid[top])) >= 0;
+	bool cov_land = quality > 0 ? cov >= 0.5 : nation(pal(0, uid[top])) >= 0;
 	if (cov_land && nat_c[top] < 0) {
 		int bl = -1;
 		for (int j = 0; j < NS; j++) {
@@ -371,7 +370,7 @@ void fragment() {
 				for (int ox = -2; ox <= 2; ox++) {
 					ivec2 cp = ip + ivec2(ox, oy);
 					int cid = pid(cp);
-					if (nation(pal(ctrl_tex, cid)) < 0) {
+					if (nation(pal(0, cid)) < 0) {
 						continue;
 					}
 					vec2 dd = vec2(cp) + 0.5 - px;
@@ -385,18 +384,18 @@ void fragment() {
 			wide_land = bd < 1e8;
 		}
 	}
-	vec4 cc = pal(ctrl_tex, id);
-	vec4 oc = pal(owner_tex, id);
+	vec4 cc = pal(0, id);
+	vec4 oc = pal(1, id);
 	int ctrl = nation(cc);
 	bool land = ctrl >= 0;
 	bool sea_px = !cov_land && land;   // суша по провинции, но по контуру — уже вода
 
 	vec2 t = 1.0 / map_size;
-	float h = texture(height_tex, muv).r;
-	float h_r = texture(height_tex, muv + vec2(t.x, 0.0)).r;
-	float h_l = texture(height_tex, muv - vec2(t.x, 0.0)).r;
-	float h_d = texture(height_tex, muv + vec2(0.0, t.y)).r;
-	float h_u = texture(height_tex, muv - vec2(0.0, t.y)).r;
+	float h = textureLod(base_tex, vec3(muv, 0.0), 0.0).r;
+	float h_r = textureLod(base_tex, vec3(muv + vec2(t.x, 0.0), 0.0), 0.0).r;
+	float h_l = textureLod(base_tex, vec3(muv - vec2(t.x, 0.0), 0.0), 0.0).r;
+	float h_d = textureLod(base_tex, vec3(muv + vec2(0.0, t.y), 0.0), 0.0).r;
+	float h_u = textureLod(base_tex, vec3(muv - vec2(0.0, t.y), 0.0), 0.0).r;
 	if (quality > 0) {
 		// у берега растровая высота резко падает к морю — светотень рисовала бы
 		// ступенчатый силуэт пикселей; берег уже дан векторным контуром
@@ -426,12 +425,13 @@ void fragment() {
 	vec2 agx = vec2(dFdx(muv.x) * art_geom.x / art_geom.z, dFdx(muv.y));
 	vec2 agy = vec2(dFdy(muv.x) * art_geom.x / art_geom.z, dFdy(muv.y));
 	vec2 ats = art_geom.zw;
+	float a_layer = a_east ? 1.0 : 0.0;
 	if (has_art) {
 		vec2 g;
 		if (quality == 2 && zoom > 0.9) {
-			g = a_east ? tex_bicubic(normal_e, auv, ats, agx, agy).rg : tex_bicubic(normal_w, auv, ats, agx, agy).rg;
+			g = tex_bicubic(normal_tex, auv, a_layer, ats, agx, agy).rg;
 		} else {
-			g = a_east ? textureGrad(normal_e, auv, agx, agy).rg : textureGrad(normal_w, auv, agx, agy).rg;
+			g = textureGrad(normal_tex, vec3(auv, a_layer), agx, agy).rg;
 		}
 		vec2 nxy = g * 2.0 - 1.0;
 		slope = length(nxy);
@@ -445,9 +445,7 @@ void fragment() {
 		// издали — карта высот 1× и детали из нормалей и фактуры (решение пользователя)
 		float ek = (has_elev && quality == 2) ? smoothstep(0.9, 1.6, zoom) : 0.0;
 		if (ek > 0.0) {
-			vec2 egx = dFdx(muv);
-			vec2 egy = dFdy(muv);
-			float e2 = textureGrad(elev_tex, muv, egx, egy).r;
+			float e2 = textureGrad(color_tex, vec3(auv, a_layer), agx, agy).a;
 			elev_m = mix(elev_m, e2 * e2 * 6000.0, ek);
 		}
 		// крупный рельеф 1× в ±2 пикс.: гребни и долины (высота против средней) и
@@ -456,21 +454,19 @@ void fragment() {
 		float s_mask = slope;
 		if (elev_m > 300.0) {
 			vec2 t2 = 2.0 / map_size;
-			float q_e = texture(height_tex, muv + vec2(t2.x, 0.0)).r;
-			float q_w = texture(height_tex, muv - vec2(t2.x, 0.0)).r;
-			float q_s = texture(height_tex, muv + vec2(0.0, t2.y)).r;
-			float q_n = texture(height_tex, muv - vec2(0.0, t2.y)).r;
+			float q_e = textureLod(base_tex, vec3(muv + vec2(t2.x, 0.0), 0.0), 0.0).r;
+			float q_w = textureLod(base_tex, vec3(muv - vec2(t2.x, 0.0), 0.0), 0.0).r;
+			float q_s = textureLod(base_tex, vec3(muv + vec2(0.0, t2.y), 0.0), 0.0).r;
+			float q_n = textureLod(base_tex, vec3(muv - vec2(0.0, t2.y), 0.0), 0.0).r;
 			s_mask = max(slope, length(vec2(q_e - q_w, q_s - q_n)) * 10.0);
 			float hb = 0.25 * (q_e + q_w + q_s + q_n);
 			float rel1 = pow(max(h - 0.5, 0.0) * 2.0, 2.0) * 6000.0 - pow(max(hb - 0.5, 0.0) * 2.0, 2.0) * 6000.0;
 			rel_m = rel1;
 			if (ek > 0.0) {
 				// то же по подробной карте: ±2 текселя подложки (вдвое ближе)
-				vec2 o = 2.0 / vec2(textureSize(elev_tex, 0));
-				vec2 egx = dFdx(muv);
-				vec2 egy = dFdy(muv);
-				float eb = textureGrad(elev_tex, muv + vec2(o.x, 0.0), egx, egy).r + textureGrad(elev_tex, muv - vec2(o.x, 0.0), egx, egy).r
-					+ textureGrad(elev_tex, muv + vec2(0.0, o.y), egx, egy).r + textureGrad(elev_tex, muv - vec2(0.0, o.y), egx, egy).r;
+				vec2 o = 2.0 / ats;
+				float eb = textureGrad(color_tex, vec3(auv + vec2(o.x, 0.0), a_layer), agx, agy).a + textureGrad(color_tex, vec3(auv - vec2(o.x, 0.0), a_layer), agx, agy).a
+					+ textureGrad(color_tex, vec3(auv + vec2(0.0, o.y), a_layer), agx, agy).a + textureGrad(color_tex, vec3(auv - vec2(0.0, o.y), a_layer), agx, agy).a;
 				eb *= 0.25;
 				rel_m = mix(rel1, elev_m - eb * eb * 6000.0, ek);
 			}
@@ -488,8 +484,8 @@ void fragment() {
 		// граница снега — по рельефу, не по текселям: выше на солнечных и крутых
 		// гранях, ниже на склонах к полюсу и в цирках; рваный край — по фактуре
 		// (две шкалы), на отвесных стенах снег не держится
-		mediump vec4 dn = has_detail ? texture(detail_tex, px / (DETAIL_TILE * id_k)) : vec4(0.5);
-		mediump vec4 dn2 = has_detail ? texture(detail_tex, px / (DETAIL_TILE * 4.7 * id_k) + vec2(0.37, 0.61)) : vec4(0.5);
+		mediump vec4 dn = has_detail ? texture(tile_tex, vec3(px / (DETAIL_TILE * id_k), 1.0)) : vec4(0.5);
+		mediump vec4 dn2 = has_detail ? texture(tile_tex, vec3(px / (DETAIL_TILE * 4.7 * id_k) + vec2(0.37, 0.61), 1.0)) : vec4(0.5);
 		float pole = lat_d >= 0.0 ? -nxy.y : nxy.y;
 		float e_eff = elev_m + max(rel_m, 0.0) * 0.7 + min(rel_m, 0.0) * mix(0.5, 0.15, wint) + pole * 400.0 - (rf - 1.0) * 700.0 - slope * 300.0
 			+ ((dn.a - 0.5) * 450.0 * (1.0 - ek) + (dn2.g - 0.5) * 900.0);
@@ -510,7 +506,7 @@ void fragment() {
 	mediump vec3 col;   // цвет — в половинной точности (дешевле на мобильных ГП)
 	// мелкие озёра входят в провинции суши, но по высоте ниже уровня моря — вода
 	// (только на низком качестве: на среднем и высоком озёра — в векторном контуре)
-	bool lake = quality == 0 && land && texture(height_tex, (vec2(ip) + 0.5) / map_size).r < 0.49;
+	bool lake = quality == 0 && land && textureLod(base_tex, vec3((vec2(ip) + 0.5) / map_size, 0.0), 0.0).r < 0.49;
 	if (!land || lake || sea_px) {
 		// вода: мелководье у берегов светлее, глубина темнее, лёгкая рябь
 		float depth = clamp((0.5 - h) * 2.4, 0.0, 1.0);
@@ -524,8 +520,8 @@ void fragment() {
 			if (has_water && quality > 0) {
 				// волны (две октавы), свет и блик солнца; издали гаснут (иначе муар)
 				float wk = smoothstep(0.5, 1.8, zoom);
-				vec2 w1 = textureGrad(water_tex, wv_uv, wv_gx, wv_gy).rg * 2.0 - 1.0;
-				vec2 w2 = textureGrad(water_tex, wv_uv * 2.7 + vec2(0.37, 0.61), wv_gx * 2.7, wv_gy * 2.7).rg * 2.0 - 1.0;
+				vec2 w1 = textureGrad(tile_tex, vec3(wv_uv, 0.0), wv_gx, wv_gy).rg * 2.0 - 1.0;
+				vec2 w2 = textureGrad(tile_tex, vec3(wv_uv * 2.7 + vec2(0.37, 0.61), 0.0), wv_gx * 2.7, wv_gy * 2.7).rg * 2.0 - 1.0;
 				vec3 wn = normalize(vec3((w1 + w2 * 0.5) * 0.45, 1.0));
 				vec3 sl = normalize(vec3(-0.55, -0.65, 0.75));
 				float wd = dot(wn, sl) / sl.z;
@@ -565,7 +561,7 @@ void fragment() {
 			// как на картах жанра: издали — «бумажная» политическая карта (цвет
 			// страны, рельеф едва заметен), вблизи — природные зоны (Natural Earth)
 			// сквозь полупрозрачный цвет страны и объёмный свет рельефа (ETOPO1)
-			mediump vec3 terr = a_east ? textureGrad(color_e, auv, agx, agy).rgb : textureGrad(color_w, auv, agx, agy).rgb;
+			mediump vec3 terr = textureGrad(color_tex, vec3(auv, a_layer), agx, agy).rgb;
 			mediump float tl = dot(terr, vec3(0.299, 0.587, 0.114));
 			terr = clamp(vec3(tl) + (terr - vec3(tl)) * 1.35, 0.0, 1.0) * 0.96;
 			// горы: серо-бурые скалы и белый снег поверх природных зон
@@ -574,7 +570,7 @@ void fragment() {
 			// пустыни и степи по климату (relief.a = 1 − сухость: пустыня BW — 1,
 			// степь BS — 0,5; Кёппен — Гейгер 1901–1930, build_map --kg): пески (эрги)
 			// на ровном, каменистая пустыня (хамада) на склонах и плато; степь — выгоревшая
-			float dry = 1.0 - texture(height_tex, muv).a;
+			float dry = 1.0 - textureLod(base_tex, vec3(muv, 0.0), 0.0).a;
 			mediump float des = smoothstep(0.55, 0.9, dry);
 			mediump float stp = smoothstep(0.2, 0.5, dry) * (1.0 - des);
 			// разнообразие (решение пользователя: не один узор на всю пустыню):
@@ -674,7 +670,7 @@ void fragment() {
 				// вблизи — фактура местности: веса по цвету природной зоны и крутизне
 				float dk = smoothstep(1.2, 3.0, zoom);
 				if (dk > 0.0) {
-					mediump vec4 dt = texture(detail_tex, px / (DETAIL_TILE * id_k));
+					mediump vec4 dt = texture(tile_tex, vec3(px / (DETAIL_TILE * id_k), 1.0));
 					mediump float sat = max(terr.r, max(terr.g, terr.b)) - min(terr.r, min(terr.g, terr.b));
 					mediump float w_snow = max(snow, smoothstep(0.80, 0.90, tl) * (1.0 - smoothstep(0.06, 0.14, sat)));
 					mediump float w_rock = max(smoothstep(0.15, 0.45, slope), mnt) * (1.0 - w_snow);
@@ -717,7 +713,7 @@ void fragment() {
 			float mid = clamp(1.0 - rv_d / max(hw, 1e-3), 0.0, 1.0);
 			vec3 rw = mix(vec3(0.20, 0.30, 0.38), vec3(0.42, 0.52, 0.60), mid * mid * nk);
 			if (has_water && nk > 0.0) {
-				vec2 wn = textureGrad(water_tex, wv_uv * 3.0, wv_gx * 3.0, wv_gy * 3.0).rg - 0.5;
+				vec2 wn = textureGrad(tile_tex, vec3(wv_uv * 3.0, 0.0), wv_gx * 3.0, wv_gy * 3.0).rg - 0.5;
 				rw *= 1.0 + (wn.x - wn.y) * 0.35 * nk;
 			}
 			rw = mix(vec3(0.27, 0.43, 0.60), rw, nk);   // вдали — спокойная синяя линия
@@ -725,7 +721,7 @@ void fragment() {
 			col = mix(col, rw, river * smoothstep(0.3, 0.7, zoom));
 			river = 0.0;
 		} else {
-			river = smoothstep(0.25, 0.8, texture(height_tex, muv).g);
+			river = smoothstep(0.25, 0.8, textureLod(base_tex, vec3(muv, 0.0), 0.0).g);
 		}
 		col = mix(col, vec3(0.22, 0.42, 0.58), river * 0.75 * smoothstep(0.35, 0.9, zoom));
 		// лёгкая «бумажная» зернистость
@@ -796,11 +792,11 @@ void fragment() {
 	float w_st_same = 0.0;
 	float w_st_oth = 0.0;
 	if (has_states) {
-		vec4 sc0 = pal(state_tex, uid[top]);
+		vec4 sc0 = pal(2, uid[top]);
 		int st_top = int(sc0.r * 255.0 + 0.5) + int(sc0.g * 255.0 + 0.5) * 256;
 		for (int j = 0; j < NS; j++) {
 			if (uid[j] >= 0 && nat_c[j] == ctrl) {
-				vec4 scj = pal(state_tex, uid[j]);
+				vec4 scj = pal(2, uid[j]);
 				int stj = int(scj.r * 255.0 + 0.5) + int(scj.g * 255.0 + 0.5) * 256;
 				if (stj == st_top) {
 					w_st_same += uw[j];
@@ -820,7 +816,7 @@ void fragment() {
 			if (uid[j] < 0) {
 				continue;
 			}
-			int r = int(pal(front_tex, uid[j]).a * 255.0 + 0.5);
+			int r = int(pal(3, uid[j]).a * 255.0 + 0.5);
 			if ((r & 1) != 0) {
 				w_fo += uw[j];
 				if (fo_j < 0 || uw[j] > uw[fo_j]) {
@@ -831,7 +827,7 @@ void fragment() {
 				w_ft += uw[j];
 			}
 		}
-		role_top = int(pal(front_tex, id).a * 255.0 + 0.5);
+		role_top = int(pal(3, id).a * 255.0 + 0.5);
 	}
 	// Производные (fwidth) — только здесь, вне ветвлений: внутри условий они на
 	// части мобильных ГП (OpenGL ES) не определены и давали ложные штрихи
@@ -860,7 +856,7 @@ void fragment() {
 			if (nid == id) {
 				continue;
 			}
-			int nc = nation(pal(ctrl_tex, nid));
+			int nc = nation(pal(0, nid));
 			if ((nc >= 0) != land) {
 				if (dist[i] < 0.3) col = mix(col, vec3(0.10, 0.13, 0.17), 0.8);
 			} else if (land && nc != ctrl) {
@@ -889,13 +885,13 @@ void fragment() {
 	// область — только выбранной провинции (решение пользователя): контур по
 	// границе весов «область выбранной» против остальной суши в окне
 	if (has_states && selected_id >= 0 && land && !wide_land) {
-		vec4 ss = pal(state_tex, selected_id);
+		vec4 ss = pal(2, selected_id);
 		int sel_st = int(ss.r * 255.0 + 0.5) + int(ss.g * 255.0 + 0.5) * 256;
 		float w_in = 0.0;
 		float w_out = 0.0;
 		for (int j = 0; j < NS; j++) {
 			if (uid[j] >= 0 && nat_c[j] >= 0) {
-				vec4 scj = pal(state_tex, uid[j]);
+				vec4 scj = pal(2, uid[j]);
 				int stj = int(scj.r * 255.0 + 0.5) + int(scj.g * 255.0 + 0.5) * 256;
 				if (stj == sel_st) {
 					w_in += uw[j];
@@ -921,7 +917,7 @@ void fragment() {
 	}
 
 	if (front_on && land && role_top != 0) {
-		mediump vec3 fc = pal(front_tex, id).rgb;
+		mediump vec3 fc = pal(3, id).rgb;
 		if ((role_top & 4) != 0) {
 			// выделено кистью: заливка цветом армии
 			col = mix(col, fc, 0.32);
@@ -934,7 +930,7 @@ void fragment() {
 	}
 	if (front_on && land && w_fo > 0.0 && w_ft > 0.0 && fo_j >= 0) {
 		// линия фронта: тёмная кайма и цвет армии — толще границы стран
-		mediump vec3 fc = pal(front_tex, uid[fo_j]).rgb;
+		mediump vec3 fc = pal(3, uid[fo_j]).rgb;
 		float dp = d3 / max(fw3, 0.5 / texel_px) * 0.5;
 		float w = min(max(lw_min(2.3 * res_k), 0.55 * map_px), 7.0 * res_k);
 		col = mix(col, vec3(0.05, 0.04, 0.03), (1.0 - smoothstep(w + 0.4, w + 1.6, dp)) * 0.85);

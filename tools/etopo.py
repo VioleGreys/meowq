@@ -49,8 +49,11 @@ def height_channel(elev: np.ndarray) -> np.ndarray:
 
 
 def main():
-    """Высоты суши вдвое подробнее карты для вида вблизи (снег, скалы, гребни):
-    assets/map/elev.png (L8: √(h / ELEV_MAX), море — 0), 8192 по ширине. Половины — как у карты нормалей (build_map_art).
+    """Высоты суши для вида вблизи (снег, скалы, гребни) — в прозрачный канал
+    assets/map/colormap_w/e.webp (√(h / ELEV_MAX), море — 0), в разрешении графики
+    карты (вдвое подробнее карты, половины build_map_art.split_halves).
+    Отдельной текстурой нельзя: шейдеру карты на телефоне не хватает текстурных
+    блоков. Запускать после build_map_art.py.
 
       python3 tools/etopo.py --etopo ETOPO1_Ice_g_geotiff.tif
     """
@@ -62,18 +65,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--etopo", required=True)
     args = ap.parse_args()
-    # одна текстура шириной 8192 (предел телефонов; половины — лишний текстурный
-    # блок шейдера, а их на телефоне не хватает)
-    W2 = 8192
-    H2 = int(round(bm.HEIGHT * W2 / bm.WIDTH))
+    W2, H2 = bm.WIDTH * ba.SCALE, bm.HEIGHT * ba.SCALE
     z = tifffile.imread(args.etopo).astype(np.float32)[:-1, :-1]
-    z2 = ba.reproject(z, W2, H2, bm.WIDTH / W2)
+    z2 = ba.reproject(z, W2, H2, 1.0 / ba.SCALE)
     del z
-    z2 = ndimage.gaussian_filter(z2, 1.0)
-    e = np.sqrt(np.clip(z2 / ELEV_MAX, 0.0, 1.0))
-    out = os.path.abspath(os.path.join(ba.OUT_DIR, "elev.png"))
-    Image.fromarray((e * 255 + 0.5).astype(np.uint8), "L").save(out, "PNG", optimize=True)
-    print(f"elev {W2}x{H2}: {out} ({os.path.getsize(out) // 1024} КБ)")
+    z2 = ndimage.gaussian_filter(z2, 1.3)   # как нормали: одна геометрия света и высот
+    halves = ba.split_halves(np.sqrt(np.clip(z2 / ELEV_MAX, 0.0, 1.0)))
+    del z2
+    for k, e in halves.items():
+        out = os.path.abspath(os.path.join(ba.OUT_DIR, f"colormap_{k}.webp"))
+        rgba = Image.open(out).convert("RGB")
+        assert rgba.size == (e.shape[1], e.shape[0]), (rgba.size, e.shape)
+        rgba.putalpha(Image.fromarray((e * 255 + 0.5).astype(np.uint8), "L"))
+        rgba.save(out, "WEBP", quality=94, alpha_quality=100, method=4)
+        print(f"высоты → прозрачный канал {out} ({os.path.getsize(out) // 1024} КБ)")
 
 if __name__ == "__main__":
     main()

@@ -19,19 +19,21 @@ const RES_COLORS := [Color(0.18, 0.15, 0.12), Color(0.36, 0.45, 0.58), Color(0.7
 	Color(0.25, 0.6, 0.3), Color(0.55, 0.35, 0.7), Color(0.85, 0.55, 0.2)]
 
 var world: World
-var id_texture: ImageTexture   # карта провинций 1× (id в RG) — для шейдера
 var quad: ColorRect            # прямоугольник во весь буфер: шейдер сам считает проекцию камеры
 var camera: Camera2D
 var mat: ShaderMaterial
 var ctrl_img: Image
 var owner_img: Image
-var ctrl_tex: ImageTexture
-var owner_tex: ImageTexture
+# палитры провинций — одной текстурой (шейдеру на телефоне не хватает текстурных
+# блоков: не больше 8 текстур, см. shaders/map.gdshader): разделы по _pal_rows строк —
+# 0 контролёр, 1 владелец, 2 область, 3 фронт
+var pal_img: Image
+var pal_tex: ImageTexture
+var _pal_rows := 1
 const ART_DIR := "res://assets/map/"
-const ART_FILES := {"color_w": "colormap_w.jpg", "color_e": "colormap_e.jpg", "normal_w": "normal_w.png", "normal_e": "normal_e.png"}
+const ART_FILES := {"color_w": "colormap_w.webp", "color_e": "colormap_e.webp", "normal_w": "normal_w.png", "normal_e": "normal_e.png"}
 const ART_PAD := 32.0   # перекрытие половин (tools/build_map_art.py PAD)
-var front_img: Image          # фронты армий игрока: rgb — цвет армии, a — роль (шейдер front_tex)
-var front_tex: ImageTexture
+var front_img: Image          # фронты армий игрока: rgb — цвет армии, a — роль (раздел 3 палитры pal_tex)
 var _front_hash := 0
 var paint_mode := false       # кисть участка фронта: один палец рисует, два — двигают карту
 const BRUSH_PX := 16.0        # радиус кисти на экране
@@ -63,8 +65,6 @@ var _dirty := true
 # MOTION_SETTLE после остановки — в выбранном качестве (Settings.map_motion_lite).
 const MOTION_SETTLE := 0.15
 var quality := 2
-var _art_ok := false
-var _elev_loaded := false
 var _winter := -1.0
 var motion_lite := true
 var _moving := 0.0           # сколько ещё считать карту «в движении», с
@@ -90,7 +90,6 @@ func setup(w: World) -> void:
 	_pal_mode = -1
 	for c in get_children():
 		c.queue_free()
-	id_texture = ImageTexture.create_from_image(world.id_image)
 	mat = ShaderMaterial.new()
 	mat.shader = load("res://shaders/map.gdshader")
 	quad = ColorRect.new()
@@ -140,18 +139,12 @@ func setup(w: World) -> void:
 	mat.set_shader_parameter("world_size", Vector2(world.width, world.height) * SCALE)
 
 	var rows := int(ceil(world.prov_count / 64.0))
+	_pal_rows = rows
 	ctrl_img = Image.create(64, rows, false, Image.FORMAT_RGBA8)
 	owner_img = Image.create(64, rows, false, Image.FORMAT_RGBA8)
-	ctrl_tex = ImageTexture.create_from_image(ctrl_img)
-	owner_tex = ImageTexture.create_from_image(owner_img)
 	front_img = Image.create(64, rows, false, Image.FORMAT_RGBA8)
-	front_tex = ImageTexture.create_from_image(front_img)
+	pal_img = Image.create(64, rows * 4, false, Image.FORMAT_RGBA8)
 	_front_hash = 0
-	mat.set_shader_parameter("front_tex", front_tex)
-	mat.set_shader_parameter("front_on", false)
-	mat.set_shader_parameter("id_tex", id_texture)
-	mat.set_shader_parameter("ctrl_tex", ctrl_tex)
-	mat.set_shader_parameter("owner_tex", owner_tex)
 	# области провинций (обводка средней линией): r + g·256 — номер + 1, 0 — нет
 	var st_img := Image.create(64, rows, false, Image.FORMAT_RGBA8)
 	var has_st := world.p_state.size() == world.prov_count
@@ -159,73 +152,98 @@ func setup(w: World) -> void:
 		for p in world.prov_count:
 			var sv := world.p_state[p] + 1
 			st_img.set_pixel(p % 64, p / 64, Color8(sv & 255, (sv >> 8) & 255, 0, 255))
-	mat.set_shader_parameter("state_tex", ImageTexture.create_from_image(st_img))
+	pal_img.blit_rect(st_img, Rect2i(0, 0, 64, rows), Vector2i(0, 2 * rows))
+	pal_tex = ImageTexture.create_from_image(pal_img)
+	mat.set_shader_parameter("pal_tex", pal_tex)
+	mat.set_shader_parameter("pal_rows", rows)
+	mat.set_shader_parameter("front_on", false)
 	mat.set_shader_parameter("has_states", has_st)
-	mat.set_shader_parameter("height_tex", ImageTexture.create_from_image(world.height_image))
 	# графика карты в полном разрешении (tools/build_map_art.py; импорт Godot со
-	# сжатием в видеопамяти): цвет природных зон и нормали рельефа суши и дна
-	# (вдвое подробнее карты, половинами запад/восток с перекрытием ART_PAD)
+	# сжатием в видеопамяти): цвет природных зон (a — высоты, tools/etopo.py) и
+	# нормали рельефа суши и дна (вдвое подробнее карты, половинами запад/восток с
+	# перекрытием ART_PAD) — массивами из двух слоёв, собранными здесь (импорт
+	# массивом растягивает слои до 8192²)
 	var art := world.width == 5632
 	for k in ["color_w", "color_e", "normal_w", "normal_e"]:
 		art = art and ResourceLoader.exists(ART_DIR + ART_FILES[k])
+	var tex_c: Texture2DArray = null
+	var tex_n: Texture2DArray = null
 	if art:
 		var cw: Texture2D = load(ART_DIR + ART_FILES["color_w"])
-		for k in ART_FILES:
-			mat.set_shader_parameter(k, load(ART_DIR + ART_FILES[k]))
 		var w2 := float(world.width * 2)
 		mat.set_shader_parameter("art_geom", Vector4(w2, w2 * 0.5 - ART_PAD, float(cw.get_width()), float(cw.get_height())))
+		tex_c = _layers([cw.get_image(), (load(ART_DIR + ART_FILES["color_e"]) as Texture2D).get_image()])
+		tex_n = _layers([(load(ART_DIR + ART_FILES["normal_w"]) as Texture2D).get_image(),
+			(load(ART_DIR + ART_FILES["normal_e"]) as Texture2D).get_image()])
+		art = tex_c != null and tex_n != null
+	if art:
+		mat.set_shader_parameter("color_tex", tex_c)
+		mat.set_shader_parameter("normal_tex", tex_n)
 	mat.set_shader_parameter("has_art", art)
-	_art_ok = art
-	_load_elev()
+	mat.set_shader_parameter("has_elev", art)
 	_winter = -1.0
 	set_day(world.day)
-	if world.detail_image != null:
-		mat.set_shader_parameter("detail_tex", ImageTexture.create_from_image(world.detail_image))
-		mat.set_shader_parameter("has_detail", true)
-	else:
-		mat.set_shader_parameter("has_detail", false)
 	mat.set_shader_parameter("map_size", Vector2(world.width, world.height))
 	# карта провинций для отрисовки вдвое подробнее (tools/build_ids2x.py):
-	# границы стран, областей и берег — по векторным контурам, а не лесенкой
+	# границы стран, областей и берег — по векторным контурам, а не лесенкой;
+	# без неё — карта 1× в обоих слоях (всё — «запад»)
 	var ids := _ids2() if world.width == 5632 else []
 	mat.set_shader_parameter("has_ids2", not ids.is_empty())
 	mat.set_shader_parameter("id_k", 2.0 if not ids.is_empty() else 1.0)
 	if not ids.is_empty():
-		var tw: ImageTexture = ids[0]
-		mat.set_shader_parameter("id_w", ids[0])
-		mat.set_shader_parameter("id_e", ids[1])
+		var tw: int = (_ids2_imgs[0] as Image).get_width()
+		mat.set_shader_parameter("ids_tex", ids[0])
 		mat.set_shader_parameter("map_size", Vector2(world.width * 2, world.height * 2))
 		mat.set_shader_parameter("ids_half", world.width)
-		mat.set_shader_parameter("ids_off", world.width - (tw.get_width() - world.width))
-	# нормали волн (tools/build_water.py) — рябь и блики на воде вблизи
+		mat.set_shader_parameter("ids_off", world.width - (tw - world.width))
+	else:
+		var id1 := world.id_image.duplicate() as Image
+		id1.convert(Image.FORMAT_RG8)
+		mat.set_shader_parameter("ids_tex", _layers([id1, id1]))
+		mat.set_shader_parameter("ids_half", world.width)
+		mat.set_shader_parameter("ids_off", 0)
+	# плитки: нормали волн (tools/build_water.py) и фактура местности вблизи — массивом
 	var wpath := "res://data/world1936/water.png.bin"
-	var has_w := FileAccess.file_exists(wpath)
-	if has_w:
-		var wimg := Image.new()
-		has_w = wimg.load_png_from_buffer(FileAccess.get_file_as_bytes(wpath)) == OK
-		if has_w:
-			wimg.generate_mipmaps()
-			mat.set_shader_parameter("water_tex", ImageTexture.create_from_image(wimg))
+	var wimg := Image.new()
+	var has_w := FileAccess.file_exists(wpath) and wimg.load_png_from_buffer(FileAccess.get_file_as_bytes(wpath)) == OK
+	var has_d := world.detail_image != null
+	var dimg: Image = (world.detail_image.duplicate() as Image) if has_d else null
+	if not has_w:
+		wimg = Image.create(512, 512, false, Image.FORMAT_RGBA8)
+		wimg.fill(Color(0.5, 0.5, 1.0))
+	if not has_d:
+		dimg = Image.create(512, 512, false, Image.FORMAT_RGBA8)
+		dimg.fill(Color(0.5, 0.5, 0.5, 0.5))
+	for im: Image in [wimg, dimg]:
+		im.convert(Image.FORMAT_RGBA8)
+		if im.get_width() != 512 or im.get_height() != 512:
+			im.resize(512, 512, Image.INTERPOLATE_BILINEAR)
+		im.generate_mipmaps()
+	mat.set_shader_parameter("tile_tex", _layers([wimg, dimg]))
 	mat.set_shader_parameter("has_water", has_w)
-	# поле расстояний до рек (tools/build_rivers.py) — реки гладкие вблизи
+	mat.set_shader_parameter("has_detail", has_d)
+	# рельеф (relief.png.bin) и поле расстояний до рек (tools/build_rivers.py) —
+	# массивом из двух слоёв одного размера; без поля рек — рельеф в обоих
+	var rel := world.height_image.duplicate() as Image
+	rel.convert(Image.FORMAT_RGBA8)
 	var rpath := "res://data/world1936/rivers.png.bin"
-	var has_r := world.width == 5632 and FileAccess.file_exists(rpath)
-	if has_r:
-		var rimg := Image.new()
-		has_r = rimg.load_png_from_buffer(FileAccess.get_file_as_bytes(rpath)) == OK
-		if has_r:
-			rimg.convert(Image.FORMAT_RGBA8)
-			rimg.generate_mipmaps()
-			mat.set_shader_parameter("river_tex", ImageTexture.create_from_image(rimg))
+	var rimg := Image.new()
+	var has_r := world.width == 5632 and FileAccess.file_exists(rpath) \
+		and rimg.load_png_from_buffer(FileAccess.get_file_as_bytes(rpath)) == OK \
+		and rimg.get_width() == rel.get_width() and rimg.get_height() == rel.get_height()
+	if not has_r:
+		rimg = rel.duplicate() as Image
+	rimg.convert(Image.FORMAT_RGBA8)
+	rel.generate_mipmaps()
+	rimg.generate_mipmaps()
+	mat.set_shader_parameter("base_tex", _layers([rel, rimg]))
 	mat.set_shader_parameter("has_rivers", has_r)
 	# поле расстояний до границ провинций (tools/build_sdf.py) — линии границ гладкие
 	var sdf := _sdf2() if not ids.is_empty() else []
 	mat.set_shader_parameter("has_sdf", not sdf.is_empty())
 	if not sdf.is_empty():
-		var sw: ImageTexture = sdf[0]
-		mat.set_shader_parameter("sdf_w", sdf[0])
-		mat.set_shader_parameter("sdf_e", sdf[1])
-		mat.set_shader_parameter("sdf_wd", float(sw.get_width()))
+		mat.set_shader_parameter("sdf_tex", sdf[0])
+		mat.set_shader_parameter("sdf_wd", float(sdf[1]))
 
 	camera = Camera2D.new()
 	add_child(camera)
@@ -351,7 +369,7 @@ static var _ids2_imgs: Array = []   # те же половины как Image (�
 
 
 ## Половины карты провинций 2× (data/world1936/ids2_*.png.bin) как RG8 —
-## грузятся один раз за запуск; пусто — файлов нет.
+## грузятся один раз за запуск; [массив из двух слоёв] или пусто — файлов нет.
 static func _ids2() -> Array:
 	if not _ids2_cache.is_empty():
 		return _ids2_cache
@@ -364,10 +382,13 @@ static func _ids2() -> Array:
 		if img.load_png_from_buffer(FileAccess.get_file_as_bytes(path)) != OK:
 			return []
 		img.convert(Image.FORMAT_RG8)
-		_ids2_imgs.append(img)
-		res.append(ImageTexture.create_from_image(img))
-	_ids2_cache = res
-	return res
+		res.append(img)
+	_ids2_imgs = res
+	var arr := _layers(res)
+	if arr == null:
+		return []
+	_ids2_cache = [arr]
+	return _ids2_cache
 
 
 # --- Кайма границ стран (как на картах жанра) ---------------------------------
@@ -422,11 +443,11 @@ static var _sdf_cache: Array = []
 
 
 ## Половины поля расстояний до границ (data/world1936/sdf_*.png.bin), L8 с
-## mipmap — один раз за запуск; пусто — файлов нет.
+## mipmap — один раз за запуск: [массив из двух слоёв, ширина слоя]; пусто — файлов нет.
 static func _sdf2() -> Array:
 	if not _sdf_cache.is_empty():
 		return _sdf_cache
-	var res: Array = []
+	var imgs: Array = []
 	for k in ["w", "e"]:
 		var path := "res://data/world1936/sdf_%s.png.bin" % k
 		if not FileAccess.file_exists(path):
@@ -436,9 +457,24 @@ static func _sdf2() -> Array:
 			return []
 		img.convert(Image.FORMAT_L8)
 		img.generate_mipmaps()
-		res.append(ImageTexture.create_from_image(img))
-	_sdf_cache = res
-	return res
+		imgs.append(img)
+	var arr := _layers(imgs)
+	if arr == null:
+		return []
+	_sdf_cache = [arr, (imgs[0] as Image).get_width()]
+	return _sdf_cache
+
+
+## Массив текстур из слоёв одного размера и формата (null — не вышло).
+static func _layers(imgs: Array) -> Texture2DArray:
+	var typed: Array[Image] = []
+	for im in imgs:
+		typed.append(im)
+	var arr := Texture2DArray.new()
+	if arr.create_from_images(typed) != OK:
+		push_error("Карта: не собрать массив текстур (%d слоёв)" % typed.size())
+		return null
+	return arr
 
 
 ## Фронты армий игрока на карте: провинция -> [роль, цвет] (роль — биты:
@@ -457,7 +493,7 @@ func set_front(marks: Dictionary) -> void:
 		var c: Color = m[1]
 		c.a = int(m[0]) / 255.0
 		front_img.set_pixel(int(p) % 64, int(p) / 64, c)
-	front_tex.update(front_img)
+	_pal_push(3, front_img)
 	mat.set_shader_parameter("front_on", not marks.is_empty())
 	redraw()
 
@@ -616,18 +652,6 @@ func gpu_ms() -> Vector2:
 
 
 ## Качество карты: 0 — низкое, 1 — среднее, 2 — высокое (см. shaders/map.gdshader).
-## Высоты в 1,45 раза подробнее карты (горы вблизи): ~30 МБ видеопамяти — грузим только при
-## высоком качестве и только раз (assets/map/elev_*.png, tools/etopo.py).
-func _load_elev() -> void:
-	if _elev_loaded or not _art_ok or quality < 2 or mat == null:
-		return
-	if not ResourceLoader.exists(ART_DIR + "elev.png"):
-		return
-	_elev_loaded = true
-	mat.set_shader_parameter("elev_tex", load(ART_DIR + "elev.png"))
-	mat.set_shader_parameter("has_elev", true)
-
-
 ## Сезон для снега в горах: зима северного полушария 0…1, пик ~10 февраля (снег
 ## копится с запаздыванием), минимум ~10 августа. Перерисовка — при заметной смене.
 func set_day(day: int) -> void:
@@ -643,9 +667,14 @@ func set_day(day: int) -> void:
 	redraw()
 
 
+## Раздел палитры в общую текстуру (0 контролёр, 1 владелец, 2 область, 3 фронт).
+func _pal_push(sec: int, img: Image) -> void:
+	pal_img.blit_rect(img, Rect2i(0, 0, 64, _pal_rows), Vector2i(0, sec * _pal_rows))
+	pal_tex.update(pal_img)
+
+
 func set_quality(q: int) -> void:
 	quality = clampi(q, 0, 2)
-	_load_elev()
 	if mat != null:
 		mat.set_shader_parameter("quality", quality)
 		redraw()
@@ -752,9 +781,9 @@ func update_palette() -> void:
 	world.palette_dirty = false
 	if changed == 0:
 		return   # владельцы не менялись — ни текстуры, ни перерисовки
-	ctrl_tex.update(ctrl_img)
+	pal_img.blit_rect(ctrl_img, Rect2i(0, 0, 64, _pal_rows), Vector2i(0, 0))
+	_pal_push(1, owner_img)
 	_update_band()
-	owner_tex.update(owner_img)
 	palette_version += 1
 	redraw()
 
