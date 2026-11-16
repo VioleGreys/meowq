@@ -314,6 +314,8 @@ func _auto_screenshot_locked() -> void:
 		hud.on_tick()
 		if "--notilt" in OS.get_cmdline_user_args():
 			map_view.set_tilt_enabled(false)
+		if "--provsel" in OS.get_cmdline_user_args():   # выбрать провинцию столицы (обводка области)
+			map_view.set_selected(world.nations[me].capital)
 		if _arg("zoom") != "":
 			map_view.camera.zoom = Vector2.ONE * float(_arg("zoom"))
 			map_view.center_on(world.nations[me].capital)

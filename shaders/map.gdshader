@@ -501,7 +501,7 @@ void fragment() {
 				vec2 wn = textureGrad(water_tex, wv_uv * 3.0, wv_gx * 3.0, wv_gy * 3.0).rg - 0.5;
 				rw *= 1.0 + (wn.x - wn.y) * 0.35 * nk;
 			}
-			rw = mix(vec3(0.22, 0.42, 0.58), rw, nk);
+			rw = mix(vec3(0.50, 0.58, 0.64), rw, nk);   // вдали — бледная серо-голубая линия, как в жанре
 			col = mix(col, vec3(0.56, 0.49, 0.36) * (0.85 + 0.25 * light), bank * 0.5 * nk);
 			col = mix(col, rw, river * mix(0.75, 1.0, nk) * smoothstep(0.35, 0.9, zoom));
 			river = 0.0;
@@ -525,7 +525,7 @@ void fragment() {
 		if (has_band && !terrain_mode) {
 			// кайма: цвет страны гуще у её границы и мягко сходит внутрь (как в жанре)
 			mediump float bd = texture(band_tex, muv).r;
-			col = mix(col, cc.rgb * 0.82, bd * bd * 0.42 * (1.0 - river_m));   // не поверх реки
+			col = mix(col, cc.rgb * 0.5, bd * bd * 0.62 * (1.0 - river_m));   // не поверх реки
 		}
 		if (highlight_nation >= 0 && ctrl != highlight_nation) {
 			col = mix(col, vec3(dot(col, vec3(0.33))), 0.55) * 0.8;
@@ -667,37 +667,38 @@ void fragment() {
 		float a2 = smoothstep(0.45, 1.3, zoom) * (1.0 - smoothstep(0.15, 0.6, river_m));
 		col = mix(col, col * 0.6, (1.0 - smoothstep(w - 0.7, w + 0.7, dp)) * a2);
 	}
-	if (land && !wide_land && w_st_oth > 0.0) {
-		float ds = (w_st_same - w_st_oth) / (w_st_same + w_st_oth);
-		float dp = mix(sdf_px, border_tx(ds, win_bl) * texel_px, near_b);
-		float w = max(lw_min(0.85), min(0.24 * map_px, mix(1.2, win_bl ? 0.35 : 0.75, near_b) * texel_px));
-		float a3 = smoothstep(0.3, 0.9, zoom);
-		col = mix(col, mix(col, cc.rgb, 0.35) * 0.45, (1.0 - smoothstep(w - 0.8, w + 0.8, dp)) * a3 * 0.75 * (1.0 - smoothstep(0.15, 0.6, river_m)));
+	// область — только выбранной провинции (решение пользователя): контур по
+	// границе весов «область выбранной» против остальной суши в окне
+	if (has_states && selected_id >= 0 && land && !wide_land) {
+		vec4 ss = pal(state_tex, selected_id);
+		int sel_st = int(ss.r * 255.0 + 0.5) + int(ss.g * 255.0 + 0.5) * 256;
+		float w_in = 0.0;
+		float w_out = 0.0;
+		for (int j = 0; j < NS; j++) {
+			if (uid[j] >= 0 && nat_c[j] >= 0) {
+				vec4 scj = pal(state_tex, uid[j]);
+				int stj = int(scj.r * 255.0 + 0.5) + int(scj.g * 255.0 + 0.5) * 256;
+				if (stj == sel_st) {
+					w_in += uw[j];
+				} else {
+					w_out += uw[j];
+				}
+			}
+		}
+		if (w_in > 0.0 && w_out > 0.0) {
+			float ds = abs(w_in - w_out) / (w_in + w_out);
+			float dp = border_tx(ds, win_bl) * texel_px;
+			float w = max(lw_min(1.0), min(0.22 * map_px, 0.9 * texel_px));
+			col = mix(col, vec3(0.96, 0.92, 0.78), (1.0 - smoothstep(w - 0.8, w + 0.8, dp)) * 0.85);
+		}
 	}
+	// граница стран (как в жанре): мягкая тёмная полоса своего цвета изнутри
+	// (кайма band_tex, выше) и тонкая полупрозрачная линия по самой границе;
+	// вблизи под лентой реки линии нет — полоса доходит до берега
 	if (land && !wide_land && w_other > 0.0) {
 		float dp = mix(sdf_px, border_tx(d1, win_bl) * texel_px, near_b);
-		float w = max(lw_min(1.1), min(0.45 * map_px, mix(1.6, win_bl ? 0.4 : 1.1, near_b) * texel_px));
-		col = mix(col, cc.rgb * 0.28, (1.0 - smoothstep(w - 0.9, w + 0.9, dp)) * 0.72 * (1.0 - smoothstep(0.15, 0.6, river_m) * river_nk));
-		// мягкий тон своей страны вдоль границы — как цветная кайма на картах
-		col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 2.0 + texel_px, dp)) * 0.18 * (1.0 - smoothstep(0.15, 0.6, river_m) * river_nk));
-	}
-	// граница стран по реке (вблизи) — вдоль внешнего края берега, со своей
-	// стороны: на том берегу (по вектору до осевой линии) другая страна
-	if (land && river_out > 0.0 && rv_d < river_out + 2.5) {
-		vec2 vn = rv_v / max(rv_d, 1e-3);
-		vec2 opp = px + (rv_v + vn * (river_out + 0.6)) * id_k;
-		int on = nation(pal(ctrl_tex, pid(ivec2(floor(opp)))));
-		// свой берег — своя страна, и граница стран рядом (кайма): у концов и
-		// развилок рек направление на «тот берег» ненадёжно — без крапин
-		vec2 own_p = px + (rv_v - vn * (river_out + 0.6)) * id_k;
-		int own_n = nation(pal(ctrl_tex, pid(ivec2(floor(own_p)))));
-		float bd_near = has_band ? texture(band_tex, muv).r : 1.0;
-		if (on >= 0 && on != ctrl && own_n == ctrl && bd_near > 0.55) {
-			float w = max(lw_min(1.1), min(0.45 * map_px, 1.1 * texel_px));
-			float dpb = (rv_d - river_out) * map_px;   // от края берега наружу, пикс. экрана
-			float a = smoothstep(-0.6, 0.3, dpb) * (1.0 - smoothstep(2.0 * w - 0.9, 2.0 * w + 0.9, dpb));
-			col = mix(col, cc.rgb * 0.28, a * 0.72 * river_nk);
-		}
+		float w = max(lw_min(1.0), min(0.18 * map_px, mix(1.2, win_bl ? 0.4 : 0.9, near_b) * texel_px));
+		col = mix(col, cc.rgb * 0.28, (1.0 - smoothstep(w - 0.8, w + 0.8, dp)) * 0.78 * (1.0 - smoothstep(0.15, 0.6, river_m) * river_nk));
 	}
 
 	if (front_on && land && role_top != 0) {
