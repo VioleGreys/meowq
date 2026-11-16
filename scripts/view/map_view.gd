@@ -149,6 +149,15 @@ func setup(w: World) -> void:
 	mat.set_shader_parameter("id_tex", id_texture)
 	mat.set_shader_parameter("ctrl_tex", ctrl_tex)
 	mat.set_shader_parameter("owner_tex", owner_tex)
+	# области провинций (обводка средней линией): r + g·256 — номер + 1, 0 — нет
+	var st_img := Image.create(64, rows, false, Image.FORMAT_RGBA8)
+	var has_st := world.p_state.size() == world.prov_count
+	if has_st:
+		for p in world.prov_count:
+			var sv := world.p_state[p] + 1
+			st_img.set_pixel(p % 64, p / 64, Color8(sv & 255, (sv >> 8) & 255, 0, 255))
+	mat.set_shader_parameter("state_tex", ImageTexture.create_from_image(st_img))
+	mat.set_shader_parameter("has_states", has_st)
 	mat.set_shader_parameter("height_tex", ImageTexture.create_from_image(world.height_image))
 	if world.terrain_image != null:
 		mat.set_shader_parameter("terrain_tex", ImageTexture.create_from_image(world.terrain_image))

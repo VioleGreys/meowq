@@ -6,6 +6,8 @@ shader_type canvas_item;
 uniform sampler2D id_tex : filter_nearest;
 uniform sampler2D ctrl_tex : filter_nearest;   // rgb — цвет контролёра/режима, a — (нация+1)/255, 0 = море
 uniform sampler2D owner_tex : filter_nearest;  // rgb — цвет владельца, a — (нация+1)/255
+uniform sampler2D state_tex : filter_nearest;  // r + g·256 — область провинции + 1 (обводка областей)
+uniform bool has_states = false;
 uniform sampler2D height_tex : filter_linear;  // r — высота (0.5 = уровень моря), g — реки
 uniform vec2 map_size = vec2(800.0, 500.0);   // сетка карты провинций (с ids2 — вдвое подробнее)
 // карта провинций для отрисовки вдвое подробнее (tools/build_ids2x.py), половинами
@@ -562,6 +564,24 @@ void fragment() {
 			w_other = max(w_other, s2);
 		}
 	}
+	// области: веса своей области победителя и других областей той же страны
+	float w_st_same = 0.0;
+	float w_st_oth = 0.0;
+	if (has_states) {
+		vec4 sc0 = pal(state_tex, uid[top]);
+		int st_top = int(sc0.r * 255.0 + 0.5) + int(sc0.g * 255.0 + 0.5) * 256;
+		for (int j = 0; j < NS; j++) {
+			if (uid[j] >= 0 && nat_c[j] == ctrl) {
+				vec4 scj = pal(state_tex, uid[j]);
+				int stj = int(scj.r * 255.0 + 0.5) + int(scj.g * 255.0 + 0.5) * 256;
+				if (stj == st_top) {
+					w_st_same += uw[j];
+				} else {
+					w_st_oth += uw[j];
+				}
+			}
+		}
+	}
 	// фронт: наш участок против целей — линия по границе между ними (как в жанре)
 	float w_fo = 0.0;
 	float w_ft = 0.0;
@@ -628,26 +648,29 @@ void fragment() {
 		col = mix(col, vec3(0.10, 0.13, 0.17), (1.0 - smoothstep(w - 0.8, w + 0.8, dp)) * 0.8);
 	}
 	land = land && !sea_px;
+	// Три уровня обводки (как в жанре): провинции — тонкая, области — средняя,
+	// страны — толстая чёрная поверх. Вблизи каждая — по расстоянию до СВОЕЙ
+	// границы (border_tx по своей группировке весов), вдали — поле расстояний
+	float near_b = has_sdf ? smoothstep(1.3, 2.2, texel_px) : 1.0;
+	if (land && !wide_land && w_prov2 > 0.0) {
+		float dp = mix(sdf_px, border_tx(d2, win_bl) * texel_px, near_b);
+		float w = max(lw_min(0.6), 0.14 * map_px);
+		float a2 = smoothstep(0.45, 1.3, zoom) * (1.0 - smoothstep(0.15, 0.6, river_m));
+		col = mix(col, col * 0.6, (1.0 - smoothstep(w - 0.7, w + 0.7, dp)) * a2);
+	}
+	if (land && !wide_land && w_st_oth > 0.0) {
+		float ds = (w_st_same - w_st_oth) / (w_st_same + w_st_oth);
+		float dp = mix(sdf_px, border_tx(ds, win_bl) * texel_px, near_b);
+		float w = max(lw_min(0.85), min(0.24 * map_px, mix(1.2, win_bl ? 0.35 : 0.75, near_b) * texel_px));
+		float a3 = smoothstep(0.3, 0.9, zoom);
+		col = mix(col, col * 0.4, (1.0 - smoothstep(w - 0.8, w + 0.8, dp)) * a3);
+	}
 	if (land && !wide_land && w_other > 0.0) {
-		// расстояние именно до границы стран (border_tx), не до ближайшей любой
-		// вдали (тексель меньше пикселя) — поле расстояний (вихляние там меньше
-		// пикселя, а толщина линии — не меньше пикселя), вблизи — border_tx
-		float near_b = has_sdf ? smoothstep(1.3, 2.2, texel_px) : 1.0;
 		float dp = mix(sdf_px, border_tx(d1, win_bl) * texel_px, near_b);
 		float w = max(lw_min(1.1), min(0.45 * map_px, mix(1.6, win_bl ? 0.4 : 1.1, near_b) * texel_px));
 		col = mix(col, vec3(0.07, 0.06, 0.06), (1.0 - smoothstep(w - 0.9, w + 0.9, dp)) * 0.9);
 		// мягкий тон своей страны вдоль границы — как цветная кайма на картах
 		col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 2.0 + texel_px, dp)) * 0.18);
-	}
-	if (land && !wide_land && w_prov2 > 0.0) {
-		// поле расстояний между центрами текселей до нуля не доходит (билинейно —
-		// минимум ~полтекселя): вблизи тонкая линия провинций пропадала. У самой
-		// границы точнее оценка по весам окна (ноль ровно на границе заливки)
-		float near_p = has_sdf ? smoothstep(1.3, 2.2, texel_px) : 1.0;
-		float dp = mix(sdf_px, border_tx(d2, win_bl) * texel_px, near_p);
-		float w = max(lw_min(0.6), 0.14 * map_px);
-		float a2 = smoothstep(0.45, 1.3, zoom) * (1.0 - smoothstep(0.15, 0.6, river_m));
-		col = mix(col, col * 0.6, (1.0 - smoothstep(w - 0.7, w + 0.7, dp)) * a2);
 	}
 
 	if (front_on && land && role_top != 0) {

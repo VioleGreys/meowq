@@ -71,6 +71,9 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	world.p_adj.resize(n)
 	world.p_adj_river = []
 	world.p_adj_river.resize(n)
+	world.p_state = PackedInt32Array()
+	world.p_state.resize(n)
+	var state_ids := {}
 
 	var tag_index := {}
 	var nations_meta: Array = meta["nations"]
@@ -149,6 +152,14 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		world.p_name[i] = p["name"]
 		world.p_vp[i] = int(p["vp"])
 		world.p_adj[i] = PackedInt32Array(p["adj"])
+		# область (как в жанре; tools/provinces8k.py) — пока только для обводки на карте
+		if land:
+			var sn: String = p.get("region", "")
+			if not state_ids.has(sn):
+				state_ids[sn] = state_ids.size()
+			world.p_state[i] = state_ids[sn]
+		else:
+			world.p_state[i] = -1
 		# река на границе с соседом (tools/build_map.py): 0 — нет, 1 — малая, 2 — крупная
 		var ar: Array = p.get("adj_river", [])
 		var rv := PackedByteArray()

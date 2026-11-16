@@ -539,6 +539,7 @@ var nation_count := 0
 var war := PackedByteArray()          # nation_count^2, 1 = война
 var adj_start := PackedInt32Array()   # CSR-соседство: adj_list[adj_start[p] .. adj_start[p+1])
 var adj_list := PackedInt32Array()
+var p_state := PackedInt32Array()        # область провинции (обводка на карте; −1 — море)
 var p_adj_river: Array = []             # Array[PackedByteArray], как p_adj: река на границе (0/1 малая/2 крупная)
 var adj_river := PackedByteArray()      # то же по CSR (рядом с adj_list)
 var p_move_mult := PackedFloat32Array()  # копии констант местности по провинциям:
