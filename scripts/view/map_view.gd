@@ -193,6 +193,16 @@ func setup(w: World) -> void:
 		mat.set_shader_parameter("map_size", Vector2(world.width * 2, world.height * 2))
 		mat.set_shader_parameter("ids_half", world.width)
 		mat.set_shader_parameter("ids_off", world.width - (tw.get_width() - world.width))
+	# нормали волн (tools/build_water.py) — рябь и блики на воде вблизи
+	var wpath := "res://data/world1936/water.png.bin"
+	var has_w := FileAccess.file_exists(wpath)
+	if has_w:
+		var wimg := Image.new()
+		has_w = wimg.load_png_from_buffer(FileAccess.get_file_as_bytes(wpath)) == OK
+		if has_w:
+			wimg.generate_mipmaps()
+			mat.set_shader_parameter("water_tex", ImageTexture.create_from_image(wimg))
+	mat.set_shader_parameter("has_water", has_w)
 	# поле расстояний до границ провинций (tools/build_sdf.py) — линии границ гладкие
 	var sdf := _sdf2() if not ids.is_empty() else []
 	mat.set_shader_parameter("has_sdf", not sdf.is_empty())
@@ -264,6 +274,36 @@ static func _ids2() -> Array:
 		res.append(ImageTexture.create_from_image(img))
 	_ids2_cache = res
 	return res
+
+
+# --- Кайма границ стран (как на картах жанра) ---------------------------------
+# Расстояние до границы двух стран на сетке в четверть карты (C++,
+# MeowqCore.border_band, миллисекунды) — при смене владельцев; шейдер
+# подмешивает цвет страны у её границы, мягко уходя внутрь.
+const BAND_STEP := 4      # пикселей карты на клетку сетки каймы
+const BAND_PX := 5        # ширина каймы, клеток сетки (~5·4 пикселя карты)
+var band_tex: ImageTexture
+static var _id_bytes := PackedByteArray()
+
+
+func _update_band() -> void:
+	if Native.core == null or not Native.core.has_method("border_band") or world.id_image == null:
+		mat.set_shader_parameter("has_band", false)
+		return
+	if _id_bytes.size() != world.width * world.height * 3:
+		var img := world.id_image.duplicate() as Image
+		img.convert(Image.FORMAT_RGB8)
+		_id_bytes = img.get_data()
+	var bw := world.width / BAND_STEP
+	var bh := world.height / BAND_STEP
+	var band: PackedByteArray = Native.core.border_band(_id_bytes, world.width, world.height, BAND_STEP, world.p_controller, BAND_PX)
+	var bimg := Image.create_from_data(bw, bh, false, Image.FORMAT_L8, band)
+	if band_tex == null or band_tex.get_width() != bw:
+		band_tex = ImageTexture.create_from_image(bimg)
+		mat.set_shader_parameter("band_tex", band_tex)
+	else:
+		band_tex.update(bimg)
+	mat.set_shader_parameter("has_band", true)
 
 
 static var _sdf_cache: Array = []
@@ -563,6 +603,7 @@ func update_palette() -> void:
 	if changed == 0:
 		return   # владельцы не менялись — ни текстуры, ни перерисовки
 	ctrl_tex.update(ctrl_img)
+	_update_band()
 	owner_tex.update(owner_img)
 	palette_version += 1
 	redraw()

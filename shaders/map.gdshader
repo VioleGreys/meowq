@@ -23,6 +23,13 @@ uniform float id_k = 1.0;
 uniform sampler2D sdf_w : filter_linear_mipmap;
 uniform sampler2D sdf_e : filter_linear_mipmap;
 uniform bool has_sdf = false;
+// кайма границ стран (MapView._update_band): 1 у границы, 0 — внутри (L8, четверть карты)
+uniform sampler2D band_tex : filter_linear;
+uniform bool has_band = false;
+// нормали волн (tools/build_water.py, свои): бесшовный тайл, блики и рябь вблизи
+uniform sampler2D water_tex : filter_linear_mipmap, repeat_enable;
+uniform bool has_water = false;
+const float WATER_TILE = 90.0;   // пикселей карты на тайл
 uniform float sdf_wd = 5664.0;   // ширина половины
 uniform int selected_id = -1;
 uniform int highlight_nation = -1;
@@ -111,6 +118,10 @@ vec4 tex_bicubic(sampler2D t, vec2 uv, vec2 ts, vec2 gx, vec2 gy) {
 void fragment() {
 	vec2 px = UV * map_size;
 	ivec2 ip = ivec2(floor(px));
+	// координаты волн и их производные (до ветвлений по пикселю)
+	vec2 wv_uv = px / (WATER_TILE * id_k);
+	vec2 wv_gx = dFdx(wv_uv);
+	vec2 wv_gy = dFdy(wv_uv);
 	// поле расстояний до границ провинций (текселей сетки; без поля — далеко)
 	float sdf_tx = 1e4;
 	if (has_sdf) {
@@ -307,6 +318,20 @@ void fragment() {
 			col = mix(vec3(0.26, 0.46, 0.52), vec3(0.10, 0.25, 0.36), smoothstep(0.0, 0.5, depth));
 			col = mix(col, vec3(0.035, 0.09, 0.17), smoothstep(0.45, 1.0, depth));
 			col *= mix(1.0, rf, 0.55);
+			if (has_water && quality > 0) {
+				// волны (две октавы), свет и блик солнца; издали гаснут (иначе муар)
+				float wk = smoothstep(0.5, 1.8, zoom);
+				vec2 w1 = textureGrad(water_tex, wv_uv, wv_gx, wv_gy).rg * 2.0 - 1.0;
+				vec2 w2 = textureGrad(water_tex, wv_uv * 2.7 + vec2(0.37, 0.61), wv_gx * 2.7, wv_gy * 2.7).rg * 2.0 - 1.0;
+				vec3 wn = normalize(vec3((w1 + w2 * 0.5) * 0.45, 1.0));
+				vec3 sl = normalize(vec3(-0.55, -0.65, 0.75));
+				float wd = dot(wn, sl) / sl.z;
+				float spec = pow(max(dot(wn, normalize(sl + vec3(0.0, 0.0, 1.0))), 0.0), 70.0);
+				col *= mix(1.0, wd, 0.22 * wk);
+				col += vec3(0.85, 0.92, 1.0) * spec * 0.22 * wk * (0.4 + 0.6 * depth);
+				// прибой: светлая полоса вдоль берега (по доле суши)
+				col = mix(col, vec3(0.62, 0.76, 0.78), smoothstep(0.04, 0.45, cov) * 0.3 * smoothstep(0.8, 2.0, zoom));
+			}
 		} else {
 			if (quality > 0) {
 				// глубина по растру не доходит до нуля у самого берега (иначе светлая
@@ -393,6 +418,11 @@ void fragment() {
 			float n01 = fract(sin(dot(g + vec2(0.0, 1.0), vec2(12.9898, 78.233))) * 43758.5453);
 			float n11 = fract(sin(dot(g + vec2(1.0, 1.0), vec2(12.9898, 78.233))) * 43758.5453);
 			col *= 0.97 + 0.03 * mix(mix(n00, n10, f.x), mix(n01, n11, f.x), f.y);
+		}
+		if (has_band && !terrain_mode) {
+			// кайма: цвет страны гуще у её границы и мягко сходит внутрь (как в жанре)
+			mediump float bd = texture(band_tex, UV).r;
+			col = mix(col, cc.rgb * 0.82, bd * bd * 0.42);
 		}
 		if (highlight_nation >= 0 && ctrl != highlight_nation) {
 			col = mix(col, vec3(dot(col, vec3(0.33))), 0.55) * 0.8;

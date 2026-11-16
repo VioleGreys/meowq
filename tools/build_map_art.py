@@ -55,7 +55,7 @@ def reproject(src: np.ndarray, w: int, h: int, scale: float) -> np.ndarray:
 
 
 EXAG_LAND = 9.0    # преувеличение рельефа суши для нормалей (вид карты, не физика)
-EXAG_SEA = 2.5     # дна — слабее: хребты угадываются, не рябят
+EXAG_SEA = 1.6     # дна — слабее: хребты угадываются, не рябят
 
 
 SCALE = 2          # подложка вдвое подробнее карты (11264×5250)
@@ -103,7 +103,11 @@ def main():
     # нормали: наклон в метрах на метр (пиксель подложки — KM_PER_PX/SCALE на экваторе, × cos широты)
     _, lat = bm.unproject(np.zeros(H2) + 0.5, (np.arange(H2) + 0.5) / SCALE)
     px_m = (bm.KM_PER_PX * 1000.0 / SCALE * np.cos(np.radians(np.asarray(lat))))[:, None].astype(np.float32)
-    zl = np.where(land2, np.maximum(z2, 0.0), z2)
+    # дно — сглажено сильнее: в батиметрии ETOPO1 есть следы галсов судов
+    # (прямые полосы), свет их проявляет
+    zs = ndimage.gaussian_filter(z2, 5.0)
+    zl = np.where(land2, np.maximum(z2, 0.0), zs)
+    del zs
     del z2
     gx = np.zeros_like(zl)
     gy = np.zeros_like(zl)
