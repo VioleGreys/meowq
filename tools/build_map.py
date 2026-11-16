@@ -588,6 +588,8 @@ DESERT_BOXES = [(-17, 15, 35, 34), (35, 12, 60, 32), (90, 38, 118, 46), (75, 36,
                 (118, -32, 145, -18), (12, -28, 26, -18), (-71, -27, -68, -18), (-118, 30, -106, 37)]
 JUNGLE_BOXES = [(-75, -12, -48, 5), (10, -5, 30, 5), (95, -8, 125, 20), (-92, 7, -77, 18),
                 (130, -10, 151, 0)]
+# пустыня (--kg): доля пустынного климата (BWh, BWk) в провинции не меньше
+DESERT_FRAC = 0.5
 # местность по рельефу (--etopo): средний уклон провинции, м/км. Альпы, Кавказ,
 # Пиренеи, Балканы — 35–75; Карпаты, Шварцвальд — 20–30; равнины — до 6
 MOUNT_SLOPE = 28.0
@@ -844,6 +846,7 @@ def main():
     ap.add_argument("--preview", default="", help="сохранить PNG-превью сюда")
     ap.add_argument("--geonames", default="", help="cities1000.txt GeoNames (CC BY 4.0): названия провинций без крупного города")
     ap.add_argument("--etopo", default="", help="ETOPO1_Ice_g_geotiff.tif (NOAA): горы и холмы по уклону, высота суши")
+    ap.add_argument("--kg", default="", help="Köppen-Geiger 1901–1930 (Beck 2023, CC BY 4.0), koppen_geiger_0p00833333.tif: пустыни по климату")
     ap.add_argument("--adm2", default="", help="папка районов geoBoundaries (tools/fetch_adm2.py): провинции по районам и рекам")
     args = ap.parse_args()
     ne = args.ne
@@ -1213,6 +1216,16 @@ def main():
         p_region[pid] = rid
     mount_mean = ndimage.mean(mount, labels=prov, index=np.arange(n_prov))
     slope_mean = ndimage.mean(slope_px, labels=prov, index=np.arange(n_prov)) if slope_px is not None else None
+    desert_mean = None
+    dry_px = None
+    if args.kg:
+        # пустыня по климату (решение пользователя, ноябрь 2026: пустыня — где она
+        # на карте): доля классов BWh/BWk Кёппена — Гейгера 1901–1930 в провинции
+        import aridity
+        des_px, stp_px = aridity.load(args.kg, WIDTH, HEIGHT)
+        desert_mean = ndimage.mean(des_px, labels=prov, index=np.arange(n_prov))
+        dry_px = np.clip(des_px + 0.5 * stp_px, 0.0, 1.0)
+        del des_px, stp_px
 
     # соседство
     a = prov[:, :-1].ravel(); b = prov[:, 1:].ravel()
@@ -1357,7 +1370,8 @@ def main():
                 terrain = 3 if mm > 0.55 else 2 if mm > 0.25 else 0
             if terrain:
                 pass   # горы и холмы важнее леса, пустыни и болот
-            elif (r["adm0"] in REMOTE_ADM0 and lat < 34.5) or _in_boxes(lon, lat, DESERT_BOXES):
+            elif (float(desert_mean[i]) >= DESERT_FRAC if desert_mean is not None
+                  else (r["adm0"] in REMOTE_ADM0 and lat < 34.5) or _in_boxes(lon, lat, DESERT_BOXES)):
                 terrain = 6   # пустыня
             elif 23.5 < lon < 30.5 and 51.3 < lat < 52.5:
                 terrain = 7   # Полесье — болота
@@ -1465,7 +1479,11 @@ def main():
     rel[..., 0] = np.clip(height * 255, 0, 255).astype(np.uint8)
     rel[..., 1] = rivers
     rel[..., 2] = coverage   # доля суши в текселе (из векторов, x4) — плавный берег в шейдере
-    Image.fromarray(rel, "RGB").save(os.path.join(out, "relief.png.bin"), "PNG", optimize=True)
+    if dry_px is not None:
+        # a — 1 − сухость (пустыня 1, степь 0,5): шейдер рисует пески там же, где
+        # пустыня в бою; без канала (a = 1) — не сухо
+        rel = np.dstack([rel, np.clip((1.0 - dry_px) * 255 + 0.5, 0, 255).astype(np.uint8)])
+    Image.fromarray(rel, "RGBA" if rel.shape[2] == 4 else "RGB").save(os.path.join(out, "relief.png.bin"), "PNG", optimize=True)
     meta = {
         "source": "Natural Earth (public domain); границы 1936 г. — tools/build_map.py",
         "width": WIDTH, "height": HEIGHT, "km_per_px": KM_PER_PX,

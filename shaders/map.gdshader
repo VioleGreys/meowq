@@ -111,6 +111,19 @@ int pid(ivec2 p) {
 	return int(c.r * 255.0 + 0.5) + int(c.g * 255.0 + 0.5) * 256;
 }
 
+// плавный шум (значения в узлах решётки, квинтическая интерполяция) — для
+// изгиба гряд дюн: фактура местности на грубом mipmap давала лесенку и «водовороты»
+float h21(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float vnoise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+	return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), u.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
 // широта точки карты (проекция Миллера, как tools/build_map.py), градусы
 float lat_at(vec2 px) {
 	float s_px = map_size.x / 6.2831853;
@@ -404,6 +417,7 @@ void fragment() {
 	float rel_m = 0.0;           // высота против окрестности, м (гребень +, долина −)
 	mediump float rock_v = 0.5;  // разброс цвета скал
 	mediump float alp = 0.0;     // высокогорный пояс у снеговой линии
+	mediump vec4 dnw = vec4(0.5);   // фактура крупной шкалы (рисунок дюн, разброс цвета)
 	// половина подложки и производные координат (до ветвлений по пикселю)
 	float ax = muv.x * art_geom.x;
 	bool a_east = ax >= art_geom.x * 0.5;
@@ -485,6 +499,7 @@ void fragment() {
 		snow *= mix(smoothstep(0.05, 0.2, s_mask + max(rel_m, 0.0) / 1200.0 + vly), 1.0, wint * 0.3);
 		snow *= smoothstep(350.0, 900.0, elev_m) * smoothstep(0.0, 0.35, mnt + max(rel_m, 0.0) / 900.0 + vly);
 		rock_v = dn.g * 0.6 + dn2.r * 0.4;
+		dnw = dn2;
 		// высокогорье у снеговой линии (луга, осыпи, каменистые днища долин) — без
 		// него долины в снегу проступали цветом страны пятнами
 		alp = smoothstep(sline - 1000.0, sline - 250.0, elev_m) * smoothstep(700.0, 1200.0, elev_m)
@@ -554,6 +569,18 @@ void fragment() {
 			// горы: серо-бурые скалы и белый снег поверх природных зон
 			// скалы: от тёмно-серых до охристых осыпей, в тени долин темнее
 			mediump vec3 rock = mix(vec3(0.43, 0.41, 0.39), vec3(0.62, 0.55, 0.45), rock_v) * (0.85 + 0.3 * tl);
+			// пустыни и степи по климату (relief.a = 1 − сухость: пустыня BW — 1,
+			// степь BS — 0,5; Кёппен — Гейгер 1901–1930, build_map --kg): пески (эрги)
+			// на ровном, каменистая пустыня (хамада) на склонах и плато; степь — выгоревшая
+			float dry = 1.0 - texture(height_tex, muv).a;
+			mediump float des = smoothstep(0.55, 0.9, dry);
+			mediump float stp = smoothstep(0.2, 0.5, dry) * (1.0 - des);
+			mediump float erg = 1.0 - smoothstep(0.06, 0.28, slope);
+			mediump vec3 sand = mix(vec3(0.88, 0.74, 0.50), vec3(0.95, 0.85, 0.62), dnw.r);
+			mediump vec3 hamada = mix(vec3(0.60, 0.44, 0.31), vec3(0.73, 0.59, 0.43), rock_v);
+			mediump vec3 des_c = mix(hamada, sand, erg) * (0.92 + 0.16 * tl);
+			terr = mix(terr, terr * vec3(1.06, 0.98, 0.80) + vec3(0.03, 0.02, 0.0), stp * 0.55);
+			terr = mix(terr, des_c, des * 0.85);
 			terr = mix(terr, rock, max(mnt * 0.8, alp * 0.85));
 			terr = mix(terr, vec3(0.94, 0.95, 0.97), snow);
 			if (terrain_mode) {
@@ -561,9 +588,32 @@ void fragment() {
 			} else {
 				mediump vec3 far_c = base * (0.9 + 0.14 * (tl - 0.75));
 				far_c = mix(far_c, mix(base, rock * 1.1, 0.35), mnt * 0.5);
+				far_c = mix(far_c, mix(base, sand, 0.3), des * 0.45);
 				far_c = mix(far_c, mix(base, vec3(0.95), 0.7), snow * 0.7);
-				mediump vec3 near_c = mix(terr * 0.92, base, 0.45 * (1.0 - 0.8 * snow) * (1.0 - 0.7 * max(mnt, alp)));
+				mediump vec3 near_c = mix(terr * 0.92, base, 0.45 * (1.0 - 0.8 * snow) * (1.0 - 0.7 * max(mnt, alp)) * (1.0 - 0.65 * des));
 				col = mix(far_c, near_c, near_k) * rf;
+			}
+			if (quality == 2 && des * erg > 0.01) {
+				// гряды дюн вблизи (эрги): пологий наветренный склон светлее, крутой
+				// подветренный — тень
+				float dkd = smoothstep(1.0, 2.4, zoom);
+				if (dkd > 0.0) {
+					vec2 q = px / id_k;
+					// гряды поперёк преобладающего ветра (направление общее: поворот угла по
+					// шуму внутри dot(q, …) с большой q давал замкнутые «кольца»); извилистость
+					// гребней — сдвиг координат плавным шумом (две шкалы), мелкая рябь наискосок
+					float n1 = vnoise(q / 23.0);
+					float n2 = vnoise(q / 23.0 + vec2(41.7, 9.3));
+					float n3 = vnoise(q / 6.0 + vec2(3.7, 11.9));
+					vec2 qq = q + vec2(n1 - 0.5, n2 - 0.5) * 7.0 + (n3 - 0.5) * 1.2;
+					const vec2 WIND = vec2(0.80, 0.60);
+					float ph = dot(qq, WIND) * 6.2831853 / 2.8;
+					float ph2 = dot(qq, vec2(-0.45, 0.89)) * 6.2831853 / 1.1;
+					float wv = fract(ph / 6.2831853);
+					float dune = wv < 0.72 ? smoothstep(0.0, 0.72, wv) : 1.0 - smoothstep(0.72, 1.0, wv);   // пологий наветренный, крутой подветренный
+					float rip = sin(ph2) * smoothstep(1.8, 3.5, zoom);
+					col *= 1.0 + ((dune - 0.55) * 0.24 + rip * 0.04) * des * erg * dkd * (1.0 - snow);
+				}
 			}
 			if (has_detail && quality == 2) {
 				// вблизи — фактура местности: веса по цвету природной зоны и крутизне

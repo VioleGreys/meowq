@@ -229,9 +229,11 @@ def main():
     Image.fromarray(img, "RGBA").save(path, "PNG", optimize=True)
     print(f"rivers {W}x{H}: {path} ({os.path.getsize(path) // 1024} КБ)")
     rpath = os.path.abspath(os.path.join(DATA, "relief.png.bin"))
-    rel = np.asarray(Image.open(rpath).convert("RGB")).copy()
+    im = Image.open(rpath)
+    mode = "RGBA" if im.mode == "RGBA" else "RGB"   # a — сухость (build_map --kg), сохраняем
+    rel = np.asarray(im.convert(mode)).copy()
     rel[..., 1] = np.where(dist < RMAX, stg, 0).astype(np.uint8)
-    Image.fromarray(rel, "RGB").save(rpath, "PNG", optimize=True)
+    Image.fromarray(rel, mode).save(rpath, "PNG", optimize=True)
     print(f"сила рек — в канал g {rpath}")
 
 

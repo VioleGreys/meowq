@@ -141,10 +141,12 @@ def main():
     del lc
     # глубина моря (лог. шкала до 5500 м) — в канал r relief.png.bin
     t = np.clip(np.log1p(np.maximum(-zm, 0.0) / 60.0) / math.log1p(5500.0 / 60.0), 0, 1)
-    r8 = np.asarray(Image.open(relp).convert("RGB")).copy()
+    im = Image.open(relp)
+    mode = "RGBA" if im.mode == "RGBA" else "RGB"   # a — сухость (build_map --kg), сохраняем
+    r8 = np.asarray(im.convert(mode)).copy()
     sea = cov < 0.5
     r8[..., 0] = np.where(sea, np.clip((0.5 - 0.45 * t) * 255 + 0.5, 0, 127), r8[..., 0]).astype(np.uint8)
-    Image.fromarray(r8, "RGB").save(relp, "PNG", optimize=True)
+    Image.fromarray(r8, mode).save(relp, "PNG", optimize=True)
     print(f"Глубины моря → {os.path.abspath(relp)}")
 
 if __name__ == "__main__":

@@ -1254,7 +1254,13 @@ func _province_text(p: int) -> String:
 	var t_mov: float = World.TERRAIN_MOVE[ter]
 	if t_def > 0.0 or t_mov < 1.0:
 		# штраф местности (как в бою: атака × (1 − 0,6 × оборона), World.refresh_def_mult)
-		s += "\nМестность: атака сюда −%d%%, скорость ×%s" % [roundi(t_def * 60.0), String.num(t_mov, 2)]
+		var parts: Array = []
+		if t_def > 0.0:
+			parts.append("атака сюда −%d%%" % roundi(t_def * 60.0))
+		parts.append("скорость ×%s" % String.num(t_mov, 2))
+		s += "\nМестность: " + ", ".join(parts)
+		if ter == World.T_DESERT:
+			s += " · снабжение вдали от моря ограничено, жара"
 		if ter == World.T_MOUNTAIN:
 			s += " · горные стрелки сильнее, танки и артиллерия слабее"
 	if p < w.p_hot.size() and (w.p_hot[p] > 0.0 or w.p_cold[p] > 0.0):
