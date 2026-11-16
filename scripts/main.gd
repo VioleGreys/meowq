@@ -135,6 +135,9 @@ func _bench_realtime(seconds: float) -> void:
 		unit_layer.visible = false
 	if "--nohud" in OS.get_cmdline_user_args():
 		hud.visible = false
+	if "--pan" in OS.get_cmdline_user_args():
+		for i in 60:   # карта стоит секунду (как в игре до первого сдвига): кэш движения строится
+			await get_tree().process_frame
 	var start_day := ticks_done
 	var t0 := Time.get_ticks_msec()
 	var frames := 0
@@ -352,13 +355,20 @@ func _part_test(path: String) -> void:
 func _motion_test(path: String) -> void:
 	unit_layer.visible = false
 	hud.visible = false
-	map_view.motion_lite = true
+	map_view.motion_lite = not "--nolite" in OS.get_cmdline_user_args()
 	var grab := func(tag: String) -> void:
 		get_viewport().get_texture().get_image().save_png(path.replace(".png", "_" + tag + ".png"))
 	for i in 30:
 		await get_tree().process_frame
 	grab.call("start")
-	print("motiontest: кэш готов ", map_view._c_valid, " размер ", map_view._c_size, " масштаб ", map_view._c_zoom, " / ", map_view.camera.zoom.x)
+	if _arg("setres") != "":
+		map_view.set_res_scale(float(_arg("setres")))
+		for i in 30:
+			await get_tree().process_frame
+		grab.call("setres")
+		map_view.map_vp.get_texture().get_image().save_png(path.replace(".png", "_setres_vp.png"))
+		print("motiontest: setres vp ", map_view.map_vp.size, " full ", map_view._full_size, " alpha ", map_view._full_alpha, " vis ", map_view.view_sprite.visible, " scale ", map_view.view_sprite.scale, " pos ", map_view.view_sprite.position, " strip ", map_view._strip_n, " hid ", map_view._strip_hidden)
+	print("motiontest: кэш готов ", map_view._cache_front().valid, " размер ", map_view._cache_front().size, " масштаб ", map_view._cache_front().zoom, " / ", map_view.camera.zoom.x)
 	var r0 := map_view.redraws
 	var c0 := map_view.cache_draws
 	for i in 40:
@@ -368,8 +378,8 @@ func _motion_test(path: String) -> void:
 		await get_tree().process_frame
 	await get_tree().process_frame
 	grab.call("moving")
-	map_view.cache_vp.get_texture().get_image().save_png(path.replace(".png", "_cache.png"))
-	print("motiontest: камера ", map_view.camera.position, " кэш ", map_view._c_cam, " окно ", map_view._c_n)
+	map_view._cache_front().vp.get_texture().get_image().save_png(path.replace(".png", "_cache.png"))
+	print("motiontest: камера ", map_view.camera.position, " кэш ", map_view._cache_front().cam, " окно ", map_view._cache_front().n)
 	print("motiontest: за 40 кадров сдвига — перерисовок карты ", map_view.redraws - r0, ", кэша ", map_view.cache_draws - c0,
 		", показан кэш ", map_view.cache_rect.visible, ", упрощённый ", map_view.lite_sprite.visible)
 	map_view._moving = 0.001
