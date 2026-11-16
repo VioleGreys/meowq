@@ -50,6 +50,17 @@ var lite_quad: ColorRect
 var lite_sprite: Sprite2D
 var snap_vp: SubViewport
 var cmats: Array = []          # шейдер карты для двух буферов кэша движения
+# заготовки неподвижной части (MapBake): те же кадры шейдером map_baked — когда
+# все нужные тайлы в атласе; иначе — живым (mat, cmats), тайлы готовятся фоном
+var mat_b: ShaderMaterial
+var cmats_b: Array = []
+var bake: MapBake
+var _bake_off := false
+var _full_baked := false       # кадр экрана нарисован с заготовками (частичные — так же)
+var _screen_keys := PackedInt64Array()
+var _bake_still := 0           # кадров подряд, когда карта стоит
+var baked_draws := 0           # для замеров: кадров и полос с заготовками
+var live_draws := 0
 var dmat: ShaderMaterial       # вывод кэша на экран (map_motion.gdshader)
 var cache_rect: ColorRect
 var snap_sprite: Sprite2D
@@ -108,6 +119,18 @@ func setup(w: World) -> void:
 		var cm := ShaderMaterial.new()
 		cm.shader = mat.shader
 		cmats.append(cm)
+	mat_b = ShaderMaterial.new()
+	mat_b.shader = load("res://shaders/map_baked.gdshader")
+	cmats_b = []
+	for i in 2:
+		var cm := ShaderMaterial.new()
+		cm.shader = mat_b.shader
+		cmats_b.append(cm)
+	bake = MapBake.new()
+	add_child(bake)
+	bake.setup(self, {})
+	_bake_off = "--nobake" in OS.get_cmdline_user_args()
+	_full_baked = false
 	quad = ColorRect.new()
 	quad.material = mat
 	quad.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -155,6 +178,7 @@ func setup(w: World) -> void:
 		b.vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 		add_child(b.vp)
 		b.cmat = cmats[i]
+		b.cmat_b = cmats_b[i]
 		_cb.append(b)
 	dmat = ShaderMaterial.new()
 	dmat.shader = load("res://shaders/map_motion.gdshader")
@@ -317,6 +341,9 @@ func setup(w: World) -> void:
 		if arg.begins_with("--mapoff="):
 			for k in arg.split("=")[1].split(","):
 				_param("has_" + k, false)
+			_bake_off = true
+	_bake_push()
+	bake.warm(mat_b)
 	camera = Camera2D.new()
 	add_child(camera)
 	camera.make_current()
@@ -742,6 +769,13 @@ func _draw_strip() -> void:
 		return
 	var y0 := floori(float(size.y) * _strip_i / _strip_n)
 	var y1 := floori(float(size.y) * (_strip_i + 1) / _strip_n)
+	if _strip_i == 0:
+		_full_baked = _screen_bake(logical, float(size.x) / maxf(1.0, logical.x), -1) == 1
+	elif _screen_bake(logical, float(size.x) / maxf(1.0, logical.x), 1 if _full_baked else 0) < 0:
+		_strip_n = 0
+		_dirty = true
+		return
+	_use_screen(_full_baked)
 	_param("quality", quality)
 	_param("res_k", float(size.x) / maxf(1.0, logical.x))
 	_param("buf_size", Vector2(size))
@@ -784,6 +818,7 @@ const RELIEF_H := 6.0            # как в map.gdshader: высота гор �
 class CacheBuf:
 	var vp: SubViewport
 	var cmat: ShaderMaterial
+	var cmat_b: ShaderMaterial
 	var quads: Array = []
 	var cam := Vector2.ZERO      # якорь: центр окна при n = 0, мир
 	var zoom := 1.0              # логический масштаб кадра
@@ -1009,6 +1044,17 @@ func _cache_draw(b: CacheBuf) -> void:
 		for xa in xs:
 			for ya in ys:
 				rects.append(Rect2(xa[0], ya[0], xa[1], ya[1]))
+	# заготовки — по рамке мира того, что рисуется в этом кадре
+	var use_b := false
+	if _bake_ok() and not b.queue.is_empty():
+		var u := Rect2()
+		for i in b.queue.size():
+			var q: Rect2 = (b.queue[i] as Rect2).intersection(win)
+			u = q if i == 0 else u.merge(q)
+		var kz := b.zoom * b.rk
+		var wr := Rect2(b.cam + (u.position - Vector2(b.size) * 0.5) / kz, u.size / kz)
+		_bake_sync_r(b.rk)
+		use_b = bake.want(bake.need_flat(wr, b.zoom, _season()))
 	b.queue.clear()
 	if rects.is_empty():
 		return
@@ -1020,12 +1066,17 @@ func _cache_draw(b: CacheBuf) -> void:
 		b.quads.append(cq)
 	for i in b.quads.size():
 		var cq: ColorRect = b.quads[i]
+		cq.material = b.cmat_b if use_b else b.cmat
 		cq.visible = i < rects.size()
 		if cq.visible:
 			cq.position = rects[i].position
 			cq.size = rects[i].size
 	var sz := Vector2(b.size)
-	var cm := b.cmat
+	var cm := b.cmat_b if use_b else b.cmat
+	if use_b:
+		baked_draws += 1
+	else:
+		live_draws += 1
 	cm.set_shader_parameter("quality", b.q)
 	cm.set_shader_parameter("res_k", b.rk)
 	cm.set_shader_parameter("buf_size", sz)
@@ -1133,6 +1184,10 @@ func _draw_part() -> void:
 	var p0 := r.position.floor()
 	var p1 := (r.position + r.size).ceil()
 	r = Rect2(p0, p1 - p0)
+	if _screen_bake(logical, float(size.x) / maxf(1.0, logical.x), 1 if _full_baked else 0) < 0:
+		_dirty = true
+		return
+	_use_screen(_full_baked)
 	_param("quality", quality)
 	_param("res_k", float(size.x) / maxf(1.0, logical.x))
 	_param("buf_size", Vector2(size))
@@ -1242,6 +1297,8 @@ func _process_map(dt: float) -> void:
 				# новый буфер ни разу не очищен — без очистки GLES3 его не выводит
 				map_vp.render_target_clear_mode = SubViewport.CLEAR_MODE_ONCE
 			quad.size = Vector2(size)
+			_full_baked = _screen_bake(logical, rk, -1) == 1
+			_use_screen(_full_baked)
 			map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 			_full_cam = camera.position
 			_full_zoom = camera.zoom.x
@@ -1279,6 +1336,12 @@ func _process_map(dt: float) -> void:
 		cache_rect.visible = false
 	_cache_tick()
 	_cache_flush()
+	if _full_baked and not _screen_keys.is_empty():
+		bake.want(_screen_keys)   # тайлы показанного кадра — не вытеснять
+	# рисовать тайлы — когда карта стоит (при сдвиге видеокарта занята кадром)
+	_bake_still = _bake_still + 1 if _moving <= 0.0 and not _dirty and _strip_n == 0 \
+		and _c_build_n == 0 and not _fading_in else 0
+	bake.tick(_bake_still >= 10)
 	# прогрев: шейдер вывода кэша компилируется при загрузке, а не при первом
 	# сдвиге (на телефоне первая компиляция — кадр до полсекунды)
 	if _warm > 0:
@@ -1296,10 +1359,74 @@ func _process_map(dt: float) -> void:
 
 ## Параметр шейдера карты — в оба материала (экран и кэш движения); камеру
 ## кэш задаёт себе сам перед отрисовкой (_cache_flush).
+const _BAKE_OWN := {"quality": 1, "res_k": 1, "buf_size": 1, "scr_size": 1, "cam_pos": 1,
+	"cam_zoom": 1, "cam_tilt": 1, "torus_n": 1, "winter": 1}
+
+
 func _param(name: String, v) -> void:
 	mat.set_shader_parameter(name, v)
+	mat_b.set_shader_parameter(name, v)
 	for cm in cmats:
 		cm.set_shader_parameter(name, v)
+	for cm in cmats_b:
+		cm.set_shader_parameter(name, v)
+	if not _BAKE_OWN.has(name):
+		bake.mat.set_shader_parameter(name, v)
+	elif name == "winter":
+		_param("pg_row", bake.pg_rows(1 if float(v) >= 0.5 else 0))
+
+
+# --- Заготовки (MapBake) -------------------------------------------------------
+
+## Атлас и таблица страниц — шейдеру с заготовками (после смены плотности).
+func _bake_push() -> void:
+	_param("page_tex", bake.page_tex)
+	_param("atlas_tex", bake.atlas)
+	_param("bk_r", bake.r_cls)
+	_param("pg_row", bake.pg_rows(_season()))
+
+
+func _season() -> int:
+	return 1 if _winter >= 0.5 else 0
+
+
+func _bake_ok() -> bool:
+	return not _bake_off and bake.ok and quality >= 1 and map_mode != MapMode.TERRAIN \
+		and world.width == 5632
+
+
+## Плотность заготовок под пиксели буфера на логический (классы 1 / 1.5 / 2, с запасом).
+func _bake_sync_r(rk: float) -> void:
+	var r := bake.r_cls
+	if rk <= r * 1.25 and (r <= 1.0 or rk >= r / 1.25):
+		return
+	var nr := 1.0 if rk < 1.25 else (1.5 if rk < 1.75 else 2.0)
+	if nr != r:
+		bake.set_r(nr)
+		_bake_push()
+
+
+## Кадр экрана (полный, полоса, частичный) с заготовками? baked — каким нарисован
+## прежний кадр (для полос и частичных: не смешивать в одном кадре); -1 — любой.
+func _screen_bake(logical: Vector2, rk: float, need_mode: int) -> int:
+	if not _bake_ok():
+		return 0
+	_bake_sync_r(rk)
+	_screen_keys = bake.need(camera.position, camera.zoom.x, tilt(), cam_focal(), logical, _season())
+	var r := 1 if bake.want(_screen_keys) else 0
+	if need_mode == 1 and r == 0:
+		return -1   # кадр с заготовками, а тайлов уже нет — перерисовать целиком
+	if need_mode == 0:
+		return 0
+	return r
+
+
+func _use_screen(baked: bool) -> void:
+	quad.material = mat_b if baked else mat
+	if baked:
+		baked_draws += 1
+	else:
+		live_draws += 1
 
 
 func _cam_uniforms(logical: Vector2) -> void:

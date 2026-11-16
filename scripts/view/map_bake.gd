@@ -1,0 +1,664 @@
+class_name MapBake
+extends Node
+## Заготовки неподвижной части карты (решение пользователя, ноябрь 2026: «нарисуем
+## и сожмём карту заранее»; APK для дальних масштабов + кэш ближних на телефоне).
+##
+## До каймы цвет суши линеен по цвету страны: col = S·base + V (map_core.gdshaderinc).
+## Тайл заготовки — (V/BK_V, 1 − S/BK_S) в RGBA8, 256² (248 своих пикселей + поля по 4).
+## Уровни k = 0…12: масштаб 2^(k/2 − 3) (0.125 … 8) × r_cls пикселей на единицу
+## мира; кадр карты берёт два ближайших уровня по масштабу точки (map_baked).
+## Источники: пакеты из APK (res://data/bake, уровни ≤ ×1, `--bake_pack`) и кэш
+## в user://bake (рисуется здесь, на устройстве, там, куда смотрят; предел —
+## Settings.bake_cache). На видеокарте — атлас из CAP слоёв (Texture2DArray) и
+## таблица страниц (номер слоя + 1 на тайл, строки уровней, лето / зима).
+
+const T := 248                  # своих пикселей тайла
+const TS := 256                 # с полями
+const PAD := 4
+const NLV := 13
+const APK_MAX_K := 6            # уровни в APK: до ×1
+const CAP := 256                # слоёв атласа (минимум GLES3 — 256)
+const PACK_DIR := "res://data/bake/"
+const CACHE_ROOT := "user://bake/"
+const BAKE_VERSION := 1         # поднять, если заготовки меняются не из шейдера
+const UPLOADS := 24             # тайлов в атлас за кадр
+
+var view: MapView
+var mat: ShaderMaterial         # map_bake.gdshader
+var vp: SubViewport
+var rect: ColorRect
+var world_px := Vector2.ONE     # размер мира, единиц
+var r_cls := 1.0                # плотность заготовок (класс разрешения экрана)
+var ver := ""
+var atlas: Texture2DArray
+var page_img: Image
+var page_tex: ImageTexture
+var _page_dirty := false
+var gw := PackedInt32Array()
+var gh := PackedInt32Array()
+var rows := PackedInt32Array()  # первая строка уровня k (лето; зима — + rows_total)
+var rows_total := 0
+var slot_key := PackedInt64Array()
+var slot_use := PackedInt64Array()
+var key_slot := {}
+var frame := 0
+var ok := false                 # заготовки можно использовать
+var blk := 2                    # тайлов в блоке отрисовки по стороне
+# источники на диске: key → [путь, смещение, размер] (пакет) или [путь] (кэш)
+var _pack := {}
+var _cache := {}                # key → размер файла, байт
+var _cache_use := {}            # key → кадр последнего использования
+var _cache_total := 0
+var _cache_dir := ""
+var _jobs := {}                 # key → номер задачи загрузки
+var _done: Array = []           # [key, Image] — загружены в потоках
+var _mx := Mutex.new()
+var _saves: Array = []          # [key, номер задачи] — пишутся в потоках
+var _wish := {}                 # key → кадр запроса (нет нигде — нарисовать)
+var _pending := {}              # блок, отданный на отрисовку (читать в следующем кадре)
+# сборка пакетов (--bake_pack): key → байты webp
+var packing := false
+var _pack_out := {}
+var baked_tiles := 0            # для замеров
+var loaded_tiles := 0
+
+
+static func lv_zoom(k: int) -> float:
+	return pow(2.0, k * 0.5 - 3.0)
+
+
+static func key_of(s: int, k: int, tx: int, ty: int) -> int:
+	return (s << 28) | (k << 22) | (ty << 11) | tx
+
+
+static func key_s(key: int) -> int:
+	return (key >> 28) & 1
+
+
+static func key_k(key: int) -> int:
+	return (key >> 22) & 63
+
+
+static func key_ty(key: int) -> int:
+	return (key >> 11) & 2047
+
+
+static func key_tx(key: int) -> int:
+	return key & 2047
+
+
+func setup(v: MapView, shader_params: Dictionary) -> void:
+	view = v
+	world_px = v.world_size()
+	blk = 2 if OS.has_feature("mobile") else 4
+	mat = ShaderMaterial.new()
+	mat.shader = load("res://shaders/map_bake.gdshader")
+	for n in shader_params:
+		mat.set_shader_parameter(n, shader_params[n])
+	vp = SubViewport.new()
+	vp.disable_3d = true
+	vp.transparent_bg = true
+	vp.size = Vector2i(blk * T + 2 * PAD, blk * T + 2 * PAD)
+	vp.render_target_clear_mode = SubViewport.CLEAR_MODE_ONCE
+	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	add_child(vp)
+	rect = ColorRect.new()
+	rect.material = mat
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vp.add_child(rect)
+	var inc: ShaderInclude = load("res://shaders/map_core.gdshaderinc")
+	# версия: шейдер, формат и размеры файлов данных карты (рельеф, реки, провинции…)
+	var sig := inc.code + "|%d|%d|%s" % [BAKE_VERSION, T, str(world_px)]
+	var da := DirAccess.open("res://data/world1936/")
+	if da != null:
+		var fs := da.get_files()
+		fs.sort()
+		for fn in fs:
+			if fn.ends_with(".bin"):
+				sig += "|%s:%d" % [fn, FileAccess.get_size("res://data/world1936/" + fn)]
+	ver = "%08x" % (hash(sig) & 0xffffffff)
+	var blank := Image.create(TS, TS, false, Image.FORMAT_RGBA8)
+	var imgs: Array[Image] = []
+	for i in CAP:
+		imgs.append(blank)
+	atlas = Texture2DArray.new()
+	atlas.create_from_images(imgs)
+	slot_key.resize(CAP)
+	slot_key.fill(-1)
+	slot_use.resize(CAP)
+	slot_use.fill(0)
+	set_r(1.0)
+
+
+## Плотность заготовок (пикселей на логический пиксель экрана; классы — в
+## MapView._bake_sync_r): новый атлас, таблица, кэш своей папкой.
+func set_r(r: float) -> void:
+	if r == r_cls and not gw.is_empty():
+		return
+	r_cls = r
+	gw.resize(NLV)
+	gh.resize(NLV)
+	rows.resize(NLV)
+	rows_total = 0
+	var wmax := 1
+	for k in NLV:
+		var z := lv_zoom(k) * r_cls
+		gw[k] = ceili(world_px.x * z / T)
+		gh[k] = ceili(world_px.y * z / T)
+		rows[k] = rows_total
+		rows_total += gh[k]
+		wmax = maxi(wmax, gw[k])
+	page_img = Image.create(wmax, rows_total * 2, false, Image.FORMAT_RG8)
+	page_tex = ImageTexture.create_from_image(page_img)
+	slot_key.fill(-1)
+	key_slot.clear()
+	_wish.clear()
+	_pending = {}
+	_wait_jobs()
+	_done.clear()
+	for sv in _saves:
+		WorkerThreadPool.wait_for_task_completion(sv[1])
+	_saves.clear()
+	_pack.clear()
+	if r_cls == 1.0:
+		_scan_packs()
+	_cache_dir = CACHE_ROOT + ver + "_r%d/" % int(round(r_cls * 100.0))
+	_scan_cache()
+	ok = true
+
+
+func _exit_tree() -> void:
+	_wait_jobs()
+	for sv in _saves:
+		WorkerThreadPool.wait_for_task_completion(sv[1])
+	_saves.clear()
+
+
+func _wait_jobs() -> void:
+	for k in _jobs:
+		WorkerThreadPool.wait_for_task_completion(_jobs[k])
+	_jobs.clear()
+
+
+# --- пакеты APK ---------------------------------------------------------------
+
+static func pack_path(s: int, k: int) -> String:
+	return PACK_DIR + "b%d_%d.bin" % [s, k]
+
+
+func _scan_packs() -> void:
+	for s in 2:
+		for k in APK_MAX_K + 1:
+			var path := pack_path(s, k)
+			if not FileAccess.file_exists(path):
+				continue
+			var f := FileAccess.open(path, FileAccess.READ)
+			if f == null or f.get_buffer(4).get_string_from_ascii() != "MQB1":
+				continue
+			var pv := f.get_pascal_string()
+			var pr := f.get_float()
+			var w := f.get_32()
+			var h := f.get_32()
+			if pv != ver or pr != r_cls or w != gw[k] or h != gh[k]:
+				push_warning("MapBake: пакет %s от другой версии карты — не используется" % path)
+				continue
+			var tab := f.get_buffer(w * h * 8)
+			for i in w * h:
+				var off := tab.decode_u32(i * 8)
+				var sz := tab.decode_s32(i * 8 + 4)
+				var key := key_of(s, k, i % w, i / w)
+				if sz > 0:
+					_pack[key] = [path, off, sz]
+				elif sz < 0:
+					var sk := key_of(0, k, i % w, i / w)
+					if _pack.has(sk):
+						_pack[key] = _pack[sk]
+
+
+# --- кэш на устройстве ------------------------------------------------------------
+
+func _scan_cache() -> void:
+	_cache.clear()
+	_cache_use.clear()
+	_cache_total = 0
+	DirAccess.make_dir_recursive_absolute(_cache_dir)
+	# заготовки прежних версий карты — удалить
+	var root := DirAccess.open(CACHE_ROOT)
+	if root != null:
+		for d in root.get_directories():
+			if not d.begins_with(ver):
+				_rm_dir(CACHE_ROOT + d)
+	var da := DirAccess.open(_cache_dir)
+	if da == null:
+		return
+	for fn in da.get_files():
+		var p := fn.get_basename().split("_")
+		if p.size() != 4 or fn.get_extension() != "webp":
+			continue
+		var key := key_of(int(p[0]), int(p[1]), int(p[2]), int(p[3]))
+		var sz := FileAccess.get_size(_cache_dir + fn)
+		_cache[key] = sz
+		_cache_use[key] = -int(Time.get_unix_time_from_system() - FileAccess.get_modified_time(_cache_dir + fn))
+		_cache_total += sz
+
+
+static func _rm_dir(path: String) -> void:
+	var da := DirAccess.open(path)
+	if da == null:
+		return
+	for fn in da.get_files():
+		da.remove(fn)
+	DirAccess.remove_absolute(path)
+
+
+func _cache_file(key: int) -> String:
+	return _cache_dir + "%d_%d_%d_%d.webp" % [key_s(key), key_k(key), key_tx(key), key_ty(key)]
+
+
+func _cache_limit() -> int:
+	return int(Settings.BAKE_CACHE_MB[Settings.bake_cache()]) * 1024 * 1024
+
+
+func cache_evict() -> void:
+	var lim := _cache_limit()
+	if _cache_total <= lim:
+		return
+	var keys := _cache.keys()
+	keys.sort_custom(func(a, b): return int(_cache_use.get(a, 0)) < int(_cache_use.get(b, 0)))
+	for key in keys:
+		if _cache_total <= lim * 0.9:
+			break
+		DirAccess.remove_absolute(_cache_file(key))
+		_cache_total -= int(_cache[key])
+		_cache.erase(key)
+		_cache_use.erase(key)
+
+
+func cache_mb() -> float:
+	return _cache_total / 1048576.0
+
+
+# --- нужные тайлы --------------------------------------------------------------
+
+## Уровень по масштабу точки (как bake_at в шейдере): [k0, вес k0 + 1].
+static func lv_of(zoom: float) -> Vector2:
+	var lf := clampf(2.0 * log(maxf(zoom, 1e-4)) / log(2.0) + 6.0, 0.0, 12.0)
+	var k0 := mini(floori(lf), 11)
+	return Vector2(k0, lf - k0)
+
+
+## Тайлы для кадра камеры (позиция, масштаб в центре, наклон, фокус, логический
+## размер буфера) и сезона. При наклоне масштаб точки зависит только от строки
+## экрана — полосами по строкам, в каждой — свои уровни и рамка мира.
+func need(cam: Vector2, zoom: float, th: float, f: float, scr: Vector2, s: int) -> PackedInt64Array:
+	var keys := {}
+	var bands := 1 if th <= 0.0 else 16
+	var st := sin(th)
+	var ct := cos(th)
+	for i in bands:
+		var ya := scr.y * i / bands
+		var yb := scr.y * (i + 1) / bands
+		var za := zoom * (ct + st * (ya - scr.y * 0.5) / f) / ct
+		var zb := zoom * (ct + st * (yb - scr.y * 0.5) / f) / ct
+		if za <= 0.0 or zb <= 0.0:
+			continue
+		var r := Rect2(_s2w(Vector2(0, ya), cam, zoom, th, f, scr), Vector2.ZERO)
+		for p in [Vector2(scr.x, ya), Vector2(0, yb), Vector2(scr.x, yb)]:
+			r = r.expand(_s2w(p, cam, zoom, th, f, scr))
+		r = r.grow(14.0 if th > 0.0 else 1.0)   # подъём гор при наклоне
+		var la := lv_of(minf(za, zb))
+		var lb := lv_of(maxf(za, zb))
+		var k_lo := int(la.x) if la.y < 0.999 else int(la.x) + 1
+		var k_hi := int(lb.x) + 1 if lb.y > 0.001 else int(lb.x)
+		for k in range(k_lo, k_hi + 1):
+			_add_rect(keys, s, k, r)
+	return PackedInt64Array(keys.keys())
+
+
+## Тайлы плоского кадра (кэш движения): рамка мира, масштаб.
+func need_flat(r: Rect2, zoom: float, s: int) -> PackedInt64Array:
+	var keys := {}
+	var l := lv_of(zoom)
+	if l.y < 0.999:
+		_add_rect(keys, s, int(l.x), r.grow(1.0))
+	if l.y > 0.001:
+		_add_rect(keys, s, int(l.x) + 1, r.grow(1.0))
+	return PackedInt64Array(keys.keys())
+
+
+func _add_rect(keys: Dictionary, s: int, k: int, r: Rect2) -> void:
+	var z := lv_zoom(k) * r_cls
+	var x0 := clampi(floori(r.position.x * z / T), 0, gw[k] - 1)
+	var x1 := clampi(floori(r.end.x * z / T), 0, gw[k] - 1)
+	var y0 := clampi(floori(r.position.y * z / T), 0, gh[k] - 1)
+	var y1 := clampi(floori(r.end.y * z / T), 0, gh[k] - 1)
+	for ty in range(y0, y1 + 1):
+		for tx in range(x0, x1 + 1):
+			keys[key_of(s, k, tx, ty)] = true
+
+
+func _s2w(p: Vector2, pos: Vector2, z: float, th: float, f: float, scr: Vector2) -> Vector2:
+	var sc := p - scr * 0.5
+	if th <= 0.0:
+		return sc / z + pos
+	var d := f / z
+	var st := sin(th)
+	var ct := cos(th)
+	var den := maxf(ct + st * sc.y / f, 1e-4)
+	var tr := d * ct / den
+	return Vector2(pos.x + tr * sc.x / f, pos.y + d * st + tr * (-st + ct * sc.y / f))
+
+
+## Все тайлы в атласе? Отмечает их использованными; недостающие — загрузить с
+## диска или нарисовать (по порядку запросов: последние — первыми).
+func want(keys: PackedInt64Array) -> bool:
+	if not ok:
+		return false
+	if keys.size() > CAP * 3 / 4:
+		return false   # не помещается в атлас
+	var all := true
+	for key in keys:
+		var sl: int = key_slot.get(key, -1)
+		if sl >= 0:
+			slot_use[sl] = frame
+			continue
+		all = false
+		if _jobs.has(key):
+			continue
+		var src: Array = _pack.get(key, [])
+		if src.is_empty() and _cache.has(key):
+			src = [_cache_file(key)]
+			_cache_use[key] = frame
+		if src.is_empty():
+			_wish[key] = frame
+		else:
+			_jobs[key] = WorkerThreadPool.add_task(_load_job.bind(key, src))
+	return all
+
+
+func _load_job(key: int, src: Array) -> void:
+	var img := Image.new()
+	var bytes: PackedByteArray
+	if src.size() == 1:
+		bytes = FileAccess.get_file_as_bytes(src[0])
+	else:
+		var f := FileAccess.open(src[0], FileAccess.READ)
+		if f != null:
+			f.seek(src[1])
+			bytes = f.get_buffer(src[2])
+	if bytes.is_empty() or img.load_webp_from_buffer(bytes) != OK:
+		img = null
+	elif img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
+	_mx.lock()
+	_done.append([key, img])
+	_mx.unlock()
+
+
+## Каждый кадр (после решений кадра карты): загруженное — в атлас, отрисовка
+## одного блока заготовок (только когда карта стоит: may_bake — при сдвиге и
+## масштабе видеокарта занята кадром), таблица страниц — на видеокарту.
+func tick(may_bake: bool = true) -> void:
+	if not ok:
+		return
+	frame += 1
+	# в атлас — не больше UPLOADS тайлов за кадр (256 КБ каждый): без рывка
+	_mx.lock()
+	var done := _done.slice(0, UPLOADS)
+	_done = _done.slice(UPLOADS)
+	_mx.unlock()
+	for d in done:
+		var key: int = d[0]
+		if _jobs.has(key):
+			WorkerThreadPool.wait_for_task_completion(_jobs[key])
+			_jobs.erase(key)
+		if d[1] == null:
+			_pack.erase(key)   # битый файл — нарисовать заново
+			_cache.erase(key)
+			_wish[key] = frame
+			continue
+		_put(key, d[1])
+		loaded_tiles += 1
+	if not _saves.is_empty():
+		_saves_poll()
+	if _warm_n > 0:
+		_warm_n -= 1
+		if _warm_n == 0:
+			_warm_rect.queue_free()
+			_warm_rect = null
+		return
+	if packing:
+		return
+	if _wish.size() > 256:
+		# давние запросы (туда уже не смотрят) — забыть
+		for k in _wish.keys():
+			if int(_wish[k]) < frame - 120:
+				_wish.erase(k)
+	if not _pending.is_empty():
+		_read_block()
+	elif not _wish.is_empty() and may_bake:
+		_bake_next()
+	if _page_dirty:
+		_page_dirty = false
+		page_tex.update(page_img)
+
+
+func _put(key: int, img: Image) -> void:
+	if key_slot.has(key):
+		return
+	var sl := -1
+	var best := 1 << 62
+	for i in CAP:
+		if slot_key[i] < 0:
+			sl = i
+			break
+		if slot_use[i] < best and slot_use[i] < frame - 1:
+			best = slot_use[i]
+			sl = i
+	if sl < 0:
+		return   # всё занято нужным в этом кадре
+	var old := slot_key[sl]
+	if old >= 0:
+		key_slot.erase(old)
+		_page_set(old, 0)
+	slot_key[sl] = key
+	slot_use[sl] = frame
+	key_slot[key] = sl
+	atlas.update_layer(img, sl)
+	_page_set(key, sl + 1)
+
+
+func _page_set(key: int, v: int) -> void:
+	var y := rows[key_k(key)] + key_ty(key) + key_s(key) * rows_total
+	page_img.set_pixel(key_tx(key), y, Color8(v & 255, v >> 8, 0, 255))
+	_page_dirty = true
+
+
+## Строка уровня 0 сезона s в таблице страниц (шейдеру — pg_row).
+func pg_rows(s: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	out.resize(NLV)
+	for k in NLV:
+		out[k] = rows[k] + s * rows_total
+	return out
+
+
+func _bake_next() -> void:
+	# последний запрошенный — первым (то, куда смотрят сейчас)
+	var key := -1
+	var fr := -1
+	for k in _wish:
+		if int(_wish[k]) > fr:
+			fr = _wish[k]
+			key = k
+	_wish.erase(key)
+	if key_slot.has(key) or _jobs.has(key) or _pack.has(key) or _cache.has(key):
+		return
+	var s := key_s(key)
+	var k := key_k(key)
+	var tx0 := key_tx(key) - key_tx(key) % blk
+	var ty0 := key_ty(key) - key_ty(key) % blk
+	bake_block(s, k, tx0, ty0)
+
+
+## Нарисовать блок тайлов (до blk × blk) уровня k сезона s с тайла (tx0, ty0).
+func bake_block(s: int, k: int, tx0: int, ty0: int) -> void:
+	var nx := mini(blk, gw[k] - tx0)
+	var ny := mini(blk, gh[k] - ty0)
+	var size := Vector2(nx * T + 2 * PAD, ny * T + 2 * PAD)
+	var z := lv_zoom(k)
+	var zr := z * r_cls
+	var cam := (Vector2(tx0 * T - PAD, ty0 * T - PAD) + size * 0.5) / zr
+	mat.set_shader_parameter("quality", 2)
+	mat.set_shader_parameter("res_k", r_cls)
+	mat.set_shader_parameter("buf_size", size)
+	mat.set_shader_parameter("scr_size", size / r_cls)
+	mat.set_shader_parameter("cam_pos", cam)
+	mat.set_shader_parameter("cam_zoom", z)
+	mat.set_shader_parameter("cam_tilt", 0.0)
+	mat.set_shader_parameter("torus_n", Vector2.ZERO)
+	mat.set_shader_parameter("winter", float(s))
+	rect.position = Vector2.ZERO
+	rect.size = size
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	_pending = {"s": s, "k": k, "tx": tx0, "ty": ty0, "nx": nx, "ny": ny, "f": frame, "drawn": false}
+	# читать — только после настоящей отрисовки кадра (в режиме «не рисовать без
+	# изменений» кадр может и не рисоваться: в буфере — прежний блок)
+	RenderingServer.frame_post_draw.connect(_on_drawn, CONNECT_ONE_SHOT)
+
+
+func _on_drawn() -> void:
+	if not _pending.is_empty():
+		_pending["drawn"] = true
+
+
+## Прогрев шейдеров при загрузке (на телефоне первая компиляция — рывок до
+## полсекунды): заготовка и кадр с заготовками — по квадрату 2×2 в буфере блока.
+var _warm_rect: ColorRect
+var _warm_n := 0
+
+
+func warm(baked: ShaderMaterial) -> void:
+	_warm_rect = ColorRect.new()
+	_warm_rect.material = baked
+	_warm_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_warm_rect.position = Vector2(4, 0)
+	_warm_rect.size = Vector2(2, 2)
+	vp.add_child(_warm_rect)
+	rect.size = Vector2(2, 2)
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	_warm_n = 3
+
+
+func _read_block() -> void:
+	if _pending.is_empty() or frame <= int(_pending["f"]) or not _pending["drawn"]:
+		return
+	var p := _pending
+	_pending = {}
+	var img := vp.get_texture().get_image()
+	if img == null:
+		return
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
+	for j in int(p["ny"]):
+		for i in int(p["nx"]):
+			var key := key_of(p["s"], p["k"], int(p["tx"]) + i, int(p["ty"]) + j)
+			var t := img.get_region(Rect2i(i * T, j * T, TS, TS))
+			baked_tiles += 1
+			if packing:
+				_pack_out[key] = t.save_webp_to_buffer(false)
+				continue
+			_put(key, t)
+			_save(key, t)
+
+
+func _save(key: int, t: Image) -> void:
+	var path := _cache_file(key)
+	_cache[key] = 0
+	_cache_use[key] = frame
+	# с потерями (q 0.95, альфа без потерь): в среднем ~2 уровня цвета, в 2.4 раза
+	# меньше файла без потерь (27 против 63 КБ ближнего тайла) — в предел кэша
+	# влезает больше карты; кодируется даже быстрее (~12 мс на ПК)
+	var task := WorkerThreadPool.add_task(func():
+		t.save_webp(path, true, 0.95))
+	_saves.append([key, task])
+
+
+## Записанные файлы кэша: размер в учёт, лишнее — вытеснить.
+func _saves_poll() -> void:
+	var left: Array = []
+	var any := false
+	for sv in _saves:
+		if not WorkerThreadPool.is_task_completed(sv[1]):
+			left.append(sv)
+			continue
+		WorkerThreadPool.wait_for_task_completion(sv[1])
+		var key: int = sv[0]
+		if _cache.has(key):
+			var sz := FileAccess.get_size(_cache_file(key))
+			_cache[key] = sz
+			_cache_total += sz
+			any = true
+	_saves = left
+	if any:
+		cache_evict()
+
+
+# --- сборка пакетов для APK (--bake_pack) ------------------------------------------
+
+## Нарисовать все тайлы уровней 0…APK_MAX_K обоих сезонов и записать пакеты
+## (зима: тайлы, совпавшие с летом, — ссылкой на летний).
+func build_packs(out_dir: String) -> void:
+	packing = true
+	DirAccess.make_dir_recursive_absolute(out_dir)
+	var t0 := Time.get_ticks_msec()
+	var total := 0
+	for k in APK_MAX_K + 1:
+		var summer := {}
+		for s in 2:
+			_pack_out.clear()
+			for ty0 in range(0, gh[k], blk):
+				for tx0 in range(0, gw[k], blk):
+					bake_block(s, k, tx0, ty0)
+					while not _pending["drawn"]:
+						await get_tree().process_frame
+					await get_tree().process_frame
+					frame += 2
+					_read_block()
+			var path := out_dir.path_join("b%d_%d.bin" % [s, k])
+			var f := FileAccess.open(path, FileAccess.WRITE)
+			f.store_buffer("MQB1".to_ascii_buffer())
+			f.store_pascal_string(ver)
+			f.store_float(r_cls)
+			f.store_32(gw[k])
+			f.store_32(gh[k])
+			var tab_pos := f.get_position()
+			var tab := PackedByteArray()
+			tab.resize(gw[k] * gh[k] * 8)
+			f.store_buffer(tab)
+			var same := 0
+			for ty in gh[k]:
+				for tx in gw[k]:
+					var key := key_of(s, k, tx, ty)
+					var b: PackedByteArray = _pack_out.get(key, PackedByteArray())
+					var i := ty * gw[k] + tx
+					var sk := key_of(0, k, tx, ty)
+					if s == 1 and summer.has(sk) and summer[sk] == b:
+						tab.encode_u32(i * 8, 0)
+						tab.encode_s32(i * 8 + 4, -1)
+						same += 1
+						continue
+					tab.encode_u32(i * 8, f.get_position())
+					tab.encode_s32(i * 8 + 4, b.size())
+					f.store_buffer(b)
+			f.seek(tab_pos)
+			f.store_buffer(tab)
+			f.seek_end()
+			total += f.get_length()
+			print("bake: уровень %d сезон %d — %d×%d тайлов, %.1f МБ (как летом: %d), %.0f с" % [k, s, gw[k], gh[k],
+				f.get_length() / 1048576.0, same, (Time.get_ticks_msec() - t0) / 1000.0])
+			f.close()
+			if s == 0:
+				summer = _pack_out.duplicate()
+	print("bake: всего %.1f МБ за %.0f с" % [total / 1048576.0, (Time.get_ticks_msec() - t0) / 1000.0])
+	packing = false

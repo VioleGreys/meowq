@@ -10,3 +10,4 @@ native/.sconsign.dblite
 native/src/*.os
 __pycache__/
 meowq.gdextension.uid
+data/bake/

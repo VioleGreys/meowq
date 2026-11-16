@@ -4474,6 +4474,24 @@ func _build_settings() -> void:
 		Settings.set_map_tilt(v)
 		game.map_view.set_tilt_enabled(v))
 	popup_body.add_child(tl)
+	popup_body.add_child(_label("Заготовки карты", 20))
+	var bk_mb: float = game.map_view.bake.cache_mb() if game.map_view.bake != null else 0.0
+	popup_body.add_child(_label("Неподвижная часть карты (рельеф, горы, вода) рисуется заранее: дальние масштабы — в игре, ближние — на телефоне там, куда вы смотрите, и хранятся до предела (старые удаляются). Больше предел — реже рисуется заново. Сейчас занято %d МБ." % roundi(bk_mb), 15, Color(0.75, 0.75, 0.7)))
+	var row4 := HBoxContainer.new()
+	row4.add_theme_constant_override("separation", 8)
+	var cur_b := Settings.bake_cache()
+	for i in Settings.BAKE_CACHE_MB.size():
+		var ii := i
+		var b4 := _button(Settings.BAKE_CACHE_NAMES[i], func():
+			Settings.set_bake_cache(ii)
+			if game.map_view.bake != null:
+				game.map_view.bake.cache_evict()   # меньше предел — лишнее сразу удалить
+			_rebuild_popup(), Vector2(0, 52))
+		b4.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b4.toggle_mode = true
+		b4.set_pressed_no_signal(i == cur_b)
+		row4.add_child(b4)
+	popup_body.add_child(row4)
 	var snd := CheckButton.new()
 	snd.text = "Звук нажатия кнопок"
 	snd.button_pressed = Settings.ui_sound()

@@ -80,6 +80,13 @@ static func build(game) -> String:
 		Settings.QUALITY_NAMES[Settings.map_quality()], Settings.RES_NAMES[Settings.map_res()],
 		int(game.map_view.res_scale * 100), Settings.FPS_NAMES[Settings.fps_cap()],
 		"да" if Settings.motion_lite() else "нет"])
+	var mv = game.map_view
+	if mv != null and mv.bake != null:
+		var bk = mv.bake
+		L.append("Заготовки карты: %s · пакетов APK — тайлов %d · кэш %d МБ из %s · плотность %.2f · кадров из заготовок %d, живых %d · тайлов нарисовано %d, загружено %d" % [
+			"вкл" if mv._bake_ok() else "выкл", bk._pack.size(), roundi(bk.cache_mb()),
+			Settings.BAKE_CACHE_NAMES[Settings.bake_cache()], bk.r_cls, mv.baked_draws, mv.live_draws,
+			bk.baked_tiles, bk.loaded_tiles])
 	if game.world != null:
 		var w = game.world
 		var me: int = game.player()

@@ -68,6 +68,28 @@ if [ "$RENDERER" = compat ]; then
 	echo "Рендерер: Compatibility (OpenGL ES 3)"
 fi
 "$GODOT" --headless --editor --quit --path . >/dev/null 2>&1 || true
+# заготовки карты для масштабов до ×1 (MapBake, docs/notes/ui.md): рисует сама
+# игра (нужен экран — xvfb-run) без потерь, tools/bake_compress.py пережимает
+# (нужен cwebp: apt-get install webp). Пересобираются, если шейдер, модуль или
+# данные карты новее пакетов; BAKE=0 — без заготовок (карта рисуется вживую)
+if [ "${BAKE:-1}" = 1 ]; then
+	STALE=0
+	[ -f data/bake/b0_6.bin ] || STALE=1
+	for f in shaders/map_core.gdshaderinc scripts/view/map_bake.gd data/world1936/*.bin assets/map/*; do
+		[ "$STALE" = 1 ] || [ ! "$f" -nt data/bake/b0_6.bin ] || STALE=1
+	done
+	if [ "$STALE" = 1 ]; then
+		echo "Заготовки карты: рисуются..."
+		rm -rf "$WORK/bake_raw" && mkdir -p "$WORK/bake_raw"
+		xvfb-run -a "$GODOT" --rendering-driver opengl3 --path . -- --screenshot="$WORK/bake.png" --nation=GER --days=1 \
+			--bake_pack="$WORK/bake_raw" 2>&1 | grep -E "^bake: всего|SCRIPT ERROR" || true
+		rm -rf data/bake
+		python3 tools/bake_compress.py "$WORK/bake_raw" data/bake | tail -1
+	fi
+	du -sh data/bake
+else
+	mv data/bake "$WORK/bake_off" 2>/dev/null || true
+fi
 if [ "$MODE" = release ]; then
 	KS="$HOME/.local/share/godot/keystores/debug.keystore"
 	export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$KS"
@@ -80,4 +102,5 @@ fi
 cp "$WORK/project.godot.bak" project.godot
 cp "$WORK/export_presets.cfg.bak" export_presets.cfg
 if [ "$MANIFEST_MOVED" = 1 ]; then mv "$WORK/meowq.gdextension" meowq.gdextension; fi
+if [ -d "$WORK/bake_off" ]; then mv "$WORK/bake_off" data/bake; fi
 ls -la "$OUT"

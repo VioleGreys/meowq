@@ -118,3 +118,19 @@ static func autosave() -> bool:
 static func set_autosave(v: bool) -> void:
 	_load().set_value("game", "autosave", v)
 	_cfg.save(PATH)
+
+
+## Предел кэша заготовок карты на устройстве (решение пользователя: 500 МБ по
+## умолчанию, можно больше), МБ. Ближние масштабы рисуются заранее там, куда
+## смотрит игрок, и хранятся в user://bake; старые вытесняются.
+const BAKE_CACHE_MB := [500, 1000, 2000]
+const BAKE_CACHE_NAMES := ["500 МБ", "1 ГБ", "2 ГБ"]
+
+
+static func bake_cache() -> int:
+	return clampi(int(_load().get_value("graphics", "bake_cache", 0)), 0, 2)
+
+
+static func set_bake_cache(i: int) -> void:
+	_load().set_value("graphics", "bake_cache", clampi(i, 0, 2))
+	_cfg.save(PATH)

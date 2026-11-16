@@ -281,11 +281,85 @@ func _auto_screenshot(path: String) -> void:
 		await _part_test(path)
 	if "--motiontest" in OS.get_cmdline_user_args():
 		await _motion_test(path)
+	if "--baketest" in OS.get_cmdline_user_args():
+		await _bake_test(path)
+	if _arg("bake_pack") != "":
+		await map_view.bake.build_packs(_arg("bake_pack"))
 	get_viewport().get_texture().get_image().save_png(path)
 	if "--report" in OS.get_cmdline_user_args():
 		print(Report.build(self))
 	_shutdown()
 	get_tree().quit()
+
+
+## Дождаться, пока кадр карты рисуется с заготовками (если они включены).
+func _bake_warm() -> void:
+	if not map_view._bake_ok():
+		return
+	var n := 0
+	while not map_view._full_baked and n < 400:
+		map_view.redraw()
+		for i in 3:
+			await get_tree().process_frame
+		n += 1
+
+
+## Проверка заготовок карты (-- --baketest): буфер карты живым шейдером
+## (*_live.png) и с заготовками (*_baked.png, тайлы рисуются фоном) — сравнить.
+func _bake_test(path: String) -> void:
+	map_view._bake_off = true
+	map_view.redraw()
+	for i in 12:
+		await get_tree().process_frame
+	map_view.map_vp.get_texture().get_image().save_png(path.replace(".png", "_live.png"))
+	map_view._bake_off = false
+	var t0 := Time.get_ticks_msec()
+	var n := 0
+	var bk := map_view.bake
+	while not map_view._full_baked and n < 400:
+		map_view.redraw()
+		for i in 3:
+			await get_tree().process_frame
+		n += 1
+		if n % 50 == 1:
+			print("baketest: ok %s можно %s, нужно %d, в атласе %d, ждут %d, грузятся %d, рисуется %s, нарисовано %d" % [bk.ok,
+				map_view._bake_ok(), map_view._screen_keys.size(), bk.key_slot.size(), bk._wish.size(), bk._jobs.size(),
+				not bk._pending.is_empty(), bk.baked_tiles])
+	print("baketest: тайлов нарисовано %d, загружено %d, за %.1f с, кадр с заготовками: %s" % [map_view.bake.baked_tiles,
+		map_view.bake.loaded_tiles, (Time.get_ticks_msec() - t0) / 1000.0, map_view._full_baked])
+	for i in 12:
+		await get_tree().process_frame
+	map_view.map_vp.get_texture().get_image().save_png(path.replace(".png", "_baked.png"))
+	# цена полного кадра карты: живой против заготовок (время кадра с перерисовкой)
+	var tq: Array = []
+	for i in 32:
+		var f0 := Time.get_ticks_usec()
+		await get_tree().process_frame
+		if i >= 2:
+			tq.append(Time.get_ticks_usec() - f0)
+	tq.sort()
+	print("baketest: кадр без перерисовки карты: %.1f мс (медиана)" % (tq[tq.size() / 2] / 1000.0))
+	var variants := [[true, ""], [false, ""], [true, ""], [false, ""]]
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--bakeoff="):   # что выключить в обоих: has_rivers,…
+			for k in a.split("=")[1].split(","):
+				variants.append([true, k])
+				variants.append([false, k])
+	for vv in variants:
+		var off: bool = vv[0]
+		if vv[1] != "":
+			map_view._param(vv[1], false)
+		map_view._bake_off = off
+		var ts: Array = []
+		for i in 32:
+			map_view.redraw()
+			var f0 := Time.get_ticks_usec()
+			await get_tree().process_frame
+			if i >= 2:
+				ts.append(Time.get_ticks_usec() - f0)
+		ts.sort()
+		print("baketest: кадр с перерисовкой карты, %s %s: %.1f мс (медиана)" % ["живой" if off else "заготовки", vv[1], ts[ts.size() / 2] / 1000.0])
+	map_view._bake_off = false
 
 
 ## Проверка частичной перерисовки карты (-- --parttest): сменить владельца у
@@ -299,6 +373,9 @@ func _part_test(path: String) -> void:
 	var full := func(tag: String) -> void:
 		map_view.redraw()
 		await shot.call(tag)
+	# заготовки: дождаться тайлов вида (и для сезона — обоих), иначе частичная
+	# и полная могли бы выйти в разных режимах (живой / с заготовками)
+	await _bake_warm()
 	await shot.call("before")
 	var c := map_view.screen_to_world(get_viewport().get_visible_rect().size * 0.5) / MapView.SCALE
 	world_lock()
@@ -343,6 +420,15 @@ func _part_test(path: String) -> void:
 	await full.call("frontfull")
 	# смена сезона полосами под снимком
 	map_view.strips = 4
+	if map_view._bake_ok():
+		# тайлы другого сезона — заранее (полосы и полный кадр — в одном режиме)
+		var vp := get_viewport().get_visible_rect().size
+		var bkeys := map_view.bake.need(map_view.camera.position, map_view.camera.zoom.x, map_view.tilt(),
+			map_view.cam_focal(), vp, 1 - map_view._season())
+		var n := 0
+		while not map_view.bake.want(bkeys) and n < 600:
+			await get_tree().process_frame
+			n += 1
 	var s0 := map_view.strip_redraws
 	map_view.set_day(world.day + 182)
 	for i in 200:
