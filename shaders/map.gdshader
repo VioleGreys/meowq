@@ -17,6 +17,13 @@ uniform bool has_ids2 = false;
 uniform int ids_half = 5632;
 uniform int ids_off = 5600;
 uniform float id_k = 1.0;
+// поле расстояний до границ провинций (tools/build_sdf.py): L8, сетка 2×,
+// половинами как ids2; 0…1 → 0…2 текселя сетки. Линии стран и провинций —
+// по нему (билинейно — гладкие на любом приближении)
+uniform sampler2D sdf_w : filter_linear_mipmap;
+uniform sampler2D sdf_e : filter_linear_mipmap;
+uniform bool has_sdf = false;
+uniform float sdf_wd = 5664.0;   // ширина половины
 uniform int selected_id = -1;
 uniform int highlight_nation = -1;
 uniform bool show_occupation = true;
@@ -384,6 +391,17 @@ void fragment() {
 	// двух провинций и моря берег не пропадает.
 	float texel_px = zoom * 2.0 * res_k / id_k;                        // тексель сетки провинций на экране (масштаб спрайта 2)
 	float map_px = texel_px * id_k;                                  // пиксель карты на экране: толщины линий — в нём
+	// расстояние до границы провинций, пиксели экрана (с полем расстояний)
+	float sdf_px = 1e4;
+	if (has_sdf) {
+		float sx = px.x;
+		bool s_east = sx >= float(ids_half);
+		vec2 suv = vec2((s_east ? sx - float(ids_off) : sx) / sdf_wd, UV.y);
+		vec2 sgx = vec2(dFdx(px.x) / sdf_wd, dFdx(UV.y));
+		vec2 sgy = vec2(dFdy(px.x) / sdf_wd, dFdy(UV.y));
+		float sd = s_east ? textureGrad(sdf_e, suv, sgx, sgy).r : textureGrad(sdf_w, suv, sgx, sgy).r;
+		sdf_px = sd * 2.0 * texel_px;
+	}
 	float w_land = 0.0;
 	float w_water = 0.0;
 	float w_mine = 0.0;      // страна победителя
@@ -484,15 +502,19 @@ void fragment() {
 	land = land && !sea_px;
 	if (land && !wide_land && w_other > 0.0) {
 		float dp = d1 / max(fw1, 0.5 / texel_px) * 0.5;
-		// вблизи — не толще ~полутекселя сетки провинций: оценка расстояния до
-		// границы верна только в пределах окна, толще — проступают ступени
+		// без поля расстояний — вблизи не толще ~полутекселя сетки провинций:
+		// оценка расстояния по весам окна верна лишь рядом с границей
 		float w = max(lw_min(1.1), min(0.45 * map_px, 0.5 * texel_px + 0.8));
+		if (has_sdf) {
+			dp = sdf_px;
+			w = max(lw_min(1.1), min(0.45 * map_px, 1.6 * texel_px));
+		}
 		col = mix(col, vec3(0.07, 0.06, 0.06), (1.0 - smoothstep(w - 0.9, w + 0.9, dp)) * 0.9);
 		// мягкий тон своей страны вдоль границы — как цветная кайма на картах
 		col = mix(col, cc.rgb * 0.9, (1.0 - smoothstep(w, w + 2.0 + texel_px, dp)) * 0.18);
 	}
 	if (land && !wide_land && w_prov2 > 0.0) {
-		float dp = d2 / max(fw2, 0.5 / texel_px) * 0.5;
+		float dp = has_sdf ? sdf_px : d2 / max(fw2, 0.5 / texel_px) * 0.5;
 		float w = max(lw_min(0.6), 0.14 * map_px);
 		float a2 = smoothstep(0.45, 1.3, zoom);
 		col = mix(col, col * 0.6, (1.0 - smoothstep(w - 0.7, w + 0.7, dp)) * a2);

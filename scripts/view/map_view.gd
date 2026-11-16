@@ -193,6 +193,14 @@ func setup(w: World) -> void:
 		mat.set_shader_parameter("map_size", Vector2(world.width * 2, world.height * 2))
 		mat.set_shader_parameter("ids_half", world.width)
 		mat.set_shader_parameter("ids_off", world.width - (tw.get_width() - world.width))
+	# поле расстояний до границ провинций (tools/build_sdf.py) — линии границ гладкие
+	var sdf := _sdf2() if not ids.is_empty() else []
+	mat.set_shader_parameter("has_sdf", not sdf.is_empty())
+	if not sdf.is_empty():
+		var sw: ImageTexture = sdf[0]
+		mat.set_shader_parameter("sdf_w", sdf[0])
+		mat.set_shader_parameter("sdf_e", sdf[1])
+		mat.set_shader_parameter("sdf_wd", float(sw.get_width()))
 
 	camera = Camera2D.new()
 	add_child(camera)
@@ -255,6 +263,29 @@ static func _ids2() -> Array:
 		img.convert(Image.FORMAT_RG8)
 		res.append(ImageTexture.create_from_image(img))
 	_ids2_cache = res
+	return res
+
+
+static var _sdf_cache: Array = []
+
+
+## Половины поля расстояний до границ (data/world1936/sdf_*.png.bin), L8 с
+## mipmap — один раз за запуск; пусто — файлов нет.
+static func _sdf2() -> Array:
+	if not _sdf_cache.is_empty():
+		return _sdf_cache
+	var res: Array = []
+	for k in ["w", "e"]:
+		var path := "res://data/world1936/sdf_%s.png.bin" % k
+		if not FileAccess.file_exists(path):
+			return []
+		var img := Image.new()
+		if img.load_png_from_buffer(FileAccess.get_file_as_bytes(path)) != OK:
+			return []
+		img.convert(Image.FORMAT_L8)
+		img.generate_mipmaps()
+		res.append(ImageTexture.create_from_image(img))
+	_sdf_cache = res
 	return res
 
 
