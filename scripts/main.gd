@@ -146,7 +146,9 @@ func _bench_realtime(seconds: float) -> void:
 			# замер сдвига и масштаба: камера ходит по кругу и «дышит»
 			var tt := frames * 0.05
 			map_view.camera.position += Vector2(cos(tt), sin(tt)) * 6.0 / map_view.camera.zoom.x
-			map_view.camera.zoom = Vector2.ONE * clampf(map_view.camera.zoom.x * (1.0 + 0.01 * sin(tt * 0.7)), 0.3, 4.0)
+			if not "--nozoom" in OS.get_cmdline_user_args():
+				map_view.camera.zoom = Vector2.ONE * clampf(map_view.camera.zoom.x * (1.0 + 0.01 * sin(tt * 0.7)), 0.3, 4.0)
+			map_view._moving = MapView.MOTION_SETTLE   # как при касании
 			map_view._on_view_changed()
 		# действие игрока каждые 10 кадров: по очереди — прежним способом
 		# (ждать мир под замком) и через очередь act; копим, сколько стоял
@@ -199,6 +201,8 @@ func _bench_realtime(seconds: float) -> void:
 	var names := ["панели дня", "палитра", "список фишек", "верхняя строка"]
 	for i in 4:
 		print("  %s: всего %.0f мс за прогон, худшее %.1f мс" % [names[i], ui_prof_sum[i] / 1000.0, ui_prof_max[i] / 1000.0])
+	print("  кэш движения: рисовался %d раз; карта целиком %d, частично %d, полосами %d" % [map_view.cache_draws,
+		map_view.redraws - map_view.part_redraws - map_view.strip_redraws, map_view.part_redraws, map_view.strip_redraws])
 	for l in Report.prof_lines():
 		print(l)
 	speed = 0
@@ -252,6 +256,8 @@ func _auto_screenshot(path: String) -> void:
 	await get_tree().process_frame
 	if "--parttest" in OS.get_cmdline_user_args():
 		await _part_test(path)
+	if "--motiontest" in OS.get_cmdline_user_args():
+		await _motion_test(path)
 	get_viewport().get_texture().get_image().save_png(path)
 	if "--report" in OS.get_cmdline_user_args():
 		print(Report.build(self))
@@ -339,6 +345,37 @@ func _part_test(path: String) -> void:
 	await shot.call("moved")
 	print("parttest: после сдвига — полос ", map_view.strip_redraws - s0, ", кадр виден ", map_view._full_alpha)
 	await full.call("movedfull")
+
+
+## Проверка кэша движения (-- --motiontest): кадр во время сдвига (из кэша)
+## против точного кадра с той же камерой; сколько раз рисовался кэш и карта.
+func _motion_test(path: String) -> void:
+	unit_layer.visible = false
+	hud.visible = false
+	map_view.motion_lite = true
+	var grab := func(tag: String) -> void:
+		get_viewport().get_texture().get_image().save_png(path.replace(".png", "_" + tag + ".png"))
+	for i in 30:
+		await get_tree().process_frame
+	grab.call("start")
+	print("motiontest: кэш готов ", map_view._c_valid, " размер ", map_view._c_size, " масштаб ", map_view._c_zoom, " / ", map_view.camera.zoom.x)
+	var r0 := map_view.redraws
+	var c0 := map_view.cache_draws
+	for i in 40:
+		map_view.camera.position += Vector2(7.3, 2.1) / map_view.camera.zoom.x
+		map_view._moving = 0.3
+		map_view._on_view_changed()
+		await get_tree().process_frame
+	await get_tree().process_frame
+	grab.call("moving")
+	map_view.cache_vp.get_texture().get_image().save_png(path.replace(".png", "_cache.png"))
+	print("motiontest: камера ", map_view.camera.position, " кэш ", map_view._c_cam, " окно ", map_view._c_n)
+	print("motiontest: за 40 кадров сдвига — перерисовок карты ", map_view.redraws - r0, ", кэша ", map_view.cache_draws - c0,
+		", показан кэш ", map_view.cache_rect.visible, ", упрощённый ", map_view.lite_sprite.visible)
+	map_view._moving = 0.001
+	for i in 60:
+		await get_tree().process_frame
+	grab.call("still")
 
 
 func _auto_screenshot_locked() -> void:

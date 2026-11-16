@@ -58,9 +58,16 @@ uniform vec2 cam_pos = vec2(0.0);
 uniform float cam_tilt = 0.0;
 uniform float cam_f = 1000.0;
 uniform vec2 scr_size = vec2(1280.0, 720.0);
-uniform vec4 q_rect = vec4(0.0, 0.0, 1.0, 1.0);
-uniform vec2 buf_size = vec2(1.0);   // размер буфера в пикселях (центры пикселей — одинаковые
-                                     // при полной и частичной перерисовке)
+uniform vec2 buf_size = vec2(1.0);   // размер буфера в пикселях
+// закольцованный буфер (плоский кэш для движения, MapView._cache_*): окно буфера
+// начинается с пикселя torus_n кадра камеры cam_pos; пиксель буфера b хранит пиксель
+// кадра torus_n + mod(b − torus_n, buf_size). Для экранного буфера torus_n = 0.
+uniform vec2 torus_n = vec2(0.0);
+varying vec2 v_bp;   // пиксель буфера (прямоугольники рисуются на своих местах буфера)
+
+void vertex() {
+	v_bp = (MODEL_MATRIX * vec4(VERTEX, 0.0, 1.0)).xy;
+}
 uniform vec2 world_size = vec2(11264.0, 5250.0);
 const float RELIEF_H = 6.0;   // высота самых высоких гор при наклоне, единиц мира
 uniform float res_k = 1.0;   // пикселей буфера карты на логический пиксель экрана
@@ -182,9 +189,10 @@ vec4 tex_bicubic(sampler2DArray t, vec2 uv, float layer, vec2 ts, vec2 gx, vec2 
 
 void fragment() {
 	// луч из пикселя экрана до плоскости карты (см. cam_*)
-	// прямоугольник буфера, который рисуется (доли: смещение, размер) — частичная
-	// перерисовка после смены владельцев (MapView.redraw_provs); целиком — (0, 0, 1, 1)
-	vec2 bp = floor((q_rect.xy + UV * q_rect.zw) * buf_size) + 0.5;
+	// центр пикселя буфера: прямоугольник (частичная перерисовка, полосы) лежит на
+	// своём месте буфера — те же центры, что при полной перерисовке
+	vec2 bp = floor(v_bp) + 0.5;
+	bp = torus_n + mod(bp - torus_n, buf_size);
 	vec2 sc = bp / buf_size * scr_size - scr_size * 0.5;
 	float st = sin(cam_tilt);
 	float ct = cos(cam_tilt);
@@ -938,8 +946,9 @@ void fragment() {
 			col = mix(col, fc, 0.32);
 		}
 		if ((role_top & 8) != 0) {
-			// цель атаки: косая штриховка цветом армии (постоянного шага на экране)
-			float st = step(0.62, fract((FRAGCOORD.x - FRAGCOORD.y) / (11.0 * res_k)));
+			// цель атаки: косая штриховка цветом армии (шаг 11 пикселей экрана,
+			// привязана к карте — одна и та же в кадре и в кэше движения)
+			float st = step(0.62, fract((wp.x - wp.y) * zoom / 11.0));
 			col = mix(col, fc * 0.9, st * 0.42);
 		}
 	}

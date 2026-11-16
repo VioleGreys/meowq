@@ -49,6 +49,10 @@ var lite_vp: SubViewport
 var lite_quad: ColorRect
 var lite_sprite: Sprite2D
 var snap_vp: SubViewport
+var cmat: ShaderMaterial       # шейдер карты для кэша движения
+var dmat: ShaderMaterial       # вывод кэша на экран (map_motion.gdshader)
+var cache_vp: SubViewport
+var cache_rect: ColorRect
 var snap_sprite: Sprite2D
 const FADE_OUT := 0.35        # за сколько растворяется сдвигаемый полный кадр, с
 const FADE_IN := 0.25         # за сколько проявляется новый полный кадр, с
@@ -100,6 +104,8 @@ func setup(w: World) -> void:
 		c.queue_free()
 	mat = ShaderMaterial.new()
 	mat.shader = load("res://shaders/map.gdshader")
+	cmat = ShaderMaterial.new()   # тот же шейдер для кэша движения (свои параметры камеры)
+	cmat.shader = mat.shader
 	quad = ColorRect.new()
 	quad.material = mat
 	quad.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -134,6 +140,26 @@ func setup(w: World) -> void:
 	lite_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	lite_sprite.visible = false
 	layer.add_child(lite_sprite)
+	# кэш движения: плоский закольцованный буфер полного качества (вид сверху);
+	# при движении экран показывает его проекцию с текущей камерой (map_motion)
+	cache_vp = SubViewport.new()
+	cache_vp.disable_3d = true
+	cache_vp.transparent_bg = false
+	cache_vp.render_target_clear_mode = SubViewport.CLEAR_MODE_ONCE
+	cache_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	add_child(cache_vp)
+	_c_quads = []
+	dmat = ShaderMaterial.new()
+	dmat.shader = load("res://shaders/map_motion.gdshader")
+	dmat.set_shader_parameter("cache_tex", cache_vp.get_texture())
+	cache_rect = ColorRect.new()
+	cache_rect.material = dmat
+	cache_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cache_rect.visible = false
+	layer.add_child(cache_rect)
+	_c_valid = false
+	_c_build_n = 0
+	_c_rects = []
 	view_sprite = Sprite2D.new()
 	view_sprite.centered = false
 	view_sprite.texture = map_vp.get_texture()
@@ -165,7 +191,7 @@ func setup(w: World) -> void:
 	Settings.apply_fps_cap()
 	motion_lite = Settings.motion_lite()
 	tilt_enabled = Settings.map_tilt()
-	mat.set_shader_parameter("world_size", Vector2(world.width, world.height) * SCALE)
+	_param("world_size", Vector2(world.width, world.height) * SCALE)
 
 	var rows := int(ceil(world.prov_count / 64.0))
 	_pal_rows = rows
@@ -183,10 +209,10 @@ func setup(w: World) -> void:
 			st_img.set_pixel(p % 64, p / 64, Color8(sv & 255, (sv >> 8) & 255, 0, 255))
 	pal_img.blit_rect(st_img, Rect2i(0, 0, 64, rows), Vector2i(0, 2 * rows))
 	pal_tex = ImageTexture.create_from_image(pal_img)
-	mat.set_shader_parameter("pal_tex", pal_tex)
-	mat.set_shader_parameter("pal_rows", rows)
-	mat.set_shader_parameter("front_on", false)
-	mat.set_shader_parameter("has_states", has_st)
+	_param("pal_tex", pal_tex)
+	_param("pal_rows", rows)
+	_param("front_on", false)
+	_param("has_states", has_st)
 	# графика карты в полном разрешении (tools/build_map_art.py; импорт Godot со
 	# сжатием в видеопамяти): цвет природных зон (a — высоты, tools/etopo.py) и
 	# нормали рельефа суши и дна (вдвое подробнее карты, половинами запад/восток с
@@ -200,16 +226,16 @@ func setup(w: World) -> void:
 	if art:
 		var cw: Texture2D = load(ART_DIR + ART_FILES["color_w"])
 		var w2 := float(world.width * 2)
-		mat.set_shader_parameter("art_geom", Vector4(w2, w2 * 0.5 - ART_PAD, float(cw.get_width()), float(cw.get_height())))
+		_param("art_geom", Vector4(w2, w2 * 0.5 - ART_PAD, float(cw.get_width()), float(cw.get_height())))
 		tex_c = _layers([cw.get_image(), (load(ART_DIR + ART_FILES["color_e"]) as Texture2D).get_image()])
 		tex_n = _layers([(load(ART_DIR + ART_FILES["normal_w"]) as Texture2D).get_image(),
 			(load(ART_DIR + ART_FILES["normal_e"]) as Texture2D).get_image()])
 		art = tex_c != null and tex_n != null
 	if art:
-		mat.set_shader_parameter("color_tex", tex_c)
-		mat.set_shader_parameter("normal_tex", tex_n)
-	mat.set_shader_parameter("has_art", art)
-	mat.set_shader_parameter("has_elev", art)
+		_param("color_tex", tex_c)
+		_param("normal_tex", tex_n)
+	_param("has_art", art)
+	_param("has_elev", art)
 	_winter = -1.0
 	_selected = -1
 	_front_marks = {}
@@ -218,25 +244,25 @@ func setup(w: World) -> void:
 		if a.begins_with("--strips="):
 			strips = maxi(1, int(a.get_slice("=", 1)))
 	set_day(world.day)
-	mat.set_shader_parameter("map_size", Vector2(world.width, world.height))
+	_param("map_size", Vector2(world.width, world.height))
 	# карта провинций для отрисовки вдвое подробнее (tools/build_ids2x.py):
 	# границы стран, областей и берег — по векторным контурам, а не лесенкой;
 	# без неё — карта 1× в обоих слоях (всё — «запад»)
 	var ids := _ids2() if world.width == 5632 else []
-	mat.set_shader_parameter("has_ids2", not ids.is_empty())
-	mat.set_shader_parameter("id_k", 2.0 if not ids.is_empty() else 1.0)
+	_param("has_ids2", not ids.is_empty())
+	_param("id_k", 2.0 if not ids.is_empty() else 1.0)
 	if not ids.is_empty():
 		var tw: int = (_ids2_imgs[0] as Image).get_width()
-		mat.set_shader_parameter("ids_tex", ids[0])
-		mat.set_shader_parameter("map_size", Vector2(world.width * 2, world.height * 2))
-		mat.set_shader_parameter("ids_half", world.width)
-		mat.set_shader_parameter("ids_off", world.width - (tw - world.width))
+		_param("ids_tex", ids[0])
+		_param("map_size", Vector2(world.width * 2, world.height * 2))
+		_param("ids_half", world.width)
+		_param("ids_off", world.width - (tw - world.width))
 	else:
 		var id1 := world.id_image.duplicate() as Image
 		id1.convert(Image.FORMAT_RG8)
-		mat.set_shader_parameter("ids_tex", _layers([id1, id1]))
-		mat.set_shader_parameter("ids_half", world.width)
-		mat.set_shader_parameter("ids_off", 0)
+		_param("ids_tex", _layers([id1, id1]))
+		_param("ids_half", world.width)
+		_param("ids_off", 0)
 	# плитки: нормали волн (tools/build_water.py) и фактура местности вблизи — массивом
 	var wpath := "res://data/world1936/water.png.bin"
 	var wimg := Image.new()
@@ -254,9 +280,9 @@ func setup(w: World) -> void:
 		if im.get_width() != 512 or im.get_height() != 512:
 			im.resize(512, 512, Image.INTERPOLATE_BILINEAR)
 		im.generate_mipmaps()
-	mat.set_shader_parameter("tile_tex", _layers([wimg, dimg]))
-	mat.set_shader_parameter("has_water", has_w)
-	mat.set_shader_parameter("has_detail", has_d)
+	_param("tile_tex", _layers([wimg, dimg]))
+	_param("has_water", has_w)
+	_param("has_detail", has_d)
 	# рельеф (relief.png.bin) и поле расстояний до рек (tools/build_rivers.py) —
 	# массивом из двух слоёв одного размера; без поля рек — рельеф в обоих
 	var rel := world.height_image.duplicate() as Image
@@ -271,20 +297,20 @@ func setup(w: World) -> void:
 	rimg.convert(Image.FORMAT_RGBA8)
 	rel.generate_mipmaps()
 	rimg.generate_mipmaps()
-	mat.set_shader_parameter("base_tex", _layers([rel, rimg]))
-	mat.set_shader_parameter("has_rivers", has_r)
+	_param("base_tex", _layers([rel, rimg]))
+	_param("has_rivers", has_r)
 	# поле расстояний до границ провинций (tools/build_sdf.py) — линии границ гладкие
 	var sdf := _sdf2() if not ids.is_empty() else []
-	mat.set_shader_parameter("has_sdf", not sdf.is_empty())
+	_param("has_sdf", not sdf.is_empty())
 	if not sdf.is_empty():
-		mat.set_shader_parameter("sdf_tex", sdf[0])
-		mat.set_shader_parameter("sdf_wd", float(sdf[1]))
+		_param("sdf_tex", sdf[0])
+		_param("sdf_wd", float(sdf[1]))
 
 	# замеры: -- --mapoff=art,rivers,sdf,... — выключить части шейдера (has_*)
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--mapoff="):
 			for k in arg.split("=")[1].split(","):
-				mat.set_shader_parameter("has_" + k, false)
+				_param("has_" + k, false)
 	camera = Camera2D.new()
 	add_child(camera)
 	camera.make_current()
@@ -405,7 +431,7 @@ var _selected := -1
 ## Выбор провинции: перерисовать только прежнюю и новую выбранную с их областями
 ## (обводка области — по границе области).
 func set_selected(prov: int) -> void:
-	mat.set_shader_parameter("selected_id", prov)
+	_param("selected_id", prov)
 	var old := _selected
 	_selected = prov
 	if old == prov:
@@ -514,10 +540,10 @@ func _band_poll() -> void:
 		var bimg := Image.create_from_data(bw, bh, false, Image.FORMAT_L8, _band_out)
 		if band_tex == null or band_tex.get_width() != bw:
 			band_tex = ImageTexture.create_from_image(bimg)
-			mat.set_shader_parameter("band_tex", band_tex)
+			_param("band_tex", band_tex)
 		else:
 			band_tex.update(bimg)
-		mat.set_shader_parameter("has_band", true)
+		_param("has_band", true)
 	redraw_provs(_band_pending)
 	_band_pending = PackedInt32Array()
 	if _band_again:
@@ -527,7 +553,7 @@ func _band_poll() -> void:
 
 func _update_band() -> void:
 	if Native.core == null or not Native.core.has_method("border_band") or world.id_image == null:
-		mat.set_shader_parameter("has_band", false)
+		_param("has_band", false)
 		return
 	if _id_bytes.size() != world.width * world.height * 3:
 		var img := _ids1_from_2x()
@@ -541,10 +567,10 @@ func _update_band() -> void:
 	var bimg := Image.create_from_data(bw, bh, false, Image.FORMAT_L8, band)
 	if band_tex == null or band_tex.get_width() != bw:
 		band_tex = ImageTexture.create_from_image(bimg)
-		mat.set_shader_parameter("band_tex", band_tex)
+		_param("band_tex", band_tex)
 	else:
 		band_tex.update(bimg)
-	mat.set_shader_parameter("has_band", true)
+	_param("has_band", true)
 
 
 static var _sdf_cache: Array = []
@@ -615,7 +641,7 @@ func set_front(marks: Dictionary) -> void:
 		c.a = int(m[0]) / 255.0
 		front_img.set_pixel(int(p) % 64, int(p) / 64, c)
 	_pal_push(3, front_img)
-	mat.set_shader_parameter("front_on", not marks.is_empty())
+	_param("front_on", not marks.is_empty())
 	if was_on != not marks.is_empty() or changed.size() > 400:
 		redraw()
 	else:
@@ -623,13 +649,17 @@ func set_front(marks: Dictionary) -> void:
 
 
 func set_highlight_nation(n: int) -> void:
-	mat.set_shader_parameter("highlight_nation", n)
+	_param("highlight_nation", n)
 	redraw()
 
 
 ## Перерисовать карту в ближайшем кадре.
+## Карта изменилась целиком (режим, качество, палитра без частичной...):
+## перерисовать кадр и заново построить кэш движения.
 func redraw() -> void:
 	_dirty = true
+	_c_valid = false
+	_c_build_n = 0
 
 
 # --- Частичная перерисовка (оптимизация для телефона, ноябрь 2026) -------------
@@ -664,6 +694,8 @@ func redraw_provs(provs: PackedInt32Array) -> void:
 	# рамка в единицах мира (пиксель карты 1× = SCALE), с запасом
 	var a := Vector2(x0 - PART_MARGIN, y0 - PART_MARGIN) * SCALE
 	var b := Vector2(x1 + 1.0 + PART_MARGIN, y1 + 1.0 + PART_MARGIN) * SCALE
+	if _c_valid or _c_build_n > 0:
+		_c_rects.append(Rect2(a, b - a))
 	var r := Rect2(world_to_screen(a), Vector2.ZERO)
 	for c in [Vector2(b.x, a.y), Vector2(a.x, b.y), b]:
 		r = r.expand(world_to_screen(c))
@@ -679,7 +711,7 @@ func redraw_provs(provs: PackedInt32Array) -> void:
 # --- Перерисовка полосами (оптимизация для телефона, ноябрь 2026) -------------
 # Полная перерисовка на высоком качестве на Adreno 619 — 100–150 мс одним кадром
 # (рывок). Где кадр можно не показывать сразу, рисуем его полосами по одной за
-# кадр (тот же шейдер, те же пиксели — частичная перерисовка через q_rect):
+# кадр (тот же шейдер, те же пиксели — частичная перерисовка прямоугольником):
 #  - смена сезона (снег) — под снимком прежнего кадра, который потом тает;
 #  - кадр в полном качестве после сдвига — скрыт, пока виден упрощённый, и
 #    проявляется, когда готовы все полосы.
@@ -702,15 +734,14 @@ func _draw_strip() -> void:
 		and is_equal_approx(tilt(), _full_tilt)
 	if not same:
 		_strip_n = 0
-		redraw()
+		_dirty = true
 		return
 	var y0 := floori(float(size.y) * _strip_i / _strip_n)
 	var y1 := floori(float(size.y) * (_strip_i + 1) / _strip_n)
-	mat.set_shader_parameter("quality", quality)
-	mat.set_shader_parameter("res_k", float(size.x) / maxf(1.0, logical.x))
-	mat.set_shader_parameter("buf_size", Vector2(size))
+	_param("quality", quality)
+	_param("res_k", float(size.x) / maxf(1.0, logical.x))
+	_param("buf_size", Vector2(size))
 	_cam_uniforms(logical)
-	mat.set_shader_parameter("q_rect", Vector4(0.0, float(y0) / size.y, 1.0, float(y1 - y0) / size.y))
 	quad.position = Vector2(0, y0)
 	quad.size = Vector2(size.x, y1 - y0)
 	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
@@ -722,6 +753,250 @@ func _draw_strip() -> void:
 		if _strip_hidden:
 			_strip_hidden = false
 			_fading_in = true   # все полосы готовы — проявляем
+
+
+# --- Кэш движения (решение пользователя, ноябрь 2026) -------------------------
+# При сдвиге карта не перерисовывается целиком и не размывается: плоский кадр
+# полного качества (вид сверху, тот же шейдер без наклона) лежит в закольцованном
+# буфере cache_vp, привязанном к миру (якорь _c_cam, окно с пикселя _c_n). Сдвиг
+# камеры — дорисовка только открывшихся полос; экран показывает проекцию буфера
+# текущей камерой (перспектива, подъём гор, дымка — map_motion.gdshader). Без
+# наклона и на том же масштабе — пиксель в пиксель с полным кадром; при наклоне
+# масштаб буфера — как у нижнего края экрана (дальние линии во время движения
+# чуть тоньше). После остановки — точный кадр (полосами, проявляется).
+# Строится заранее, пока карта стоит (полосами), заново — при смене масштаба
+# больше CACHE_ZOOM_TOL, качества, сезона, всей карты; смена владельцев —
+# частично (_c_rects).
+const CACHE_MAX_SCREENS := 3.2   # пикселей кэша не больше стольких экранов
+const CACHE_MARGIN := 0.1        # запас окна на сдвиг (доля большей стороны экрана)
+const CACHE_ZOOM_TOL := 1.15
+const RELIEF_H := 6.0            # как в map.gdshader: высота гор при наклоне, единиц мира
+var _c_quads: Array = []
+var _c_valid := false
+var _c_cam := Vector2.ZERO       # якорь: центр окна при _c_n = 0, мир
+var _c_zoom := 1.0               # логический масштаб кадра кэша
+var _c_zneed := 1.0              # нужный масштаб при постройке (_c_zoom меньше, если упёрлись в размер)
+var _c_rk := 1.0                 # пикселей буфера на логический
+var _c_n := Vector2i.ZERO        # окно: первый пиксель кадра якоря
+var _c_size := Vector2i.ONE
+var _c_q := -1
+var _c_build_i := 0
+var _c_build_n := 0              # постройка полосами: 0 — не строится
+var _c_rects: Array = []         # мировые рамки к дорисовке (смена владельцев)
+var _c_queue: Array = []         # прямоугольники кадра якоря к отрисовке в этом кадре
+var _c_zoom_seen := 0.0
+var _c_still := 0                # кадров подряд без смены масштаба
+var cache_draws := 0             # для замеров: сколько раз рисовался кэш
+
+
+## Пикселей буфера на логический пиксель экрана (как у кадра карты).
+func _screen_rk() -> float:
+	var logical := get_viewport_rect().size
+	var phys := Vector2(get_window().size)
+	return float(maxi(1, int(phys.x * res_scale))) / maxf(1.0, logical.x)
+
+
+## Нужный кэш для текущей камеры → [масштаб, рамка видимого в мире].
+func _cache_need() -> Array:
+	var vp := get_viewport_rect().size
+	var r := Rect2(screen_to_world(Vector2.ZERO), Vector2.ZERO)
+	for p in [Vector2(vp.x, 0), Vector2(0, vp.y), vp, Vector2(vp.x * 0.5, 0)]:
+		r = r.expand(screen_to_world(p))
+	var th := tilt()
+	var z := camera.zoom.x
+	if th > 0.0:
+		z *= 1.0 + tan(th) * vp.y * 0.5 / cam_focal()   # масштаб нижнего края экрана
+		r = r.grow(RELIEF_H * 2.5)                       # подъём гор берёт точки ближе к камере
+	return [z, r]
+
+
+## Начать строить кэш для текущей камеры (полосами, по одной за кадр).
+func _cache_build() -> void:
+	var need := _cache_need()
+	var z: float = need[0]
+	var r: Rect2 = need[1]
+	var rk := _screen_rk()
+	var vp := get_viewport_rect().size * rk
+	var m := maxf(vp.x, vp.y) * CACHE_MARGIN
+	var px := r.size * z * rk + Vector2(m, m) * 2.0
+	# не больше CACHE_MAX_SCREENS экранов и 8192 по стороне — иначе мельче
+	var k := minf(1.0, sqrt(CACHE_MAX_SCREENS * vp.x * vp.y / maxf(1.0, px.x * px.y)))
+	k = minf(k, 8192.0 / maxf(px.x, px.y))
+	_c_zoom = z * k
+	_c_zneed = z
+	_c_rk = rk
+	_c_size = Vector2i(maxi(8, ceili(px.x * k)), maxi(8, ceili(px.y * k)))
+	_c_cam = r.get_center()
+	_c_n = Vector2i.ZERO
+	_c_q = quality
+	_c_valid = false
+	_c_rects.clear()
+	_c_queue.clear()
+	if cache_vp.size != _c_size:
+		cache_vp.size = _c_size
+	_c_build_i = 0
+	_c_build_n = maxi(1, strips)
+
+
+## Рамка мира → прямоугольник кадра якоря (пиксели буфера, целые).
+func _cache_px(r: Rect2) -> Rect2:
+	var k := _c_zoom * _c_rk
+	var p0 := ((r.position - _c_cam) * k + Vector2(_c_size) * 0.5).floor()
+	var p1 := ((r.end - _c_cam) * k + Vector2(_c_size) * 0.5).ceil()
+	return Rect2(p0, p1 - p0)
+
+
+## Можно ли показать движение из кэша; если видимое вышло за окно — сдвинуть
+## окно и дорисовать открывшиеся полосы (в этом же кадре).
+func _cache_usable() -> bool:
+	if not _c_valid or _c_build_n > 0 or _c_q != quality or absf(_c_rk - _screen_rk()) > 1e-4:
+		return false
+	var need := _cache_need()
+	var zr: float = float(need[0]) / _c_zneed
+	if zr > CACHE_ZOOM_TOL or zr < 1.0 / CACHE_ZOOM_TOL:
+		return false
+	var fp := _cache_px(need[1])
+	var win := Rect2(Vector2(_c_n), Vector2(_c_size))
+	if win.encloses(fp):
+		return true
+	if fp.size.x > _c_size.x - 2 or fp.size.y > _c_size.y - 2:
+		return false
+	# новое окно: видимое посередине
+	var n2 := Vector2i((fp.get_center() - Vector2(_c_size) * 0.5).round())
+	var d := n2 - _c_n
+	if absi(d.x) >= _c_size.x or absi(d.y) >= _c_size.y:
+		_c_n = n2
+		_c_queue.append(Rect2(Vector2(n2), Vector2(_c_size)))
+		return true
+	_c_n = n2
+	var w := Vector2(_c_size)
+	if d.x > 0:
+		_c_queue.append(Rect2(Vector2(n2.x + w.x - d.x, n2.y), Vector2(d.x, w.y)))
+	elif d.x < 0:
+		_c_queue.append(Rect2(Vector2(n2), Vector2(-d.x, w.y)))
+	if d.y > 0:
+		_c_queue.append(Rect2(Vector2(n2.x, n2.y + w.y - d.y), Vector2(w.x, d.y)))
+	elif d.y < 0:
+		_c_queue.append(Rect2(Vector2(n2), Vector2(w.x, -d.y)))
+	return true
+
+
+## Каждый кадр: постройка полосами, частичные дорисовки, предзагрузка.
+func _cache_tick() -> void:
+	if cache_vp == null:
+		return
+	var z := camera.zoom.x
+	_c_still = _c_still + 1 if z == _c_zoom_seen else 0
+	_c_zoom_seen = z
+	if _c_build_n > 0:
+		var need := _cache_need()
+		var zr: float = float(need[0]) / _c_zneed
+		if zr > CACHE_ZOOM_TOL or zr < 1.0 / CACHE_ZOOM_TOL or _c_q != quality:
+			_c_build_n = 0   # масштаб ушёл — строить заново, когда остановится
+			return
+		var y0 := floori(float(_c_size.y) * _c_build_i / _c_build_n)
+		var y1 := floori(float(_c_size.y) * (_c_build_i + 1) / _c_build_n)
+		_c_queue.append(Rect2(Vector2(_c_n.x, _c_n.y + y0), Vector2(_c_size.x, y1 - y0)))
+		_c_build_i += 1
+		if _c_build_i >= _c_build_n:
+			_c_build_n = 0
+			_c_valid = true
+		return
+	if _c_valid:
+		if not _c_rects.is_empty():
+			for r in _c_rects:
+				_c_queue.append(_cache_px(r))
+			_c_rects.clear()
+		if _c_q != quality or absf(_c_rk - _screen_rk()) > 1e-4:
+			_c_valid = false
+		else:
+			var zr: float = float(_cache_need()[0]) / _c_zneed
+			if zr > CACHE_ZOOM_TOL or zr < 1.0 / CACHE_ZOOM_TOL:
+				_c_valid = false
+	# заранее: кэша нет или масштаб другой — строить, когда масштаб устоялся и
+	# в этом кадре не рисуется полный кадр карты (не складывать нагрузку)
+	# при движении (масштаб тот же) — сразу: упрощённый кадр на это время не
+	# перерисовывается, только сдвигается (см. _process_map)
+	if not _c_valid and _strip_n == 0 \
+			and ((_c_still >= 3 and not _dirty and redraws == _c_redraws0) or _moving > 0.0):
+		_cache_build()
+
+
+## Нарисовать накопленные прямоугольники кадра якоря (окно — закольцованное).
+func _cache_flush() -> void:
+	if cache_vp == null:
+		return
+	if cache_rect.visible:
+		_cache_show()
+	if _c_queue.is_empty():
+		return
+	var win := Rect2(Vector2(_c_n), Vector2(_c_size))
+	var rects: Array = []
+	for r in _c_queue:
+		var q: Rect2 = (r as Rect2).intersection(win)
+		if q.size.x < 1.0 or q.size.y < 1.0:
+			continue
+		# в буфер: по модулю размера, с разрезом по краю
+		var bx := posmod(int(q.position.x), _c_size.x)
+		var by := posmod(int(q.position.y), _c_size.y)
+		var w := int(q.size.x)
+		var h := int(q.size.y)
+		var xs := [[bx, mini(w, _c_size.x - bx)]]
+		if bx + w > _c_size.x:
+			xs.append([0, bx + w - _c_size.x])
+		var ys := [[by, mini(h, _c_size.y - by)]]
+		if by + h > _c_size.y:
+			ys.append([0, by + h - _c_size.y])
+		for xa in xs:
+			for ya in ys:
+				rects.append(Rect2(xa[0], ya[0], xa[1], ya[1]))
+	_c_queue.clear()
+	if rects.is_empty():
+		return
+	while _c_quads.size() < rects.size():
+		var cq := ColorRect.new()
+		cq.material = cmat
+		cq.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cache_vp.add_child(cq)
+		_c_quads.append(cq)
+	for i in _c_quads.size():
+		var cq: ColorRect = _c_quads[i]
+		cq.visible = i < rects.size()
+		if cq.visible:
+			cq.position = rects[i].position
+			cq.size = rects[i].size
+	var sz := Vector2(_c_size)
+	cmat.set_shader_parameter("quality", _c_q)
+	cmat.set_shader_parameter("res_k", _c_rk)
+	cmat.set_shader_parameter("buf_size", sz)
+	cmat.set_shader_parameter("scr_size", sz / _c_rk)
+	cmat.set_shader_parameter("cam_pos", _c_cam)
+	cmat.set_shader_parameter("cam_zoom", _c_zoom)
+	cmat.set_shader_parameter("cam_tilt", 0.0)
+	cmat.set_shader_parameter("cam_f", cam_focal())
+	cmat.set_shader_parameter("torus_n", Vector2(_c_n))
+	cache_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	cache_draws += 1
+
+
+## Вывод кэша текущей камерой.
+func _cache_show() -> void:
+	var logical := get_viewport_rect().size
+	cache_rect.position = Vector2.ZERO
+	cache_rect.size = logical
+	dmat.set_shader_parameter("base_tex", mat.get_shader_parameter("base_tex"))
+	dmat.set_shader_parameter("world_size", world_size())
+	dmat.set_shader_parameter("cam_pos", camera.position)
+	dmat.set_shader_parameter("cam_zoom", camera.zoom.x)
+	dmat.set_shader_parameter("cam_tilt", tilt())
+	dmat.set_shader_parameter("cam_f", cam_focal())
+	dmat.set_shader_parameter("scr_size", logical)
+	dmat.set_shader_parameter("c_cam", _c_cam)
+	dmat.set_shader_parameter("c_zoom", _c_zoom)
+	dmat.set_shader_parameter("c_rk", _c_rk)
+	dmat.set_shader_parameter("c_n", Vector2(_c_n))
+	dmat.set_shader_parameter("c_size", Vector2(_c_size))
+	dmat.set_shader_parameter("c_exact", tilt() <= 0.0 and is_equal_approx(camera.zoom.x, _c_zoom))
 
 
 ## Разрешение буфера карты: доля пикселей экрана (0.5–1); 0 — авто: после
@@ -788,7 +1063,7 @@ func _draw_part() -> void:
 	var r := Rect2(_part_rect.position * k, _part_rect.size * k)
 	r = r.intersection(Rect2(Vector2.ZERO, Vector2(size)))
 	if not same or r.size.x * r.size.y > PART_MAX * size.x * size.y:
-		redraw()
+		_dirty = true   # кэш движения уже получил эту область (redraw_provs)
 		return
 	if r.size.x < 1.0 or r.size.y < 1.0:
 		return   # область вне экрана — рисовать нечего
@@ -796,11 +1071,10 @@ func _draw_part() -> void:
 	var p0 := r.position.floor()
 	var p1 := (r.position + r.size).ceil()
 	r = Rect2(p0, p1 - p0)
-	mat.set_shader_parameter("quality", quality)
-	mat.set_shader_parameter("res_k", float(size.x) / maxf(1.0, logical.x))
-	mat.set_shader_parameter("buf_size", Vector2(size))
+	_param("quality", quality)
+	_param("res_k", float(size.x) / maxf(1.0, logical.x))
+	_param("buf_size", Vector2(size))
 	_cam_uniforms(logical)
-	mat.set_shader_parameter("q_rect", Vector4(r.position.x / size.x, r.position.y / size.y, r.size.x / size.x, r.size.y / size.y))
 	quad.position = r.position
 	quad.size = r.size
 	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
@@ -814,7 +1088,11 @@ func _process(dt: float) -> void:
 	FrameProf.add("карта", Time.get_ticks_usec() - t0)
 
 
+var _c_redraws0 := 0   # перерисовок карты к началу кадра (кэш не строится в кадр с ними)
+
+
 func _process_map(dt: float) -> void:
+	_c_redraws0 = redraws
 	Report.frame(dt, redraws - part_redraws, part_redraws)
 	if res_auto and map_vp != null:
 		_auto_adjust(dt)
@@ -836,21 +1114,33 @@ func _process_map(dt: float) -> void:
 		_part_dirty = false
 		_strip_n = 0
 		_strip_hidden = false
-		mat.set_shader_parameter("q_rect", Vector4(0.0, 0.0, 1.0, 1.0))
-		var lite := motion_lite and _moving > 0.0 and (quality > 0 or res_scale > 0.5)
+		# движение: из кэша (всегда, когда он годится), иначе — упрощённо (если
+		# включено «упрощать при сдвиге» и есть что упрощать), иначе — как есть
+		var use_cache := _moving > 0.0 and _cache_usable()
+		var lite := use_cache or (motion_lite and _moving > 0.0 and (quality > 0 or res_scale > 0.5))
 		var was_lite := _lite_drawn
 		_lite_drawn = lite
-		mat.set_shader_parameter("quality", 0 if lite else quality)
+		_param("quality", 0 if lite else quality)
 		var rs := 0.5 if lite else res_scale
 		var logical := get_viewport_rect().size
 		var phys := Vector2(get_window().size)
 		var size := Vector2i(maxi(1, int(phys.x * rs)), maxi(1, int(phys.y * rs)))
 		var rk := float(size.x) / maxf(1.0, logical.x)  # пикселей буфера на логический
-		mat.set_shader_parameter("res_k", rk)
-		mat.set_shader_parameter("buf_size", Vector2(size))
+		_param("res_k", rk)
+		_param("buf_size", Vector2(size))
 		_cam_uniforms(logical)
 		quad.position = Vector2.ZERO
-		if lite:
+		if use_cache:
+			# движение — из кэша: плоский кадр полного качества, открывшиеся края
+			# дорисованы (_cache_usable), проекция с текущей камерой (map_motion)
+			cache_rect.visible = true
+			lite_sprite.visible = false
+			_fading_in = false
+			redraws -= 1
+		elif lite and _c_build_n > 0 and lite_sprite.visible and was_lite:
+			redraws -= 1   # кэш строится — прежний упрощённый кадр просто сдвигается
+		elif lite:
+			cache_rect.visible = false
 			if lite_vp.size != size:
 				lite_vp.size = size
 			lite_quad.size = Vector2(size)
@@ -894,22 +1184,33 @@ func _process_map(dt: float) -> void:
 		_full_alpha = minf(1.0, _full_alpha + dt / FADE_IN)
 		if _full_alpha >= 1.0:
 			_fading_in = false
-	if not motion_lite:
+	if not motion_lite and not cache_rect.visible:
 		_full_alpha = 1.0
 	if _full_alpha >= 1.0 and not _lite_drawn:
 		lite_sprite.visible = false
+		cache_rect.visible = false
+	_cache_tick()
+	_cache_flush()
 	view_sprite.modulate.a = _full_alpha
 	_place(view_sprite, _full_cam, _full_zoom, _full_size)
 	if lite_sprite.visible:
 		_place(lite_sprite, _lite_cam, _lite_zoom, _lite_size)
 
 
+## Параметр шейдера карты — в оба материала (экран и кэш движения); камеру
+## кэш задаёт себе сам перед отрисовкой (_cache_flush).
+func _param(name: String, v) -> void:
+	mat.set_shader_parameter(name, v)
+	cmat.set_shader_parameter(name, v)
+
+
 func _cam_uniforms(logical: Vector2) -> void:
-	mat.set_shader_parameter("cam_pos", camera.position)
-	mat.set_shader_parameter("cam_zoom", camera.zoom.x)
-	mat.set_shader_parameter("cam_tilt", tilt())
-	mat.set_shader_parameter("cam_f", cam_focal())
-	mat.set_shader_parameter("scr_size", logical)
+	_param("torus_n", Vector2.ZERO)
+	_param("cam_pos", camera.position)
+	_param("cam_zoom", camera.zoom.x)
+	_param("cam_tilt", tilt())
+	_param("cam_f", cam_focal())
+	_param("scr_size", logical)
 
 
 ## Показ буфера, нарисованного с камеры (c_b, z_b), при текущей камере: старый
@@ -954,10 +1255,12 @@ func set_day(day: int) -> void:
 		return
 	var shown := _winter >= 0.0 and not _dirty and _full_alpha >= 1.0 and not _lite_drawn \
 		and not _fading_in and _moving <= 0.0 and _strip_n == 0 and map_vp.size.x > 1
+	_c_valid = false   # снег другой — кэш движения строить заново
+	_c_build_n = 0
 	if not shown:
 		_season_end()
 		_winter = w
-		mat.set_shader_parameter("winter", w)
+		_param("winter", w)
 		redraw()
 		return
 	# снимок видимого кадра (в этом кадре), сезон — со следующего
@@ -983,7 +1286,7 @@ func _season_end() -> void:
 		return
 	if _season_step == 1:
 		_winter = _season_w
-		mat.set_shader_parameter("winter", _season_w)
+		_param("winter", _season_w)
 		redraw()
 	_season_step = 0
 	snap_sprite.visible = false
@@ -1000,7 +1303,7 @@ func _season_tick(dt: float) -> void:
 	match _season_step:
 		1:
 			_winter = _season_w
-			mat.set_shader_parameter("winter", _season_w)
+			_param("winter", _season_w)
 			_season_step = 2
 			if strips > 1:
 				_strip_i = 0
@@ -1028,14 +1331,14 @@ func _pal_push(sec: int, img: Image) -> void:
 func set_quality(q: int) -> void:
 	quality = clampi(q, 0, 2)
 	if mat != null:
-		mat.set_shader_parameter("quality", quality)
+		_param("quality", quality)
 		redraw()
 
 
 func set_map_mode(m: int) -> void:
 	map_mode = m
-	mat.set_shader_parameter("show_occupation", m == MapMode.POLITICAL)
-	mat.set_shader_parameter("terrain_mode", m == MapMode.TERRAIN)
+	_param("show_occupation", m == MapMode.POLITICAL)
+	_param("terrain_mode", m == MapMode.TERRAIN)
 	update_palette()
 	redraw()
 
@@ -1270,5 +1573,5 @@ func _on_view_changed() -> void:
 		_moving = MOTION_SETTLE
 	_wheel = false
 	view_version += 1
-	redraw()
+	_dirty = true   # сдвиг камеры: кэш движения остаётся
 	view_changed.emit()
