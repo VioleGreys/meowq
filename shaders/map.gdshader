@@ -111,6 +111,16 @@ vec4 tex_bicubic(sampler2D t, vec2 uv, vec2 ts, vec2 gx, vec2 gy) {
 void fragment() {
 	vec2 px = UV * map_size;
 	ivec2 ip = ivec2(floor(px));
+	// поле расстояний до границ провинций (текселей сетки; без поля — далеко)
+	float sdf_tx = 1e4;
+	if (has_sdf) {
+		bool s_east = px.x >= float(ids_half);
+		vec2 suv = vec2((s_east ? px.x - float(ids_off) : px.x) / sdf_wd, UV.y);
+		vec2 sgx = vec2(dFdx(px.x) / sdf_wd, dFdx(UV.y));
+		vec2 sgy = vec2(dFdy(px.x) / sdf_wd, dFdy(UV.y));
+		float sd = s_east ? textureGrad(sdf_e, suv, sgx, sgy).r : textureGrad(sdf_w, suv, sgx, sgy).r;
+		sdf_tx = sd * 2.0;
+	}
 	// Сглаженные границы: берём 4 ближайших текселя карты и выбираем провинцию с
 	// наибольшим весом билинейной интерполяции — граница идёт плавной кривой, а не
 	// «лесенкой» пикселей. diff — запас победителя над вторым: 0 на самой границе.
@@ -131,6 +141,11 @@ void fragment() {
 		uw[0] = 1.0;
 	} else {
 	bool far = zoom * 2.0 / id_k < 1.2 || quality < 2;
+	if (far && sdf_tx < 1.6 && quality == 1 && zoom * 2.0 / id_k >= 1.2) {
+		// среднее качество с полем расстояний: у границы — окно 4×4, как у линий
+		// (иначе заливка идёт лесенкой мимо гладкой линии); вдали — 2×2
+		far = false;
+	}
 	vec4 wx;
 	vec4 wy;
 	vec4 bx = vec4(0.0, 1.0 - tf.x, tf.x, 0.0);   // билинейные веса (перевес ближних)
@@ -392,16 +407,7 @@ void fragment() {
 	float texel_px = zoom * 2.0 * res_k / id_k;                        // тексель сетки провинций на экране (масштаб спрайта 2)
 	float map_px = texel_px * id_k;                                  // пиксель карты на экране: толщины линий — в нём
 	// расстояние до границы провинций, пиксели экрана (с полем расстояний)
-	float sdf_px = 1e4;
-	if (has_sdf) {
-		float sx = px.x;
-		bool s_east = sx >= float(ids_half);
-		vec2 suv = vec2((s_east ? sx - float(ids_off) : sx) / sdf_wd, UV.y);
-		vec2 sgx = vec2(dFdx(px.x) / sdf_wd, dFdx(UV.y));
-		vec2 sgy = vec2(dFdy(px.x) / sdf_wd, dFdy(UV.y));
-		float sd = s_east ? textureGrad(sdf_e, suv, sgx, sgy).r : textureGrad(sdf_w, suv, sgx, sgy).r;
-		sdf_px = sd * 2.0 * texel_px;
-	}
+	float sdf_px = sdf_tx * texel_px;
 	float w_land = 0.0;
 	float w_water = 0.0;
 	float w_mine = 0.0;      // страна победителя

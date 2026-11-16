@@ -10,18 +10,19 @@ data/world1936/sdf_w.png.bin, sdf_e.png.bin (L8, сетка карты пров�
 Шейдер берёт поле билинейно — линии гладкие на любом приближении, а заливка
 провинций с ними совпадает.
 
-  python3 tools/build_sdf.py
+  python3 tools/build_sdf.py      (нужен numba: pip install numba; ~минуты)
 """
 import os
 import sys
 
+import numba
 import numpy as np
 from PIL import Image
 from scipy import ndimage
 
 sys.path.insert(0, os.path.dirname(__file__))
 import build_map as bm  # noqa: E402
-from build_ids2x import PAD, bspline  # noqa: E402
+from build_ids2x import PAD  # noqa: E402
 
 Image.MAX_IMAGE_PIXELS = None
 DATA = os.path.join(os.path.dirname(__file__), "..", "data", "world1936")
@@ -39,53 +40,113 @@ def load_ids2() -> np.ndarray:
     return np.concatenate([w[:, :half], e[:, PAD:]], 1)
 
 
-def smooth_labels(ids: np.ndarray, r0: int, r1: int) -> np.ndarray:
-    """Сглаженные метки в точках SUB×SUB на тексель для строк сетки [r0, r1)."""
+@numba.njit(cache=True)
+def _wts(f):
+    f2 = f * f
+    f3 = f2 * f
+    w0 = (1 - f) ** 3 / 6
+    w1 = (3 * f3 - 6 * f2 + 4) / 6 + (1 - f) * 0.35
+    w2 = (-3 * f3 + 3 * f2 + 3 * f + 1) / 6 + f * 0.35
+    w3 = f3 / 6
+    return w0, w1, w2, w3
+
+
+@numba.njit(parallel=True, cache=True)
+def _labels4(ids, near):
+    """Сглаженные метки SUB×SUB на тексель (только у границ; вдали — как есть)."""
     H, W = ids.shape
-    xs = (np.arange(W * SUB) + 0.5) / SUB - 0.5
-    ix0 = np.floor(xs).astype(np.int64)
-    wx = bspline((xs - ix0).astype(np.float32))
-    ys = (np.arange(r0 * SUB, r1 * SUB) + 0.5) / SUB - 0.5
-    iy0 = np.floor(ys).astype(np.int64)
-    wy = bspline((ys - iy0).astype(np.float32))
-    labs, wts = [], []
-    for oy in range(4):
-        yy = np.clip(iy0 + oy - 1, 0, H - 1)
-        for ox in range(4):
-            xx = np.clip(ix0 + ox - 1, 0, W - 1)
-            labs.append(ids[yy][:, xx])
-            wts.append(wy[oy][:, None] * wx[ox][None, :])
-    L = np.stack(labs, -1)
-    Wt = np.stack(wts, -1)
-    tot = np.zeros_like(Wt)
-    for i in range(16):
-        tot[..., i] = (Wt * (L == L[..., i:i + 1])).sum(-1)
-    k = np.argmax(tot, -1)
-    return np.take_along_axis(L, k[..., None], -1)[..., 0]
+    out = np.empty((H * SUB, W * SUB), np.int16)
+    lab = np.empty(16, np.int32)
+    for y in numba.prange(H * SUB):
+        lab = np.empty(16, np.int32)
+        wt = np.empty(16, np.float32)
+        ty = y // SUB
+        qy = (y + 0.5) / SUB - 0.5
+        iy = int(np.floor(qy))
+        wy = _wts(qy - iy)
+        for x in range(W * SUB):
+            tx = x // SUB
+            if not near[ty, tx]:
+                out[y, x] = ids[ty, tx]
+                continue
+            qx = (x + 0.5) / SUB - 0.5
+            ix = int(np.floor(qx))
+            wx = _wts(qx - ix)
+            n = 0
+            for oy in range(4):
+                yy = min(max(iy + oy - 1, 0), H - 1)
+                for ox in range(4):
+                    xx = min(max(ix + ox - 1, 0), W - 1)
+                    lab[n] = ids[yy, xx]
+                    wt[n] = wy[oy] * wx[ox]
+                    n += 1
+            best = -1.0
+            bl = lab[0]
+            for a in range(16):
+                t = 0.0
+                for b in range(16):
+                    if lab[b] == lab[a]:
+                        t += wt[b]
+                if t > best:
+                    best = t
+                    bl = lab[a]
+            out[y, x] = bl
+    return out
+
+
+@numba.njit(parallel=True, cache=True)
+def _dist(l4, near, maxd):
+    """Расстояние от центра текселя до ближайшей границы сглаженных меток (текселей)."""
+    H, W = near.shape
+    out = np.empty((H, W), np.uint8)
+    R = int(maxd * SUB) + 1
+    H4, W4 = l4.shape
+    for ty in numba.prange(H):
+        for tx in range(W):
+            if not near[ty, tx]:
+                out[ty, tx] = 255
+                continue
+            cy = ty * SUB + SUB / 2.0   # центр текселя в координатах точек
+            cx = tx * SUB + SUB / 2.0
+            best = maxd * SUB
+            y0 = max(0, ty * SUB + SUB // 2 - R)
+            y1 = min(H4 - 1, ty * SUB + SUB // 2 + R)
+            x0 = max(0, tx * SUB + SUB // 2 - R)
+            x1 = min(W4 - 1, tx * SUB + SUB // 2 + R)
+            for y in range(y0, y1):
+                for x in range(x0, x1):
+                    a = l4[y, x]
+                    # граница между точкой и соседом справа / снизу — в середине
+                    if l4[y, x + 1] != a:
+                        dx = x + 1.0 - cx
+                        dy = y + 0.5 - cy
+                        d = np.sqrt(dx * dx + dy * dy)
+                        if d < best:
+                            best = d
+                    if l4[y + 1, x] != a:
+                        dx = x + 0.5 - cx
+                        dy = y + 1.0 - cy
+                        d = np.sqrt(dx * dx + dy * dy)
+                        if d < best:
+                            best = d
+            out[ty, tx] = int(min(best / SUB, maxd) / maxd * 255.0 + 0.5)
+    return out
 
 
 def main():
     ids = load_ids2()
     H, W = ids.shape
-    sdf = np.zeros((H, W), np.uint8)
-    band = 12                        # строк сетки 2× в полосе
-    ov = int(np.ceil(MAXD)) + 1      # перекрытие полос (строк сетки 2×)
-    for r0 in range(0, H, band):
-        r1 = min(H, r0 + band)
-        a0, a1 = max(0, r0 - ov), min(H, r1 + ov)
-        lab = smooth_labels(ids, a0, a1)
-        edge = np.zeros(lab.shape, bool)
-        edge[:, 1:] |= lab[:, 1:] != lab[:, :-1]
-        edge[1:, :] |= lab[1:, :] != lab[:-1, :]
-        d = ndimage.distance_transform_edt(~edge)
-        # в центре текселя сетки 2×: точка (SUB/2, SUB/2) внутри него; граница —
-        # между точками, поэтому −0.5 точки
-        c = SUB // 2
-        dc = d[(r0 - a0) * SUB + c:(r1 - a0) * SUB:SUB, c::SUB][: r1 - r0, :W]
-        dt = np.clip((dc - 0.5) / SUB, 0, MAXD)
-        sdf[r0:r1] = np.round(dt / MAXD * 255).astype(np.uint8)
-        if r0 % 600 < band:
-            print(f"  строки {r0}/{H}", flush=True)
+    # у границ: в окне ±3 текселя есть другая провинция
+    diff = np.zeros((H, W), bool)
+    diff[:, 1:] |= ids[:, 1:] != ids[:, :-1]
+    diff[:, :-1] |= ids[:, 1:] != ids[:, :-1]
+    diff[1:, :] |= ids[1:, :] != ids[:-1, :]
+    diff[:-1, :] |= ids[1:, :] != ids[:-1, :]
+    near = ndimage.binary_dilation(diff, iterations=3)
+    print(f"Текселей у границ: {near.mean():.3f}", flush=True)
+    l4 = _labels4(ids, near)
+    print("Сглаженные метки готовы", flush=True)
+    sdf = _dist(l4, near, MAXD)
     half = W // 2
     for nm, a in (("w", sdf[:, : half + PAD]), ("e", sdf[:, half - PAD:])):
         path = os.path.abspath(os.path.join(DATA, f"sdf_{nm}.png.bin"))
