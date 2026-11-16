@@ -29,7 +29,8 @@ var vp: SubViewport
 var rect: ColorRect
 var world_px := Vector2.ONE     # размер мира, единиц
 var r_cls := 1.0                # плотность заготовок (класс разрешения экрана)
-var ver := ""
+var ver := ""                   # хэш шейдера и формата
+var pack_stamp := ""            # метка пакетов APK (данные карты при сборке), "" — нет
 var atlas: Texture2DArray
 var page_img: Image
 var page_tex: ImageTexture
@@ -107,16 +108,12 @@ func setup(v: MapView, shader_params: Dictionary) -> void:
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vp.add_child(rect)
 	var inc: ShaderInclude = load("res://shaders/map_core.gdshaderinc")
-	# версия: шейдер, формат и размеры файлов данных карты (рельеф, реки, провинции…)
-	var sig := inc.code + "|%d|%d|%s" % [BAKE_VERSION, T, str(world_px)]
-	var da := DirAccess.open("res://data/world1936/")
-	if da != null:
-		var fs := da.get_files()
-		fs.sort()
-		for fn in fs:
-			if fn.ends_with(".bin"):
-				sig += "|%s:%d" % [fn, FileAccess.get_size("res://data/world1936/" + fn)]
-	ver = "%08x" % (hash(sig) & 0xffffffff)
+	# версия: код шейдера и формат. Данные карты в неё не входят: на телефоне
+	# список и размеры файлов внутри APK читались иначе, чем на ПК, — пакеты
+	# отвергались (ноябрь 2026). Пакет помечает сборка своей меткой (данные карты
+	# на ПК при сборке, data_stamp) — она же ключ кэша на устройстве
+	ver = "%08x" % (hash(inc.code + "|%d|%d|%s" % [BAKE_VERSION, T, str(world_px)]) & 0xffffffff)
+	pack_stamp = ""
 	var blank := Image.create(TS, TS, false, Image.FORMAT_RGBA8)
 	var imgs: Array[Image] = []
 	for i in CAP:
@@ -162,7 +159,7 @@ func set_r(r: float) -> void:
 	_pack.clear()
 	if r_cls == 1.0:
 		_scan_packs()
-	_cache_dir = CACHE_ROOT + ver + "_r%d/" % int(round(r_cls * 100.0))
+	_cache_dir = CACHE_ROOT + ver + ("-" + pack_stamp if pack_stamp != "" else "") + "_r%d/" % int(round(r_cls * 100.0))
 	_scan_cache()
 	ok = true
 
@@ -199,9 +196,12 @@ func _scan_packs() -> void:
 			var pr := f.get_float()
 			var w := f.get_32()
 			var h := f.get_32()
-			if pv != ver or pr != r_cls or w != gw[k] or h != gh[k]:
-				push_warning("MapBake: пакет %s от другой версии карты — не используется" % path)
+			var pv_ok := pv.begins_with(ver + "-") and (pack_stamp == "" or pv == ver + "-" + pack_stamp)
+			if not pv_ok or pr != r_cls or w != gw[k] or h != gh[k]:
+				push_warning("MapBake: пакет %s от другой версии карты (%s, нужна %s, r %.2f/%.2f, сетка %d×%d/%d×%d) — не используется" % [
+					path, pv, ver, pr, r_cls, w, h, gw[k], gh[k]])
 				continue
+			pack_stamp = pv.substr(ver.length() + 1)
 			var tab := f.get_buffer(w * h * 8)
 			for i in w * h:
 				var off := tab.decode_u32(i * 8)
@@ -226,7 +226,7 @@ func _scan_cache() -> void:
 	var root := DirAccess.open(CACHE_ROOT)
 	if root != null:
 		for d in root.get_directories():
-			if not d.begins_with(ver):
+			if not d.begins_with(ver + ("-" + pack_stamp if pack_stamp != "" else "") + "_r"):
 				_rm_dir(CACHE_ROOT + d)
 	var da := DirAccess.open(_cache_dir)
 	if da == null:
@@ -606,6 +606,21 @@ func _saves_poll() -> void:
 
 # --- сборка пакетов для APK (--bake_pack) ------------------------------------------
 
+## Метка данных карты (сборка на ПК): размеры файлов data/world1936/*.bin и графики.
+static func data_stamp() -> String:
+	var sig := ""
+	for dir in ["res://data/world1936/", "res://assets/map/"]:
+		var da := DirAccess.open(dir)
+		if da == null:
+			continue
+		var fs := da.get_files()
+		fs.sort()
+		for fn in fs:
+			if fn.ends_with(".bin") or fn.ends_with(".webp") or fn.ends_with(".png"):
+				sig += "|%s:%d" % [fn, FileAccess.get_size(dir + fn)]
+	return "%08x" % (hash(sig) & 0xffffffff)
+
+
 ## Нарисовать все тайлы уровней 0…APK_MAX_K обоих сезонов и записать пакеты
 ## (зима: тайлы, совпавшие с летом, — ссылкой на летний).
 func build_packs(out_dir: String) -> void:
@@ -628,7 +643,7 @@ func build_packs(out_dir: String) -> void:
 			var path := out_dir.path_join("b%d_%d.bin" % [s, k])
 			var f := FileAccess.open(path, FileAccess.WRITE)
 			f.store_buffer("MQB1".to_ascii_buffer())
-			f.store_pascal_string(ver)
+			f.store_pascal_string(ver + "-" + data_stamp())
 			f.store_float(r_cls)
 			f.store_32(gw[k])
 			f.store_32(gh[k])

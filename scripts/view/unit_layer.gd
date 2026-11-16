@@ -697,7 +697,8 @@ func _rebuild_labels() -> void:
 			var px0 := r[c * 8]
 			var center0 := Vector2(r[c * 8 + 1], r[c * 8 + 2]) / maxf(1.0, px0)
 			var span0 := (Vector2(r[c * 8 + 5], r[c * 8 + 6]) - Vector2(r[c * 8 + 3], r[c * 8 + 4])) * MapView.SCALE
-			_labels.append([center0 * MapView.SCALE, world.nations[c].name.to_upper(), sqrt(px0) * 0.5, maxf(span0.x, span0.y * 0.8)])
+			_labels.append([center0 * MapView.SCALE, world.nations[c].name.to_upper(), sqrt(px0) * 0.5, maxf(span0.x, span0.y * 0.8), c])
+		_fix_label_pos()
 		return
 	var comp := PackedInt32Array()
 	comp.resize(world.prov_count)
@@ -751,7 +752,71 @@ func _rebuild_labels() -> void:
 		var b: Array = best[c]
 		var center: Vector2 = b[1] / maxf(1.0, b[0])
 		var span: Vector2 = (b[3] - b[2]) * MapView.SCALE
-		_labels.append([center * MapView.SCALE, world.nations[c].name.to_upper(), sqrt(float(b[0])) * 0.5, maxf(span.x, span.y * 0.8)])
+		_labels.append([center * MapView.SCALE, world.nations[c].name.to_upper(), sqrt(float(b[0])) * 0.5, maxf(span.x, span.y * 0.8), c])
+	_fix_label_pos()
+
+
+## Центр тяжести вытянутой или изогнутой страны бывает на чужой земле
+## («НОРВЕГИЯ» над Швецией): тогда подпись — в «глубину» своей территории рядом
+## с ним (провинция с наибольшим числом шагов до чужой провинции или моря, ближе
+## к центру; не дальше полуразмаха — иначе ушла бы в колонии).
+func _fix_label_pos() -> void:
+	var need: Array = []
+	for i in _labels.size():
+		var l: Array = _labels[i]
+		var p := world.province_at_pixel(l[0] / MapView.SCALE)
+		if p < 0 or world.p_controller[p] != int(l[4]) or world.p_land[p] == 0:
+			need.append(i)
+	if need.is_empty():
+		return
+	# глубина: шагов до провинции другого владельца или моря (одним обходом)
+	var n := world.prov_count
+	var pc := world.p_controller
+	var land := world.p_land
+	var a_s := world.adj_start
+	var a_l := world.adj_list
+	var depth := PackedInt32Array()
+	depth.resize(n)
+	depth.fill(-1)
+	var q := PackedInt32Array()
+	for p in n:
+		if land[p] == 0 or pc[p] < 0:
+			continue
+		for k in range(a_s[p], a_s[p + 1]):
+			var r := a_l[k]
+			if land[r] == 0 or pc[r] != pc[p]:
+				depth[p] = 0
+				q.append(p)
+				break
+	var head := 0
+	while head < q.size():
+		var p := q[head]
+		head += 1
+		for k in range(a_s[p], a_s[p + 1]):
+			var r := a_l[k]
+			if depth[r] < 0 and land[r] == 1 and pc[r] == pc[p]:
+				depth[r] = depth[p] + 1
+				q.append(r)
+	var cen := world.p_center
+	for i in need:
+		var l: Array = _labels[i]
+		var c: int = l[4]
+		var ctr: Vector2 = l[0] / MapView.SCALE
+		var lim: float = l[3] / MapView.SCALE * 0.5
+		var best := -1
+		var best_s := -INF
+		for p in n:
+			if pc[p] != c or land[p] == 0:
+				continue
+			var d := cen[p].distance_to(ctr)
+			if d > lim:
+				continue
+			var sc := float(maxi(depth[p], 0)) * 3.0 - d / maxf(lim, 1.0) * 4.0
+			if sc > best_s:
+				best_s = sc
+				best = p
+		if best >= 0:
+			l[0] = cen[best] * MapView.SCALE
 
 
 ## Условные знаки родов войск (в духе военных карт).
