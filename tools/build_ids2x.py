@@ -68,6 +68,65 @@ def bspline(f: np.ndarray):
     return [w[i] + b[i] * 0.35 for i in range(4)]
 
 
+SNAP_NEAR = 1.6     # у реки ближе стольких пикселей карты — провинция своего берега
+SNAP_SIDE = 2.6     # берег пробуем на таком расстоянии от осевой линии
+
+
+def snap_rivers(out, land_of):
+    """Граница провинций по реке — точно по осевой линии: пиксель у реки,
+    разделяющей две провинции, берёт провинцию своего берега (по вектору до
+    ближайшей точки реки, tools/build_rivers.py). Иначе река в 1× раздаётся
+    соседям «зубцами», и после сглаживания вдоль реки — обрезки провинций, а
+    линия границы выходит из-под ленты реки пунктиром."""
+    path = os.path.join(DATA, "rivers.png.bin")
+    if not os.path.exists(path):
+        return
+    rv = np.asarray(Image.open(path).convert("RGB")).astype(np.float32)
+    vec = (rv[..., :2] - 128.0) / 127.0 * 4.0          # RMAX build_rivers
+    has = rv[..., 2] > 0
+    H2, W2 = out.shape
+    H, W = has.shape
+    src = out.copy()
+    changed = 0
+    band = 256
+    for y0 in range(0, H2, band):
+        y1 = min(H2, y0 + band)
+        ys = (np.arange(y0, y1) + 0.5) / SCALE
+        xs = (np.arange(W2) + 0.5) / SCALE
+        gy, gx = np.meshgrid(ys, xs, indexing="ij")
+        # билинейно вектор (центры текселей 1× в +0.5)
+        fx = gx - 0.5
+        fy = gy - 0.5
+        ix = np.clip(np.floor(fx).astype(np.int64), 0, W - 2)
+        iy = np.clip(np.floor(fy).astype(np.int64), 0, H - 2)
+        tx = (fx - ix)[..., None]
+        ty = (fy - iy)[..., None]
+        v = (vec[iy, ix] * (1 - tx) * (1 - ty) + vec[iy, ix + 1] * tx * (1 - ty)
+             + vec[iy + 1, ix] * (1 - tx) * ty + vec[iy + 1, ix + 1] * tx * ty)
+        hh = has[iy, ix] | has[iy, ix + 1] | has[iy + 1, ix] | has[iy + 1, ix + 1]
+        d = np.sqrt((v ** 2).sum(-1))
+        m = hh & (d < SNAP_NEAR) & (d > 1e-3)
+        if not m.any():
+            continue
+        yy, xx = np.nonzero(m)
+        vv = v[yy, xx]
+        dd = d[yy, xx][:, None]
+        n = vv / dd
+        rx = gx[yy, xx] + vv[:, 0]
+        ry = gy[yy, xx] + vv[:, 1]
+        sx = np.clip(((rx - n[:, 0] * SNAP_SIDE) * SCALE).astype(np.int64), 0, W2 - 1)
+        sy = np.clip(((ry - n[:, 1] * SNAP_SIDE) * SCALE).astype(np.int64), 0, H2 - 1)
+        ox = np.clip(((rx + n[:, 0] * SNAP_SIDE) * SCALE).astype(np.int64), 0, W2 - 1)
+        oy = np.clip(((ry + n[:, 1] * SNAP_SIDE) * SCALE).astype(np.int64), 0, H2 - 1)
+        ps = src[sy, sx]
+        po = src[oy, ox]
+        cur = src[y0 + yy, xx]
+        ok = (ps != po) & (land_of[ps] == 1) & (land_of[po] == 1) & (land_of[cur] == 1) & (ps != cur)
+        out[y0 + yy[ok], xx[ok]] = ps[ok]
+        changed += int(ok.sum())
+    print(f"Пикселей 2× у рек отдано своему берегу: {changed}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ne", required=True)
@@ -126,6 +185,7 @@ def main():
         score = tot + 4.0 * (is_land == ld) + 2.0 * (is_land & ld & (reg_of[L] == rg))
         k = np.argmax(score, -1)
         out[y0:y1] = np.take_along_axis(L, k[..., None], -1)[..., 0]
+    snap_rivers(out, land_of)
     os.makedirs(OUT_DIR, exist_ok=True)
     half = W2 // 2
     for nm, a in (("w", out[:, : half + PAD]), ("e", out[:, half - PAD:])):

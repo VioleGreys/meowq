@@ -2264,8 +2264,8 @@ func recalc_spirits(nat: Nation) -> void:
 
 
 # --- Реки на границах провинций (решение пользователя, ноябрь 2026: как в жанре) ---
-const RIVER_ATK_SMALL := 0.8    # атака через малую реку
-const RIVER_ATK_BIG := 0.6      # через крупную
+const RIVER_ATK_SMALL := 0.7    # атака через малую реку (−30 %, решение пользователя)
+const RIVER_ATK_BIG := 0.4      # через крупную (−60 %)
 const RIVER_MOVE_SMALL := 0.75  # скорость перехода через малую реку
 const RIVER_MOVE_BIG := 0.5     # через крупную
 
