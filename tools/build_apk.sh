@@ -68,15 +68,15 @@ if [ "$RENDERER" = compat ]; then
 	echo "Рендерер: Compatibility (OpenGL ES 3)"
 fi
 "$GODOT" --headless --editor --quit --path . >/dev/null 2>&1 || true
-# заготовки карты для масштабов до ×1 (MapBake, docs/notes/ui.md): рисует сама
+# заготовки карты для масштабов до ×2.8 (MapBake, docs/notes/ui.md): рисует сама
 # игра (нужен экран — xvfb-run) без потерь, tools/bake_compress.py пережимает
 # (нужен cwebp: apt-get install webp). Пересобираются, если шейдер, модуль или
 # данные карты новее пакетов; BAKE=0 — без заготовок (карта рисуется вживую)
 if [ "${BAKE:-1}" = 1 ]; then
 	STALE=0
-	[ -f data/bake/b0_6.bin ] || STALE=1
+	[ -f data/bake/b0_9.bin ] || STALE=1
 	for f in shaders/map_core.gdshaderinc scripts/view/map_bake.gd data/world1936/*.bin assets/map/*; do
-		[ "$STALE" = 1 ] || [ ! "$f" -nt data/bake/b0_6.bin ] || STALE=1
+		[ "$STALE" = 1 ] || [ ! "$f" -nt data/bake/b0_9.bin ] || STALE=1
 	done
 	if [ "$STALE" = 1 ]; then
 		echo "Заготовки карты: рисуются..."

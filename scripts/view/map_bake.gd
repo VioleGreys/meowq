@@ -16,7 +16,7 @@ const T := 248                  # своих пикселей тайла
 const TS := 256                 # с полями
 const PAD := 4
 const NLV := 13
-const APK_MAX_K := 6            # уровни в APK: до ×1
+const APK_MAX_K := 9            # уровни в APK: до ×2.8 (решение пользователя; ближе — кэш на устройстве)
 const CAP := 256                # слоёв атласа (минимум GLES3 — 256)
 const PACK_DIR := "res://data/bake/"
 const CACHE_ROOT := "user://bake/"
@@ -707,22 +707,15 @@ func build_packs(out_dir: String) -> void:
 	DirAccess.make_dir_recursive_absolute(out_dir)
 	var t0 := Time.get_ticks_msec()
 	var total := 0
+	var stamp := ver + "-" + data_stamp()
 	for k in APK_MAX_K + 1:
-		var summer := {}
+		var summer := {}   # key лета → хэш байтов (зима, совпавшая с летом, — ссылкой)
 		for s in 2:
-			_pack_out.clear()
-			for ty0 in range(0, gh[k], blk):
-				for tx0 in range(0, gw[k], blk):
-					bake_block(s, k, tx0, ty0)
-					while not _pending["drawn"]:
-						await get_tree().process_frame
-					await get_tree().process_frame
-					frame += 2
-					_read_block()
+			# пишется по ходу (ближние уровни — сотни МБ: в памяти не держим)
 			var path := out_dir.path_join("b%d_%d.bin" % [s, k])
 			var f := FileAccess.open(path, FileAccess.WRITE)
 			f.store_buffer("MQB1".to_ascii_buffer())
-			f.store_pascal_string(ver + "-" + data_stamp())
+			f.store_pascal_string(stamp)
 			f.store_float(r_cls)
 			f.store_32(gw[k])
 			f.store_32(gh[k])
@@ -731,20 +724,33 @@ func build_packs(out_dir: String) -> void:
 			tab.resize(gw[k] * gh[k] * 8)
 			f.store_buffer(tab)
 			var same := 0
-			for ty in gh[k]:
-				for tx in gw[k]:
-					var key := key_of(s, k, tx, ty)
-					var b: PackedByteArray = _pack_out.get(key, PackedByteArray())
-					var i := ty * gw[k] + tx
-					var sk := key_of(0, k, tx, ty)
-					if s == 1 and summer.has(sk) and summer[sk] == b:
-						tab.encode_u32(i * 8, 0)
-						tab.encode_s32(i * 8 + 4, -1)
-						same += 1
-						continue
-					tab.encode_u32(i * 8, f.get_position())
-					tab.encode_s32(i * 8 + 4, b.size())
-					f.store_buffer(b)
+			for ty0 in range(0, gh[k], blk):
+				for tx0 in range(0, gw[k], blk):
+					_pack_out.clear()
+					bake_block(s, k, tx0, ty0)
+					while not _pending["drawn"]:
+						await get_tree().process_frame
+					await get_tree().process_frame
+					frame += 2
+					_read_block()
+					for key in _pack_out:
+						var b: PackedByteArray = _pack_out[key]
+						var tx := key_tx(key)
+						var ty := key_ty(key)
+						var i := ty * gw[k] + tx
+						var hb := hash(b)
+						var sk := key_of(0, k, tx, ty)
+						if s == 0:
+							summer[sk] = hb
+						elif summer.get(sk, -1) == hb:
+							tab.encode_u32(i * 8, 0)
+							tab.encode_s32(i * 8 + 4, -1)
+							same += 1
+							continue
+						tab.encode_u32(i * 8, f.get_position())
+						tab.encode_s32(i * 8 + 4, b.size())
+						f.store_buffer(b)
+			_pack_out.clear()
 			f.seek(tab_pos)
 			f.store_buffer(tab)
 			f.seek_end()
@@ -752,7 +758,5 @@ func build_packs(out_dir: String) -> void:
 			print("bake: уровень %d сезон %d — %d×%d тайлов, %.1f МБ (как летом: %d), %.0f с" % [k, s, gw[k], gh[k],
 				f.get_length() / 1048576.0, same, (Time.get_ticks_msec() - t0) / 1000.0])
 			f.close()
-			if s == 0:
-				summer = _pack_out.duplicate()
 	print("bake: всего %.1f МБ за %.0f с" % [total / 1048576.0, (Time.get_ticks_msec() - t0) / 1000.0])
 	packing = false
