@@ -646,6 +646,60 @@ static func data_stamp() -> String:
 	return "%08x" % (hash(sig) & 0xffffffff)
 
 
+## Оценка объёма (--bake_sample): случайные блоки уровней levels обоих сезонов
+## в пакеты-выборки (остальные тайлы — пустые записи); сжать tools/bake_compress.py.
+func sample_packs(out_dir: String, levels: Array, blocks: int) -> void:
+	packing = true
+	DirAccess.make_dir_recursive_absolute(out_dir)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 1936
+	for k in levels:
+		var pos: Array = []
+		for i in blocks:
+			pos.append(Vector2i(rng.randi_range(0, (gw[k] - 1) / blk) * blk, rng.randi_range(0, (gh[k] - 1) / blk) * blk))
+		var summer := {}
+		for s in 2:
+			_pack_out.clear()
+			for p in pos:
+				bake_block(s, k, p.x, p.y)
+				while not _pending["drawn"]:
+					await get_tree().process_frame
+				await get_tree().process_frame
+				frame += 2
+				_read_block()
+			var f := FileAccess.open(out_dir.path_join("b%d_%d.bin" % [s, k]), FileAccess.WRITE)
+			f.store_buffer("MQB1".to_ascii_buffer())
+			f.store_pascal_string("sample")
+			f.store_float(r_cls)
+			f.store_32(gw[k])
+			f.store_32(gh[k])
+			var tab_pos := f.get_position()
+			var tab := PackedByteArray()
+			tab.resize(gw[k] * gh[k] * 8)
+			f.store_buffer(tab)
+			var n := 0
+			var same := 0
+			for key in _pack_out:
+				var i := key_ty(key) * gw[k] + key_tx(key)
+				var b: PackedByteArray = _pack_out[key]
+				var sk := key_of(0, k, key_tx(key), key_ty(key))
+				if s == 1 and summer.has(sk) and summer[sk] == b:
+					tab.encode_s32(i * 8 + 4, -1)
+					same += 1
+					continue
+				tab.encode_u32(i * 8, f.get_position())
+				tab.encode_s32(i * 8 + 4, b.size())
+				f.store_buffer(b)
+				n += 1
+			f.seek(tab_pos)
+			f.store_buffer(tab)
+			f.close()
+			print("sample: k=%d s=%d тайлов %d (как летом %d) из %d×%d" % [k, s, n, same, gw[k], gh[k]])
+			if s == 0:
+				summer = _pack_out.duplicate()
+	packing = false
+
+
 ## Нарисовать все тайлы уровней 0…APK_MAX_K обоих сезонов и записать пакеты
 ## (зима: тайлы, совпавшие с летом, — ссылкой на летний).
 func build_packs(out_dir: String) -> void:

@@ -283,6 +283,8 @@ func _auto_screenshot(path: String) -> void:
 		await _motion_test(path)
 	if "--baketest" in OS.get_cmdline_user_args():
 		await _bake_test(path)
+	if _arg("bake_sample") != "":
+		await map_view.bake.sample_packs(_arg("bake_sample"), [6, 7, 8, 9, 10], 24)
 	if _arg("bake_pack") != "":
 		await map_view.bake.build_packs(_arg("bake_pack"))
 	get_viewport().get_texture().get_image().save_png(path)
