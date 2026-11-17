@@ -244,35 +244,55 @@
  },
  {
   "cell": 40,
-  "file": "q_ultimatenature/FBX/CommonTree_1.fbx"
+  "file": "q_ultimatenature/FBX/CommonTree_1.fbx",
+  "pitch": 72
  },
  {
   "cell": 41,
-  "file": "q_ultimatenature/FBX/CommonTree_2.fbx"
+  "file": "q_ultimatenature/FBX/CommonTree_2.fbx",
+  "pitch": 72,
+  "tint": [
+   1.08,
+   1.05,
+   0.85
+  ],
+  "tint_what": "all"
  },
  {
   "cell": 42,
-  "file": "q_ultimatenature/FBX/CommonTree_3.fbx"
+  "file": "q_ultimatenature/FBX/CommonTree_3.fbx",
+  "pitch": 72
  },
  {
   "cell": 43,
-  "file": "q_ultimatenature/FBX/PineTree_1.fbx"
+  "file": "q_ultimatenature/FBX/CommonTree_4.fbx",
+  "pitch": 72,
+  "tint": [
+   1.08,
+   1.05,
+   0.85
+  ],
+  "tint_what": "all"
  },
  {
   "cell": 44,
-  "file": "q_ultimatenature/FBX/PineTree_2.fbx"
+  "file": "q_ultimatenature/FBX/CommonTree_5.fbx",
+  "pitch": 72
  },
  {
   "cell": 45,
-  "file": "q_ultimatenature/FBX/PineTree_3.fbx"
+  "file": "q_ultimatenature/FBX/BirchTree_1.fbx",
+  "pitch": 72
  },
  {
   "cell": 46,
-  "file": "q_ultimatenature/FBX/BirchTree_1.fbx"
+  "file": "q_ultimatenature/FBX/BirchTree_2.fbx",
+  "pitch": 72
  },
  {
   "cell": 47,
-  "file": "q_ultimatenature/FBX/Bush_1.fbx"
+  "file": "q_ultimatenature/FBX/BirchTree_3.fbx",
+  "pitch": 72
  },
  {
   "cell": 48,
@@ -305,5 +325,75 @@
  {
   "cell": 55,
   "file": "q_ultimatenature/FBX/Willow_2.fbx"
+ },
+ {
+  "cell": 56,
+  "file": "q_ultimatenature/FBX/PineTree_1.fbx",
+  "pitch": 72,
+  "tint": [
+   0.62,
+   0.78,
+   0.7
+  ],
+  "tint_what": "all"
+ },
+ {
+  "cell": 57,
+  "file": "q_ultimatenature/FBX/PineTree_2.fbx",
+  "pitch": 72,
+  "tint": [
+   0.62,
+   0.78,
+   0.7
+  ],
+  "tint_what": "all"
+ },
+ {
+  "cell": 58,
+  "file": "q_ultimatenature/FBX/PineTree_3.fbx",
+  "pitch": 72,
+  "tint": [
+   0.62,
+   0.78,
+   0.7
+  ],
+  "tint_what": "all"
+ },
+ {
+  "cell": 59,
+  "file": "q_ultimatenature/FBX/PineTree_4.fbx",
+  "pitch": 72,
+  "tint": [
+   0.62,
+   0.78,
+   0.7
+  ],
+  "tint_what": "all"
+ },
+ {
+  "cell": 60,
+  "file": "q_ultimatenature/FBX/PineTree_5.fbx",
+  "pitch": 72,
+  "tint": [
+   0.62,
+   0.78,
+   0.7
+  ],
+  "tint_what": "all"
+ },
+ {
+  "cell": 61,
+  "file": "q_ultimatenature/FBX/Bush_1.fbx",
+  "pitch": 72
+ },
+ {
+  "cell": 62,
+  "file": "q_ultimatenature/FBX/Bush_2.fbx",
+  "pitch": 72
+ },
+ {
+  "cell": 63,
+  "file": "q_ultimatenature/FBX/BushBerries_2.fbx",
+  "pitch": 72
  }
 ]

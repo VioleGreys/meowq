@@ -137,7 +137,7 @@ func _run() -> void:
 			_tint(m, Color(e["tint"][0], e["tint"][1], e["tint"][2]), e.get("tint_what", "roof"))
 		# камера: с юга, сверху под PITCH; кадр — по проекции рамки модели
 		var ext := box.size
-		var pr := deg_to_rad(PITCH)
+		var pr := deg_to_rad(float(e.get("pitch", PITCH)))
 		var w := maxf(ext.x, 1e-3)
 		var h := ext.z * sin(pr) + ext.y * cos(pr)
 		var size := maxf(w, h) * 1.12 + 0.25 * maxf(ext.x, ext.z)   # запас под тень

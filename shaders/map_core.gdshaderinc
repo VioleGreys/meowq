@@ -339,20 +339,61 @@ vec4 spr_cell(vec2 q, vec2 cell, float seed, float prob, int base, int nvar, flo
 	return textureGrad(tile_tex, vec3(auv, 2.0), gx * k, gy * k);
 }
 
+// Сплошной полог леса (как в жанре): кроны крупнее ячейки и перекрывают соседей —
+// на пиксель четыре ближайшие ячейки, с севера на юг (южные кроны поверх северных:
+// камера с юга). Пород — пятнами ~9 пикс.: хвойные доля conif, иначе лиственные и
+// берёзы. Пропуски в пологе — по плотности prob.
+vec4 canopy(vec2 q, float cell, float prob, float conif, vec2 gx, vec2 gy) {
+	vec2 g = q / cell - 0.5;
+	vec2 b = floor(g);
+	vec4 acc = vec4(0.0);
+	const float SZ = 1.75;   // поперечник кроны в ячейках
+	float k = 1.0 / (cell * SZ * 8.0);
+	for (int j = 0; j < 2; j++) {
+		for (int i = 0; i < 2; i++) {
+			vec2 c = b + vec2(float(i), float(j));
+			if (h21(c + vec2(61.0, 1.7)) >= prob) {
+				continue;
+			}
+			vec2 jit = (vec2(h21(c + vec2(61.0, 3.1)), h21(c + vec2(61.0, 5.9))) - 0.5) * 0.2;
+			vec2 lu = (g - c - jit) / SZ + 0.5;
+			if (lu.x < 0.0 || lu.y < 0.0 || lu.x > 1.0 || lu.y > 1.0) {
+				continue;
+			}
+			bool pine = h21(floor(c * cell / 9.0) + vec2(3.0, 3.0)) < conif;
+			float hv = h21(c + vec2(61.0, 8.3));
+			int idx = pine ? 56 + min(int(hv * 5.0), 4) : 40 + min(int(hv * 8.0), 7);
+			vec2 auv = (vec2(float(idx % 8), float(idx / 8)) + lu) / 8.0;
+			vec4 t = textureGrad(tile_tex, vec3(auv, 2.0), gx * k, gy * k);
+			acc = vec4(mix(acc.rgb, t.rgb, t.a), acc.a + t.a * (1.0 - acc.a));
+		}
+	}
+	return acc;
+}
+
 // Постройка города в ячейке: класс и вероятность — по застройке (cover.b) в центре
 // ячейки (по пикселю — спрайты резались бы на краю пятна): центр крупного города —
 // доходные дома (0–7), соборы (24, 25) и заводы на окраинах (28–31); городок — дома
 // (8–15); деревня и окраина — дома и хозяйства (16–19, 32–39).
 vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, out float dens) {
-	const vec2 cell = vec2(4.0, 3.4);
+	// плотные кварталы: ровная сетка без сдвигов, дом во всю ячейку (просветы — улицы)
+	const vec2 cell = vec2(1.7, 1.45);
 	vec2 g = q / cell;
-	g.x += h21(vec2(floor(g.y), 11.0)) * 0.5;
 	vec2 c = floor(g);
-	vec2 ctr = (c + 0.5 - vec2(h21(vec2(c.y, 11.0)) * 0.5, 0.0)) * cell;
-	float d = textureLod(base_tex, vec3(ctr / msz, 2.0), 1.8).b * 2.2;   // в среднем по ячейке
+	vec2 ctr = (c + 0.5) * cell;
+	vec2 cuv = ctr / msz;
+	float d = textureLod(base_tex, vec3(cuv, 2.0), 0.6).b * 1.4;
 	dens = d;
+	// на воде, у берега и на реке — не строим
+	float cov_c = textureLod(base_tex, vec3(cuv, 0.0), 0.0).b;
+	float rv_c = textureLod(base_tex, vec3(cuv, 1.0), 0.0).a * RIVER_MAX;
+	float rs_c = textureLod(base_tex, vec3(cuv, 0.0), 0.0).g;
+	if (cov_c < 0.75 || (rs_c > 0.01 && rv_c < 1.6)) {
+		return vec4(0.0);
+	}
 	float hp = h21(c + vec2(11.0, 1.7));
-	float prob = smoothstep(0.003, 0.2, d) * 0.97;
+	// город — сплошное пятно (порог плотности), деревня — кучка у самой точки
+	float prob = d > 0.12 ? 1.0 : smoothstep(0.02, 0.1, d) * 0.85;
 	if (hp >= prob) {
 		return vec4(0.0);
 	}
@@ -360,23 +401,19 @@ vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, out float dens) {
 	float hk = h21(c + vec2(11.0, 4.4));
 	int base;
 	int nvar;
-	float fill;
-	if (d > 0.5) {
-		base = 0; nvar = 8; fill = 0.98;
-		if (hk < 0.04) { base = 24; nvar = 2; }
-	} else if (d > 0.18) {
-		base = 8; nvar = 8; fill = 0.85;
-		if (hk < 0.10) { base = 28; nvar = 4; fill = 0.95; }
-		else if (hk < 0.14) { base = 24; nvar = 1; }
+	if (d > 0.45) {
+		base = 0; nvar = 8;
+		if (hk < 0.03) { base = 25; nvar = 1; }
+	} else if (d > 0.15) {
+		base = 8; nvar = 8;
+		if (hk < 0.08) { base = 28; nvar = 4; }
+		else if (hk < 0.11) { base = 24; nvar = 1; }
 	} else {
-		base = hk < 0.5 ? 16 : 32; nvar = hk < 0.5 ? 4 : 8; fill = 0.72;
+		base = hk < 0.6 ? 16 : 32; nvar = hk < 0.6 ? 4 : 8;
 	}
 	int idx = base + min(int(hv * float(nvar)), nvar - 1);
-	vec2 off = (vec2(h21(c + vec2(11.0, 3.1)), h21(c + vec2(11.0, 5.9))) - 0.5) * (1.0 - fill);
-	vec2 lu = (fract(g) - 0.5 - off) / fill + 0.5;
-	if (lu.x < 0.0 || lu.y < 0.0 || lu.x > 1.0 || lu.y > 1.0) {
-		return vec4(0.0);
-	}
+	const float fill = 1.0;
+	vec2 lu = fract(g);
 	vec2 auv = (vec2(float(idx % 8), float(idx / 8)) + lu) / 8.0;
 	vec2 k = 1.0 / (cell * fill * 8.0);
 	return textureGrad(tile_tex, vec3(auv, 2.0), gx * k, gy * k);
@@ -982,52 +1019,35 @@ void fragment() {
 			float dk_s = (has_sprites && quality == 2) ? smoothstep(2.0, 3.0, zoom) : 0.0;
 			if (dk_s > 0.0) {
 				vec2 msz = map_size / id_k;
-				// хутора и рощи на пашне
-				if (fl > 0.05) {
-					vec4 sp = spr_cell(qc, vec2(9.0), 21.0, 0.35 * fl, 20, 4, 0.45, q_gx, q_gy);
-					vec4 st = spr_cell(qc + vec2(3.9, 2.4), vec2(6.5), 23.0, 0.12 * fl, 40, 8, 0.4, q_gx, q_gy);
-					sp = sp.a > 0.0 ? sp : st;
-					terr = mix(terr, sp.rgb, sp.a * dk_s);
-					bld = max(bld, sp.a);
-				}
-				// пригороды: дома с садами вокруг городов (застройка, размытая на ~6 пикс.)
-				float sub = textureLod(base_tex, vec3(muv, 2.0), 2.5).b;
-				float sw = smoothstep(0.01, 0.08, sub) * (1.0 - smoothstep(0.05, 0.25, cv.b)) * (1.0 - fo) * (1.0 - ms);
-				if (sw > 0.0) {
-					vec4 sp = spr_cell(qc, vec2(4.6, 4.0), 31.0, 0.6 * sw, 32, 8, 0.7, q_gx, q_gy);
-					terr = mix(terr, mix(terr, vec3(0.42, 0.52, 0.30), 0.35), sw * 0.6 * dk_s);   // сады
-					terr = mix(terr, sp.rgb, sp.a * dk_s);
-					bld = max(bld, sp.a);
-				}
-				// города, городки, деревни
-				if (cv.b > 0.002 || sub > 0.004) {
-					float dens;
-					vec4 sp = town_cell(qc, msz, q_gx, q_gy, dens);
-					terr = mix(terr, vec3(0.70, 0.68, 0.63), smoothstep(0.3, 0.6, cv.b) * dk_s * 0.7);   // мостовые
-					terr = mix(terr, sp.rgb, sp.a * dk_s);
-					bld = max(bld, sp.a);
-				}
-				// лес: деревья двумя сдвинутыми сетками; хвойные / лиственные по широте
-				// пятнами ~9 пикс., в тайге — берёзы
+				// лес: сплошной полог крон; хвойных больше к северу
 				if (fo > 0.05) {
 					float conif = smoothstep(45.0, 60.0, lat_c) * 0.85 + 0.1;
-					bool pine = h21(floor(qc / 9.0)) < conif;
-					int tb = pine ? 43 : 40;
-					vec4 t1 = spr_cell(qc, vec2(2.8), 41.0, fo * 1.2, tb, 3, 1.0, q_gx, q_gy);
-					vec4 t2 = spr_cell(qc + vec2(1.4, 1.3), vec2(2.8), 43.0, fo * 1.0, pine ? 44 : 46, 2, 0.95, q_gx, q_gy);
-					vec4 tt = t2.a > 0.6 ? t2 : (t1.a > 0.0 ? t1 : t2);
-					terr = mix(terr, terr * 0.8, fo * dk_s * 0.5);   // подлесок и тень крон
-					float ta = tt.a * smoothstep(0.15, 0.5, fo);
-					terr = mix(terr, tt.rgb, ta * dk_s);
-					bld = max(bld, ta * 0.8);
+					vec4 tt = canopy(qc, 0.95, smoothstep(0.15, 0.55, fo) * 1.05, conif, q_gx, q_gy);
+					terr = mix(terr, terr * 0.55, smoothstep(0.2, 0.5, fo) * dk_s);   // тень под пологом
+					terr = mix(terr, tt.rgb, tt.a * dk_s);
+					bld = max(bld, tt.a * 0.85);
 				}
-				// болото: камыш, ивы и сухие берёзы
+				// города и деревни: плотные кварталы на месте застройки
+				float dens = 0.0;
+				if (cv.b > 0.002) {
+					vec4 sp = town_cell(qc, msz, q_gx, q_gy, dens);
+					terr = mix(terr, vec3(0.62, 0.60, 0.56), smoothstep(0.12, 0.3, dens) * dk_s * 0.8);   // мостовые и дворы
+					terr = mix(terr, sp.rgb, sp.a * dk_s);
+					bld = max(bld, sp.a);
+				}
+				// редкие хутора на пашне (не у рек и не в лесу)
+				if (fl > 0.3 && cv.b < 0.01 && rv_d > 3.0) {
+					vec4 sp = spr_cell(qc, vec2(8.0), 21.0, 0.25 * fl, 20, 3, 0.3, q_gx, q_gy);
+					terr = mix(terr, sp.rgb, sp.a * dk_s);
+					bld = max(bld, sp.a);
+				}
+				// болото: камыш, ивы и сухие берёзы; в окнах воды — кувшинки
 				if (ms > 0.05) {
-					vec4 rd = spr_cell(qc, vec2(2.0), 51.0, 0.5 * ms, 48, 2, 0.9, q_gx, q_gy);
-					vec4 sh2 = spr_cell(qc + vec2(2.4, 1.6), vec2(4.0), 53.0, 0.6 * ms, 51, 2, 0.75, q_gx, q_gy);
+					vec4 rd = spr_cell(qc, vec2(1.2), 51.0, 0.6 * ms, 48, 2, 0.9, q_gx, q_gy);
+					vec4 sh2 = spr_cell(qc + vec2(2.4, 1.6), vec2(3.0), 53.0, 0.5 * ms, 51, 2, 0.8, q_gx, q_gy);
 					vec4 mm = sh2.a > 0.3 ? sh2 : rd;
-					if (pool_m > 0.5) {   // в воде — кувшинки, не камыш
-						mm = spr_cell(qc + vec2(0.3, 0.5), vec2(1.3), 57.0, 0.35, 53, 1, 0.6, q_gx, q_gy);
+					if (pool_m > 0.5) {
+						mm = spr_cell(qc + vec2(0.3, 0.5), vec2(1.1), 57.0, 0.4, 53, 1, 0.7, q_gx, q_gy);
 					}
 					terr = mix(terr, mm.rgb, mm.a * dk_s);
 					bld = max(bld, mm.a * 0.7);
