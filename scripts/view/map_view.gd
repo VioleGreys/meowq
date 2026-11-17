@@ -840,6 +840,7 @@ var _c_zoom_seen := 0.0
 var _c_still := 0                # кадров подряд без смены масштаба
 var cache_draws := 0             # для замеров: сколько раз рисовался кэш
 var _no_cache := "--nocache" in OS.get_cmdline_user_args()   # замеры: полный кадр при движении
+var _cache_part := false         # видимое шире окна кэша: под ним — упрощённый кадр
 
 
 func _cache_front() -> CacheBuf:
@@ -945,13 +946,17 @@ func _cache_usable() -> bool:
 		return false
 	var fp := _cache_px(b, need[1])
 	var win := Rect2(Vector2(b.n), Vector2(b.size))
+	_cache_part = false
 	if win.encloses(fp):
 		return true
 	# видимое шире окна (отдалили): показывать, пока недостаёт не больше половины
 	# окна (края тянутся, пока второй буфер строится), иначе — нет
 	if fp.size.x > b.size.x * 1.5 or fp.size.y > b.size.y * 1.5:
 		return false
-	# новое окно: видимое посередине
+	# новое окно: видимое посередине; видимое шире окна — края кадра вне буфера
+	# закрывает упрощённый живой кадр под ним (раньше тянулись крайние пиксели
+	# буфера — «размытие по бокам» при отдалении)
+	_cache_part = fp.size.x > b.size.x + 1.0 or fp.size.y > b.size.y + 1.0
 	var n2 := Vector2i((fp.get_center() - Vector2(b.size) * 0.5).round())
 	var d := n2 - b.n
 	b.n = n2
@@ -1110,6 +1115,7 @@ func _cache_show() -> void:
 	dmat.set_shader_parameter("c_n", Vector2(b.n))
 	dmat.set_shader_parameter("c_size", Vector2(b.size))
 	dmat.set_shader_parameter("c_exact", tilt() <= 0.0 and is_equal_approx(camera.zoom.x, b.zoom))
+	dmat.set_shader_parameter("c_clip", _cache_part and lite_sprite.visible)
 
 
 ## Разрешение буфера карты: доля пикселей экрана (0.5–1); 0 — авто: после
@@ -1275,13 +1281,36 @@ func _process_map(dt: float) -> void:
 			# движение — из кэша: плоский кадр полного качества, открывшиеся края
 			# дорисованы (_cache_usable), проекция с текущей камерой (map_motion)
 			cache_rect.visible = true
-			lite_sprite.visible = false
 			_fading_in = false
-			redraws -= 1
-		elif lite and _c_build_n > 0 and lite_sprite.visible and was_lite and not cache_rect.visible:
+			if _cache_part:
+				# видимое шире буфера (отдаление): края — кадр под кэшем; с заготовками —
+				# в полном качестве (дёшево и не отличается от кэша), иначе упрощённый
+				var lb := _screen_bake(logical, rk, -1, true) == 1
+				lite_quad.material = mat_b if lb else mat
+				if lb:
+					_param("quality", mini(quality, 1))
+				if lite_vp.size != size:
+					lite_vp.size = size
+				lite_quad.size = Vector2(size)
+				lite_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+				_lite_cam = camera.position
+				_lite_zoom = camera.zoom.x
+				_lite_size = Vector2(size)
+				lite_sprite.visible = true
+			else:
+				lite_sprite.visible = false
+				redraws -= 1
+		elif lite and _c_build_n > 0 and lite_sprite.visible and was_lite and not cache_rect.visible \
+				and _lite_covers(logical):
 			redraws -= 1   # кэш строится — прежний упрощённый кадр просто сдвигается
 		elif lite:
 			cache_rect.visible = false
+			# с заготовками упрощённый кадр — среднего качества (неподвижная часть
+			# как в полном, дешевле живого низкого); без них — низкое, как было
+			var lb2 := _screen_bake(logical, rk, -1, true) == 1
+			lite_quad.material = mat_b if lb2 else mat
+			if lb2:
+				_param("quality", mini(quality, 1))
 			if lite_vp.size != size:
 				lite_vp.size = size
 			lite_quad.size = Vector2(size)
@@ -1408,11 +1437,14 @@ func _bake_sync_r(rk: float) -> void:
 
 ## Кадр экрана (полный, полоса, частичный) с заготовками? baked — каким нарисован
 ## прежний кадр (для полос и частичных: не смешивать в одном кадре); -1 — любой.
-func _screen_bake(logical: Vector2, rk: float, need_mode: int) -> int:
+func _screen_bake(logical: Vector2, rk: float, need_mode: int, partial := false) -> int:
 	if not _bake_ok():
 		return 0
 	_bake_sync_r(rk)
-	_screen_keys = bake.need(camera.position, camera.zoom.x, tilt(), cam_focal(), logical, _season())
+	var keys := bake.need(camera.position, camera.zoom.x, tilt(), cam_focal(), logical, _season())
+	if partial:
+		return 1 if bake.want(keys, true, _season()) else 0
+	_screen_keys = keys
 	var r := 1 if bake.want(_screen_keys) else 0
 	if need_mode == 1 and r == 0:
 		return -1   # кадр с заготовками, а тайлов уже нет — перерисовать целиком
@@ -1436,6 +1468,17 @@ func _cam_uniforms(logical: Vector2) -> void:
 	_param("cam_tilt", tilt())
 	_param("cam_f", cam_focal())
 	_param("scr_size", logical)
+
+
+## Прежний упрощённый кадр, сдвинутый и масштабированный под текущую камеру,
+## ещё закрывает экран? (При отдалении он уменьшается — по краям пусто.)
+func _lite_covers(logical: Vector2) -> bool:
+	if tilt() > 0.0 or _full_tilt > 0.0:
+		return false
+	var half := logical * 0.5
+	var r := camera.zoom.x / maxf(1e-6, _lite_zoom)
+	var ps := half - half * r + (_lite_cam - camera.position) * camera.zoom.x
+	return ps.x <= 0.5 and ps.y <= 0.5 and ps.x + logical.x * r >= logical.x - 0.5 and ps.y + logical.y * r >= logical.y - 0.5
 
 
 ## Показ буфера, нарисованного с камеры (c_b, z_b), при текущей камере: старый

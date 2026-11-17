@@ -478,11 +478,17 @@ func _motion_test(path: String) -> void:
 	var r0 := map_view.redraws
 	var c0 := map_view.cache_draws
 	var u0 := unit_layer.draw_count
+	var mz := float(_arg("mzoom")) if _arg("mzoom") != "" else 1.0   # масштаб за кадр (отдаление < 1)
 	for i in 40:
 		map_view.camera.position += Vector2(7.3, 2.1) / map_view.camera.zoom.x
+		map_view.camera.zoom *= mz
 		map_view._moving = 0.3
 		map_view._on_view_changed()
 		await get_tree().process_frame
+		if mz != 1.0 and i % 8 == 7:
+			grab.call("m%d" % i)
+			print("motiontest: кадр %d — края с заготовками %s, кэш %s, упрощённый %s, масштаб %.2f" % [i, map_view.lite_quad.material == map_view.mat_b, map_view.cache_rect.visible,
+				map_view.lite_sprite.visible, map_view.camera.zoom.x])
 	await get_tree().process_frame
 	grab.call("moving")
 	map_view._cache_front().vp.get_texture().get_image().save_png(path.replace(".png", "_cache.png"))

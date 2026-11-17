@@ -673,7 +673,9 @@ func _draw_label(l: Array, z: float) -> void:
 		return
 	var alpha := clampf((1.6 - z) * 2.0, 0.0, 0.75)
 	var k := size / LBL_PX
-	draw_set_transform(pos - Vector2(w * 0.5, 0), 0.0, Vector2(k, k))
+	# строка — серединой заглавных по точке страны (базовая линия ниже на половину
+	# высоты заглавных ~0.7 кегля); раньше вся подпись стояла над точкой
+	draw_set_transform(pos - Vector2(w * 0.5, -size * 0.35), 0.0, Vector2(k, k))
 	draw_string_outline(label_font, Vector2.ZERO, text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX, int(4.0 / k), Color(0.95, 0.92, 0.84, alpha * 0.45))
 	draw_string(label_font, Vector2.ZERO, text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX, Color(0.10, 0.08, 0.06, alpha))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

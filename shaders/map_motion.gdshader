@@ -19,6 +19,7 @@ uniform float c_rk = 1.0;
 uniform vec2 c_n = vec2(0.0);
 uniform vec2 c_size = vec2(1.0);
 uniform bool c_exact = false;   // без наклона и тот же масштаб — брать ближайший пиксель
+uniform bool c_clip = false;    // вне окна буфера — прозрачно (под кэшем упрощённый кадр)
 
 const float RELIEF_H = 6.0;   // как в map.gdshader
 
@@ -41,12 +42,15 @@ void fragment() {
 	float haze = clamp((tr / dist - 1.0) * 0.35, 0.0, 0.22) * smoothstep(0.05, 0.5, cam_tilt);
 	// пиксель кадра якоря → пиксель закольцованного буфера
 	vec2 a = (wp - c_cam) * (c_zoom * c_rk) + c_size * 0.5;
-	a = clamp(a, c_n + 0.5, c_n + c_size - 0.5);
+	vec2 ac = clamp(a, c_n + 0.5, c_n + c_size - 0.5);
+	// вне окна: мягкий край в 2 пикселя буфера к упрощённому кадру под кэшем
+	float edge = c_clip ? 1.0 - smoothstep(0.0, 2.0, length(a - ac)) : 1.0;
+	a = ac;
 	vec2 b = mod(a, c_size);
 	if (c_exact) {
 		b = floor(b) + 0.5;
 	}
 	vec3 col = textureLod(cache_tex, b / c_size, 0.0).rgb;
 	col = mix(col, vec3(0.80, 0.84, 0.86), haze);
-	COLOR = outside ? vec4(0.302, 0.302, 0.302, 1.0) : vec4(col, 1.0);
+	COLOR = outside ? vec4(0.302, 0.302, 0.302, 1.0) : vec4(col, edge);
 }

@@ -351,9 +351,19 @@ func _s2w(p: Vector2, pos: Vector2, z: float, th: float, f: float, scr: Vector2)
 
 ## Все тайлы в атласе? Отмечает их использованными; недостающие — загрузить с
 ## диска или нарисовать (по порядку запросов: последние — первыми).
-func want(keys: PackedInt64Array) -> bool:
+## partial — для кадров в движении: хватит самого дальнего уровня сезона s (его
+## держим всегда — шейдер берёт его вместо недостающего тайла, мягче, но верно).
+func want(keys: PackedInt64Array, partial: bool = false, s: int = 0) -> bool:
 	if not ok:
 		return false
+	if partial:
+		want(_base_keys(s))
+		var all0 := true
+		for key in _base_keys(s):
+			if not key_slot.has(key):
+				all0 = false
+		want(keys)
+		return all0
 	if keys.size() > CAP * 3 / 4:
 		return false   # не помещается в атлас
 	var all := true
@@ -374,6 +384,21 @@ func want(keys: PackedInt64Array) -> bool:
 		else:
 			_jobs[key] = WorkerThreadPool.add_task(_load_job.bind(key, src))
 	return all
+
+
+var _base_cache := {}
+
+
+## Тайлы самого дальнего уровня (весь мир) сезона s.
+func _base_keys(s: int) -> PackedInt64Array:
+	var ck := s * 100 + int(r_cls * 10.0)
+	if not _base_cache.has(ck):
+		var out := PackedInt64Array()
+		for ty in gh[0]:
+			for tx in gw[0]:
+				out.append(key_of(s, 0, tx, ty))
+		_base_cache[ck] = out
+	return _base_cache[ck]
 
 
 func _load_job(key: int, src: Array) -> void:
