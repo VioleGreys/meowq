@@ -1368,9 +1368,13 @@ func _process_map(dt: float) -> void:
 	if _full_baked and not _screen_keys.is_empty():
 		bake.want(_screen_keys)   # тайлы показанного кадра — не вытеснять
 	# рисовать тайлы — когда карта стоит (при сдвиге видеокарта занята кадром)
+	# и не трогают экран: касание — скорее всего выбор провинции или сдвиг, кадр с
+	# дорисовкой тайла в этот момент дал бы задержку отклика
 	_bake_still = _bake_still + 1 if _moving <= 0.0 and not _dirty and _strip_n == 0 \
-		and _c_build_n == 0 and not _fading_in else 0
-	bake.tick(_bake_still >= 10)
+		and _c_build_n == 0 and not _fading_in and _touches.is_empty() else 0
+	var tb := Time.get_ticks_usec()
+	bake.tick(_bake_still >= 30)
+	FrameProf.add("заготовки", Time.get_ticks_usec() - tb)
 	# прогрев: шейдер вывода кэша компилируется при загрузке, а не при первом
 	# сдвиге (на телефоне первая компиляция — кадр до полсекунды)
 	if _warm > 0:
@@ -1825,7 +1829,9 @@ func _tap(screen_pos: Vector2) -> void:
 	var wp := screen_to_world(screen_pos) / SCALE
 	var p := world.province_at_pixel(wp)
 	if p >= 0:
+		var t0 := Time.get_ticks_usec()
 		province_tapped.emit(p)
+		FrameProf.add("касание провинции", Time.get_ticks_usec() - t0)
 
 
 func _on_view_changed() -> void:

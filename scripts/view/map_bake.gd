@@ -21,7 +21,8 @@ const CAP := 256                # слоёв атласа (минимум GLES3 
 const PACK_DIR := "res://data/bake/"
 const CACHE_ROOT := "user://bake/"
 const BAKE_VERSION := 1         # поднять, если заготовки меняются не из шейдера
-const UPLOADS := 24             # тайлов в атлас за кадр
+const UPLOADS := 24             # тайлов в атлас за кадр (ПК; телефон — uploads)
+var uploads := UPLOADS
 
 var view: MapView
 var mat: ShaderMaterial         # map_bake.gdshader
@@ -91,7 +92,10 @@ static func key_tx(key: int) -> int:
 func setup(v: MapView, shader_params: Dictionary) -> void:
 	view = v
 	world_px = v.world_size()
-	blk = 2 if OS.has_feature("mobile") else 4
+	# телефон — по одному тайлу за раз: чтение готового блока с видеокарты ждёт
+	# её (блок 2×2 — заметная остановка кадра, отчёт: худший кадр карты 229 мс)
+	blk = 1 if OS.has_feature("mobile") else 4
+	uploads = 8 if OS.has_feature("mobile") else UPLOADS
 	mat = ShaderMaterial.new()
 	mat.shader = load("res://shaders/map_bake.gdshader")
 	for n in shader_params:
@@ -429,9 +433,10 @@ func tick(may_bake: bool = true) -> void:
 	frame += 1
 	# в атлас — не больше UPLOADS тайлов за кадр (256 КБ каждый): без рывка
 	_mx.lock()
-	var done := _done.slice(0, UPLOADS)
-	_done = _done.slice(UPLOADS)
+	var done := _done.slice(0, uploads)
+	_done = _done.slice(uploads)
 	_mx.unlock()
+	var t_up := Time.get_ticks_usec()
 	for d in done:
 		var key: int = d[0]
 		if _jobs.has(key):
@@ -444,6 +449,8 @@ func tick(may_bake: bool = true) -> void:
 			continue
 		_put(key, d[1])
 		loaded_tiles += 1
+	if not done.is_empty():
+		FrameProf.add("заготовки: в атлас", Time.get_ticks_usec() - t_up)
 	if not _saves.is_empty():
 		_saves_poll()
 	if _warm_n > 0:
@@ -460,12 +467,17 @@ func tick(may_bake: bool = true) -> void:
 			if int(_wish[k]) < frame - 120:
 				_wish.erase(k)
 	if not _pending.is_empty():
+		var t_rd := Time.get_ticks_usec()
 		_read_block()
+		if _pending.is_empty():
+			FrameProf.add("заготовки: чтение тайла", Time.get_ticks_usec() - t_rd)
 	elif not _wish.is_empty() and may_bake:
 		_bake_next()
 	if _page_dirty:
 		_page_dirty = false
+		var t_pg := Time.get_ticks_usec()
 		page_tex.update(page_img)
+		FrameProf.add("заготовки: таблица", Time.get_ticks_usec() - t_pg)
 
 
 func _put(key: int, img: Image) -> void:

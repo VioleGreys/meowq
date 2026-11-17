@@ -44,6 +44,11 @@ vec2 w2s(vec2 p, vec2 pos, float z, float th) {
 
 void vertex() {
 	if (on) {
-		VERTEX = w2s(s2w(VERTEX, r_pos, r_zoom, r_tilt), c_pos, c_zoom, c_tilt);
+		// перенос — в координатах слоя: VERTEX у подписей стран — в координатах строки
+		// до draw_set_transform (масштаб и место подписи — в MODEL_MATRIX); без этого
+		// подписи при переносе съезжали (на сдвиг камеры с прошлой перерисовки)
+		vec2 p = (MODEL_MATRIX * vec4(VERTEX, 0.0, 1.0)).xy;
+		p = w2s(s2w(p, r_pos, r_zoom, r_tilt), c_pos, c_zoom, c_tilt);
+		VERTEX = (inverse(MODEL_MATRIX) * vec4(p, 0.0, 1.0)).xy;
 	}
 }

@@ -482,7 +482,9 @@ func _motion_test(path: String) -> void:
 	var u0 := unit_layer.draw_count
 	var mz := float(_arg("mzoom")) if _arg("mzoom") != "" else 1.0   # масштаб за кадр (отдаление < 1)
 	for i in 40:
-		map_view.camera.position += Vector2(7.3, 2.1) / map_view.camera.zoom.x
+		if not "--nopan" in OS.get_cmdline_user_args():
+			var step := float(_arg("panpx")) if _arg("panpx") != "" else 7.3   # пикс. экрана за кадр
+			map_view.camera.position += Vector2(step, step * 0.29) / map_view.camera.zoom.x
 		map_view.camera.zoom *= mz
 		map_view._moving = 0.3
 		map_view._on_view_changed()
@@ -502,6 +504,11 @@ func _motion_test(path: String) -> void:
 	for i in 60:
 		await get_tree().process_frame
 	grab.call("still")
+	# слой фишек заново при той же камере — для сравнения с перенесённым
+	unit_layer._dirty = true
+	for i in 10:
+		await get_tree().process_frame
+	grab.call("fresh")
 
 
 func _auto_screenshot_locked() -> void:
