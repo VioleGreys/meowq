@@ -868,6 +868,7 @@ void fragment() {
 			fl *= 1.0 - rc;
 			float dk_c = (quality == 2) ? smoothstep(1.6, 3.0, zoom) : 0.0;   // рисунок вблизи
 			mediump float tex_c = 0.0;   // светотень рисунка (−…+)
+			float pool_m = 0.0;          // окно воды болота (кувшинки атласа)
 			// холмы: оливково-бурый тон, вблизи — округлые бугры (свет с северо-запада)
 			if (hill > 0.0) {
 				terr = mix(terr, terr * vec3(1.02, 0.98, 0.86) + vec3(0.03, 0.02, 0.0), hill * 0.5 * free_k);
@@ -906,6 +907,7 @@ void fragment() {
 					float rim = smoothstep(lim - 0.05, lim, pw) * (1.0 - smoothstep(lim, lim + 0.05, pw));
 					mediump vec3 wcol = mix(vec3(0.24, 0.34, 0.36), vec3(0.40, 0.50, 0.52), smoothstep(lim + 0.05, lim + 0.2, pw));
 					terr = mix(terr, wcol, pool * 0.9);
+					pool_m = pool;
 					terr = mix(terr, vec3(0.30, 0.36, 0.20), rim * ms * dk_c * 0.6);   // заросший край
 					float tuft = vnoise(qc * 11.0 + vec2(2.0, 2.0));
 					tex_c += (tuft - 0.5) * 0.16 * ms * (1.0 - pool);
@@ -1022,8 +1024,11 @@ void fragment() {
 				// болото: камыш, ивы и сухие берёзы
 				if (ms > 0.05) {
 					vec4 rd = spr_cell(qc, vec2(2.0), 51.0, 0.5 * ms, 48, 2, 0.9, q_gx, q_gy);
-					vec4 sh2 = spr_cell(qc + vec2(2.4, 1.6), vec2(5.0), 53.0, 0.35 * ms, 51, 2, 0.6, q_gx, q_gy);
+					vec4 sh2 = spr_cell(qc + vec2(2.4, 1.6), vec2(4.0), 53.0, 0.6 * ms, 51, 2, 0.75, q_gx, q_gy);
 					vec4 mm = sh2.a > 0.3 ? sh2 : rd;
+					if (pool_m > 0.5) {   // в воде — кувшинки, не камыш
+						mm = spr_cell(qc + vec2(0.3, 0.5), vec2(1.3), 57.0, 0.35, 53, 1, 0.6, q_gx, q_gy);
+					}
 					terr = mix(terr, mm.rgb, mm.a * dk_s);
 					bld = max(bld, mm.a * 0.7);
 				}

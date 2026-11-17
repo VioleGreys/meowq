@@ -300,7 +300,8 @@ func _bake_warm() -> void:
 		return
 	var n := 0
 	while not map_view._full_baked and n < 400:
-		map_view.redraw()
+		if n % 20 == 0:
+			map_view.redraw()
 		for i in 3:
 			await get_tree().process_frame
 		n += 1
@@ -318,8 +319,10 @@ func _bake_test(path: String) -> void:
 	var t0 := Time.get_ticks_msec()
 	var n := 0
 	var bk := map_view.bake
+	# тайлы рисуются, пока карта стоит (_bake_still): перерисовка — раз в 60 кадров
 	while not map_view._full_baked and n < 400:
-		map_view.redraw()
+		if n % 20 == 0:
+			map_view.redraw()
 		for i in 3:
 			await get_tree().process_frame
 		n += 1
