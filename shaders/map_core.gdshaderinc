@@ -199,6 +199,9 @@ uniform bool has_elev = false;
 // покров суши (data/world1936/cover.png.bin, tools/build_cover.py) — слой 2 base_tex:
 // r — лес (доля крон), g — болото, b — застройка 1936 г., a — рисовые поля
 uniform bool has_cover = false;
+// постройки и деревья (data/world1936/sprites.png.bin, tools/render_sprites.gd) — слой 2
+// tile_tex: атлас 8×8 по 64 пикс., модели CC0 сверху с юга, тень на юго-восток
+uniform bool has_sprites = false;
 uniform float winter = 1.0;   // зима в северном полушарии 0…1 (MapView.set_day)
 const float DETAIL_TILE = 48.0;   // пикселей карты на тайл
 // проекция Миллера для сетки широт и долгот (как tools/build_map.py)
@@ -314,6 +317,71 @@ vec4 tex_bicubic(sampler2DArray t, vec2 uv, float layer, vec2 ts, vec2 gx, vec2 
 		+ g1.y * (g0.x * textureGrad(t, vec3(vec2(p0.x, p1.y), layer), gx, gy) + g1.x * textureGrad(t, vec3(vec2(p1.x, p1.y), layer), gx, gy));
 }
 
+// Спрайт атласа в ячейке сетки q / cell (q — пиксели карты 1×): есть с вероятностью
+// prob, сдвинут внутри ячейки, занимает долю fill; вариант — base + [0, nvar).
+// Спрайт не выходит за свою ячейку — одна выборка на пиксель. gx, gy — изменение q на
+// пиксель экрана (до ветвлений): mipmap без швов на краях ячеек.
+vec4 spr_cell(vec2 q, vec2 cell, float seed, float prob, int base, int nvar, float fill, vec2 gx, vec2 gy) {
+	vec2 g = q / cell;
+	g.x += h21(vec2(floor(g.y), seed)) * 0.5;   // ряды со сдвигом
+	vec2 c = floor(g);
+	if (h21(c + vec2(seed, 1.7)) >= prob) {
+		return vec4(0.0);
+	}
+	vec2 off = (vec2(h21(c + vec2(seed, 3.1)), h21(c + vec2(seed, 5.9))) - 0.5) * (1.0 - fill);
+	vec2 lu = (fract(g) - 0.5 - off) / fill + 0.5;
+	if (lu.x < 0.0 || lu.y < 0.0 || lu.x > 1.0 || lu.y > 1.0) {
+		return vec4(0.0);
+	}
+	int idx = base + min(int(h21(c + vec2(seed, 8.3)) * float(nvar)), nvar - 1);
+	vec2 auv = (vec2(float(idx % 8), float(idx / 8)) + lu) / 8.0;
+	vec2 k = 1.0 / (cell * fill * 8.0);
+	return textureGrad(tile_tex, vec3(auv, 2.0), gx * k, gy * k);
+}
+
+// Постройка города в ячейке: класс и вероятность — по застройке (cover.b) в центре
+// ячейки (по пикселю — спрайты резались бы на краю пятна): центр крупного города —
+// доходные дома (0–7), соборы (24, 25) и заводы на окраинах (28–31); городок — дома
+// (8–15); деревня и окраина — дома и хозяйства (16–19, 32–39).
+vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, out float dens) {
+	const vec2 cell = vec2(4.0, 3.4);
+	vec2 g = q / cell;
+	g.x += h21(vec2(floor(g.y), 11.0)) * 0.5;
+	vec2 c = floor(g);
+	vec2 ctr = (c + 0.5 - vec2(h21(vec2(c.y, 11.0)) * 0.5, 0.0)) * cell;
+	float d = textureLod(base_tex, vec3(ctr / msz, 2.0), 1.8).b * 2.2;   // в среднем по ячейке
+	dens = d;
+	float hp = h21(c + vec2(11.0, 1.7));
+	float prob = smoothstep(0.003, 0.2, d) * 0.97;
+	if (hp >= prob) {
+		return vec4(0.0);
+	}
+	float hv = h21(c + vec2(11.0, 8.3));
+	float hk = h21(c + vec2(11.0, 4.4));
+	int base;
+	int nvar;
+	float fill;
+	if (d > 0.5) {
+		base = 0; nvar = 8; fill = 0.98;
+		if (hk < 0.04) { base = 24; nvar = 2; }
+	} else if (d > 0.18) {
+		base = 8; nvar = 8; fill = 0.85;
+		if (hk < 0.10) { base = 28; nvar = 4; fill = 0.95; }
+		else if (hk < 0.14) { base = 24; nvar = 1; }
+	} else {
+		base = hk < 0.5 ? 16 : 32; nvar = hk < 0.5 ? 4 : 8; fill = 0.72;
+	}
+	int idx = base + min(int(hv * float(nvar)), nvar - 1);
+	vec2 off = (vec2(h21(c + vec2(11.0, 3.1)), h21(c + vec2(11.0, 5.9))) - 0.5) * (1.0 - fill);
+	vec2 lu = (fract(g) - 0.5 - off) / fill + 0.5;
+	if (lu.x < 0.0 || lu.y < 0.0 || lu.x > 1.0 || lu.y > 1.0) {
+		return vec4(0.0);
+	}
+	vec2 auv = (vec2(float(idx % 8), float(idx / 8)) + lu) / 8.0;
+	vec2 k = 1.0 / (cell * fill * 8.0);
+	return textureGrad(tile_tex, vec3(auv, 2.0), gx * k, gy * k);
+}
+
 void fragment() {
 	// луч из пикселя экрана до плоскости карты (см. cam_*)
 	// центр пикселя буфера: прямоугольник (частичная перерисовка, полосы) лежит на
@@ -348,6 +416,9 @@ void fragment() {
 	vec2 wv_uv = px / (WATER_TILE * id_k);
 	vec2 wv_gx = dFdx(wv_uv);
 	vec2 wv_gy = dFdy(wv_uv);
+	// изменение пикселей карты 1× на пиксель экрана — для спрайтов (mipmap)
+	vec2 q_gx = dFdx(px) / id_k;
+	vec2 q_gy = dFdy(px) / id_k;
 	// реки: расстояние до осевой линии (пикселей карты) и его изменение на пиксель
 	// экрана — до ветвлений (fwidth)
 	// сила реки (1 — крупная, 0,67 — средняя, 0,39 — малая) — в канале g рельефа
@@ -899,10 +970,65 @@ void fragment() {
 				roof *= 0.86 + 0.24 * vnoise(g * 2.3);
 				mediump vec3 uc_far = vec3(0.53, 0.50, 0.47);
 				mediump vec3 uc_near = mix(vec3(0.74, 0.72, 0.67), roof, built * (1.0 - street));
-				ub_n = ub * mix(1.0, max(built, 0.35), dk_c);
-				terr = mix(terr, mix(uc_far, uc_near, dk_c), ub_n);
+				float dk_u = has_sprites ? dk_c * (1.0 - smoothstep(2.0, 3.0, zoom)) : dk_c;   // ближе — постройки атласа
+				ub_n = ub * mix(1.0, max(built, 0.35), dk_u);
+				terr = mix(terr, mix(uc_far, uc_near, dk_u), ub_n);
 				tex_c += (built * (1.0 - street) - 0.5) * 0.1 * ub_n * dk_c;
 			}
+			// --- постройки и деревья атласа (вблизи, высокое качество) ---------------
+			mediump float bld = 0.0;   // доля спрайта в пикселе (цвет страны под ним слабее)
+			float dk_s = (has_sprites && quality == 2) ? smoothstep(2.0, 3.0, zoom) : 0.0;
+			if (dk_s > 0.0) {
+				vec2 msz = map_size / id_k;
+				// хутора и рощи на пашне
+				if (fl > 0.05) {
+					vec4 sp = spr_cell(qc, vec2(9.0), 21.0, 0.35 * fl, 20, 4, 0.45, q_gx, q_gy);
+					vec4 st = spr_cell(qc + vec2(3.9, 2.4), vec2(6.5), 23.0, 0.12 * fl, 40, 8, 0.4, q_gx, q_gy);
+					sp = sp.a > 0.0 ? sp : st;
+					terr = mix(terr, sp.rgb, sp.a * dk_s);
+					bld = max(bld, sp.a);
+				}
+				// пригороды: дома с садами вокруг городов (застройка, размытая на ~6 пикс.)
+				float sub = textureLod(base_tex, vec3(muv, 2.0), 2.5).b;
+				float sw = smoothstep(0.01, 0.08, sub) * (1.0 - smoothstep(0.05, 0.25, cv.b)) * (1.0 - fo) * (1.0 - ms);
+				if (sw > 0.0) {
+					vec4 sp = spr_cell(qc, vec2(4.6, 4.0), 31.0, 0.6 * sw, 32, 8, 0.7, q_gx, q_gy);
+					terr = mix(terr, mix(terr, vec3(0.42, 0.52, 0.30), 0.35), sw * 0.6 * dk_s);   // сады
+					terr = mix(terr, sp.rgb, sp.a * dk_s);
+					bld = max(bld, sp.a);
+				}
+				// города, городки, деревни
+				if (cv.b > 0.002 || sub > 0.004) {
+					float dens;
+					vec4 sp = town_cell(qc, msz, q_gx, q_gy, dens);
+					terr = mix(terr, vec3(0.70, 0.68, 0.63), smoothstep(0.3, 0.6, cv.b) * dk_s * 0.7);   // мостовые
+					terr = mix(terr, sp.rgb, sp.a * dk_s);
+					bld = max(bld, sp.a);
+				}
+				// лес: деревья двумя сдвинутыми сетками; хвойные / лиственные по широте
+				// пятнами ~9 пикс., в тайге — берёзы
+				if (fo > 0.05) {
+					float conif = smoothstep(45.0, 60.0, lat_c) * 0.85 + 0.1;
+					bool pine = h21(floor(qc / 9.0)) < conif;
+					int tb = pine ? 43 : 40;
+					vec4 t1 = spr_cell(qc, vec2(2.8), 41.0, fo * 1.2, tb, 3, 1.0, q_gx, q_gy);
+					vec4 t2 = spr_cell(qc + vec2(1.4, 1.3), vec2(2.8), 43.0, fo * 1.0, pine ? 44 : 46, 2, 0.95, q_gx, q_gy);
+					vec4 tt = t2.a > 0.6 ? t2 : (t1.a > 0.0 ? t1 : t2);
+					terr = mix(terr, terr * 0.8, fo * dk_s * 0.5);   // подлесок и тень крон
+					float ta = tt.a * smoothstep(0.15, 0.5, fo);
+					terr = mix(terr, tt.rgb, ta * dk_s);
+					bld = max(bld, ta * 0.8);
+				}
+				// болото: камыш, ивы и сухие берёзы
+				if (ms > 0.05) {
+					vec4 rd = spr_cell(qc, vec2(2.0), 51.0, 0.5 * ms, 48, 2, 0.9, q_gx, q_gy);
+					vec4 sh2 = spr_cell(qc + vec2(2.4, 1.6), vec2(5.0), 53.0, 0.35 * ms, 51, 2, 0.6, q_gx, q_gy);
+					vec4 mm = sh2.a > 0.3 ? sh2 : rd;
+					terr = mix(terr, mm.rgb, mm.a * dk_s);
+					bld = max(bld, mm.a * 0.7);
+				}
+			}
+			ub_n = max(ub_n * (1.0 - dk_s), bld * dk_s);
 			if (terrain_mode) {
 				lc = K(terr * 0.95 * rf);
 			} else {
@@ -915,7 +1041,7 @@ void fragment() {
 				far_c = mix(far_c, mix(base, K(vec3(0.42, 0.44, 0.30)), 0.3), ms * 0.45);
 				far_c = mix(far_c, mix(base, K(vec3(0.50, 0.47, 0.44)), 0.6), ub * 0.75);
 				LC near_c = mix(K(terr * 0.92), base, 0.45 * (1.0 - 0.8 * snow) * (1.0 - 0.7 * max(mnt, alp)) * (1.0 - 0.65 * des)
-					* (1.0 - 0.45 * fo) * (1.0 - 0.6 * ub_n) * (1.0 - 0.4 * ms));
+					* (1.0 - 0.45 * fo - 0.3 * fo * dk_s) * (1.0 - 0.8 * ub_n) * (1.0 - 0.4 * ms));
 				lc = mix(far_c, near_c, near_k) * rf;
 			}
 			lc *= 1.0 + tex_c * dk_c;

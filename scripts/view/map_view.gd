@@ -305,12 +305,19 @@ func setup(w: World) -> void:
 	if not has_d:
 		dimg = Image.create(512, 512, false, Image.FORMAT_RGBA8)
 		dimg.fill(Color(0.5, 0.5, 0.5, 0.5))
-	for im: Image in [wimg, dimg]:
+	# атлас построек и деревьев (tools/render_sprites.gd) — третьим слоем
+	var spath := "res://data/world1936/sprites.png.bin"
+	var simg := Image.new()
+	var has_s := FileAccess.file_exists(spath) and simg.load_png_from_buffer(FileAccess.get_file_as_bytes(spath)) == OK
+	if not has_s:
+		simg = Image.create(512, 512, false, Image.FORMAT_RGBA8)
+	for im: Image in [wimg, dimg, simg]:
 		im.convert(Image.FORMAT_RGBA8)
 		if im.get_width() != 512 or im.get_height() != 512:
 			im.resize(512, 512, Image.INTERPOLATE_BILINEAR)
 		im.generate_mipmaps()
-	_param("tile_tex", _layers([wimg, dimg]))
+	_param("tile_tex", _layers([wimg, dimg, simg]))
+	_param("has_sprites", has_s)
 	_param("has_water", has_w)
 	_param("has_detail", has_d)
 	# рельеф (relief.png.bin) и поле расстояний до рек (tools/build_rivers.py) —

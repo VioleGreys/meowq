@@ -1,0 +1,309 @@
+[
+ {
+  "cell": 0,
+  "file": "q_buildings/FBX/Building1_Large.fbx",
+  "yaw": 0
+ },
+ {
+  "cell": 1,
+  "file": "q_buildings/FBX/Building2_Large.fbx",
+  "yaw": 0
+ },
+ {
+  "cell": 2,
+  "file": "q_buildings/FBX/Building3_Big.fbx",
+  "yaw": 0
+ },
+ {
+  "cell": 3,
+  "file": "q_buildings/FBX/Building1_Small.fbx",
+  "yaw": 0
+ },
+ {
+  "cell": 4,
+  "file": "q_buildings/FBX/Building2_Small.fbx",
+  "yaw": 0
+ },
+ {
+  "cell": 5,
+  "file": "q_buildings/FBX/Building3_Small.fbx",
+  "yaw": 0
+ },
+ {
+  "cell": 6,
+  "file": "q_buildings/FBX/Building3_Big.fbx"
+ },
+ {
+  "cell": 7,
+  "file": "q_buildings/FBX/Building2_Small.fbx"
+ },
+ {
+  "cell": 8,
+  "file": "q_simplebuildings/FBX/House.fbx",
+  "tex": "q_simplebuildings/Textures/HouseTexture1.png"
+ },
+ {
+  "cell": 9,
+  "file": "q_simplebuildings/FBX/House2.fbx",
+  "tex": "q_simplebuildings/Textures/HouseTexture2.png"
+ },
+ {
+  "cell": 10,
+  "file": "q_simplebuildings/FBX/House3.fbx",
+  "tex": "q_simplebuildings/Textures/HouseTexture3.png"
+ },
+ {
+  "cell": 11,
+  "file": "q_simplebuildings/FBX/House4.fbx",
+  "tex": "q_simplebuildings/Textures/HouseTexture4.png"
+ },
+ {
+  "cell": 12,
+  "file": "q_simplebuildings/FBX/House5.fbx",
+  "tex": "q_simplebuildings/Textures/HouseTexture1.png"
+ },
+ {
+  "cell": 13,
+  "file": "q_simplebuildings/FBX/Shop.fbx",
+  "tex": "q_simplebuildings/Textures/Shop.png"
+ },
+ {
+  "cell": 14,
+  "file": "q_simplebuildings/FBX/Flat.fbx",
+  "tex": "q_simplebuildings/Textures/Hotel.png"
+ },
+ {
+  "cell": 15,
+  "file": "q_simplebuildings/FBX/Bank.fbx",
+  "tex": "q_simplebuildings/Textures/Hotel.png"
+ },
+ {
+  "cell": 16,
+  "file": "q_village/Medieval Village Pack - Dec 2020/Buildings/FBX/House_1.fbx",
+  "recolor": {
+   "rooftiles": [
+    0.6,
+    0.33,
+    0.25
+   ]
+  }
+ },
+ {
+  "cell": 17,
+  "file": "q_village/Medieval Village Pack - Dec 2020/Buildings/FBX/House_2.fbx",
+  "recolor": {
+   "rooftiles": [
+    0.6,
+    0.33,
+    0.25
+   ]
+  }
+ },
+ {
+  "cell": 18,
+  "file": "q_village/Medieval Village Pack - Dec 2020/Buildings/FBX/House_3.fbx",
+  "recolor": {
+   "rooftiles": [
+    0.6,
+    0.33,
+    0.25
+   ]
+  }
+ },
+ {
+  "cell": 19,
+  "file": "q_village/Medieval Village Pack - Dec 2020/Buildings/FBX/House_4.fbx",
+  "recolor": {
+   "rooftiles": [
+    0.6,
+    0.33,
+    0.25
+   ]
+  }
+ },
+ {
+  "cell": 20,
+  "file": "q_farmbuildings/FBX/Silo_House.fbx"
+ },
+ {
+  "cell": 21,
+  "file": "q_farmbuildings/FBX/Barn.fbx"
+ },
+ {
+  "cell": 22,
+  "file": "q_farmbuildings/FBX/SmallBarn.fbx"
+ },
+ {
+  "cell": 23,
+  "file": "q_farmbuildings/FBX/OpenBarn.fbx"
+ },
+ {
+  "cell": 24,
+  "file": "q_village/Medieval Village Pack - Dec 2020/Buildings/FBX/Bell_Tower.fbx",
+  "recolor": {
+   "rooftiles": [
+    0.6,
+    0.33,
+    0.25
+   ]
+  }
+ },
+ {
+  "cell": 25,
+  "file": "q_buildings/FBX/Building4.fbx"
+ },
+ {
+  "cell": 28,
+  "file": "k_ind/Models/GLB format/building-k.glb",
+  "tint": [
+   0.86,
+   0.58,
+   0.48
+  ],
+  "tint_what": "all"
+ },
+ {
+  "cell": 29,
+  "file": "k_ind/Models/GLB format/building-g.glb",
+  "tint": [
+   0.86,
+   0.58,
+   0.48
+  ],
+  "tint_what": "all"
+ },
+ {
+  "cell": 30,
+  "file": "k_ind/Models/GLB format/building-h.glb",
+  "tint": [
+   0.86,
+   0.58,
+   0.48
+  ],
+  "tint_what": "all"
+ },
+ {
+  "cell": 31,
+  "file": "k_ind/Models/GLB format/building-i.glb",
+  "tint": [
+   0.86,
+   0.58,
+   0.48
+  ],
+  "tint_what": "all"
+ },
+ {
+  "cell": 32,
+  "file": "q_buildings/FBX/House1.fbx"
+ },
+ {
+  "cell": 33,
+  "file": "q_buildings/FBX/House2.fbx"
+ },
+ {
+  "cell": 34,
+  "file": "q_simplebuildings/FBX/House.fbx",
+  "yaw": 90,
+  "tex": "q_simplebuildings/Textures/HouseTexture1.png"
+ },
+ {
+  "cell": 35,
+  "file": "q_simplebuildings/FBX/House2.fbx",
+  "yaw": 90,
+  "tex": "q_simplebuildings/Textures/HouseTexture2.png"
+ },
+ {
+  "cell": 36,
+  "file": "q_simplebuildings/FBX/House3.fbx",
+  "yaw": 90,
+  "tex": "q_simplebuildings/Textures/HouseTexture3.png"
+ },
+ {
+  "cell": 37,
+  "file": "q_simplebuildings/FBX/House4.fbx",
+  "yaw": 90,
+  "tex": "q_simplebuildings/Textures/HouseTexture4.png"
+ },
+ {
+  "cell": 38,
+  "file": "q_simplebuildings/FBX/House5.fbx",
+  "yaw": 90,
+  "tex": "q_simplebuildings/Textures/HouseTexture1.png"
+ },
+ {
+  "cell": 39,
+  "file": "q_village/Medieval Village Pack - Dec 2020/Buildings/FBX/House_2.fbx",
+  "yaw": 90,
+  "recolor": {
+   "rooftiles": [
+    0.6,
+    0.33,
+    0.25
+   ]
+  }
+ },
+ {
+  "cell": 40,
+  "file": "q_ultimatenature/FBX/CommonTree_1.fbx"
+ },
+ {
+  "cell": 41,
+  "file": "q_ultimatenature/FBX/CommonTree_2.fbx"
+ },
+ {
+  "cell": 42,
+  "file": "q_ultimatenature/FBX/CommonTree_3.fbx"
+ },
+ {
+  "cell": 43,
+  "file": "q_ultimatenature/FBX/PineTree_1.fbx"
+ },
+ {
+  "cell": 44,
+  "file": "q_ultimatenature/FBX/PineTree_2.fbx"
+ },
+ {
+  "cell": 45,
+  "file": "q_ultimatenature/FBX/PineTree_3.fbx"
+ },
+ {
+  "cell": 46,
+  "file": "q_ultimatenature/FBX/BirchTree_1.fbx"
+ },
+ {
+  "cell": 47,
+  "file": "q_ultimatenature/FBX/Bush_1.fbx"
+ },
+ {
+  "cell": 48,
+  "file": "q_ultimatenature/FBX/Grass.fbx"
+ },
+ {
+  "cell": 49,
+  "file": "q_ultimatenature/FBX/Grass_2.fbx"
+ },
+ {
+  "cell": 50,
+  "file": "q_ultimatenature/FBX/Plant_1.fbx"
+ },
+ {
+  "cell": 51,
+  "file": "q_ultimatenature/FBX/Willow_1.fbx"
+ },
+ {
+  "cell": 52,
+  "file": "q_ultimatenature/FBX/BirchTree_Dead_1.fbx"
+ },
+ {
+  "cell": 53,
+  "file": "q_ultimatenature/FBX/Lilypad.fbx"
+ },
+ {
+  "cell": 54,
+  "file": "q_ultimatenature/FBX/BushBerries_1.fbx"
+ },
+ {
+  "cell": 55,
+  "file": "q_ultimatenature/FBX/Willow_2.fbx"
+ }
+]
