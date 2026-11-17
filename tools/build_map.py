@@ -846,6 +846,8 @@ def main():
     ap.add_argument("--preview", default="", help="сохранить PNG-превью сюда")
     ap.add_argument("--geonames", default="", help="cities1000.txt GeoNames (CC BY 4.0): названия провинций без крупного города")
     ap.add_argument("--etopo", default="", help="ETOPO1_Ice_g_geotiff.tif (NOAA): горы и холмы по уклону, высота суши")
+    ap.add_argument("--glwd", default="", help="GLWD v2 combined_classes (CC BY 4.0): болота по данным (tools/wetlands.py)")
+    ap.add_argument("--forest", default="", help="папка мозаики сомкнутости крон Hansen (CC BY 4.0, tools/forest.py): леса по данным")
     ap.add_argument("--kg", default="", help="Köppen-Geiger 1901–1930 (Beck 2023, CC BY 4.0), koppen_geiger_0p00833333.tif: пустыни по климату")
     ap.add_argument("--adm2", default="", help="папка районов geoBoundaries (tools/fetch_adm2.py): провинции по районам и рекам")
     args = ap.parse_args()
@@ -1227,6 +1229,17 @@ def main():
         dry_px = np.clip(des_px + 0.5 * stp_px, 0.0, 1.0)
         del des_px, stp_px
 
+    # болота и леса по данным (решение пользователя, ноябрь 2026): доля в провинции
+    cover_mean = None
+    if args.glwd and args.forest:
+        import forest as forest_mod
+        import wetlands
+        marsh_px = wetlands.load(args.glwd, WIDTH, HEIGHT)[0]
+        forest_px = forest_mod.load(args.forest, WIDTH, HEIGHT)
+        cover_mean = (ndimage.mean(forest_px, labels=prov, index=np.arange(n_prov)),
+                      ndimage.mean(marsh_px, labels=prov, index=np.arange(n_prov)))
+        del marsh_px, forest_px
+
     # соседство
     a = prov[:, :-1].ravel(); b = prov[:, 1:].ravel()
     c = prov[:-1, :].ravel(); d = prov[1:, :].ravel()
@@ -1385,6 +1398,11 @@ def main():
                     terrain = 1
             if _in_boxes(lon, lat, PLATEAU_BOXES) and terrain != 4:
                 terrain = 3   # Тибетское нагорье, Альтиплано
+            if cover_mean is not None:
+                # лес и болото — по данным (build_cover.cover_terrain; джунгли и «синусы» леса не нужны)
+                import build_cover
+                terrain = build_cover.cover_terrain(0 if terrain in (1, 7) else terrain,
+                                                    float(cover_mean[0][i]), float(cover_mean[1][i]), lon, lat)
             total_pop = city_pop[i]
             if pop >= 400000:
                 terrain = 4

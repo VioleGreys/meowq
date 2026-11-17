@@ -325,10 +325,21 @@ func setup(w: World) -> void:
 	if not has_r:
 		rimg = rel.duplicate() as Image
 	rimg.convert(Image.FORMAT_RGBA8)
+	# покров суши (tools/build_cover.py): лес, болото, застройка, рис — третьим слоём
+	var cpath := "res://data/world1936/cover.png.bin"
+	var cimg := Image.new()
+	var has_c := world.width == 5632 and FileAccess.file_exists(cpath) \
+		and cimg.load_png_from_buffer(FileAccess.get_file_as_bytes(cpath)) == OK \
+		and cimg.get_width() == rel.get_width() and cimg.get_height() == rel.get_height()
+	if not has_c:
+		cimg = Image.create(rel.get_width(), rel.get_height(), false, Image.FORMAT_RGBA8)
+	cimg.convert(Image.FORMAT_RGBA8)
 	rel.generate_mipmaps()
 	rimg.generate_mipmaps()
-	_param("base_tex", _layers([rel, rimg]))
+	cimg.generate_mipmaps()
+	_param("base_tex", _layers([rel, rimg, cimg]))
 	_param("has_rivers", has_r)
+	_param("has_cover", has_c)
 	# поле расстояний до границ провинций (tools/build_sdf.py) — линии границ гладкие
 	var sdf := _sdf2() if not ids.is_empty() else []
 	_param("has_sdf", not sdf.is_empty())

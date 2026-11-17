@@ -196,6 +196,9 @@ uniform bool has_art = false;
 uniform bool has_detail = false;
 // высоты суши вдвое подробнее карты (вид вблизи, только высокое качество): √(h / 6000 м)
 uniform bool has_elev = false;
+// покров суши (data/world1936/cover.png.bin, tools/build_cover.py) — слой 2 base_tex:
+// r — лес (доля крон), g — болото, b — застройка 1936 г., a — рисовые поля
+uniform bool has_cover = false;
 uniform float winter = 1.0;   // зима в северном полушарии 0…1 (MapView.set_day)
 const float DETAIL_TILE = 48.0;   // пикселей карты на тайл
 // проекция Миллера для сетки широт и долгот (как tools/build_map.py)
@@ -352,6 +355,10 @@ void fragment() {
 	// приведённые расстояния: до ближайшей реки и до реки «с другой стороны»
 	// (второе русло, угол слияния)
 	vec4 rv4 = has_rivers ? texture(base_tex, vec3(muv, 1.0)) : vec4(1.0, 1.0, 1.0, 1.0);
+#ifndef BAKED
+	// покров суши — до ветвлений (mipmap по производным)
+	mediump vec4 cv = has_cover ? texture(base_tex, vec3(muv, 2.0)) : vec4(0.0);
+#endif
 	// вблизи — расстояние с гладким слиянием соседних русел (готово в данных)
 	float rv_ds = rv4.b * RIVER_MAX;
 	// длина билинейного вектора — точна у одной реки; между двумя реками векторы
@@ -554,6 +561,7 @@ void fragment() {
 	float rel_m = 0.0;           // высота против окрестности, м (гребень +, долина −)
 	mediump float rock_v = 0.5;  // разброс цвета скал
 	mediump float alp = 0.0;     // высокогорный пояс у снеговой линии
+	mediump float hill = 0.0;    // доля «холмы»: средний уклон ниже гор
 	mediump vec4 dnw = vec4(0.5);   // фактура крупной шкалы (рисунок дюн, разброс цвета)
 	// половина подложки и производные координат (до ветвлений по пикселю)
 	float ax = muv.x * art_geom.x;
@@ -609,6 +617,10 @@ void fragment() {
 			}
 		}
 		mnt = smoothstep(0.10, 0.36, s_mask) * smoothstep(200.0, 1100.0, elev_m);
+		// холмы (как в жанре): холмистый рельеф ниже гор — по уклону и высоте над окрестностью
+		// холмы (как в жанре): холмистость края (разброс высот в ~60 км, cover.a)
+		// ниже гор — Арденны, Богемия; равнины Парижа и Украины — нет
+		hill = smoothstep(0.2, 0.45, cv.a) * (1.0 - smoothstep(0.15, 0.5, mnt));
 		rf = clamp(mix(1.0, dot(nn, ld) / ld.z, mix(0.55, 0.8, near_k) + 0.2 * mnt), 0.36, 1.4);
 		rf *= 1.0 + clamp(rel_m / 1400.0, -0.22, 0.10) * smoothstep(0.0, 0.5, mnt);
 		float lat_d = lat_at(px);
@@ -761,6 +773,136 @@ void fragment() {
 			terr = mix(terr, des_c, des * 0.85);
 			terr = mix(terr, rock, max(mnt * 0.8, alp * 0.85));
 			terr = mix(terr, vec3(0.94, 0.95, 0.97), snow);
+			// --- покров суши (как в жанре): лес, болота, пашни, холмы, города -------
+			// издали — лёгкий тон поверх цвета страны, вблизи — рисунок
+			// (кроны, окна воды, поля, кварталы); всё неподвижно — уходит в заготовки
+			vec2 qc = px / id_k;   // пиксели карты 1×
+			float lat_c = abs(lat_at(px));
+			float free_k = (1.0 - des) * (1.0 - max(mnt, alp)) * (1.0 - snow);
+			// рваный край леса и болота — шумом, не по текселям
+			float edge_n = vnoise(qc * 0.9 + vec2(3.1, 7.7)) - 0.5;
+			mediump float fo = smoothstep(0.30, 0.62, cv.r + edge_n * 0.25) * (1.0 - 0.5 * mnt) * (1.0 - des) * (1.0 - snow);
+			mediump float ms = smoothstep(0.10, 0.42, cv.g + edge_n * 0.15) * free_k;
+			mediump float ub = smoothstep(0.02, 0.45, cv.b) * (1.0 - snow);
+			// рисовые чеки — муссонная Азия (Индия, Индокитай, Китай южнее Хуанхэ, Япония)
+			float lon_c = degrees(px.x / (map_size.x / 6.2831853)) + lon_min;
+			mediump float rc = smoothstep(68.0, 74.0, lon_c) * (1.0 - smoothstep(142.0, 146.0, lon_c))
+				* (1.0 - smoothstep(34.0, 38.0, lat_at(px))) * smoothstep(-9.0, -5.0, lat_at(px)) * (1.0 - stp) * free_k * (1.0 - ub);
+			fo *= 1.0 - ms * 0.6;
+			// пашня: ровные обжитые места умеренного пояса (1936 г.: распахано почти
+			// всё, что не лес, не болото, не степь и не пустыня)
+			mediump float fl = (1.0 - smoothstep(0.3, 0.6, cv.a)) * free_k * (1.0 - fo) * (1.0 - ms) * (1.0 - ub)
+				* (1.0 - stp * 0.6) * (1.0 - smoothstep(58.0, 64.0, lat_c));
+			rc *= fl;
+			fl *= 1.0 - rc;
+			float dk_c = (quality == 2) ? smoothstep(1.6, 3.0, zoom) : 0.0;   // рисунок вблизи
+			mediump float tex_c = 0.0;   // светотень рисунка (−…+)
+			// холмы: оливково-бурый тон, вблизи — округлые бугры (свет с северо-запада)
+			if (hill > 0.0) {
+				terr = mix(terr, terr * vec3(1.02, 0.98, 0.86) + vec3(0.03, 0.02, 0.0), hill * 0.5 * free_k);
+				if (dk_c > 0.0) {
+					vec2 hq = qc * 1.3;
+					float e = 0.35;
+					float h0 = vnoise(hq) * 0.65 + vnoise(hq * 2.3 + vec2(5.0, 1.0)) * 0.35;
+					float h1 = vnoise(hq + vec2(-e, -e)) * 0.65 + vnoise((hq + vec2(-e, -e)) * 2.3 + vec2(5.0, 1.0)) * 0.35;
+					tex_c += (h1 - h0) * 1.1 * hill * free_k * (1.0 - fo * 0.5);
+				}
+			}
+			// лес: тайга — тёмная сине-зелёная, широколиственный — светлее, тропики — сочные
+			if (fo > 0.0) {
+				mediump vec3 fc = mix(vec3(0.20, 0.31, 0.16), vec3(0.15, 0.24, 0.17), smoothstep(50.0, 60.0, lat_c));
+				fc = mix(vec3(0.13, 0.30, 0.12), fc, smoothstep(20.0, 32.0, lat_c));
+				fc *= 0.9 + 0.2 * vnoise(qc / 14.0 + vec2(2.0, 9.0));
+				terr = mix(terr, mix(terr, fc, 0.75), fo);
+				if (dk_c > 0.0) {
+					// кроны: бугорки двух размеров, тень с юго-востока
+					vec2 tq = qc * 4.2;
+					float c0 = vnoise(tq);
+					float c1 = vnoise(tq + vec2(-0.3, -0.3));
+					float c2 = vnoise(qc * 9.5 + vec2(1.7, 4.4));
+					tex_c += ((c1 - c0) * 0.9 + (c2 - 0.5) * 0.25 - (1.0 - c0) * 0.12) * fo;
+				}
+			}
+			// болото: оливковая осока и мох, вблизи — окна тёмной воды с бликом и протоки,
+			// кочки (как в жанре)
+			if (ms > 0.0) {
+				mediump vec3 mc = mix(vec3(0.37, 0.42, 0.26), vec3(0.45, 0.43, 0.29), vnoise(qc / 6.0 + vec2(8.0, 3.0)));
+				terr = mix(terr, mix(terr, mc, 0.75), ms);
+				if (dk_c > 0.0) {
+					float pw = vnoise(qc * 0.75 + vec2(1.0, 6.0)) * 0.6 + vnoise(qc * 2.1 + vec2(9.0, 2.0)) * 0.3 + vnoise(qc * 5.3) * 0.1;
+					float lim = mix(0.68, 0.56, smoothstep(0.3, 0.8, cv.g));   // гуще болото — больше воды
+					float pool = smoothstep(lim, lim + 0.05, pw) * ms * dk_c;
+					float rim = smoothstep(lim - 0.05, lim, pw) * (1.0 - smoothstep(lim, lim + 0.05, pw));
+					mediump vec3 wcol = mix(vec3(0.24, 0.34, 0.36), vec3(0.40, 0.50, 0.52), smoothstep(lim + 0.05, lim + 0.2, pw));
+					terr = mix(terr, wcol, pool * 0.9);
+					terr = mix(terr, vec3(0.30, 0.36, 0.20), rim * ms * dk_c * 0.6);   // заросший край
+					float tuft = vnoise(qc * 11.0 + vec2(2.0, 2.0));
+					tex_c += (tuft - 0.5) * 0.16 * ms * (1.0 - pool);
+				}
+			}
+			// пашни: лоскуты полей (пшеница, зелень, пар, луг), в каждом крае свой
+			// наклон и шаг; живые изгороди — тёмные края
+			if (fl > 0.01 && dk_c > 0.0) {
+				// угол, шаг и вытянутость полей — свои на неровный участок ~11 пикс. (поворот
+				// координат углом из плавного шума давал муар-«кольца»: фаза ∝ координате);
+				// шов участков — межа
+				vec2 rid = floor((qc + (vec2(vnoise(qc / 7.0), vnoise(qc / 7.0 + vec2(5.2, 1.3))) - 0.5) * 7.0) / 11.0);
+				float hr = h21(rid + vec2(4.0, 4.0));
+				float ang = (hr - 0.5) * 3.0;
+				vec2 rq = vec2(cos(ang) * qc.x + sin(ang) * qc.y, -sin(ang) * qc.x + cos(ang) * qc.y) + h21(rid) * 13.0;
+				float fsz = mix(0.6, 1.25, h21(rid + vec2(9.0, 1.0)));
+				vec2 g = rq / (vec2(mix(1.0, 2.2, h21(rid + vec2(2.0, 7.0))), 1.0) * fsz * 0.75);
+				g.x += h21(vec2(floor(g.y), rid.x * 7.0 + rid.y)) * 1.7;   // ряды со сдвигом — не сетка
+				vec2 cid = floor(g);
+				vec2 fq = fract(g);
+				float hc = h21(cid);
+				mediump vec3 fcol = hc < 0.3 ? vec3(0.76, 0.69, 0.45)
+					: hc < 0.55 ? vec3(0.53, 0.60, 0.35)
+					: hc < 0.75 ? vec3(0.61, 0.65, 0.42)
+					: hc < 0.9 ? vec3(0.58, 0.50, 0.37) : vec3(0.69, 0.65, 0.48);
+				fcol *= 0.94 + 0.12 * h21(cid + vec2(3.0, 3.0));
+				float wnt = (lat_at(px) >= 0.0 ? winter : 1.0 - winter) * smoothstep(30.0, 45.0, lat_c);
+				fcol = mix(fcol, vec3(0.56, 0.50, 0.38) + (hc - 0.5) * 0.08, wnt * 0.7);   // зимой — пашня и стерня
+				float hedge = 1.0 - min(min(fq.x, 1.0 - fq.x) * 0.95, min(fq.y, 1.0 - fq.y) * 0.7) / 0.06;
+				terr = mix(terr, mix(terr, fcol, 0.42), fl * dk_c);
+				// борозды вдоль поля (у половины полей), межи — тонкие и не у всех полей
+				float furrow = step(0.5, h21(cid + vec2(8.0, 2.0))) * (sin(fq.y * 6.2831853 * (4.0 + 3.0 * hc)) * 0.5 + 0.5);
+				tex_c += (furrow - 0.5) * 0.05 * fl * smoothstep(3.0, 4.5, zoom);
+				tex_c -= clamp(hedge, 0.0, 1.0) * 0.07 * step(0.35, h21(cid + vec2(1.0, 6.0))) * fl * smoothstep(2.2, 3.4, zoom);
+			}
+			// рис: мелкие залитые чеки, бирюзовый отблеск
+			if (rc > 0.0 && dk_c > 0.0) {
+				vec2 g = qc / vec2(0.55, 0.42);
+				g.x += h21(vec2(floor(g.y), 7.0));
+				float hc = h21(floor(g));
+				mediump vec3 rcol = mix(vec3(0.42, 0.58, 0.40), vec3(0.40, 0.55, 0.55), step(0.6, hc));
+				terr = mix(terr, mix(terr, rcol, 0.55), rc * dk_c);
+				vec2 fq = fract(g);
+				tex_c -= step(min(min(fq.x, 1.0 - fq.x), min(fq.y, 1.0 - fq.y)), 0.05) * 0.08 * rc * dk_c;
+			}
+			// города 1936 г.: издали — серо-бурые пятна, вблизи — кварталы с улицами
+			mediump float ub_n = ub;
+			if (ub > 0.0) {
+				// сетка улиц — своя на участок ~5 пикс. (старый город, новые кварталы)
+				vec2 rid = floor((qc + (vec2(vnoise(qc / 3.0), vnoise(qc / 3.0 + vec2(5.2, 1.3))) - 0.5) * 3.0) / 5.0);
+				float ang = (h21(rid + vec2(1.0, 13.0)) - 0.5) * 1.6;
+				vec2 rq = vec2(cos(ang) * qc.x + sin(ang) * qc.y, -sin(ang) * qc.x + cos(ang) * qc.y) + h21(rid) * 7.0;
+				vec2 g = rq / vec2(0.55, 0.42);
+				vec2 cid = floor(g);
+				vec2 fq = fract(g);
+				float hc = h21(cid + vec2(17.0, 3.0));
+				float built = step(hc, cv.b * 1.5 + 0.1);   // окраины — редкие кварталы
+				float street = step(min(min(fq.x, 1.0 - fq.x) * 0.55, min(fq.y, 1.0 - fq.y) * 0.42), 0.035);
+				// крыши: черепица, шифер, жесть — приглушённые; дворы темнее
+				float hr = h21(cid + vec2(2.0, 9.0));
+				mediump vec3 roof = hr < 0.4 ? vec3(0.55, 0.43, 0.37) : hr < 0.75 ? vec3(0.47, 0.46, 0.45) : vec3(0.58, 0.54, 0.48);
+				roof *= 0.86 + 0.24 * vnoise(g * 2.3);
+				mediump vec3 uc_far = vec3(0.53, 0.50, 0.47);
+				mediump vec3 uc_near = mix(vec3(0.74, 0.72, 0.67), roof, built * (1.0 - street));
+				ub_n = ub * mix(1.0, max(built, 0.35), dk_c);
+				terr = mix(terr, mix(uc_far, uc_near, dk_c), ub_n);
+				tex_c += (built * (1.0 - street) - 0.5) * 0.1 * ub_n * dk_c;
+			}
 			if (terrain_mode) {
 				lc = K(terr * 0.95 * rf);
 			} else {
@@ -768,9 +910,15 @@ void fragment() {
 				far_c = mix(far_c, mix(base, K(rock * 1.1), 0.35), mnt * 0.5);
 				far_c = mix(far_c, mix(base, K(des_c), 0.3), des * 0.45);
 				far_c = mix(far_c, mix(base, K(vec3(0.95)), 0.7), snow * 0.7);
-				LC near_c = mix(K(terr * 0.92), base, 0.45 * (1.0 - 0.8 * snow) * (1.0 - 0.7 * max(mnt, alp)) * (1.0 - 0.65 * des));
+				// издали: лес темнит цвет страны, болото — оливковый тон, город — серое пятно
+				far_c = mix(far_c, far_c * 0.86, fo * 0.6);
+				far_c = mix(far_c, mix(base, K(vec3(0.42, 0.44, 0.30)), 0.3), ms * 0.45);
+				far_c = mix(far_c, mix(base, K(vec3(0.50, 0.47, 0.44)), 0.6), ub * 0.75);
+				LC near_c = mix(K(terr * 0.92), base, 0.45 * (1.0 - 0.8 * snow) * (1.0 - 0.7 * max(mnt, alp)) * (1.0 - 0.65 * des)
+					* (1.0 - 0.45 * fo) * (1.0 - 0.6 * ub_n) * (1.0 - 0.4 * ms));
 				lc = mix(far_c, near_c, near_k) * rf;
 			}
+			lc *= 1.0 + tex_c * dk_c;
 			if (quality == 2 && des > 0.01) {
 				// гряды дюн вблизи (эрги): пологий наветренный склон светлее, крутой
 				// подветренный — тень
