@@ -60,7 +60,7 @@ func _aabb(n: Node, xf: Transform3D) -> AABB:
 		var t: Transform3D = it[1]
 		if node is Node3D:
 			t = t * (node as Node3D).transform
-		if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
+		if node is MeshInstance3D and (node as MeshInstance3D).mesh != null and (node as MeshInstance3D).visible:
 			var b: AABB = t * (node as MeshInstance3D).mesh.get_aabb()
 			box = b if first else box.merge(b)
 			first = false
@@ -132,7 +132,8 @@ func _run() -> void:
 		_reset(m)
 		m.position = Vector3.ZERO
 		holder.add_child(m)
-		m.rotation_degrees.y = float(e.get("yaw", 0.0))
+		_only(m, e.get("only", []))
+		m.rotation_degrees = Vector3(float(e.get("rotx", 0.0)), float(e.get("yaw", 0.0)), 0.0)
 		await process_frame
 		var box := _aabb(m, Transform3D.IDENTITY)
 		var ctr := box.get_center()
@@ -181,6 +182,16 @@ func _run() -> void:
 				spr.set_pixel(x, y, c)
 		# обрезка по содержимому (модель с тенью) — квадрат, модель заполняет ячейку
 		var used := spr.get_used_rect()
+		if e.get("tight", false):
+			# только здание (без запаса под тень): дом заполняет своё место, тень у края режется
+			var ob := Image.create(CELL * SS, CELL * SS, false, Image.FORMAT_RGBA8)
+			ob.fill(Color(0, 0, 0, 0))
+			for y2 in CELL * SS:
+				for x2 in CELL * SS:
+					if obj.get_pixel(x2, y2).a > 0.5:
+						ob.set_pixel(x2, y2, Color(1, 1, 1, 1))
+			var r := ob.get_used_rect()
+			used = r.grow_individual(0, 0, int(r.size.x * 0.12), int(r.size.y * 0.08)).intersection(Rect2i(0, 0, CELL * SS, CELL * SS))
 		if used.size.x > 4 and used.size.y > 4:
 			var side := maxi(used.size.x, used.size.y) + 6
 			var sq := Image.create(side, side, false, Image.FORMAT_RGBA8)
@@ -214,6 +225,23 @@ func _run() -> void:
 		bg.save_png(_arg("sheet"))
 	print("атлас: ", out)
 	quit()
+
+
+## Показать только объекты сцены, в имени которых (или у предков) есть одна из
+## подстрок `only` (сцена из нескольких зданий); пусто — всё.
+func _only(n: Node, names: Array) -> void:
+	var stack: Array = [[n, false]]
+	while not stack.is_empty():
+		var it: Array = stack.pop_back()
+		var node: Node = it[0]
+		var hit: bool = it[1]
+		for nm in names:
+			if str(node.name).contains(str(nm)):
+				hit = true
+		if node is MeshInstance3D:
+			(node as MeshInstance3D).visible = names.is_empty() or hit
+		for c in node.get_children():
+			stack.append([c, hit])
 
 
 ## Сбросить перекраску прошлого раза (модель из кэша).

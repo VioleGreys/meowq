@@ -8,7 +8,7 @@ signal view_changed
 
 const SCALE := 2.0
 const MIN_ZOOM := 0.1
-const MAX_ZOOM := 5.0
+const MAX_ZOOM := 8.0   # было 5: постройки вблизи как в жанре (дом ~25 пикс. экрана)
 const TAP_SLOP := 14.0
 
 enum MapMode { POLITICAL, TERRAIN, INDUSTRY, FACTIONS, SUPPLY, RESOURCES }
@@ -233,10 +233,14 @@ func setup(w: World) -> void:
 	# области провинций (обводка средней линией): r + g·256 — номер + 1, 0 — нет
 	var st_img := Image.create(64, rows, false, Image.FORMAT_RGBA8)
 	var has_st := world.p_state.size() == world.prov_count
-	if has_st:
-		for p in world.prov_count:
-			var sv := world.p_state[p] + 1
-			st_img.set_pixel(p % 64, p / 64, Color8(sv & 255, (sv >> 8) & 255, 0, 255))
+	# b — класс города провинции для застройки вблизи (шейдер town_d): 3 — столица и
+	# от 1 млн (очки победы ≥ 15), 2 — от 400 тыс. (≥ 8), 1 — от 150 тыс. (≥ 4), 0 — нет
+	var has_vp := world.p_vp.size() == world.prov_count
+	for p in world.prov_count:
+		var sv := (world.p_state[p] + 1) if has_st else 0
+		var vp: int = world.p_vp[p] if has_vp else 0
+		var cls := 3 if vp >= 15 else 2 if vp >= 8 else 1 if vp >= 4 else 0
+		st_img.set_pixel(p % 64, p / 64, Color8(sv & 255, (sv >> 8) & 255, cls, 255))
 	pal_img.blit_rect(st_img, Rect2i(0, 0, 64, rows), Vector2i(0, 2 * rows))
 	pal_tex = ImageTexture.create_from_image(pal_img)
 	_param("pal_tex", pal_tex)

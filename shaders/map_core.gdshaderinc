@@ -381,48 +381,198 @@ vec4 canopy(vec2 q, float cell, float prob, float conif, vec2 gx, vec2 gy) {
 // ячейки (по пикселю — спрайты резались бы на краю пятна): центр крупного города —
 // доходные дома (0–7), соборы (24, 25) и заводы на окраинах (28–31); городок — дома
 // (8–15); деревня и окраина — дома и хозяйства (16–19, 32–39).
-vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, out float dens) {
-	// плотные кварталы: ровная сетка без сдвигов, дом во всю ячейку (просветы — улицы)
-	const vec2 cell = vec2(1.7, 1.45);
-	vec2 g = q / cell;
-	vec2 c = floor(g);
-	vec2 ctr = (c + 0.5) * cell;
-	vec2 cuv = ctr / msz;
-	float d = textureLod(base_tex, vec3(cuv, 2.0), 0.6).b * 1.4;
+// Город как в жанре, но без «квадратной» сетки: кварталы — ячейки Вороного по
+// случайным точкам (треугольники, четырёх-, пятиугольники разной величины), улицы —
+// по их границам под любыми углами; дома — внутри квартала с отступом от улицы
+// (место дома целиком в своём квартале), в изогнутом ряду от точки квартала. Класс
+// квартала — по застройке у его точки: центр — доходные дома, дальше — дома, на
+// окраине изредка заводской квартал целиком; одна церковь у середины квартала.
+// Деревня — редкие дома своей сеткой, без мостовой. На воде и у реки — пусто.
+const int TOWN_C = 0;
+const int TOWN_H = 12;
+const int VIL = 24;
+const int IZBA = 30;
+const int FACT = 34;
+const int CHURCH = 38;
+const vec2 SLOT = vec2(1.5, 1.3);     // место дома, пикселей карты 1× (условно крупно)
+const float BLK_CS = 5.5;             // шаг точек кварталов
+const float STREET = 0.4;             // ширина улицы
+
+vec2 h22(vec2 p) {
+	return vec2(h21(p), h21(p + vec2(17.3, 41.9)));
+}
+
+// расстояние до ближайшей границы ячейки (x, пикс.) и номер ячейки (yz) —
+// границы Вороного (два прохода: ближайшая точка, затем расстояние до биссектрис)
+vec3 town_vor_n(vec2 p, out vec2 nrm) {
+	nrm = vec2(1.0, 0.0);
+	vec2 g = p / BLK_CS;
+	vec2 n = floor(g);
+	vec2 f = g - n;
+	vec2 mg = vec2(0.0);
+	vec2 mr = vec2(0.0);
+	float md = 8.0;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 o = vec2(float(i), float(j));
+			vec2 r = o + 0.1 + 0.8 * h22(n + o) - f;
+			float d = dot(r, r);
+			if (d < md) { md = d; mr = r; mg = o; }
+		}
+	}
+	md = 8.0;
+	for (int j = -2; j <= 2; j++) {
+		for (int i = -2; i <= 2; i++) {
+			vec2 o = mg + vec2(float(i), float(j));
+			vec2 r = o + 0.1 + 0.8 * h22(n + o) - f;
+			if (dot(mr - r, mr - r) > 1e-5) {
+				float e = dot(0.5 * (mr + r), normalize(r - mr));
+				if (e < md) { md = e; nrm = normalize(r - mr); }
+			}
+		}
+	}
+	return vec3(md * BLK_CS, n + mg);
+}
+
+vec3 town_vor(vec2 p) {
+	vec2 nn;
+	return town_vor_n(p, nn);
+}
+
+vec2 town_seed(vec2 c) {
+	return (c + 0.1 + 0.8 * h22(c)) * BLK_CS;
+}
+
+// застройка города — по провинциям (решение пользователя): город заполняет свою
+// провинцию (класс из палитры, раздел 2, b: 3 — столица и от 1 млн, 2 — от 400 тыс.,
+// 1 — от 150 тыс.), пригород — полоса ~1,6 пикс. в соседних провинциях, не дальше
+int town_cls(vec2 p) {
+	int id = pid(ivec2(floor(p * id_k)));
+	return int(pal(2, id).b * 255.0 + 0.5);
+}
+
+float town_d(vec2 p, vec2 msz) {
+	int c = town_cls(p);
+	if (c > 0) {
+		return c == 3 ? 0.6 : (c == 2 ? 0.4 : 0.22);
+	}
+	const float R = 1.6;
+	int n = max(max(town_cls(p + vec2(R, 0.0)), town_cls(p - vec2(R, 0.0))),
+		max(town_cls(p + vec2(0.0, R)), town_cls(p - vec2(0.0, R))));
+	return n > 0 ? 0.14 : 0.0;
+}
+
+bool town_wet(vec2 p, vec2 msz) {
+	vec2 uv = p / msz;
+	float cov_c = textureLod(base_tex, vec3(uv, 0.0), 0.0).b;
+	float rv_c = textureLod(base_tex, vec3(uv, 1.0), 0.0).a * RIVER_MAX;
+	float rs_c = textureLod(base_tex, vec3(uv, 0.0), 0.0).g;
+	return cov_c < 0.85 || (rs_c > 0.01 && rv_c < 0.7);
+}
+
+vec4 town_spr(int idx, vec2 lu, vec2 cell, vec2 gx, vec2 gy) {
+	if (lu.x < 0.0 || lu.y < 0.0 || lu.x > 1.0 || lu.y > 1.0) {
+		return vec4(0.0);
+	}
+	vec2 k = 1.0 / (cell * 4.0);
+	return textureGrad(tile_tex, atl_uv(idx, lu), gx * k, gy * k);
+}
+
+// мост: улица города, пересекающая реку, — вдоль улицы в обе стороны недалеко суша
+// (граница квартала вдоль реки мостом не становится)
+float town_bridge(vec2 q, vec2 msz) {
+	vec2 nrm;
+	vec3 v = town_vor_n(q, nrm);
+	float d = town_d(q, msz);
+	if (d < 0.2) {
+		return 0.0;
+	}
+	vec2 e = vec2(-nrm.y, nrm.x);   // направление улицы
+	// суша по обе стороны недалеко, а поперёк улицы — вода с обеих сторон (не вдоль
+	// берега) и рядом нет третьей улицы (развилки над водой)
+	bool ok = false;
+	for (int i = 1; i <= 2; i++) {
+		float L = 0.9 * float(i);
+		if (!town_wet(q + e * L, msz) && !town_wet(q - e * L, msz)) {
+			ok = true;
+		}
+	}
+	ok = ok && town_wet(q + nrm * 0.8, msz) && town_wet(q - nrm * 0.8, msz);
+	vec2 n2;
+	ok = ok && town_vor_n(q + e * 0.7, n2).x < STREET && town_vor_n(q - e * 0.7, n2).x < STREET
+		&& abs(dot(n2, nrm)) > 0.95;
+	return ok ? (1.0 - smoothstep(STREET * 0.3, STREET * 0.45, v.x)) : 0.0;
+}
+
+vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, float east, out float dens, out float street) {
+	street = 0.0;
+	vec3 v = town_vor(q);
+	vec2 c = v.yz;
+	vec2 sp = town_seed(c);
+	float d = max(town_d(sp, msz), town_d(q, msz));
 	dens = d;
-	// на воде, у берега и на реке — не строим
-	float cov_c = textureLod(base_tex, vec3(cuv, 0.0), 0.0).b;
-	float rv_c = textureLod(base_tex, vec3(cuv, 1.0), 0.0).a * RIVER_MAX;
-	float rs_c = textureLod(base_tex, vec3(cuv, 0.0), 0.0).g;
-	if (cov_c < 0.75 || (rs_c > 0.01 && rv_c < 1.6)) {
+	bool urban = d > 0.12;
+	if (!urban) {
+		// деревня: редкие дома своей неровной сеткой, без улиц
+		const vec2 VS = vec2(3.4, 3.0);
+		vec2 g = q / VS;
+		g.x += h21(vec2(floor(g.y), 29.0)) * 0.7;
+		vec2 vc = floor(g);
+		vec2 ctr = (vc + 0.5 - vec2(h21(vec2(vc.y, 29.0)) * 0.7, 0.0)) * VS;
+		float dn = textureLod(base_tex, vec3(ctr / msz, 2.0), 1.0).b * 1.6;
+		float hp = h21(vc + vec2(29.0, 1.7));
+		if (dn < 0.05 || hp >= smoothstep(0.05, 0.16, dn) * 0.5 || town_wet(ctr, msz)) {
+			return vec4(0.0);
+		}
+		float hv = h21(vc + vec2(29.0, 8.3));
+		int idx = east > 0.5 ? IZBA + min(int(hv * 4.0), 3) : VIL + min(int(hv * 6.0), 5);
+		vec2 jit = (h22(vc + vec2(5.0, 5.0)) - 0.5) * 0.25;
+		return town_spr(idx, (fract(g) - 0.5 - jit) / 0.7 + 0.5, VS * 0.7, gx, gy);
+	}
+	// улица по границе квартала (у границы большого города — мягче)
+	float sw = STREET * mix(0.7, 1.4, h21(c + vec2(2.0, 7.0)));
+	float st = 1.0 - smoothstep(sw * 0.4, sw * 0.6, v.x);
+	street = st * smoothstep(0.12, 0.22, d);
+	if (st > 0.5) {
 		return vec4(0.0);
 	}
-	float hp = h21(c + vec2(11.0, 1.7));
-	// город — сплошное пятно (порог плотности), деревня — кучка у самой точки
-	float prob = d > 0.12 ? 1.0 : smoothstep(0.02, 0.1, d) * 0.85;
-	if (hp >= prob) {
+	// места домов — ряды от точки квартала (свой сдвиг рядов в каждом квартале)
+	vec2 rel = (q - sp) / SLOT + 0.5;
+	rel.x += floor(rel.y) * (h21(c + vec2(8.0, 3.0)) - 0.5) * 0.8;
+	vec2 sl = floor(rel);
+	vec2 ctr = sp + (sl - vec2(floor(rel.y) * (h21(c + vec2(8.0, 3.0)) - 0.5) * 0.8, 0.0)) * SLOT;
+	// место целиком в своём квартале, с отступом от улицы
+	vec3 vc = town_vor(ctr);
+	if (any(notEqual(vc.yz, c)) || vc.x < max(SLOT.x, SLOT.y) * 0.25 + sw * 0.5) {
 		return vec4(0.0);
 	}
-	float hv = h21(c + vec2(11.0, 8.3));
-	float hk = h21(c + vec2(11.0, 4.4));
-	int base;
-	int nvar;
-	if (d > 0.45) {
-		base = 0; nvar = 8;
-		if (hk < 0.03) { base = 25; nvar = 1; }
-	} else if (d > 0.15) {
-		base = 8; nvar = 8;
-		if (hk < 0.08) { base = 28; nvar = 4; }
-		else if (hk < 0.11) { base = 24; nvar = 1; }
+	vec2 hs = SLOT * 0.3;
+	if (town_wet(ctr, msz) || town_wet(ctr + hs, msz) || town_wet(ctr - hs, msz)
+			|| town_wet(ctr + vec2(hs.x, -hs.y), msz) || town_wet(ctr + vec2(-hs.x, hs.y), msz)) {
+		return vec4(0.0);
+	}
+	float ds = town_d(ctr, msz);   // место — в провинции города или в полосе пригорода
+	vec2 key = c * 17.0 + sl;
+	float hp = h21(key + vec2(11.0, 1.7));
+	float hv = h21(key + vec2(11.0, 8.3));
+	// занятость мест: центр плотно, город и городок реже, пригород — редкие дома
+	float occ = ds > 0.5 ? 0.85 : ds > 0.3 ? 0.72 : ds > 0.2 ? 0.6 : ds > 0.12 ? 0.32 : 0.0;
+	if (hp >= occ) {
+		return vec4(0.0);
+	}
+	float hb = h21(c + vec2(11.0, 4.4));
+	int idx;
+	if (d < 0.5 && hb < 0.12) {
+		idx = FACT + min(int(hv * 4.0), 3);            // заводской квартал
+	} else if (hb > 0.8 && all(equal(sl, vec2(0.0)))) {
+		idx = CHURCH + min(int(hv * 2.0), 1);           // церковь у середины квартала
 	} else {
-		base = hk < 0.6 ? 16 : 32; nvar = hk < 0.6 ? 4 : 8;
+		idx = d > 0.45 ? TOWN_C + min(int(hv * 12.0), 11) : TOWN_H + min(int(hv * 12.0), 11);
 	}
-	int idx = base + min(int(hv * float(nvar)), nvar - 1);
 	const float fill = 1.0;
-	vec2 lu = fract(g);
-	vec3 auv = atl_uv(idx, lu);
-	vec2 k = 1.0 / (cell * fill * 4.0);
-	return textureGrad(tile_tex, auv, gx * k, gy * k);
+	vec2 jit = (h22(key + vec2(5.0, 5.0)) - 0.5) * 0.08;
+	vec2 lu = ((q - ctr) / SLOT - jit) / fill + 0.5;
+	return town_spr(idx, lu, SLOT * fill, gx, gy);
 }
 
 void fragment() {
@@ -1016,7 +1166,7 @@ void fragment() {
 				mediump vec3 uc_far = vec3(0.53, 0.50, 0.47);
 				mediump vec3 uc_near = mix(vec3(0.74, 0.72, 0.67), roof, built * (1.0 - street));
 				float dk_u = has_sprites ? dk_c * (1.0 - smoothstep(2.0, 3.0, zoom)) : dk_c;   // ближе — постройки атласа
-				ub_n = ub * mix(1.0, max(built, 0.35), dk_u);
+				ub_n = ub * mix(1.0, max(built, 0.35), dk_u) * (has_sprites ? 1.0 - smoothstep(2.0, 3.0, zoom) : 1.0);
 				terr = mix(terr, mix(uc_far, uc_near, dk_u), ub_n);
 				tex_c += (built * (1.0 - street) - 0.5) * 0.1 * ub_n * dk_c;
 			}
@@ -1028,18 +1178,34 @@ void fragment() {
 				// лес: сплошной полог крон; хвойных больше к северу
 				if (fo > 0.05) {
 					float conif = smoothstep(45.0, 60.0, lat_c) * 0.85 + 0.1;
-					vec4 tt = canopy(qc, 0.95, smoothstep(0.15, 0.55, fo) * 1.05, conif, q_gx, q_gy);
+					// у городов и деревень леса нет (не растёт между домами)
+					float tw = smoothstep(0.02, 0.07, town_d(qc, msz));
+					vec4 tt = canopy(qc, 0.95, smoothstep(0.15, 0.55, fo) * 1.05 * (1.0 - tw), conif, q_gx, q_gy);
 					terr = mix(terr, terr * 0.55, smoothstep(0.2, 0.5, fo) * dk_s);   // тень под пологом
 					terr = mix(terr, tt.rgb, tt.a * dk_s);
 					bld = max(bld, tt.a * 0.85);
 				}
-				// города и деревни: плотные кварталы на месте застройки
+				// города и деревни: кварталы с улицами; к востоку от ~24° в. д. — избы
 				float dens = 0.0;
-				if (cv.b > 0.002) {
-					vec4 sp = town_cell(qc, msz, q_gx, q_gy, dens);
-					terr = mix(terr, vec3(0.62, 0.60, 0.56), smoothstep(0.12, 0.3, dens) * dk_s * 0.8);   // мостовые и дворы
+				float street = 0.0;
+				if (cv.b > 0.002 || town_d(qc, msz) > 0.1) {   // город по провинции, деревни по застройке
+					float lon_t = degrees(px.x / (map_size.x / 6.2831853)) + lon_min;
+					float east = step(0.5, smoothstep(22.0, 28.0, lon_t + (vnoise(qc / 30.0) - 0.5) * 6.0));
+					vec4 sp = town_cell(qc, msz, q_gx, q_gy, east, dens, street);
+					// тон построек к карте: чуть приглушить
+					// старение: выгоревшие краски, серо-бурый налёт, пятна грязи и потёки
+					// (мелкий шум + вертикальные полосы), у каждого дома свой оттенок
+					float lum_s = dot(sp.rgb, vec3(0.3, 0.59, 0.11));
+					vec3 aged = mix(sp.rgb, vec3(lum_s), 0.28);
+					aged = mix(aged, vec3(0.46, 0.42, 0.36) * (0.7 + 0.6 * lum_s), 0.22);
+					float grime = vnoise(qc * 9.0) * 0.6 + vnoise(qc * 23.0 + vec2(3.0, 7.0)) * 0.4;
+					float streak = vnoise(vec2(qc.x * 30.0, qc.y * 4.0));
+					aged *= 0.8 + 0.3 * grime - 0.1 * smoothstep(0.55, 0.85, streak);
+					aged *= 0.9 + 0.2 * vec3(h21(floor(qc / 2.7) + vec2(1.0, 0.0)), h21(floor(qc / 2.7) + vec2(2.0, 0.0)), h21(floor(qc / 2.7) + vec2(3.0, 0.0))) * vec3(1.0, 0.9, 0.8);
+					sp.rgb = clamp(aged * 1.12, 0.0, 1.0);
+					terr = mix(terr, vec3(0.60, 0.58, 0.54), street * dk_s * 0.85);    // мостовая
 					terr = mix(terr, sp.rgb, sp.a * dk_s);
-					bld = max(bld, sp.a);
+					bld = max(bld, max(sp.a, street * 0.8));
 				}
 				// редкие хутора на пашне (не у рек и не в лесу)
 				if (fl > 0.3 && cv.b < 0.01 && rv_d > 3.0) {
@@ -1166,7 +1332,7 @@ void fragment() {
 			float mp = zoom * 2.0 * res_k;   // пикселей буфера на пиксель карты
 			// расстояния в поле приведённые (делённые на относительную ширину реки):
 			// полуширина здесь — крупной, узкие выходят уже сами
-			float hw_px = max(1.2 * exp(0.58 * (zoom - 1.0)), 1.3) * res_k;
+			float hw_px = max(1.2 * exp(0.58 * (min(zoom, 5.0) - 1.0)), 1.3) * res_k * max(zoom / 5.0, 1.0);   // ближе ×5 — в масштабе карты
 			float hw = clamp(hw_px / mp, 1.3 * rv_fw, RIVER_MAX - 0.8);
 			float aa = 0.6 * rv_fw;
 			// вблизи — со слиянием соседних русел: полоска суши уже ~3/4 ширины
@@ -1193,6 +1359,12 @@ void fragment() {
 #endif
 			col = mix(col, mix(col * 0.62, vec3(0.56, 0.49, 0.36) * (0.85 + 0.25 * light), nk), bank * mix(0.18, 0.5, nk));   // вдали — едва заметная кромка, вблизи — берег
 			col = mix(col, rw, river * smoothstep(0.3, 0.7, zoom));
+			// мосты: улица большого города над рекой (вблизи, высокое качество)
+			if (quality == 2 && has_sprites && river > 0.01 && zoom > 2.0) {
+				float brg = town_bridge(px / id_k, map_size / id_k) * smoothstep(2.0, 3.0, zoom);
+				col = mix(col, vec3(0.58, 0.55, 0.50), brg * river);
+				col = mix(col, col * 0.7, brg * (1.0 - smoothstep(0.0, 0.25, river)) * river);
+			}
 			river = 0.0;
 		} else {
 			river = smoothstep(0.25, 0.8, textureLod(base_tex, vec3(muv, 0.0), 0.0).g);

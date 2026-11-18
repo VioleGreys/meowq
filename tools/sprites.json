@@ -1,246 +1,263 @@
 [
  {
   "cell": 0,
-  "file": "q_buildings/FBX/Building1_Large.fbx",
-  "yaw": 0
+  "file": "sfdl/Bordeaux_Flat_1_corner_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 1,
-  "file": "q_buildings/FBX/Building2_Large.fbx",
-  "yaw": 0
+  "file": "sfdl/Bordeaux_Flat_2_corner_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 2,
-  "file": "q_buildings/FBX/Building3_Big.fbx",
-  "yaw": 0
+  "file": "sfdl/Troyes_Shop_8_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 3,
-  "file": "q_buildings/FBX/Building1_Small.fbx",
-  "yaw": 0
+  "file": "sfdl/Troyes_Shop_1_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 4,
-  "file": "q_buildings/FBX/Building2_Small.fbx",
-  "yaw": 0
+  "file": "sfdl/Dijon_Shop_1_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 5,
-  "file": "q_buildings/FBX/Building3_Small.fbx",
-  "yaw": 0
+  "file": "sfdl/Le_Mans_Corner_House_1_b_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 6,
-  "file": "q_buildings/FBX/Building3_Big.fbx"
+  "file": "sfdl/Nivelles_Corner_House_1_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 7,
-  "file": "q_buildings/FBX/Building2_Small.fbx"
+  "file": "sfdl/Nivelles_Corner_House_2_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 8,
-  "file": "q_simplebuildings/FBX/House.fbx",
-  "tex": "q_simplebuildings/Textures/HouseTexture1.png"
+  "file": "sfdl/Angers_Shop_2_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 9,
-  "file": "q_simplebuildings/FBX/House2.fbx",
-  "tex": "q_simplebuildings/Textures/HouseTexture2.png"
+  "file": "sfdl/Bourges_Corner_Shop_1_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 10,
-  "file": "q_simplebuildings/FBX/House3.fbx",
-  "tex": "q_simplebuildings/Textures/HouseTexture3.png"
+  "file": "sfdl/Mons_Corner_Shop_1_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 11,
-  "file": "q_simplebuildings/FBX/House4.fbx",
-  "tex": "q_simplebuildings/Textures/HouseTexture4.png"
+  "file": "sfdl/Nivelles_House_9_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 12,
-  "file": "q_simplebuildings/FBX/House5.fbx",
-  "tex": "q_simplebuildings/Textures/HouseTexture1.png"
+  "file": "sfdl/Nivelles_House_1_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 13,
-  "file": "q_simplebuildings/FBX/Shop.fbx",
-  "tex": "q_simplebuildings/Textures/Shop.png"
+  "file": "sfdl/Nivelles_House_2_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 14,
-  "file": "q_simplebuildings/FBX/Flat.fbx",
-  "tex": "q_simplebuildings/Textures/Hotel.png"
+  "file": "sfdl/Nivelles_House_3_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 15,
-  "file": "q_simplebuildings/FBX/Bank.fbx",
-  "tex": "q_simplebuildings/Textures/Hotel.png"
+  "file": "sfdl/Nivelles_House_5_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 16,
-  "file": "q_village/Medieval Village Pack - Dec 2020/Buildings/FBX/House_1.fbx",
-  "recolor": {
-   "rooftiles": [
-    0.6,
-    0.33,
-    0.25
-   ]
-  }
+  "file": "sfdl/Nivelles_House_7_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 17,
-  "file": "q_village/Medieval Village Pack - Dec 2020/Buildings/FBX/House_2.fbx",
-  "recolor": {
-   "rooftiles": [
-    0.6,
-    0.33,
-    0.25
-   ]
-  }
+  "file": "sfdl/Mons_House_1_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 18,
-  "file": "q_village/Medieval Village Pack - Dec 2020/Buildings/FBX/House_3.fbx",
-  "recolor": {
-   "rooftiles": [
-    0.6,
-    0.33,
-    0.25
-   ]
-  }
+  "file": "sfdl/Mons_House_2_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 19,
-  "file": "q_village/Medieval Village Pack - Dec 2020/Buildings/FBX/House_4.fbx",
-  "recolor": {
-   "rooftiles": [
-    0.6,
-    0.33,
-    0.25
-   ]
-  }
+  "file": "sfdl/Troyes_House_1_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 20,
-  "file": "q_farmbuildings/FBX/Silo_House.fbx"
+  "file": "sfdl/Troyes_House_3_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 21,
-  "file": "q_farmbuildings/FBX/Barn.fbx"
+  "file": "sfdl/Laval_House_1_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 22,
-  "file": "q_farmbuildings/FBX/SmallBarn.fbx"
+  "file": "sfdl/Rouen_House_1_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 23,
-  "file": "q_farmbuildings/FBX/OpenBarn.fbx"
+  "file": "sfdl/Dijon_House_1_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 24,
-  "file": "q_village/Medieval Village Pack - Dec 2020/Buildings/FBX/Bell_Tower.fbx",
-  "recolor": {
-   "rooftiles": [
-    0.6,
-    0.33,
-    0.25
-   ]
-  }
+  "file": "sfdl/Feluy_Village_House_1_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 25,
-  "file": "q_buildings/FBX/Building4.fbx"
+  "file": "sfdl/Fumay_House_1_France/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 26,
+  "file": "sfdl/Tramain_House_1_France/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 27,
+  "file": "sfdl/Nivelles_House_4_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 28,
-  "file": "k_ind/Models/GLB format/building-k.glb",
-  "tint": [
-   0.86,
-   0.58,
-   0.48
-  ],
-  "tint_what": "all"
+  "file": "sfdl/Nivelles_House_6_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 29,
-  "file": "k_ind/Models/GLB format/building-g.glb",
-  "tint": [
-   0.86,
-   0.58,
-   0.48
-  ],
-  "tint_what": "all"
+  "file": "sfdl/Troyes_Filler_House_1_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 30,
-  "file": "k_ind/Models/GLB format/building-h.glb",
-  "tint": [
-   0.86,
-   0.58,
-   0.48
-  ],
-  "tint_what": "all"
+  "file": "sfdl/Traditional_Russian_Cabin_Izba/model.glb",
+  "pitch": 58,
+  "yaw": 0,
+  "tight": true
  },
  {
   "cell": 31,
-  "file": "k_ind/Models/GLB format/building-i.glb",
-  "tint": [
-   0.86,
-   0.58,
-   0.48
-  ],
-  "tint_what": "all"
+  "file": "sfdl/Russian_Izba_Low_Poly_3D_Game_Asset/model.glb",
+  "pitch": 58,
+  "yaw": 0,
+  "tight": true
  },
  {
   "cell": 32,
-  "file": "q_buildings/FBX/House1.fbx"
+  "file": "sfdl/Traditional_Russian_Cabin_Izba/model.glb",
+  "pitch": 58,
+  "yaw": 90,
+  "tight": true
  },
  {
   "cell": 33,
-  "file": "q_buildings/FBX/House2.fbx"
+  "file": "sfdl/Russian_Izba_Low_Poly_3D_Game_Asset/model.glb",
+  "pitch": 58,
+  "yaw": 90,
+  "tight": true
  },
  {
   "cell": 34,
-  "file": "q_simplebuildings/FBX/House.fbx",
-  "yaw": 90,
-  "tex": "q_simplebuildings/Textures/HouseTexture1.png"
+  "file": "sfdl/Industrial_Buildings_Set_Low_poly_models/model.glb",
+  "pitch": 58,
+  "only": [
+   "Industrial_FactoryPlant_1"
+  ],
+  "rotx": -90,
+  "tight": true
  },
  {
   "cell": 35,
-  "file": "q_simplebuildings/FBX/House2.fbx",
-  "yaw": 90,
-  "tex": "q_simplebuildings/Textures/HouseTexture2.png"
+  "file": "sfdl/Industrial_Buildings_Set_Low_poly_models/model.glb",
+  "pitch": 58,
+  "only": [
+   "Industrial_Warehouse_5"
+  ],
+  "rotx": -90,
+  "tight": true
  },
  {
   "cell": 36,
-  "file": "q_simplebuildings/FBX/House3.fbx",
-  "yaw": 90,
-  "tex": "q_simplebuildings/Textures/HouseTexture3.png"
+  "file": "sfdl/Industrial_Buildings_Set_Low_poly_models/model.glb",
+  "pitch": 58,
+  "only": [
+   "Industrial_Building_10"
+  ],
+  "rotx": -90,
+  "tight": true
  },
  {
   "cell": 37,
-  "file": "q_simplebuildings/FBX/House4.fbx",
-  "yaw": 90,
-  "tex": "q_simplebuildings/Textures/HouseTexture4.png"
+  "file": "sfdl/Industrial_Buildings_Set_Low_poly_models/model.glb",
+  "pitch": 58,
+  "only": [
+   "Industrial_Building_1_"
+  ],
+  "rotx": -90,
+  "tight": true
  },
  {
   "cell": 38,
-  "file": "q_simplebuildings/FBX/House5.fbx",
-  "yaw": 90,
-  "tex": "q_simplebuildings/Textures/HouseTexture1.png"
+  "file": "sfdl/Nivelles_House_8_Belgium/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 39,
-  "file": "q_village/Medieval Village Pack - Dec 2020/Buildings/FBX/House_2.fbx",
-  "yaw": 90,
-  "recolor": {
-   "rooftiles": [
-    0.6,
-    0.33,
-    0.25
-   ]
-  }
+  "file": "sfdl/Le_Mans_House_2_France/model.glb",
+  "pitch": 58,
+  "tight": true
  },
  {
   "cell": 40,
