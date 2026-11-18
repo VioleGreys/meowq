@@ -458,6 +458,11 @@ int town_cls(vec2 p) {
 	return int(pal(2, id).b * 255.0 + 0.5);
 }
 
+float town_scale(vec2 p) {
+	int id = pid(ivec2(floor(p * id_k)));
+	return max(pal(2, id).a, 0.5);
+}
+
 float town_d(vec2 p, vec2 msz) {
 	int c = town_cls(p);
 	if (c > 0) {
@@ -575,7 +580,7 @@ vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, vec2 ll, out float dens, out 
 		vec2 ctr = (vc + 0.5 - vec2(h21(vec2(vc.y, 29.0)) * 0.7, 0.0)) * VS;
 		float dn = textureLod(base_tex, vec3(ctr / msz, 2.0), 1.0).b * 1.6;
 		float hp = h21(vc + vec2(29.0, 1.7));
-		if (town_soft(ctr, msz, 4.0) > 0.0 || town_soft(ctr, msz, 9.0) > 0.0 || dn < 0.05 || hp >= smoothstep(0.05, 0.16, dn) * 0.5 || town_wet(ctr, msz)) {
+		if (town_soft(ctr, msz, 4.0) > 0.0 || town_soft(ctr, msz, 9.0) > 0.0 || textureLod(base_tex, vec3(ctr / msz, 2.0), 0.0).r > 0.3 || dn < 0.05 || hp >= smoothstep(0.05, 0.16, dn) * 0.5 || town_wet(ctr, msz)) {
 			return vec4(0.0);
 		}
 		float hv = h21(vc + vec2(29.0, 8.3));
@@ -591,25 +596,26 @@ vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, vec2 ll, out float dens, out 
 	if (st > 0.6) {
 		return vec4(0.0);
 	}
+	vec2 SL = SLOT * town_scale(q);   // мельче в маленьких провинциях
 	// места домов — ряды от точки квартала (свой сдвиг рядов в каждом квартале)
-	vec2 rel = (q - sp) / SLOT + 0.5;
+	vec2 rel = (q - sp) / SL + 0.5;
 	rel.x += floor(rel.y) * (h21(c + vec2(8.0, 3.0)) - 0.5) * 0.8;
 	vec2 sl = floor(rel);
-	vec2 ctr = sp + (sl - vec2(floor(rel.y) * (h21(c + vec2(8.0, 3.0)) - 0.5) * 0.8, 0.0)) * SLOT;
+	vec2 ctr = sp + (sl - vec2(floor(rel.y) * (h21(c + vec2(8.0, 3.0)) - 0.5) * 0.8, 0.0)) * SL;
 	// место целиком в своём квартале, с отступом от улицы
 	vec3 vc = town_vor(ctr);
-	if (any(notEqual(vc.yz, c)) || vc.x < max(SLOT.x, SLOT.y) * 0.15 + sw * 0.5) {
+	if (any(notEqual(vc.yz, c)) || vc.x < max(SL.x, SL.y) * 0.15 + sw * 0.5) {
 		return vec4(0.0);
 	}
 	// дом целиком в провинции города (половинки на границе не ставим)
 	// (центр в провинции города и до её границы не ближе полудиагонали дома — по полю
 	// расстояний до границ провинций)
-	vec2 hc = SLOT * 0.33;
+	vec2 hc = SL * 0.33;
 	if (urban && (town_d(ctr, msz) < 0.2 || town_d(ctr + hc, msz) < 0.2 || town_d(ctr - hc, msz) < 0.2
 			|| town_d(ctr + vec2(hc.x, -hc.y), msz) < 0.2 || town_d(ctr + vec2(-hc.x, hc.y), msz) < 0.2)) {
 		return vec4(0.0);
 	}
-	vec2 hs = SLOT * 0.3;
+	vec2 hs = SL * 0.3;
 	if (town_wet(ctr, msz) || town_wet(ctr + hs, msz) || town_wet(ctr - hs, msz)
 			|| town_wet(ctr + vec2(hs.x, -hs.y), msz) || town_wet(ctr + vec2(-hs.x, hs.y), msz)) {
 		return vec4(0.0);
@@ -644,10 +650,10 @@ vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, vec2 ll, out float dens, out 
 	dq = vec2(ca * dq.x + sa * dq.y, -sa * dq.x + ca * dq.y);
 	const float fill = 0.92;
 	vec2 jit = (h22(key + vec2(5.0, 5.0)) - 0.5) * 0.06;
-	vec2 lu = (dq / SLOT - jit) / fill + 0.5;
+	vec2 lu = (dq / SL - jit) / fill + 0.5;
 	vec2 rgx = vec2(ca * gx.x + sa * gx.y, -sa * gx.x + ca * gx.y);
 	vec2 rgy = vec2(ca * gy.x + sa * gy.y, -sa * gy.x + ca * gy.y);
-	return town_spr(idx, lu, SLOT * fill, rgx, rgy);
+	return town_spr(idx, lu, SL * fill, rgx, rgy);
 }
 
 void fragment() {
@@ -1120,10 +1126,13 @@ void fragment() {
 			float free_k = (1.0 - des) * (1.0 - max(mnt, alp)) * (1.0 - snow);
 			// рваный край леса и болота — шумом, не по текселям
 			float edge_n = vnoise(qc * 0.9 + vec2(3.1, 7.7)) - 0.5;
-			mediump float fo = smoothstep(0.30, 0.62, cv.r + edge_n * 0.25) * (1.0 - 0.5 * mnt) * (1.0 - des) * (1.0 - snow);
-			// в городе (его провинция и пригород) и в деревнях леса нет вовсе: ни крон, ни тени
+			// лес — по сглаженной доле (mip 1,5): без мелких островков, колечек и острых углов
+			float cv_f = has_cover ? textureLod(base_tex, vec3(muv, 2.0), 1.5).r : 0.0;
+			mediump float fo = smoothstep(0.40, 0.48, max(cv_f, cv.r * 0.6) + edge_n * 0.12) * (1.0 - 0.5 * mnt) * (1.0 - des) * (1.0 - snow);
+			// в провинции города леса нет вовсе (решение пользователя: где лес заходит на
+			// провинцию города — убрать полностью); край чуть шире провинции — под линией границы
 			bool town_px = quality == 2 && has_sprites && zoom > 1.5;
-			float town_here = town_px ? max(smoothstep(0.05, 0.6, town_soft(qc0(px), map_size / id_k, 1.4)), smoothstep(0.06, 0.12, cv.b + (vnoise(px / id_k * 0.8) - 0.5) * 0.03)) : 0.0;
+			float town_here = town_px ? smoothstep(0.0, 0.45, town_soft(qc0(px), map_size / id_k, 1.1)) : 0.0;
 			fo *= 1.0 - town_here;
 			mediump float ms = smoothstep(0.10, 0.42, cv.g + edge_n * 0.15) * free_k;
 			mediump float ub = smoothstep(0.02, 0.45, cv.b) * (1.0 - snow);

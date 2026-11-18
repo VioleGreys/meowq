@@ -240,7 +240,13 @@ func setup(w: World) -> void:
 		var sv := (world.p_state[p] + 1) if has_st else 0
 		var vp: int = world.p_vp[p] if has_vp else 0
 		var cls := 3 if vp >= 15 else 2 if vp >= 8 else 1 if vp >= 4 else 0
-		st_img.set_pixel(p % 64, p / 64, Color8(sv & 255, (sv >> 8) & 255, cls, 255))
+		# a — масштаб домов города (решение пользователя: в маленькой провинции —
+		# мельче, иначе Берлин 12×8 пикс. почти пуст): меньшая сторона рамки / 16
+		var hs := 1.0
+		if world.p_bbox.size() >= (p + 1) * 4:
+			var side := mini(world.p_bbox[p * 4 + 2] - world.p_bbox[p * 4], world.p_bbox[p * 4 + 3] - world.p_bbox[p * 4 + 1])
+			hs = clampf(float(side) / 16.0, 0.5, 1.0)
+		st_img.set_pixel(p % 64, p / 64, Color8(sv & 255, (sv >> 8) & 255, cls, int(hs * 255.0)))
 	pal_img.blit_rect(st_img, Rect2i(0, 0, 64, rows), Vector2i(0, 2 * rows))
 	pal_tex = ImageTexture.create_from_image(pal_img)
 	_param("pal_tex", pal_tex)
