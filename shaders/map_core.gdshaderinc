@@ -1134,7 +1134,8 @@ void fragment() {
 			bool town_px = quality == 2 && has_sprites && zoom > 1.5;
 			float town_here = town_px ? smoothstep(0.0, 0.45, town_soft(qc0(px), map_size / id_k, 1.1)) : 0.0;
 			fo *= 1.0 - town_here;
-			mediump float ms = smoothstep(0.10, 0.42, cv.g + edge_n * 0.15) * free_k;
+			hill *= 1.0 - town_here;
+			mediump float ms = smoothstep(0.10, 0.42, cv.g + edge_n * 0.15) * free_k * (1.0 - town_here);
 			mediump float ub = smoothstep(0.02, 0.45, cv.b) * (1.0 - snow);
 			// рисовые чеки — муссонная Азия (Индия, Индокитай, Китай южнее Хуанхэ, Япония)
 			float lon_c = degrees(px.x / (map_size.x / 6.2831853)) + lon_min;
@@ -1145,6 +1146,7 @@ void fragment() {
 			// всё, что не лес, не болото, не степь и не пустыня)
 			mediump float fl = (1.0 - smoothstep(0.3, 0.6, cv.a)) * free_k * (1.0 - fo) * (1.0 - ms) * (1.0 - ub)
 				* (1.0 - stp * 0.6) * (1.0 - smoothstep(58.0, 64.0, lat_c));
+			fl *= 1.0 - town_here;   // в городе — ни полей, ни травы
 			rc *= fl;
 			fl *= 1.0 - rc;
 			float dk_c = (quality == 2) ? smoothstep(1.6, 3.0, zoom) : 0.0;   // рисунок вблизи
@@ -1406,7 +1408,7 @@ void fragment() {
 			}
 			if (has_detail && quality == 2) {
 				// вблизи — фактура местности: веса по цвету природной зоны и крутизне
-				float dk = smoothstep(1.2, 3.0, zoom);
+				float dk = smoothstep(1.2, 3.0, zoom) * (1.0 - town_here);
 				if (dk > 0.0) {
 					mediump vec4 dt = texture(tile_tex, vec3(px / (DETAIL_TILE * id_k), 1.0));
 					mediump float sat = max(terr.r, max(terr.g, terr.b)) - min(terr.r, min(terr.g, terr.b));
