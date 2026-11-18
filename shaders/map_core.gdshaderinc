@@ -199,8 +199,8 @@ uniform bool has_elev = false;
 // покров суши (data/world1936/cover.png.bin, tools/build_cover.py) — слой 2 base_tex:
 // r — лес (доля крон), g — болото, b — застройка 1936 г., a — рисовые поля
 uniform bool has_cover = false;
-// постройки и деревья (data/world1936/sprites.png.bin, tools/render_sprites.gd) — слой 2
-// tile_tex: атлас 8×8 по 64 пикс., модели CC0 сверху с юга, тень на юго-восток
+// постройки и деревья (data/world1936/sprites.png.bin, tools/render_sprites.gd) — слои
+// 2–5 tile_tex: в слое 4×4 ячейки по 128 пикс., модели CC0 сверху с юга, тень на юго-восток
 uniform bool has_sprites = false;
 uniform float winter = 1.0;   // зима в северном полушарии 0…1 (MapView.set_day)
 const float DETAIL_TILE = 48.0;   // пикселей карты на тайл
@@ -317,6 +317,12 @@ vec4 tex_bicubic(sampler2DArray t, vec2 uv, float layer, vec2 ts, vec2 gx, vec2 
 		+ g1.y * (g0.x * textureGrad(t, vec3(vec2(p0.x, p1.y), layer), gx, gy) + g1.x * textureGrad(t, vec3(vec2(p1.x, p1.y), layer), gx, gy));
 }
 
+// Ячейка атласа построек: idx — номер (слой 2 + idx / 16), lu — 0…1 внутри ячейки.
+vec3 atl_uv(int idx, vec2 lu) {
+	int w = idx % 16;
+	return vec3((vec2(float(w % 4), float(w / 4)) + lu) / 4.0, 2.0 + float(idx / 16));
+}
+
 // Спрайт атласа в ячейке сетки q / cell (q — пиксели карты 1×): есть с вероятностью
 // prob, сдвинут внутри ячейки, занимает долю fill; вариант — base + [0, nvar).
 // Спрайт не выходит за свою ячейку — одна выборка на пиксель. gx, gy — изменение q на
@@ -334,9 +340,9 @@ vec4 spr_cell(vec2 q, vec2 cell, float seed, float prob, int base, int nvar, flo
 		return vec4(0.0);
 	}
 	int idx = base + min(int(h21(c + vec2(seed, 8.3)) * float(nvar)), nvar - 1);
-	vec2 auv = (vec2(float(idx % 8), float(idx / 8)) + lu) / 8.0;
-	vec2 k = 1.0 / (cell * fill * 8.0);
-	return textureGrad(tile_tex, vec3(auv, 2.0), gx * k, gy * k);
+	vec3 auv = atl_uv(idx, lu);
+	vec2 k = 1.0 / (cell * fill * 4.0);
+	return textureGrad(tile_tex, auv, gx * k, gy * k);
 }
 
 // Сплошной полог леса (как в жанре): кроны крупнее ячейки и перекрывают соседей —
@@ -348,7 +354,7 @@ vec4 canopy(vec2 q, float cell, float prob, float conif, vec2 gx, vec2 gy) {
 	vec2 b = floor(g);
 	vec4 acc = vec4(0.0);
 	const float SZ = 1.75;   // поперечник кроны в ячейках
-	float k = 1.0 / (cell * SZ * 8.0);
+	float k = 1.0 / (cell * SZ * 4.0);
 	for (int j = 0; j < 2; j++) {
 		for (int i = 0; i < 2; i++) {
 			vec2 c = b + vec2(float(i), float(j));
@@ -363,8 +369,8 @@ vec4 canopy(vec2 q, float cell, float prob, float conif, vec2 gx, vec2 gy) {
 			bool pine = h21(floor(c * cell / 9.0) + vec2(3.0, 3.0)) < conif;
 			float hv = h21(c + vec2(61.0, 8.3));
 			int idx = pine ? 56 + min(int(hv * 5.0), 4) : 40 + min(int(hv * 8.0), 7);
-			vec2 auv = (vec2(float(idx % 8), float(idx / 8)) + lu) / 8.0;
-			vec4 t = textureGrad(tile_tex, vec3(auv, 2.0), gx * k, gy * k);
+			vec3 auv = atl_uv(idx, lu);
+			vec4 t = textureGrad(tile_tex, auv, gx * k, gy * k);
 			acc = vec4(mix(acc.rgb, t.rgb, t.a), acc.a + t.a * (1.0 - acc.a));
 		}
 	}
@@ -414,9 +420,9 @@ vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, out float dens) {
 	int idx = base + min(int(hv * float(nvar)), nvar - 1);
 	const float fill = 1.0;
 	vec2 lu = fract(g);
-	vec2 auv = (vec2(float(idx % 8), float(idx / 8)) + lu) / 8.0;
-	vec2 k = 1.0 / (cell * fill * 8.0);
-	return textureGrad(tile_tex, vec3(auv, 2.0), gx * k, gy * k);
+	vec3 auv = atl_uv(idx, lu);
+	vec2 k = 1.0 / (cell * fill * 4.0);
+	return textureGrad(tile_tex, auv, gx * k, gy * k);
 }
 
 void fragment() {

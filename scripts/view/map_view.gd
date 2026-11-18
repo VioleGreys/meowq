@@ -309,14 +309,23 @@ func setup(w: World) -> void:
 	var spath := "res://data/world1936/sprites.png.bin"
 	var simg := Image.new()
 	var has_s := FileAccess.file_exists(spath) and simg.load_png_from_buffer(FileAccess.get_file_as_bytes(spath)) == OK
-	if not has_s:
-		simg = Image.create(512, 512, false, Image.FORMAT_RGBA8)
-	for im: Image in [wimg, dimg, simg]:
+	# атлас — четыре слоя 512×512 один под другим (512×2048)
+	var slayers: Array = []
+	has_s = has_s and simg.get_width() == 512 and simg.get_height() == 2048
+	for l in 4:
+		var li: Image
+		if has_s:
+			simg.convert(Image.FORMAT_RGBA8)
+			li = simg.get_region(Rect2i(0, l * 512, 512, 512))
+		else:
+			li = Image.create(512, 512, false, Image.FORMAT_RGBA8)
+		slayers.append(li)
+	for im: Image in [wimg, dimg] + slayers:
 		im.convert(Image.FORMAT_RGBA8)
 		if im.get_width() != 512 or im.get_height() != 512:
 			im.resize(512, 512, Image.INTERPOLATE_BILINEAR)
 		im.generate_mipmaps()
-	_param("tile_tex", _layers([wimg, dimg, simg]))
+	_param("tile_tex", _layers([wimg, dimg] + slayers))
 	_param("has_sprites", has_s)
 	_param("has_water", has_w)
 	_param("has_detail", has_d)

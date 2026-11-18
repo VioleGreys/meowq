@@ -1,6 +1,7 @@
 extends SceneTree
-## Атлас построек и деревьев для карты (data/world1936/sprites.png.bin, 512×512,
-## сетка 8×8 по 64 пикс.): 3D-модели под CC0 (Quaternius, Kenney, Poly Haven —
+## Атлас построек и деревьев для карты (data/world1936/sprites.png.bin, 512×2048:
+## четыре слоя 512×512 сверху вниз, в слое 4×4 ячейки по 128 пикс.; ячейка N —
+## слой N / 16): 3D-модели под CC0 (Quaternius, Kenney, Poly Haven —
 ## assets/CREDITS.md) рисуются ортокамерой с юга под углом PITCH, солнце с
 ## северо-запада (как свет карты), тень на землю — разностью двух проходов
 ## (с моделью и без). Список ячеек — tools/sprites.json: [{"cell": N, "file":
@@ -10,8 +11,10 @@ extends SceneTree
 ##   xvfb-run -a godot --rendering-driver opengl3 --path . --script res://tools/render_sprites.gd -- \
 ##       --models=ПАПКА_МОДЕЛЕЙ [--out=data/world1936/sprites.png.bin] [--sheet=превью.png]
 
-const CELL := 64
-const GRID := 8
+const CELL := 128
+const GRID := 4          # ячеек в ряду слоя
+const LAYERS := 4
+const LW := CELL * GRID  # сторона слоя, 512
 const SS := 4                 # рисуем вчетверо крупнее и уменьшаем (сглаживание)
 const PITCH := 52.0           # угол взгляда к горизонту, градусы
 
@@ -112,16 +115,22 @@ func _run() -> void:
 	gmat.albedo_color = Color(1, 1, 1)
 	ground.material_override = gmat
 	vp.add_child(ground)
-	var atlas := Image.create(CELL * GRID, CELL * GRID, false, Image.FORMAT_RGBA8)
+	var atlas := Image.create(LW, LW * LAYERS, false, Image.FORMAT_RGBA8)
+	var cache := {}   # путь → загруженная модель (ель Poly Haven — полгигабайта)
 	atlas.fill(Color(0, 0, 0, 0))
 	for e in spec:
 		var cell: int = int(e["cell"])
 		var path: String = models.path_join(e["file"])
-		var m := _load_model(path)
+		var m: Node3D = cache.get(path)
 		if m == null:
-			continue
+			m = _load_model(path)
+			if m == null:
+				continue
+			cache[path] = m
 		for c in holder.get_children():
-			c.queue_free()
+			holder.remove_child(c)
+		_reset(m)
+		m.position = Vector3.ZERO
 		holder.add_child(m)
 		m.rotation_degrees.y = float(e.get("yaw", 0.0))
 		await process_frame
@@ -184,7 +193,8 @@ func _run() -> void:
 			for edge in [0, CELL - 1]:
 				spr.set_pixel(i, edge, Color(0, 0, 0, 0))
 				spr.set_pixel(edge, i, Color(0, 0, 0, 0))
-		atlas.blit_rect(spr, Rect2i(0, 0, CELL, CELL), Vector2i((cell % GRID) * CELL, (cell / GRID) * CELL))
+		var wc := cell % (GRID * GRID)
+		atlas.blit_rect(spr, Rect2i(0, 0, CELL, CELL), Vector2i((wc % GRID) * CELL, (cell / (GRID * GRID)) * LW + (wc / GRID) * CELL))
 		print("спрайт %d: %s" % [cell, e["file"]])
 	var out := _arg("out", "res://data/world1936/sprites.png.bin")
 	var buf := atlas.save_png_to_buffer()
@@ -193,13 +203,30 @@ func _run() -> void:
 	f.close()
 	if _arg("sheet") != "":
 		var sh2 := atlas.duplicate() as Image
-		sh2.resize(CELL * GRID * 2, CELL * GRID * 2, Image.INTERPOLATE_NEAREST)
+		# превью: слои рядом (2048×512)
+		var row := Image.create(LW * LAYERS, LW, false, Image.FORMAT_RGBA8)
+		for l in LAYERS:
+			row.blit_rect(sh2, Rect2i(0, l * LW, LW, LW), Vector2i(l * LW, 0))
+		sh2 = row
 		var bg := Image.create(sh2.get_width(), sh2.get_height(), false, Image.FORMAT_RGBA8)
 		bg.fill(Color(0.55, 0.62, 0.42))
 		bg.blend_rect(sh2, Rect2i(Vector2i.ZERO, sh2.get_size()), Vector2i.ZERO)
 		bg.save_png(_arg("sheet"))
 	print("атлас: ", out)
 	quit()
+
+
+## Сбросить перекраску прошлого раза (модель из кэша).
+func _reset(n: Node) -> void:
+	var stack: Array = [n]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is MeshInstance3D:
+			var mi := node as MeshInstance3D
+			for s in mi.mesh.get_surface_count():
+				mi.set_surface_override_material(s, null)
+		for c in node.get_children():
+			stack.append(c)
 
 
 ## Текстура на все материалы (модели, где она не вшита в файл).
