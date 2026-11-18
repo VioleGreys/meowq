@@ -383,5 +383,199 @@
   "cell": 63,
   "file": "q_ultimatenature/FBX/BushBerries_2.fbx",
   "pitch": 72
+ },
+ {
+  "cell": 64,
+  "file": "sfdl/Old_russian_house/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 65,
+  "file": "sfdl/Russian_village_house/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 66,
+  "file": "sfdl/Old_Russian_House/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 67,
+  "file": "sfdl/Old_barrack_from_DayZ/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 68,
+  "file": "sfdl/Old_russian_house/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "yaw": 90
+ },
+ {
+  "cell": 69,
+  "file": "sfdl/Russian_village_house/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "yaw": 90
+ },
+ {
+  "cell": 70,
+  "file": "sfdl/Old_Russian_House/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "yaw": 90
+ },
+ {
+  "cell": 71,
+  "file": "sfdl/Old_russian_house/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "yaw": 180
+ },
+ {
+  "cell": 72,
+  "file": "sfdl/Village_House_USSR_CIS/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 73,
+  "file": "sfdl/Low_poly_Brick_House/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 74,
+  "file": "sfdl/Rural_Brick_House_with_Barn_and_Chicken_Coop/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 75,
+  "file": "sfdl/Brick_house/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 76,
+  "file": "sfdl/Old_brick_house/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 77,
+  "file": "sfdl/Low_poly_Brick_House/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "yaw": 90
+ },
+ {
+  "cell": 78,
+  "file": "sfdl/XX_century_italian_house/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 79,
+  "file": "sfdl/Old_House_1/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 80,
+  "file": "sfdl/Low_Poly_Portuguese_Village_House_3/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 81,
+  "file": "sfdl/Low_Poly_Portuguese_Village_House_1/model.glb",
+  "pitch": 58,
+  "tight": true
+ },
+ {
+  "cell": 82,
+  "file": "sfdl/Low_Poly_Portuguese_Village_House_3/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "yaw": 90
+ },
+ {
+  "cell": 83,
+  "file": "sfdl/Low_Poly_Portuguese_Village_House_1/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "yaw": 90
+ },
+ {
+  "cell": 84,
+  "file": "sfdl/Residences_of_Rothenburg_ob_der_Tauber/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "only": [
+   "Object_4"
+  ]
+ },
+ {
+  "cell": 85,
+  "file": "sfdl/Old_brick_house/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "yaw": 90
+ },
+ {
+  "cell": 86,
+  "file": "sfdl/Residences_of_Rothenburg_ob_der_Tauber/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "only": [
+   "Object_6"
+  ]
+ },
+ {
+  "cell": 87,
+  "file": "sfdl/Russian_village_house/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "yaw": 180
+ },
+ {
+  "cell": 88,
+  "file": "sfdl/Brick_house/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "yaw": 90
+ },
+ {
+  "cell": 89,
+  "file": "sfdl/Residences_of_Rothenburg_ob_der_Tauber/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "only": [
+   "Object_8"
+  ]
+ },
+ {
+  "cell": 90,
+  "file": "sfdl/Low_poly_Modular_Building_Tenement_House/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "only": [
+   "Object_4"
+  ]
+ },
+ {
+  "cell": 91,
+  "file": "sfdl/Low_poly_Modular_Building_Tenement_House/model.glb",
+  "pitch": 58,
+  "tight": true,
+  "only": [
+   "Object_4"
+  ],
+  "yaw": 90
  }
 ]

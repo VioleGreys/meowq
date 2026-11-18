@@ -200,8 +200,11 @@ uniform bool has_elev = false;
 // r — лес (доля крон), g — болото, b — застройка 1936 г., a — рисовые поля
 uniform bool has_cover = false;
 // постройки и деревья (data/world1936/sprites.png.bin, tools/render_sprites.gd) — слои
-// 2–5 tile_tex: в слое 4×4 ячейки по 128 пикс., модели CC0 сверху с юга, тень на юго-восток
+// 2–7 tile_tex: в слое 4×4 ячейки по 128 пикс., модели CC0 сверху с юга, тень на юго-восток
 uniform bool has_sprites = false;
+// покрытия (data/world1936/road_tex.png.bin, ambientCG CC0): слои tile_tex 8 — брусчатка,
+// 9 — грунт, 10 — камень мостов
+uniform bool has_road_tex = false;
 uniform float winter = 1.0;   // зима в северном полушарии 0…1 (MapView.set_day)
 const float DETAIL_TILE = 48.0;   // пикселей карты на тайл
 // проекция Миллера для сетки широт и долгот (как tools/build_map.py)
@@ -317,6 +320,10 @@ vec4 tex_bicubic(sampler2DArray t, vec2 uv, float layer, vec2 ts, vec2 gx, vec2 
 		+ g1.y * (g0.x * textureGrad(t, vec3(vec2(p0.x, p1.y), layer), gx, gy) + g1.x * textureGrad(t, vec3(vec2(p1.x, p1.y), layer), gx, gy));
 }
 
+vec2 qc0(vec2 px) {
+	return px / id_k;
+}
+
 // Ячейка атласа построек: idx — номер (слой 2 + idx / 16), lu — 0…1 внутри ячейки.
 vec3 atl_uv(int idx, vec2 lu) {
 	int w = idx % 16;
@@ -361,7 +368,7 @@ vec4 canopy(vec2 q, float cell, float prob, float conif, vec2 gx, vec2 gy) {
 			if (h21(c + vec2(61.0, 1.7)) >= prob) {
 				continue;
 			}
-			vec2 jit = (vec2(h21(c + vec2(61.0, 3.1)), h21(c + vec2(61.0, 5.9))) - 0.5) * 0.2;
+			vec2 jit = (vec2(h21(c + vec2(61.0, 3.1)), h21(c + vec2(61.0, 5.9))) - 0.5) * 0.55;
 			vec2 lu = (g - c - jit) / SZ + 0.5;
 			if (lu.x < 0.0 || lu.y < 0.0 || lu.x > 1.0 || lu.y > 1.0) {
 				continue;
@@ -456,10 +463,22 @@ float town_d(vec2 p, vec2 msz) {
 	if (c > 0) {
 		return c == 3 ? 0.6 : (c == 2 ? 0.4 : 0.22);
 	}
-	const float R = 1.6;
-	int n = max(max(town_cls(p + vec2(R, 0.0)), town_cls(p - vec2(R, 0.0))),
-		max(town_cls(p + vec2(0.0, R)), town_cls(p - vec2(0.0, R))));
-	return n > 0 ? 0.14 : 0.0;
+	return 0.0;   // за провинцией города — ни домов, ни улиц (решение пользователя)
+}
+
+// мягкая доля города около точки (5 выборок в радиусе r со сдвигом по шуму) — край
+// без ступенек сетки провинций
+float town_soft(vec2 p, vec2 msz, float r) {
+	// 8 выборок по кругу, угол и радиус плавно меняются по месту — край округлый,
+	// без ступенек сетки провинций
+	float a0 = vnoise(p * 0.7) * 6.283;
+	float sum = 0.0;
+	for (int k = 0; k < 8; k++) {
+		float a = a0 + float(k) * 0.785398;
+		float rr = r * (0.5 + 0.5 * float(k & 1));
+		sum += step(0.1, town_d(p + vec2(cos(a), sin(a)) * rr, msz));
+	}
+	return sum / 8.0;
 }
 
 bool town_wet(vec2 p, vec2 msz) {
@@ -480,9 +499,10 @@ vec4 town_spr(int idx, vec2 lu, vec2 cell, vec2 gx, vec2 gy) {
 
 // мост: улица города, пересекающая реку, — вдоль улицы в обе стороны недалеко суша
 // (граница квартала вдоль реки мостом не становится)
-float town_bridge(vec2 q, vec2 msz) {
+float town_bridge(vec2 q, vec2 msz, out vec3 buv) {
 	vec2 nrm;
 	vec3 v = town_vor_n(q, nrm);
+	buv = vec3(dot(q, vec2(-nrm.y, nrm.x)), v.x, STREET * 0.45);
 	float d = town_d(q, msz);
 	if (d < 0.2) {
 		return 0.0;
@@ -504,12 +524,46 @@ float town_bridge(vec2 q, vec2 msz) {
 	return ok ? (1.0 - smoothstep(STREET * 0.3, STREET * 0.45, v.x)) : 0.0;
 }
 
-vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, float east, out float dens, out float street) {
+// Дом по региону (решение пользователя: больше материалов): ll — долгота, широта;
+// kind: 0 — центр города, 1 — дома города, 2 — деревня. Ячейки: 0–23 Франция и
+// Бельгия, 24–29 деревня Запада, 64–71 дерево (СССР), 72–77 кирпич (Восточная Европа),
+// 78–83 штукатурка и черепица (юг), 84, 86, 89 — Германия, 90–91 доходные дома.
+int town_pick(vec2 ll, int kind, float hv, float hr) {
+	float lon = ll.x + (hr - 0.5) * 4.0;   // размытая граница регионов
+	float lat = ll.y;
+	bool south = lat < 44.5 && lon < 30.0;
+	bool west = !south && lon < 6.5;
+	bool central = !south && !west && lon < 15.5;
+	bool poland = !south && lon >= 15.5 && lon < 25.0;
+	int n;
+	if (kind == 0) {
+		if (south) { return hv < 0.4 ? 78 + int(hv * 5.0) : TOWN_C + min(int(hv * 12.0), 11); }
+		if (west) { return TOWN_C + min(int(hv * 12.0), 11); }
+		return hv < 0.35 ? 90 + int(hv * 5.7) : TOWN_C + min(int(hv * 12.0), 11);
+	}
+	if (kind == 1) {
+		if (south) { return 78 + min(int(hv * 6.0), 5); }
+		if (west) { return TOWN_H + min(int(hv * 12.0), 11); }
+		if (central) { return hv < 0.4 ? (hv < 0.13 ? 84 : hv < 0.26 ? 86 : 89) : TOWN_H + min(int(hv * 12.0), 11); }
+		if (poland) { return hv < 0.6 ? 72 + min(int(hv * 10.0), 5) : TOWN_H + min(int(hv * 12.0), 11); }
+		return hv < 0.55 ? 72 + min(int(hv * 10.9), 5) : 64 + min(int((hv - 0.55) * 17.8), 7);
+	}
+	if (south) { return 80 + min(int(hv * 4.0), 3); }
+	if (west) { return VIL + min(int(hv * 6.0), 5); }
+	if (central) { return hv < 0.5 ? (hv < 0.17 ? 84 : hv < 0.34 ? 86 : 89) : VIL + min(int(hv * 6.0), 5); }
+	if (poland) { return hv < 0.5 ? 72 + min(int(hv * 12.0), 5) : 64 + min(int((hv - 0.5) * 16.0), 7); }
+	return hv < 0.85 ? 64 + min(int(hv * 9.4), 7) : 72 + min(int((hv - 0.85) * 40.0), 5);
+}
+
+vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, vec2 ll, out float dens, out float street, out vec3 suv) {
 	street = 0.0;
-	vec3 v = town_vor(q);
+	vec2 nrm;
+	vec3 v = town_vor_n(q, nrm);
+	vec2 e_st = vec2(-nrm.y, nrm.x);
+	suv = vec3(dot(q, e_st), v.x, 0.0);   // вдоль улицы, от её края до оси
 	vec2 c = v.yz;
 	vec2 sp = town_seed(c);
-	float d = max(town_d(sp, msz), town_d(q, msz));
+	float d = town_d(q, msz);
 	dens = d;
 	bool urban = d > 0.12;
 	if (!urban) {
@@ -521,19 +575,20 @@ vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, float east, out float dens, o
 		vec2 ctr = (vc + 0.5 - vec2(h21(vec2(vc.y, 29.0)) * 0.7, 0.0)) * VS;
 		float dn = textureLod(base_tex, vec3(ctr / msz, 2.0), 1.0).b * 1.6;
 		float hp = h21(vc + vec2(29.0, 1.7));
-		if (dn < 0.05 || hp >= smoothstep(0.05, 0.16, dn) * 0.5 || town_wet(ctr, msz)) {
+		if (town_soft(ctr, msz, 4.0) > 0.0 || town_soft(ctr, msz, 9.0) > 0.0 || dn < 0.05 || hp >= smoothstep(0.05, 0.16, dn) * 0.5 || town_wet(ctr, msz)) {
 			return vec4(0.0);
 		}
 		float hv = h21(vc + vec2(29.0, 8.3));
-		int idx = east > 0.5 ? IZBA + min(int(hv * 4.0), 3) : VIL + min(int(hv * 6.0), 5);
+		int idx = town_pick(ll, 2, hv, h21(vc + vec2(31.0, 3.0)));
 		vec2 jit = (h22(vc + vec2(5.0, 5.0)) - 0.5) * 0.25;
-		return town_spr(idx, (fract(g) - 0.5 - jit) / 0.7 + 0.5, VS * 0.7, gx, gy);
+		return town_spr(idx, (fract(g) - 0.5 - jit) * VS / SLOT + 0.5, SLOT, gx, gy);
 	}
 	// улица по границе квартала (у границы большого города — мягче)
 	float sw = STREET * mix(0.7, 1.4, h21(c + vec2(2.0, 7.0)));
-	float st = 1.0 - smoothstep(sw * 0.4, sw * 0.6, v.x);
-	street = st * smoothstep(0.12, 0.22, d);
-	if (st > 0.5) {
+	float st = 1.0 - smoothstep(sw * 0.3, sw * 0.65, v.x);
+	street = st * step(0.2, town_d(q, msz));
+	suv.z = sw * 0.5;   // полуширина
+	if (st > 0.6) {
 		return vec4(0.0);
 	}
 	// места домов — ряды от точки квартала (свой сдвиг рядов в каждом квартале)
@@ -543,7 +598,15 @@ vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, float east, out float dens, o
 	vec2 ctr = sp + (sl - vec2(floor(rel.y) * (h21(c + vec2(8.0, 3.0)) - 0.5) * 0.8, 0.0)) * SLOT;
 	// место целиком в своём квартале, с отступом от улицы
 	vec3 vc = town_vor(ctr);
-	if (any(notEqual(vc.yz, c)) || vc.x < max(SLOT.x, SLOT.y) * 0.25 + sw * 0.5) {
+	if (any(notEqual(vc.yz, c)) || vc.x < max(SLOT.x, SLOT.y) * 0.15 + sw * 0.5) {
+		return vec4(0.0);
+	}
+	// дом целиком в провинции города (половинки на границе не ставим)
+	// (центр в провинции города и до её границы не ближе полудиагонали дома — по полю
+	// расстояний до границ провинций)
+	vec2 hc = SLOT * 0.33;
+	if (urban && (town_d(ctr, msz) < 0.2 || town_d(ctr + hc, msz) < 0.2 || town_d(ctr - hc, msz) < 0.2
+			|| town_d(ctr + vec2(hc.x, -hc.y), msz) < 0.2 || town_d(ctr + vec2(-hc.x, hc.y), msz) < 0.2)) {
 		return vec4(0.0);
 	}
 	vec2 hs = SLOT * 0.3;
@@ -567,12 +630,24 @@ vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, float east, out float dens, o
 	} else if (hb > 0.8 && all(equal(sl, vec2(0.0)))) {
 		idx = CHURCH + min(int(hv * 2.0), 1);           // церковь у середины квартала
 	} else {
-		idx = d > 0.45 ? TOWN_C + min(int(hv * 12.0), 11) : TOWN_H + min(int(hv * 12.0), 11);
+		idx = town_pick(ll, d > 0.45 ? 0 : 1, hv, h21(c + vec2(31.0, 3.0)));
 	}
-	const float fill = 1.0;
-	vec2 jit = (h22(key + vec2(5.0, 5.0)) - 0.5) * 0.08;
-	vec2 lu = ((q - ctr) / SLOT - jit) / fill + 0.5;
-	return town_spr(idx, lu, SLOT * fill, gx, gy);
+	// дом развёрнут к ближайшей улице (угол её края, сведённый к ±45°) и чуть
+	// случайно — не строго по сетке
+	vec2 nrm_h;
+	town_vor_n(ctr, nrm_h);
+	float ang = atan(nrm_h.y, nrm_h.x);
+	ang = ang - 1.5707963 * floor(ang / 1.5707963 + 0.5) + (hv - 0.5) * 0.12;
+	float ca = cos(ang);
+	float sa = sin(ang);
+	vec2 dq = q - ctr;
+	dq = vec2(ca * dq.x + sa * dq.y, -sa * dq.x + ca * dq.y);
+	const float fill = 0.92;
+	vec2 jit = (h22(key + vec2(5.0, 5.0)) - 0.5) * 0.06;
+	vec2 lu = (dq / SLOT - jit) / fill + 0.5;
+	vec2 rgx = vec2(ca * gx.x + sa * gx.y, -sa * gx.x + ca * gx.y);
+	vec2 rgy = vec2(ca * gy.x + sa * gy.y, -sa * gy.x + ca * gy.y);
+	return town_spr(idx, lu, SLOT * fill, rgx, rgy);
 }
 
 void fragment() {
@@ -1046,6 +1121,10 @@ void fragment() {
 			// рваный край леса и болота — шумом, не по текселям
 			float edge_n = vnoise(qc * 0.9 + vec2(3.1, 7.7)) - 0.5;
 			mediump float fo = smoothstep(0.30, 0.62, cv.r + edge_n * 0.25) * (1.0 - 0.5 * mnt) * (1.0 - des) * (1.0 - snow);
+			// в городе (его провинция и пригород) и в деревнях леса нет вовсе: ни крон, ни тени
+			bool town_px = quality == 2 && has_sprites && zoom > 1.5;
+			float town_here = town_px ? max(smoothstep(0.05, 0.6, town_soft(qc0(px), map_size / id_k, 1.4)), smoothstep(0.015, 0.05, cv.b + (vnoise(px / id_k * 0.8) - 0.5) * 0.04)) : 0.0;
+			fo *= 1.0 - town_here;
 			mediump float ms = smoothstep(0.10, 0.42, cv.g + edge_n * 0.15) * free_k;
 			mediump float ub = smoothstep(0.02, 0.45, cv.b) * (1.0 - snow);
 			// рисовые чеки — муссонная Азия (Индия, Индокитай, Китай южнее Хуанхэ, Япония)
@@ -1179,8 +1258,7 @@ void fragment() {
 				if (fo > 0.05) {
 					float conif = smoothstep(45.0, 60.0, lat_c) * 0.85 + 0.1;
 					// у городов и деревень леса нет (не растёт между домами)
-					float tw = smoothstep(0.02, 0.07, town_d(qc, msz));
-					vec4 tt = canopy(qc, 0.95, smoothstep(0.15, 0.55, fo) * 1.05 * (1.0 - tw), conif, q_gx, q_gy);
+					vec4 tt = canopy(qc, 0.95, smoothstep(0.15, 0.55, fo) * 1.05, conif, q_gx, q_gy);
 					terr = mix(terr, terr * 0.55, smoothstep(0.2, 0.5, fo) * dk_s);   // тень под пологом
 					terr = mix(terr, tt.rgb, tt.a * dk_s);
 					bld = max(bld, tt.a * 0.85);
@@ -1188,30 +1266,51 @@ void fragment() {
 				// города и деревни: кварталы с улицами; к востоку от ~24° в. д. — избы
 				float dens = 0.0;
 				float street = 0.0;
+				// каменная подложка города: старый камень под всей провинцией города
+				float tdc = town_d(qc, msz);
+				if (tdc > 0.2 && has_road_tex) {
+					float gl2 = length(vec2(length(q_gx), length(q_gy)));
+					vec3 stn = textureGrad(tile_tex, vec3(qc / 1.2, 10.0), vec2(gl2, 0.0) / 1.2, vec2(0.0, gl2) / 1.2).rgb;
+					stn = mix(vec3(dot(stn, vec3(0.33))), stn, 0.4) * vec3(0.92, 0.88, 0.82) * (0.85 + 0.2 * vnoise(qc * 0.7));
+					terr = mix(terr, stn, dk_s * 0.75 * step(0.2, tdc));
+					bld = max(bld, 0.6 * step(0.2, tdc));
+				}
 				if (cv.b > 0.002 || town_d(qc, msz) > 0.1) {   // город по провинции, деревни по застройке
 					float lon_t = degrees(px.x / (map_size.x / 6.2831853)) + lon_min;
-					float east = step(0.5, smoothstep(22.0, 28.0, lon_t + (vnoise(qc / 30.0) - 0.5) * 6.0));
-					vec4 sp = town_cell(qc, msz, q_gx, q_gy, east, dens, street);
+					vec3 suv;
+					vec4 sp = town_cell(qc, msz, q_gx, q_gy, vec2(lon_t, lat_at(px)), dens, street, suv);
 					// тон построек к карте: чуть приглушить
-					// старение: выгоревшие краски, серо-бурый налёт, пятна грязи и потёки
-					// (мелкий шум + вертикальные полосы), у каждого дома свой оттенок
+					// старение (сильнее): выгоревшие краски, серо-бурый налёт и копоть, мох на
+					// крышах, пятна грязи и потёки, у каждого дома свой износ
 					float lum_s = dot(sp.rgb, vec3(0.3, 0.59, 0.11));
-					vec3 aged = mix(sp.rgb, vec3(lum_s), 0.28);
-					aged = mix(aged, vec3(0.46, 0.42, 0.36) * (0.7 + 0.6 * lum_s), 0.22);
-					float grime = vnoise(qc * 9.0) * 0.6 + vnoise(qc * 23.0 + vec2(3.0, 7.0)) * 0.4;
+					vec2 hid = floor(qc / 1.5);
+					float wear = h21(hid + vec2(4.0, 1.0));
+					vec3 aged = mix(sp.rgb, vec3(lum_s), 0.2);
+					aged = mix(aged, vec3(0.52, 0.47, 0.40) * (0.75 + 0.5 * lum_s), 0.1 + 0.12 * wear);
+					float grime = vnoise(qc * 9.0) * 0.55 + vnoise(qc * 23.0 + vec2(3.0, 7.0)) * 0.45;
 					float streak = vnoise(vec2(qc.x * 30.0, qc.y * 4.0));
-					aged *= 0.8 + 0.3 * grime - 0.1 * smoothstep(0.55, 0.85, streak);
-					aged *= 0.9 + 0.2 * vec3(h21(floor(qc / 2.7) + vec2(1.0, 0.0)), h21(floor(qc / 2.7) + vec2(2.0, 0.0)), h21(floor(qc / 2.7) + vec2(3.0, 0.0))) * vec3(1.0, 0.9, 0.8);
+					aged *= 0.9 + 0.18 * grime - 0.08 * smoothstep(0.5, 0.85, streak);
+					aged = mix(aged, vec3(0.36, 0.39, 0.28), smoothstep(0.62, 0.8, vnoise(qc * 6.0 + vec2(9.0, 2.0))) * 0.12);   // мох
+					aged = mix(aged, aged * 0.75, smoothstep(0.72, 0.9, vnoise(qc * 4.0 + vec2(1.0, 5.0))) * 0.15);    // копоть
+					aged *= 0.88 + 0.16 * vec3(h21(hid + vec2(1.0, 0.0)), h21(hid + vec2(2.0, 0.0)), h21(hid + vec2(3.0, 0.0))) * vec3(1.0, 0.9, 0.8);
 					sp.rgb = clamp(aged * 1.12, 0.0, 1.0);
-					terr = mix(terr, vec3(0.60, 0.58, 0.54), street * dk_s * 0.85);    // мостовая
+					// мостовая: старая брусчатка вдоль улицы, приглушённая к цвету земли, края
+					// мягкие (без резкого бордюра), к краю — пыль и тень от домов
+					vec3 pave = mix(terr, vec3(0.52, 0.50, 0.46), 0.6);
+					if (has_road_tex && street > 0.0) {
+						float gl = length(vec2(length(q_gx), length(q_gy)));
+						vec2 tuv = suv.xy / 0.5;
+						vec3 tx = textureGrad(tile_tex, vec3(tuv, 8.0), vec2(gl, 0.0) / 0.5, vec2(0.0, gl) / 0.5).rgb;
+						float tl2 = dot(tx, vec3(0.33));
+						pave *= 0.85 + 0.3 * tl2;   // только рисунок камней, цвет — свой
+						float side = 1.0 - suv.y / max(suv.z, 1e-3);   // 0 — ось, 1 — край
+						pave = mix(pave, terr * 0.9, smoothstep(0.55, 1.0, side) * 0.55);   // пыль к краю
+						pave *= 1.0 - 0.12 * smoothstep(0.75, 1.0, side);
+						pave *= 0.9 + 0.2 * vnoise(qc * 3.0 + vec2(4.0, 4.0));   // заплаты и грязь
+					}
+					terr = mix(terr, pave, street * dk_s * 0.7);
 					terr = mix(terr, sp.rgb, sp.a * dk_s);
 					bld = max(bld, max(sp.a, street * 0.8));
-				}
-				// редкие хутора на пашне (не у рек и не в лесу)
-				if (fl > 0.3 && cv.b < 0.01 && rv_d > 3.0) {
-					vec4 sp = spr_cell(qc, vec2(8.0), 21.0, 0.25 * fl, 20, 3, 0.3, q_gx, q_gy);
-					terr = mix(terr, sp.rgb, sp.a * dk_s);
-					bld = max(bld, sp.a);
 				}
 				// болото: камыш, ивы и сухие берёзы; в окнах воды — кувшинки
 				if (ms > 0.05) {
@@ -1359,11 +1458,25 @@ void fragment() {
 #endif
 			col = mix(col, mix(col * 0.62, vec3(0.56, 0.49, 0.36) * (0.85 + 0.25 * light), nk), bank * mix(0.18, 0.5, nk));   // вдали — едва заметная кромка, вблизи — берег
 			col = mix(col, rw, river * smoothstep(0.3, 0.7, zoom));
-			// мосты: улица большого города над рекой (вблизи, высокое качество)
+			// мосты: улица города поперёк реки — каменный настил вдоль улицы, парапеты,
+			// тень на воде к юго-востоку (вблизи, высокое качество)
 			if (quality == 2 && has_sprites && river > 0.01 && zoom > 2.0) {
-				float brg = town_bridge(px / id_k, map_size / id_k) * smoothstep(2.0, 3.0, zoom);
-				col = mix(col, vec3(0.58, 0.55, 0.50), brg * river);
-				col = mix(col, col * 0.7, brg * (1.0 - smoothstep(0.0, 0.25, river)) * river);
+				vec3 buv;
+				vec2 qb = px / id_k;
+				float brg = town_bridge(qb, map_size / id_k, buv) * smoothstep(2.0, 3.0, zoom);
+				vec3 buv2;
+				float sh_b = town_bridge(qb - vec2(0.12, 0.12), map_size / id_k, buv2) * (1.0 - brg);
+				col = mix(col, col * 0.55, sh_b * river * smoothstep(2.0, 3.0, zoom));
+				if (brg > 0.0) {
+					vec3 stone = vec3(0.6, 0.57, 0.52);
+					if (has_road_tex) {
+						vec2 bg = vec2(length(dFdx(qb)), length(dFdy(qb)));
+						stone = textureGrad(tile_tex, vec3(buv.xy / 0.35, 10.0), vec2(bg.x, 0.0) / 0.35, vec2(0.0, bg.y) / 0.35).rgb * 0.85;
+					}
+					float side = 1.0 - buv.y / max(buv.z, 1e-3);
+					stone *= 1.0 + 0.25 * smoothstep(0.75, 0.82, side) - 0.45 * smoothstep(0.9, 1.0, side);   // парапет
+					col = mix(col, stone, brg * river);
+				}
 			}
 			river = 0.0;
 		} else {

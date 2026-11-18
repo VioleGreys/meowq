@@ -313,10 +313,10 @@ func setup(w: World) -> void:
 	var spath := "res://data/world1936/sprites.png.bin"
 	var simg := Image.new()
 	var has_s := FileAccess.file_exists(spath) and simg.load_png_from_buffer(FileAccess.get_file_as_bytes(spath)) == OK
-	# атлас — четыре слоя 512×512 один под другим (512×2048)
+	# атлас — шесть слоёв 512×512 один под другим (512×3072)
 	var slayers: Array = []
-	has_s = has_s and simg.get_width() == 512 and simg.get_height() == 2048
-	for l in 4:
+	has_s = has_s and simg.get_width() == 512 and simg.get_height() == 3072
+	for l in 6:
 		var li: Image
 		if has_s:
 			simg.convert(Image.FORMAT_RGBA8)
@@ -324,6 +324,21 @@ func setup(w: World) -> void:
 		else:
 			li = Image.create(512, 512, false, Image.FORMAT_RGBA8)
 		slayers.append(li)
+	# покрытия дорог и мостов (ambientCG, CC0): брусчатка, грунт, камень — слои 8–10
+	var rpath2 := "res://data/world1936/road_tex.png.bin"
+	var rimg2 := Image.new()
+	var has_rt := FileAccess.file_exists(rpath2) and rimg2.load_png_from_buffer(FileAccess.get_file_as_bytes(rpath2)) == OK \
+		and rimg2.get_width() == 512 and rimg2.get_height() == 1536
+	for l in 3:
+		var li: Image
+		if has_rt:
+			rimg2.convert(Image.FORMAT_RGBA8)
+			li = rimg2.get_region(Rect2i(0, l * 512, 512, 512))
+		else:
+			li = Image.create(512, 512, false, Image.FORMAT_RGBA8)
+			li.fill(Color(0.6, 0.58, 0.54))
+		slayers.append(li)
+	_param("has_road_tex", has_rt)
 	for im: Image in [wimg, dimg] + slayers:
 		im.convert(Image.FORMAT_RGBA8)
 		if im.get_width() != 512 or im.get_height() != 512:
