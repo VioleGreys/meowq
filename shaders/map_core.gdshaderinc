@@ -486,7 +486,7 @@ bool town_wet(vec2 p, vec2 msz) {
 	float cov_c = textureLod(base_tex, vec3(uv, 0.0), 0.0).b;
 	float rv_c = textureLod(base_tex, vec3(uv, 1.0), 0.0).a * RIVER_MAX;
 	float rs_c = textureLod(base_tex, vec3(uv, 0.0), 0.0).g;
-	return cov_c < 0.85 || (rs_c > 0.01 && rv_c < 0.7);
+	return cov_c < 0.9 || (rs_c > 0.01 && rv_c < 2.2);   // от реки — с запасом на ширину ленты вблизи
 }
 
 vec4 town_spr(int idx, vec2 lu, vec2 cell, vec2 gx, vec2 gy) {
@@ -1123,7 +1123,7 @@ void fragment() {
 			mediump float fo = smoothstep(0.30, 0.62, cv.r + edge_n * 0.25) * (1.0 - 0.5 * mnt) * (1.0 - des) * (1.0 - snow);
 			// в городе (его провинция и пригород) и в деревнях леса нет вовсе: ни крон, ни тени
 			bool town_px = quality == 2 && has_sprites && zoom > 1.5;
-			float town_here = town_px ? max(smoothstep(0.05, 0.6, town_soft(qc0(px), map_size / id_k, 1.4)), smoothstep(0.015, 0.05, cv.b + (vnoise(px / id_k * 0.8) - 0.5) * 0.04)) : 0.0;
+			float town_here = town_px ? max(smoothstep(0.05, 0.6, town_soft(qc0(px), map_size / id_k, 1.4)), smoothstep(0.06, 0.12, cv.b + (vnoise(px / id_k * 0.8) - 0.5) * 0.03)) : 0.0;
 			fo *= 1.0 - town_here;
 			mediump float ms = smoothstep(0.10, 0.42, cv.g + edge_n * 0.15) * free_k;
 			mediump float ub = smoothstep(0.02, 0.45, cv.b) * (1.0 - snow);
