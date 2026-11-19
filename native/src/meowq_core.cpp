@@ -6,6 +6,7 @@
 using namespace godot;
 
 void MeowqCore::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("avif_rgba", "data"), &MeowqCore::avif_rgba);
 	ClassDB::bind_method(D_METHOD("supply_bfs", "adj_start", "adj_list", "land", "ctrl", "ally", "nation_count", "side", "hubs"), &MeowqCore::supply_bfs);
 	ClassDB::bind_method(D_METHOD("supply_field", "t"), &MeowqCore::supply_field);
 	ClassDB::bind_method(D_METHOD("plan_update", "alive", "transit", "next", "battle", "prov", "owner", "ctrl", "adj_start", "adj_list", "land", "hostile", "nc", "plan", "gain", "active", "rear"), &MeowqCore::plan_update);

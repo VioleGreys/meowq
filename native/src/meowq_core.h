@@ -24,6 +24,10 @@ protected:
 	static void _bind_methods();
 
 public:
+	// Тайл заготовки карты из AVIF (пакеты APK, MapBake): RGBA8 построчно; пусто —
+	// не удалось. Без состояния — можно звать из потоков (avif.cpp).
+	PackedByteArray avif_rgba(const PackedByteArray &data) const;
+
 	// Сеть снабжения стороны side: расстояние (в провинциях) от узлов hubs по
 	// суше через провинции союзников; -1 — вне сети.
 	PackedInt32Array supply_bfs(const PackedInt32Array &adj_start, const PackedInt32Array &adj_list,

@@ -22,3 +22,14 @@
   открыт) в `/opt/ndk/ndk/28.1.13356709`, `ANDROID_HOME=/opt/ndk scons platform=android
   arch=arm64 target=template_release`; `build_apk.sh` кладёт ядро в APK, если библиотека
   собрана (иначе APK на GDScript). В нижней строке игры — «C++» или «GDScript».
+- Декодер AVIF в ядре (`native/src/avif.cpp`, `MeowqCore.avif_rgba`): пакеты заготовок
+  карты в APK — AVIF (ноябрь 2026). dav1d 1.4.3 + libavif 1.0.4, статические, только
+  декодер: `sh tools/build_avif.sh` (pip install meson; cmake, ninja, nasm; NDK) →
+  `/opt/avif/{linux,android}`; затем scons ядра подхватывает их сам (без них —
+  заглушка, игра пакеты AVIF не берёт и рисует тайлы на устройстве). Ядро под
+  Android +0.6 МБ. Тайл 256² декодируется за ~0.9 мс (WebP — 1.7). `build_apk.sh`
+  без ядра под Android с BAKE=1 не собирает (пакеты были бы бесполезны).
+- Пакеты заготовок (BAKE=1): все уровни до ×5.6, по уровню за раз (`--bake_levels=k`,
+  без потерь ×5.6 — ~2 ГБ на диске), сразу `tools/bake_compress.py` (avifenc:
+  apt-get install libavif-bin webp). Время на llvmpipe (4 ядра): рисование ~27 мс
+  на тайл, сжатие ~28 мс — вся карта ~1.5 ч; итог ~650 МБ (оценка).

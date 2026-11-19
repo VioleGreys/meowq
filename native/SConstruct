@@ -9,6 +9,18 @@ env = SConscript("godot-cpp/SConstruct")
 env.Append(CPPPATH=["src/"])
 # одинаковые результаты с GDScript: без слияния умножения и сложения (FMA)
 env.Append(CCFLAGS=["-ffp-contract=off"])
+# декодер AVIF (тайлы заготовок карты): libavif + dav1d, статические, собраны
+# заранее tools/build_avif.sh в AVIF_ROOT/<linux|android>; нет — заглушка
+# (пакеты AVIF игра не берёт, docs/notes/build.md)
+import os
+_avif = os.path.join(os.environ.get("AVIF_ROOT", "/opt/avif"), env["platform"])
+if os.path.exists(os.path.join(_avif, "lib", "libavif.a")):
+    env.Append(CPPPATH=[os.path.join(_avif, "include")])
+    env.Append(LIBPATH=[os.path.join(_avif, "lib")])
+    env.Append(LIBS=["avif", "dav1d"])
+    env.Append(CPPDEFINES=["MEOWQ_AVIF"])
+else:
+    print("AVIF: нет %s — декодер заготовок не войдёт (tools/build_avif.sh)" % _avif)
 sources = Glob("src/*.cpp")
 lib = "bin/libmeowq{}{}".format(env["suffix"], env["SHLIBSUFFIX"])
 Default(env.SharedLibrary(lib, source=sources))

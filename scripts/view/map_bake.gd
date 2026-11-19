@@ -16,7 +16,7 @@ const T := 248                  # своих пикселей тайла
 const TS := 256                 # с полями
 const PAD := 4
 const NLV := 13
-const APK_MAX_K := 9            # уровни в APK: до ×2.8 (решение пользователя; ближе — кэш на устройстве)
+const APK_MAX_K := 11           # уровни в APK: до ×5.6 — вся карта (решение пользователя ноябрь 2026; пакеты — AVIF)
 const CAP := 256                # слоёв атласа (минимум GLES3 — 256)
 const PACK_DIR := "res://data/bake/"
 const CACHE_ROOT := "user://bake/"
@@ -48,6 +48,7 @@ var ok := false                 # заготовки можно использо
 var blk := 2                    # тайлов в блоке отрисовки по стороне
 # источники на диске: key → [путь, смещение, размер] (пакет) или [путь] (кэш)
 var _pack := {}
+var _avif: Object = null        # декодер AVIF (MeowqCore.avif_rgba; без C++ — пакеты AVIF не берём)
 var _cache := {}                # key → размер файла, байт
 var _cache_use := {}            # key → кадр последнего использования
 var _cache_total := 0
@@ -192,6 +193,8 @@ static func pack_path(s: int, k: int) -> String:
 
 
 func _scan_packs() -> void:
+	if _avif == null and ClassDB.class_exists("MeowqCore"):
+		_avif = ClassDB.instantiate("MeowqCore")
 	for s in 2:
 		for k in APK_MAX_K + 1:
 			var path := pack_path(s, k)
@@ -209,8 +212,11 @@ func _scan_packs() -> void:
 				push_warning("MapBake: пакет %s от другой версии карты (%s, нужна %s, r %.2f/%.2f, сетка %d×%d/%d×%d) — не используется" % [
 					path, pv, ver, pr, r_cls, w, h, gw[k], gh[k]])
 				continue
-			pack_stamp = pv.substr(ver.length() + 1)
 			var tab := f.get_buffer(w * h * 8)
+			if _avif == null and _pack_is_avif(f, tab):
+				push_warning("MapBake: пакет %s в AVIF, а ядра C++ нет — не используется" % path)
+				continue
+			pack_stamp = pv.substr(ver.length() + 1)
 			for i in w * h:
 				var off := tab.decode_u32(i * 8)
 				var sz := tab.decode_s32(i * 8 + 4)
@@ -221,6 +227,19 @@ func _scan_packs() -> void:
 					var sk := key_of(0, k, i % w, i / w)
 					if _pack.has(sk):
 						_pack[key] = _pack[sk]
+
+
+## Тайлы пакета в AVIF (первый непустой: «ftyp» с 4-го байта), а не в WebP («RIFF»)?
+static func _pack_is_avif(f: FileAccess, tab: PackedByteArray) -> bool:
+	for i in tab.size() / 8:
+		if tab.decode_s32(i * 8 + 4) > 0:
+			f.seek(tab.decode_u32(i * 8))
+			return f.get_buffer(8).slice(4).get_string_from_ascii() == "ftyp"
+	return false
+
+
+static func _is_avif(b: PackedByteArray) -> bool:
+	return b.size() > 12 and b[4] == 0x66 and b[5] == 0x74 and b[6] == 0x79 and b[7] == 0x70
 
 
 # --- кэш на устройстве ------------------------------------------------------------
@@ -419,7 +438,10 @@ func _load_job(key: int, src: Array) -> void:
 		if f != null:
 			f.seek(src[1])
 			bytes = f.get_buffer(src[2])
-	if bytes.is_empty() or img.load_webp_from_buffer(bytes) != OK:
+	if _is_avif(bytes):
+		var px: PackedByteArray = _avif.avif_rgba(bytes) if _avif != null else PackedByteArray()
+		img = Image.create_from_data(TS, TS, false, Image.FORMAT_RGBA8, px) if px.size() == TS * TS * 4 else null
+	elif bytes.is_empty() or img.load_webp_from_buffer(bytes) != OK:
 		img = null
 	elif img.get_format() != Image.FORMAT_RGBA8:
 		img.convert(Image.FORMAT_RGBA8)
@@ -787,13 +809,17 @@ func sample_packs(out_dir: String, levels: Array, blocks: int) -> void:
 
 ## Нарисовать все тайлы уровней 0…APK_MAX_K обоих сезонов и записать пакеты
 ## (зима: тайлы, совпавшие с летом, — ссылкой на летний).
-func build_packs(out_dir: String) -> void:
+## levels — какие уровни (пусто — все до APK_MAX_K): сборка по уровню за раз —
+## без потерь ближние уровни занимают гигабайты (×5.6 — ~2 ГБ), сжимаются сразу.
+func build_packs(out_dir: String, levels: Array = []) -> void:
 	packing = true
 	DirAccess.make_dir_recursive_absolute(out_dir)
 	var t0 := Time.get_ticks_msec()
 	var total := 0
 	var stamp := ver + "-" + data_stamp()
-	for k in APK_MAX_K + 1:
+	if levels.is_empty():
+		levels = range(APK_MAX_K + 1)
+	for k in levels:
 		var summer := {}   # key лета → хэш байтов (зима, совпавшая с летом, — ссылкой)
 		for s in 2:
 			# пишется по ходу (ближние уровни — сотни МБ: в памяти не держим)

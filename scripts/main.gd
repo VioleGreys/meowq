@@ -306,7 +306,11 @@ func _auto_screenshot(path: String) -> void:
 	if _arg("bake_sample") != "":
 		await map_view.bake.sample_packs(_arg("bake_sample"), [6, 7, 8, 9, 10], 24)
 	if _arg("bake_pack") != "":
-		await map_view.bake.build_packs(_arg("bake_pack"))
+		var lv: Array = []   # -- --bake_levels=10,11 — только эти уровни
+		if _arg("bake_levels") != "":
+			for x in _arg("bake_levels").split(","):
+				lv.append(int(x))
+		await map_view.bake.build_packs(_arg("bake_pack"), lv)
 	get_viewport().get_texture().get_image().save_png(path)
 	if "--report" in OS.get_cmdline_user_args():
 		print(Report.build(self))

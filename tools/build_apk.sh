@@ -76,23 +76,29 @@ for k in colormap_w.webp colormap_e.webp normal_w.png normal_e.png; do
 	[ -s "data/art/$k.etc2.zst" ] || { echo "Нет data/art/$k.etc2.zst — APK без графики карты не собираем"; exit 1; }
 	[ "data/art/$k.etc2.zst" -nt "assets/map/$k" ] || { echo "data/art/$k.etc2.zst старее assets/map/$k"; exit 1; }
 done
-# заготовки карты для масштабов до ×2.8 (MapBake, docs/notes/ui.md): рисует сама
-# игра (нужен экран — xvfb-run) без потерь, tools/bake_compress.py пережимает
-# (нужен cwebp: apt-get install webp). Пересобираются, если шейдер, модуль или
-# данные карты новее пакетов; BAKE=0 — без заготовок (карта рисуется вживую)
+# заготовки карты для всех масштабов до ×5.6 (MapBake, docs/notes/ui.md): рисует
+# сама игра (нужен экран — xvfb-run) без потерь, по уровню за раз (ближние без потерь —
+# гигабайты), tools/bake_compress.py сразу пережимает в AVIF (нужен avifenc:
+# apt-get install libavif-bin). Читает их ядро C++ (декодер AVIF) — без него игра
+# пакеты не берёт. Пересобираются, если шейдер, модуль или данные карты новее
+# пакетов; BAKE=0 — без заготовок (карта рисуется вживую)
 if [ "${BAKE:-1}" = 1 ]; then
+	[ -f native/bin/libmeowq.android.template_release.arm64.so ] || { echo "Нет ядра C++ под Android (декодер AVIF для заготовок): docs/notes/build.md"; exit 1; }
 	STALE=0
-	[ -f data/bake/b0_9.bin ] || STALE=1
+	[ -f data/bake/b0_11.bin ] || STALE=1
 	for f in shaders/map_core.gdshaderinc scripts/view/map_bake.gd tools/bake_compress.py data/world1936/*.bin assets/map/*; do
-		[ "$STALE" = 1 ] || [ ! "$f" -nt data/bake/b0_9.bin ] || STALE=1
+		[ "$STALE" = 1 ] || [ ! "$f" -nt data/bake/b0_11.bin ] || STALE=1
 	done
 	if [ "$STALE" = 1 ]; then
 		echo "Заготовки карты: рисуются..."
-		rm -rf "$WORK/bake_raw" && mkdir -p "$WORK/bake_raw"
-		xvfb-run -a "$GODOT" --rendering-driver opengl3 --path . -- --screenshot="$WORK/bake.png" --nation=GER --days=1 \
-			--bake_pack="$WORK/bake_raw" 2>&1 | grep -E "^bake: всего|SCRIPT ERROR" || true
 		rm -rf data/bake
-		python3 tools/bake_compress.py "$WORK/bake_raw" data/bake | tail -1
+		for k in 0 1 2 3 4 5 6 7 8 9 10 11; do
+			rm -rf "$WORK/bake_raw" && mkdir -p "$WORK/bake_raw"
+			xvfb-run -a "$GODOT" --rendering-driver opengl3 --path . -- --screenshot="$WORK/bake.png" --nation=GER --days=1 \
+				--bake_pack="$WORK/bake_raw" --bake_levels=$k 2>&1 | grep -E "^bake: всего|SCRIPT ERROR" || true
+			python3 tools/bake_compress.py "$WORK/bake_raw" data/bake | tail -1
+		done
+		rm -rf "$WORK/bake_raw"
 	fi
 	du -sh data/bake
 else
