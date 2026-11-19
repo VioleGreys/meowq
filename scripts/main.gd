@@ -84,9 +84,9 @@ func _ready() -> void:
 	if not single_thread:
 		sim_thread = Thread.new()
 		# на телефоне — пониже главного потока: кадры важнее, запас по дням есть
-		sim_thread.start(_sim_loop, Thread.PRIORITY_LOW if OS.has_feature("mobile") else Thread.PRIORITY_NORMAL)
+		sim_thread.start(_sim_loop, Thread.PRIORITY_LOW if Device.mobile() else Thread.PRIORITY_NORMAL)
 	# инструменты (скриншот, замер) идут сразу к выбору страны, игрок — в главное меню
-	var tool := _arg("screenshot") != "" or _arg("bench_rt") != ""
+	var tool := _arg("screenshot") != "" or _arg("bench_rt") != "" or "--stress" in OS.get_cmdline_user_args()
 	# кадр рисуется, только когда на экране что-то изменилось (решение
 	# пользователя, ноябрь 2026: телефон меньше греется — дольше держит частоты);
 	# в инструментах — только с -- --lowproc
@@ -97,6 +97,19 @@ func _ready() -> void:
 		_auto_screenshot(_arg("screenshot"))
 	elif _arg("bench_rt") != "":
 		_bench_realtime(float(_arg("bench_rt")))
+	elif "--stress" in OS.get_cmdline_user_args():
+		var sb := StressBench.new()
+		add_child(sb)
+		if "--ingame" in OS.get_cmdline_user_args():   # проверка пути кнопки «Проверка нагрузки»
+			world_lock()
+			start_as(nation_by_tag(_arg("nation")) if _arg("nation") != "" else 0)
+			world_unlock()
+			await sb.run(self, true)
+			print("STRESS_INGAME: партия %s, %s" % [world.nations[player()].name, world.date_string()])
+			_shutdown()
+			get_tree().quit()
+		else:
+			sb.run(self)
 
 
 func _arg(name: String) -> String:
@@ -1015,6 +1028,7 @@ func _sim_loop() -> void:
 		# на паузе заказанные дни сбрасываются — остановка сразу
 		if state == "play" and sim != null and speed > 0:
 			sim.tick()
+			StressBench.note_tick(sim, world)
 			if _slow_tick_usec > 0:   # отладка: имитация медленного телефона
 				var t0 := Time.get_ticks_usec()
 				while Time.get_ticks_usec() - t0 < _slow_tick_usec:
@@ -1066,6 +1080,7 @@ func _request_days(n: int) -> void:
 		for i in n:
 			if state == "play" and sim != null:
 				sim.tick()
+				StressBench.note_tick(sim, world)
 				ticks_done += 1
 				_publish()
 				_autosave_tick(int(1000000.0 / maxf(0.5, SPEEDS[mini(speed, 5)])))

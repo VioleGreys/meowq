@@ -134,6 +134,8 @@
 - Производительность: `godot --headless --path . --script res://tests/perf_bench.gd`
   (разгон до 1940 г., тик по фазам, один поток против многих); в реальном
   времени: `godot --headless --path . -- --bench_rt=15 [--nation=SWE]`.
+- Стенд нагрузки (кадры, тик, фризы, действия игрока; `engine.md`): `godot --headless --path . -- --stress [--seg=4 --from=1939-09-10]`,
+  как телефон — `taskset -c 0,1 godot --headless --path . -- --stress --phone`; на телефоне — «Настройки» → «Проверка нагрузки».
 - Тест детерминизма и скорости: `godot --headless --path . --script res://tests/sim_bench.gd`
   (`-- --large` — большая карта). Однопоточный и многопоточный результаты
   обязаны совпадать.

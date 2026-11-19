@@ -31,7 +31,7 @@ static var _threads := -1
 static func thread_count() -> int:
 	if _threads < 0:
 		_threads = OS.get_processor_count()
-		if OS.has_feature("mobile"):
+		if Device.mobile():
 			_threads -= 2
 		for a in OS.get_cmdline_user_args():
 			if a.begins_with("--threads="):

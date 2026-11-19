@@ -1149,7 +1149,7 @@ func show_top() -> void:
 	var ph: Dictionary = d["phases"]
 	for k in ph:
 		phases += " %s %.1f" % [k, ph[k] / 1000.0]
-	if OS.has_feature("mobile"):
+	if Device.mobile():
 		phases = ""   # на телефоне без фаз — они закрывали бы карту
 	var gpu: Vector2 = game.map_view.gpu_ms()
 	if gpu.x <= 0.0:
@@ -4509,3 +4509,9 @@ func _build_settings() -> void:
 	popup_body.add_child(_button("Скопировать отчёт", func():
 		DisplayServer.clipboard_set(Report.build(game))
 		toast("Отчёт скопирован в буфер обмена"), Vector2(0, 52)))
+	if game.state == "play" and game.player() >= 0:
+		popup_body.add_child(_label("Проверка нагрузки: ~45 с игра сама идёт, двигает карту, открывает окна, отдаёт приказы и сохраняется. Потом партия вернётся как была, отчёт — в буфер обмена.", 15, Color(0.75, 0.75, 0.7)))
+		popup_body.add_child(_button("Проверка нагрузки", func():
+			var sb := StressBench.new()
+			game.add_child(sb)
+			sb.run.call_deferred(game, true), Vector2(0, 52)))

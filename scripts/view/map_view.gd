@@ -284,7 +284,7 @@ func setup(w: World) -> void:
 	_winter = -1.0
 	_selected = -1
 	_front_marks = {}
-	strips = 4 if OS.has_feature("mobile") else 1
+	strips = 4 if Device.mobile() else 1
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--strips="):
 			strips = maxi(1, int(a.get_slice("=", 1)))

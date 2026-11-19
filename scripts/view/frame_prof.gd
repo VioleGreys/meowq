@@ -8,11 +8,13 @@ static var _sum := {}
 static var _max := {}
 static var last_sum := {}   # прошлая секунда: участок → мкс за секунду
 static var last_max := {}   # участок → худший одиночный замер, мкс
+static var frame := {}      # участок → мкс с последнего сброса (StressBench — по кадрам)
 
 
 static func add(key: String, usec: int) -> void:
 	_sum[key] = int(_sum.get(key, 0)) + usec
 	_max[key] = maxi(int(_max.get(key, 0)), usec)
+	frame[key] = int(frame.get(key, 0)) + usec
 
 
 static func roll() -> void:

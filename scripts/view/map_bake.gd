@@ -94,8 +94,8 @@ func setup(v: MapView, shader_params: Dictionary) -> void:
 	world_px = v.world_size()
 	# телефон — по одному тайлу за раз: чтение готового блока с видеокарты ждёт
 	# её (блок 2×2 — заметная остановка кадра, отчёт: худший кадр карты 229 мс)
-	blk = 1 if OS.has_feature("mobile") else 4
-	uploads = 8 if OS.has_feature("mobile") else UPLOADS
+	blk = 1 if Device.mobile() else 4
+	uploads = 8 if Device.mobile() else UPLOADS
 	mat = ShaderMaterial.new()
 	mat.shader = load("res://shaders/map_bake.gdshader")
 	for n in shader_params:

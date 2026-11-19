@@ -25,7 +25,7 @@ static func map_quality() -> int:
 	for a in OS.get_cmdline_user_args():   # для замеров: -- --quality=0|1|2
 		if a.begins_with("--quality="):
 			return clampi(int(a.split("=")[1]), 0, 2)
-	var def := 1 if OS.has_feature("mobile") else 2
+	var def := 1 if Device.mobile() else 2
 	return int(_load().get_value("graphics", "map_quality", def))
 
 
@@ -40,7 +40,7 @@ static func map_res() -> int:
 	for a in OS.get_cmdline_user_args():   # для замеров: -- --mapres=0|1|2
 		if a.begins_with("--mapres="):
 			return clampi(int(a.split("=")[1]), 0, 3)
-	var def := 3 if OS.has_feature("mobile") else 2
+	var def := 3 if Device.mobile() else 2
 	return int(_load().get_value("graphics", "map_res", def))
 
 
@@ -52,7 +52,7 @@ static func set_map_res(r: int) -> void:
 ## Упрощать карту, пока её двигают (быстрее сдвиг на слабом телефоне).
 ## По умолчанию: телефон — да, ПК — нет.
 static func motion_lite() -> bool:
-	return bool(_load().get_value("graphics", "motion_lite", OS.has_feature("mobile")))
+	return bool(_load().get_value("graphics", "motion_lite", Device.mobile()))
 
 
 static func set_motion_lite(v: bool) -> void:
@@ -73,7 +73,7 @@ static func set_map_tilt(v: bool) -> void:
 ## Ограничение кадров: 0 — 30, 1 — 60, 2 — без ограничения (по частоте экрана).
 ## На экранах 90–120 Гц лишние кадры только греют телефон.
 static func fps_cap() -> int:
-	var def := 1 if OS.has_feature("mobile") else 2
+	var def := 1 if Device.mobile() else 2
 	return int(_load().get_value("graphics", "fps_cap", def))
 
 
