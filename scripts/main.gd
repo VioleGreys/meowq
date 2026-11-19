@@ -333,6 +333,18 @@ func _bake_test(path: String) -> void:
 	for i in 12:
 		await get_tree().process_frame
 	map_view.map_vp.get_texture().get_image().save_png(path.replace(".png", "_live.png"))
+	if "--liveshot" in OS.get_cmdline_user_args():   # только снимок живым шейдером (сверка попиксельно)
+		if "--livetime" in OS.get_cmdline_user_args():   # и цена живого кадра
+			var tl: Array = []
+			for i in 24:
+				map_view.redraw()
+				var f0 := Time.get_ticks_usec()
+				await get_tree().process_frame
+				if i >= 2:
+					tl.append(Time.get_ticks_usec() - f0)
+			tl.sort()
+			print("baketest: живой кадр %.1f мс (медиана)" % (tl[tl.size() / 2] / 1000.0))
+		return
 	map_view._bake_off = false
 	var t0 := Time.get_ticks_msec()
 	var n := 0
