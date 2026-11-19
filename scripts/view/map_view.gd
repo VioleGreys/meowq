@@ -26,10 +26,12 @@ var ctrl_img: Image
 var owner_img: Image
 # палитры провинций — одной текстурой (шейдеру на телефоне не хватает текстурных
 # блоков: не больше 8 текстур, см. shaders/map.gdshader): разделы по _pal_rows строк —
-# 0 контролёр, 1 владелец, 2 область, 3 фронт
+# 0 контролёр, 1 владелец, 2 область, 3 фронт; 4…21 — дороги (_roads_pal)
 var pal_img: Image
 var pal_tex: ImageTexture
 var _pal_rows := 1
+const PAL_SECS := 4 + 2 + 2 * ROAD_HALVES
+const ROAD_HALVES := 8
 const ART_DIR := "res://assets/map/"
 const ART_FILES := {"color_w": "colormap_w.webp", "color_e": "colormap_e.webp", "normal_w": "normal_w.png", "normal_e": "normal_e.png"}
 const ART_PAD := 32.0   # перекрытие половин (tools/build_map_art.py PAD)
@@ -228,7 +230,7 @@ func setup(w: World) -> void:
 	ctrl_img = Image.create(64, rows, false, Image.FORMAT_RGBA8)
 	owner_img = Image.create(64, rows, false, Image.FORMAT_RGBA8)
 	front_img = Image.create(64, rows, false, Image.FORMAT_RGBA8)
-	pal_img = Image.create(64, rows * 4, false, Image.FORMAT_RGBA8)
+	pal_img = Image.create(64, rows * PAL_SECS, false, Image.FORMAT_RGBA8)
 	_front_hash = 0
 	# области провинций (обводка средней линией): r + g·256 — номер + 1, 0 — нет
 	var st_img := Image.create(64, rows, false, Image.FORMAT_RGBA8)
@@ -248,6 +250,7 @@ func setup(w: World) -> void:
 			hs = clampf(float(side) / 16.0, 0.5, 1.0)
 		st_img.set_pixel(p % 64, p / 64, Color8(sv & 255, (sv >> 8) & 255, cls, int(hs * 255.0)))
 	pal_img.blit_rect(st_img, Rect2i(0, 0, 64, rows), Vector2i(0, 2 * rows))
+	_param("has_roads", world.width == 5632 and _roads_pal(rows))
 	pal_tex = ImageTexture.create_from_image(pal_img)
 	_param("pal_tex", pal_tex)
 	_param("pal_rows", rows)
@@ -656,6 +659,54 @@ func _update_band() -> void:
 	else:
 		band_tex.update(bimg)
 	_param("has_band", true)
+
+
+## Дороги и железные дороги вблизи (data/world1936/roads.json, tools/build_roads.py) —
+## в разделы палитры 4…21: 4 — центр провинции (x, y по 16 бит, 1/8 пикс. карты 1×),
+## 5 — r число половин, g/b — типы половин по 2 бита (1 — дорога, 2 — жд), a — биты
+## стороны (дорога рядом с жд — по одну сторону с обеих провинций); 6 + 2i — точка K,
+## 7 + 2i — точка W половины i (центр → K → W, W — на общей границе с соседом).
+func _roads_pal(rows: int) -> bool:
+	var path := "res://data/world1936/roads.json"
+	if not FileAccess.file_exists(path):
+		return false
+	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not (data is Dictionary):
+		return false
+	var q: float = float((data as Dictionary).get("q", 8.0))
+	var prov: Dictionary = (data as Dictionary).get("prov", {})
+	var secs: Array[Image] = []
+	for k in 2 + 2 * ROAD_HALVES:
+		secs.append(Image.create(64, rows, false, Image.FORMAT_RGBA8))
+	for key in prov:
+		var p := int(key)
+		if p < 0 or p >= world.prov_count:
+			continue
+		var v: Dictionary = prov[key]
+		var c: Array = v["c"]
+		var hs: Array = v["h"]
+		var x := p % 64
+		var y := p / 64
+		secs[0].set_pixel(x, y, _road_pt(float(c[0]), float(c[1]), q))
+		var n := mini(hs.size(), ROAD_HALVES)
+		var tb := 0
+		var fb := 0
+		for i in n:
+			var h: Array = hs[i]
+			tb |= (int(h[0]) & 3) << (2 * i)
+			fb |= (int(h[1]) & 1) << i
+			secs[2 + 2 * i].set_pixel(x, y, _road_pt(float(h[2]), float(h[3]), q))
+			secs[3 + 2 * i].set_pixel(x, y, _road_pt(float(h[4]), float(h[5]), q))
+		secs[1].set_pixel(x, y, Color8(n, tb & 255, (tb >> 8) & 255, fb))
+	for k in secs.size():
+		pal_img.blit_rect(secs[k], Rect2i(0, 0, 64, rows), Vector2i(0, (4 + k) * rows))
+	return true
+
+
+static func _road_pt(x: float, y: float, q: float) -> Color:
+	var ix := clampi(int(round(x * q)), 0, 65535)
+	var iy := clampi(int(round(y * q)), 0, 65535)
+	return Color8(ix & 255, ix >> 8, iy & 255, iy >> 8)
 
 
 static var _sdf_cache: Array = []

@@ -205,6 +205,12 @@ uniform bool has_sprites = false;
 // покрытия (data/world1936/road_tex.png.bin, ambientCG CC0): слои tile_tex 8 — брусчатка,
 // 9 — грунт, 10 — камень мостов
 uniform bool has_road_tex = false;
+// дороги и железные дороги вблизи (data/world1936/roads.json, tools/build_roads.py) —
+// разделы палитры 4…21 (MapView._roads_pal): от провинции к провинции, центр → K → W
+uniform bool has_roads = false;
+const int RD_SEC = 4;
+const float RD_OFF = 0.42;     // дорога рядом с жд — сбоку, пикс. карты
+const float TIE_P = 0.30;      // шаг шпал, пикс. карты
 uniform float winter = 1.0;   // зима в северном полушарии 0…1 (MapView.set_day)
 const float DETAIL_TILE = 48.0;   // пикселей карты на тайл
 // проекция Миллера для сетки широт и долгот (как tools/build_map.py)
@@ -654,6 +660,113 @@ vec4 town_cell(vec2 q, vec2 msz, vec2 gx, vec2 gy, vec2 ll, out float dens, out 
 	vec2 rgx = vec2(ca * gx.x + sa * gx.y, -sa * gx.x + ca * gx.y);
 	vec2 rgy = vec2(ca * gy.x + sa * gy.y, -sa * gy.x + ca * gy.y);
 	return town_spr(idx, lu, SL * fill, rgx, rgy);
+}
+
+// --- дороги и железные дороги -------------------------------------------------
+vec2 rd_pt(vec4 t) {
+	t = floor(t * 255.0 + 0.5);
+	return vec2(t.r + t.g * 256.0, t.b + t.a * 256.0) * 0.125;
+}
+
+float rd_seg(vec2 q, vec2 a, vec2 b, out float h) {
+	vec2 ba = b - a;
+	h = clamp(dot(q - a, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
+	return length(q - a - ba * h);
+}
+
+// половины дорог провинции id у точки q (пикс. карты 1×): расстояние до жд (d_rail),
+// дуга вдоль жд от точки W на границе (s_rail — для шпал: у W обе стороны дают 0),
+// расстояние до дороги (d_road)
+void road_prov(int id, vec2 q, inout float d_rail, inout float s_rail, inout float d_road) {
+	vec4 m = floor(pal(RD_SEC + 1, id) * 255.0 + 0.5);
+	int n = int(m.r);
+	if (n == 0) {
+		return;
+	}
+	vec2 c = rd_pt(pal(RD_SEC, id));
+	if (length(q - c) > 400.0) {
+		return;
+	}
+	int tb = int(m.g) | (int(m.b) << 8);
+	int fb = int(m.a);
+	for (int i = 0; i < 8; i++) {
+		if (i >= n) {
+			break;
+		}
+		int tp = (tb >> (2 * i)) & 3;
+		vec2 k = rd_pt(pal(RD_SEC + 2 + 2 * i, id));
+		vec2 w = rd_pt(pal(RD_SEC + 3 + 2 * i, id));
+		vec2 u2 = normalize(w - k + vec2(1e-5, 0.0));
+		vec2 u1 = normalize(k - c + vec2(1e-5, 0.0));
+		vec2 we = w + u2 * 0.7;   // за W — по той же прямой, что и у соседа
+		float h1;
+		float h2;
+		float d1 = rd_seg(q, c, k, h1);
+		float d2 = rd_seg(q, k, we, h2);
+		if ((tp & 2) != 0) {
+			float d = min(d1, d2);
+			if (d < d_rail) {
+				d_rail = d;
+				s_rail = d2 <= d1 ? dot(q - w, u2) : dot(q - k, u1) - length(w - k);
+			}
+		}
+		if ((tp & 1) != 0) {
+			if (tp == 3) {
+				// рядом с жд — сбоку (с обеих провинций по одну сторону)
+				float sg = ((fb >> i) & 1) == 1 ? -RD_OFF : RD_OFF;
+				vec2 n1 = vec2(-u1.y, u1.x) * sg;
+				vec2 n2 = vec2(-u2.y, u2.x) * sg;
+				d1 = rd_seg(q, c + n1, k + n1, h1);
+				d2 = rd_seg(q, k + n2, we + n2, h2);
+			}
+			d_road = min(d_road, min(d1, d2));
+		}
+	}
+}
+
+// цвет полотна: rgb и доля; mp — пикселей экрана на пиксель карты, ql — для текстуры
+vec4 road_paint(vec3 under, float d_rail, float s_rail, float d_road, float mp, vec2 q, float gl, float rk, float ok) {
+	float fw = 1.0 / mp;   // пикс. карты на пиксель экрана
+	vec3 col = under;
+	float a = 0.0;
+	// дорога: грунтовка, мягкие края, колеи; вдали — тонкая светлая линия
+	if (d_road < 1.0 && ok > 0.0) {
+		float hw = max(0.13, 0.55 * fw);
+		float m = (1.0 - smoothstep(hw - fw, hw + fw * 1.5, d_road)) * ok;
+		vec3 dirt = vec3(0.60, 0.53, 0.41);
+		if (has_road_tex) {
+			vec3 g = textureGrad(tile_tex, vec3(q / 0.8, 9.0), vec2(gl, 0.0) / 0.8, vec2(0.0, gl) / 0.8).rgb;
+			dirt *= 0.8 + 0.4 * dot(g, vec3(0.33));
+		}
+		float rut = smoothstep(0.035, 0.0, abs(d_road - hw * 0.45)) * smoothstep(8.0, 14.0, mp);
+		dirt *= 1.0 - 0.18 * rut;
+		dirt = mix(dirt, under, 0.25 * smoothstep(hw * 0.4, hw, d_road));   // края в траву
+		col = mix(col, dirt, m * 0.8);
+		a = max(a, m * 0.8);
+	}
+	// жд: вдали — тёмная линия; ближе — насыпь из щебня, шпалы и два рельса
+	if (d_rail < 1.0 && rk > 0.0) {
+		float near = smoothstep(5.0, 9.0, mp);
+		float hw = mix(max(0.09, 0.6 * fw), 0.26, near);
+		float m = (1.0 - smoothstep(hw - fw, hw + fw, d_rail)) * rk;
+		// вдали — буро-коричневая (не путать с серыми линиями границ), шпалы — штрихом
+		vec3 bed = mix(vec3(0.33, 0.22, 0.14), vec3(0.50, 0.47, 0.43), near);
+		float tick = (1.0 - smoothstep(0.25, 0.45, abs(fract(s_rail / (TIE_P * 3.0) + 0.5) - 0.5) * 2.0)) * (1.0 - near);
+		hw += tick * 0.6 * fw * smoothstep(3.0, 5.0, mp);
+		m = (1.0 - smoothstep(hw - fw, hw + fw, d_rail)) * rk;
+		bed *= 0.92 + 0.16 * h21(floor(q * 14.0));   // щебень
+		bed = mix(bed, under * 0.7, 0.35 * smoothstep(hw * 0.6, hw, d_rail) * near);   // откос
+		float tk = smoothstep(3.0, 6.0, TIE_P * mp) * near;
+		float tie = (1.0 - smoothstep(0.30, 0.40, abs(fract(s_rail / TIE_P + 0.5) - 0.5) * 2.0))
+			* (1.0 - smoothstep(0.17, 0.19, d_rail));
+		bed = mix(bed, vec3(0.26, 0.19, 0.13), tie * tk * 0.9);
+		float rl = 1.0 - smoothstep(0.022, 0.022 + fw, abs(d_rail - 0.095));
+		bed = mix(bed, vec3(0.20, 0.20, 0.22), rl * smoothstep(7.0, 11.0, mp));
+		bed = mix(bed, vec3(0.62, 0.62, 0.64), smoothstep(7.0, 11.0, mp) * 0.4 * (1.0 - smoothstep(0.0, 0.01 + fw * 0.5, abs(d_rail - 0.088))));   // блик рельса
+		col = mix(col, bed, m);
+		a = max(a, m);
+	}
+	return vec4(col, a);
 }
 
 void fragment() {
@@ -1336,6 +1449,24 @@ void fragment() {
 				}
 			}
 			ub_n = max(ub_n * (1.0 - dk_s), bld * dk_s);
+			// дороги и жд (высокое качество): поверх леса и кварталов, цвет страны под ними
+			// слабее; дороги в провинции города гаснут (там улицы), жд идёт до центра
+			if (has_roads && quality == 2 && zoom > 1.3) {
+				float d_rail = 9.0;
+				float s_rail = 0.0;
+				float d_road = 9.0;
+				road_prov(id, qc, d_rail, s_rail, d_road);
+				if (id2 != id) {
+					road_prov(id2, qc, d_rail, s_rail, d_road);
+				}
+				if (min(d_rail, d_road) < 1.0) {
+					float gl = length(vec2(length(q_gx), length(q_gy)));
+					vec4 rp = road_paint(terr, d_rail, s_rail, d_road, zoom * 2.0 * res_k, qc, gl,
+						smoothstep(1.3, 1.9, zoom), smoothstep(2.0, 2.8, zoom) * (1.0 - town_here));
+					terr = rp.rgb;
+					ub_n = max(ub_n, rp.a);
+				}
+			}
 			if (terrain_mode) {
 				lc = K(terr * 0.95 * rf);
 			} else {
@@ -1487,6 +1618,34 @@ void fragment() {
 					float side = 1.0 - buv.y / max(buv.z, 1e-3);
 					stone *= 1.0 + 0.25 * smoothstep(0.75, 0.82, side) - 0.45 * smoothstep(0.9, 1.0, side);   // парапет
 					col = mix(col, stone, brg * river);
+				}
+			}
+			// мосты дорог и жд: полотно поверх воды, по краям — фермы/перила, тень на воду
+			if (has_roads && quality == 2 && river > 0.01 && zoom > 1.3) {
+				float d_rail = 9.0;
+				float s_rail = 0.0;
+				float d_road = 9.0;
+				vec2 qr = px / id_k;
+				road_prov(id, qr, d_rail, s_rail, d_road);
+				if (id2 != id) {
+					road_prov(id2, qr, d_rail, s_rail, d_road);
+				}
+				if (min(d_rail, d_road) < 1.2) {
+					float mp = zoom * 2.0 * res_k;
+					float fw = 1.0 / mp;
+					float gl = length(vec2(length(q_gx), length(q_gy)));
+					float rk = smoothstep(1.3, 1.9, zoom);
+					float ok = smoothstep(2.0, 2.8, zoom);
+					float near = smoothstep(5.0, 9.0, mp);
+					// тень настила к юго-востоку
+					float d_sh = min(d_rail + 9.0 * (1.0 - rk), d_road + 9.0 * (1.0 - ok));
+					col = mix(col, col * 0.55, (1.0 - smoothstep(0.30, 0.42, d_sh - 0.06)) * near * river * 0.5);
+					vec4 rp = road_paint(col, d_rail, s_rail, d_road, mp, qr, gl, rk, ok);
+					col = mix(col, rp.rgb, river);
+					// фермы жд-моста и перила дорожного — тёмные кромки
+					float tr_r = (1.0 - smoothstep(0.03, 0.03 + fw, abs(d_rail - 0.27))) * rk;
+					float tr_d = (1.0 - smoothstep(0.025, 0.025 + fw, abs(d_road - 0.16))) * ok;
+					col = mix(col, vec3(0.22, 0.22, 0.24), max(tr_r, tr_d) * near * river);
 				}
 			}
 			river = 0.0;
