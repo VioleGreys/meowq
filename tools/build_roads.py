@@ -21,7 +21,8 @@
       дороже); путь берётся, если по уже проложенным путям дороже RAIL_T × его
       цены; не дороже RAIL_MAX (через Сахару и тайгу без городов — нет).
 
-  python3 tools/build_roads.py [--ne-rail ne_10m_railroads] [--preview out.png] [--cache файл]
+  godot --headless --path . --script res://tools/dump_supply.gd -- --out=supply.json
+  python3 tools/build_roads.py [--ne-rail ne_10m_railroads] [--supply supply.json] [--preview out.png] [--cache файл]
 
 С --ne-rail жд-рёбра — только вдоль реальных линий Natural Earth (общественное
 достояние; сеть современная, но так видно, где пути шли и где их не было).
@@ -55,6 +56,9 @@ RAIL_T_WILD = 1.6
 RAIL_DEV = 0.03    # застройка округи, с которой сеть жд густая
 RAIL_R = 160.0     # пары городов не дальше, пикс.
 RAIL_MAX = 230.0   # цена пути не больше
+SUP_R = 280.0      # пары пунктов снабжения — не дальше, пикс.
+SUP_MAX = 420.0    # и цена пути не больше
+SUP_NEAR = 12.0    # реальная линия у пункта ближе — подключить и без цепочки вдоль неё
 # переходы железных дорог через границу — только исторические (решение пользователя:
 # «между странами жд пути, только если так было исторически»), около 1936 г.:
 # страны (теги 1936 г.) и точка перехода (долгота, широта); без перехода в списке
@@ -151,6 +155,7 @@ GROUP = {"GXC": "CHN", "YUN": "CHN", "SHX": "CHN", "XSM": "CHN", "SIK": "CHN", "
 
 NE_NEAR = 4.0      # жд-ребро — вдоль реальной линии: точек ближе NE_NEAR пикс.
 NE_FRAC = 0.6      # не меньше этой доли
+NE_FRAC_MNT = 0.8  # ребро с горной провинцией — строже (допуск NE_NEAR без прибавки)
 RAIL_T_SPAN = 2.6
 RAIL_DEV_WILD = 0.01   # застройка округи ниже — все рёбра вдоль реальных линий
 
@@ -453,6 +458,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--preview")
     ap.add_argument("--ne-rail", help="ne_10m_railroads (путь без .shp): жд только вдоль реальных линий")
+    ap.add_argument("--supply", help="JSON пунктов снабжения (tools/dump_supply.gd): жд к ним — первыми")
     ap.add_argument("--cache", help="файл: геометрия рёбер (для подбора сети без пересчёта)")
     args = ap.parse_args()
     meta = json.load(open(os.path.join(DATA, "map.json"), encoding="utf-8"))
@@ -506,9 +512,22 @@ def main():
         cross.add(best)
     print(f"переходов через границу {len(cross)} из {len(CROSS)}")
     redges_ok = [e for e in geom if grp[e[0]] == grp[e[1]] or e in cross]
+    # запасной граф для пунктов снабжения — без гор (через хребты пути не шли)
+    flat = [e for e in redges_ok if provs[e[0]]["terrain"] != 3 and provs[e[1]]["terrain"] != 3]
+    G2 = csr_matrix((np.array([cost[e] for e in flat] * 2),
+                     (np.array([e[0] for e in flat] + [e[1] for e in flat]),
+                      np.array([e[1] for e in flat] + [e[0] for e in flat]))), shape=(n, n))
+    nd = None
     if args.ne_rail:
         nd = ne_rail_dist(args.ne_rail, W1, meta["height"])
-        redges_ok = [e for e in redges_ok if e in cross or on_rail(geom[e], nd, max(NE_NEAR, 0.12 * length[e])) >= NE_FRAC]
+        def real(e):
+            if e in cross:
+                return True
+            if provs[e[0]]["terrain"] == 3 or provs[e[1]]["terrain"] == 3:
+                # в горах — строго (иначе длинное ребро напрямую через хребет)
+                return on_rail(geom[e], nd, NE_NEAR) >= NE_FRAC_MNT
+            return on_rail(geom[e], nd, max(NE_NEAR, 0.12 * length[e])) >= NE_FRAC
+        redges_ok = [e for e in redges_ok if real(e)]
         print(f"рёбер вдоль реальных линий {len(redges_ok)}")
     ea = np.array([e[0] for e in redges_ok] + [e[1] for e in redges_ok])
     eb = np.array([e[1] for e in redges_ok] + [e[0] for e in redges_ok])
@@ -516,17 +535,28 @@ def main():
     G = csr_matrix((ew, (ea, eb)), shape=(n, n))
     cities = [i for i, p in enumerate(provs) if p["land"] and p["vp"] >= RAIL_VP and i in cen]
     # концы переходов — тоже узлы: к ним ведут пути от ближних городов
-    cities = sorted(set(cities) | {v for e in cross for v in e})
+    cities = set(cities) | {v for e in cross for v in e}
+    # пункты снабжения (решение пользователя: для жд приоритет — точки снабжения)
+    sup = set()
+    if args.supply:
+        sd = json.load(open(args.supply, encoding="utf-8"))
+        sup = {int(p) for p in sd["hubs"] + sd["caps"] if int(p) in cen}
+        print(f"пунктов снабжения {len(sup)}")
+    cities = sorted(cities | sup)
     print(f"городов {len(cities)}, пути...", flush=True)
-    D, pred = dijkstra(G, indices=cities, limit=RAIL_MAX, return_predecessors=True)
+    D, pred = dijkstra(G, indices=cities, limit=max(RAIL_MAX, SUP_MAX), return_predecessors=True)
     ci = {c: k for k, c in enumerate(cities)}
     pairs = []
     for x in range(len(cities)):
         a = cities[x]
         for y in range(x + 1, len(cities)):
             b = cities[y]
-            if math.dist(cen[a], cen[b]) <= RAIL_R and D[x, b] < RAIL_MAX:
-                pairs.append((D[x, b], a, b))
+            # пары пунктов снабжения — первыми, дальше и без скидки на бедность
+            tier = 0 if (a in sup and b in sup) else 1
+            if tier == 0 and math.dist(cen[a], cen[b]) <= SUP_R and D[x, b] < SUP_MAX:
+                pairs.append((0, D[x, b], a, b))
+            elif math.dist(cen[a], cen[b]) <= RAIL_R and D[x, b] < RAIL_MAX:
+                pairs.append((1, D[x, b], a, b))
     pairs.sort()
     radj = [[] for _ in range(n)]
     rails = set()
@@ -534,11 +564,7 @@ def main():
         rails.add(e)
         radj[e[0]].append((e[1], cost[e]))
         radj[e[1]].append((e[0], cost[e]))
-    for c, a, b in pairs:
-        t = RAIL_T + RAIL_T_WILD * (1.0 - min(1.0, 0.5 * (rdev[a] + rdev[b]) / RAIL_DEV)) \
-            + RAIL_T_POOR * (1.0 - 0.5 * (kdev[a] + kdev[b]))
-        if _dist(radj, a, b, t * c) <= t * c:
-            continue
+    def lay(a, b):
         v = b
         row = ci[a]
         while v != a:
@@ -549,6 +575,45 @@ def main():
                 radj[u].append((v, cost[e]))
                 radj[v].append((u, cost[e]))
             v = u
+
+    for tier, c, a, b in pairs:
+        if tier == 0:
+            t = RAIL_T
+        else:
+            t = RAIL_T + RAIL_T_WILD * (1.0 - min(1.0, 0.5 * (rdev[a] + rdev[b]) / RAIL_DEV)) \
+                + RAIL_T_POOR * (1.0 - 0.5 * (kdev[a] + kdev[b]))
+        if _dist(radj, a, b, t * c) <= t * c:
+            continue
+        lay(a, b)
+    # пункт снабжения без жд — к ближайшему узлу с жд (если путь вдоль реальных линий есть)
+    lone = 0
+    for s_ in sorted(sup):
+        if radj[s_]:
+            continue
+        row = D[ci[s_]]
+        cand = [v for v in range(n) if radj[v] and row[v] < SUP_MAX]
+        if cand:
+            lay(s_, min(cand, key=lambda v: row[v]))
+        elif nd is not None and nd[min(int(cen[s_][1]), nd.shape[0] - 1), min(int(cen[s_][0]), nd.shape[1] - 1)] < SUP_NEAR:
+            # реальная линия у самого пункта, но цепочка рёбер вдоль неё рвётся —
+            # кратчайшим путём по провинциям своей страны
+            d2, p2 = dijkstra(G2, indices=[s_], limit=SUP_MAX * 2, return_predecessors=True)
+            cand = [v for v in range(n) if radj[v] and d2[0, v] < SUP_MAX * 2]
+            if not cand:
+                lone += 1
+                continue
+            v = min(cand, key=lambda v: d2[0, v])
+            while v != s_:
+                u = int(p2[0, v])
+                e = (min(u, v), max(u, v))
+                if e not in rails:
+                    rails.add(e)
+                    radj[u].append((v, cost[e]))
+                    radj[v].append((u, cost[e]))
+                v = u
+        else:
+            lone += 1
+    print(f"пунктов снабжения без жд (нет реальных линий рядом): {lone}")
     if args.ne_rail:
         # в глуши реальная сеть и так редкая — все её линии (Транссиб, линии от портов
         # вглубь), а не только пути между городами
