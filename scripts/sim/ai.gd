@@ -299,6 +299,10 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var hold_base := nid * prov_count if holdt.size() == nc * prov_count else -1
 	var besieged: PackedByteArray = tb.get("besieged", PackedByteArray())
 	var has_cap := supcap.size() == prov_count
+	# туман войны (World.fog_table): врагов вне видимости не считаем; своя и
+	# союзная земля видна всегда
+	var fog: PackedByteArray = tb.get("fog", PackedByteArray())
+	var fog_base := nid * prov_count if fog.size() == nc * prov_count else -1
 	# снабжение дивизий и климат (акклиматизация страны) — для выбора целей атаки
 	var dv_sup: PackedFloat64Array = tb.get("dv_sup", PackedFloat64Array())
 	var has_sup := dv_sup.size() == dv_owner.size()
@@ -453,7 +457,10 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		for t in targets:
 			var enemy_str := 0.0
 			var pocketed := 0
-			for k in range(pd_start[t], pd_start[t + 1]):
+			var t_end := pd_start[t + 1]
+			if fog_base >= 0 and fog[fog_base + t] == 0 and ctrl[t] != nid and (ctrl[t] < 0 or ally.size() == 0 or ally[nid * nc + ctrl[t]] == 0):
+				t_end = pd_start[t]   # не видно — врагов там не знаем
+			for k in range(pd_start[t], t_end):
 				var e := pd_list[k]
 				var eo := dv_owner[e]
 				if eo != nid and war[nid * nc + eo] == 1:
@@ -685,6 +692,8 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		var threat := 0.0
 		for k in range(a_start[f], a_start[f + 1]):
 			var q := a_list[k]
+			if fog_base >= 0 and fog[fog_base + q] == 0 and ctrl[q] != nid and (ctrl[q] < 0 or ally.size() == 0 or ally[nid * nc + ctrl[q]] == 0):
+				continue   # туман войны
 			for m in range(pd_start[q], pd_start[q + 1]):
 				var eo := dv_owner[pd_list[m]]
 				if eo != nid and (ally.size() == 0 or ally[nid * nc + eo] == 0):
@@ -948,7 +957,7 @@ static func ai_tables(world: World) -> Dictionary:
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
 		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list, "supcap": world.p_supcap,
 		"nohit": no_attack_table(world), "atklim": attack_limit_table(world), "hold": hold_table(world), "dv_sup": world.d_sup, "p_hot": world.p_hot, "p_cold": world.p_cold,
-		"n_hot": world.n_hot, "n_cold": world.n_cold}
+		"n_hot": world.n_hot, "n_cold": world.n_cold, "fog": world.fog_table() if world.fog_ai else PackedByteArray()}
 
 
 ## Провинции, которые ИИ страны не атакует (эффект attack_limit: земли adm0 вне

@@ -71,6 +71,13 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	const PackedByteArray atklim_a = tables.has("atklim") ? PackedByteArray(tables["atklim"]) : PackedByteArray();
 	const int64_t atk_base = atklim_a.size() == int64_t(nc) * int64_t(land_a.size()) ? int64_t(nid) * int64_t(land_a.size()) : -1;
 	const uint8_t *atklim = atklim_a.ptr();
+	// туман войны (World.fog_table): nc×pc, 1 — видно; врагов вне видимости не считаем
+	const PackedByteArray fog_a = tables.has("fog") ? PackedByteArray(tables["fog"]) : PackedByteArray();
+	const int64_t fog_base = fog_a.size() == int64_t(nc) * int64_t(land_a.size()) ? int64_t(nid) * int64_t(land_a.size()) : -1;
+	const uint8_t *fog = fog_a.ptr();
+	auto hidden = [&](int32_t q) {
+		return fog_base >= 0 && fog[fog_base + q] == 0 && ctrl[q] != nid && (ctrl[q] < 0 || !has_ally || ally[int64_t(nid) * nc + ctrl[q]] == 0);
+	};
 	// гарнизоны (Nation.hold): nc×pc — не меньше дивизий на участке фронта
 	const PackedByteArray hold_a = tables.has("hold") ? PackedByteArray(tables["hold"]) : PackedByteArray();
 	const int64_t hold_base = hold_a.size() == int64_t(nc) * int64_t(land_a.size()) ? int64_t(nid) * int64_t(land_a.size()) : -1;
@@ -272,7 +279,8 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		for (int32_t t : targets.order) {
 			double enemy_str = 0.0;
 			int pocketed = 0;
-			for (int32_t k = pd_start[t]; k < pd_start[t + 1]; k++) {
+			const int32_t t_end = hidden(t) ? pd_start[t] : pd_start[t + 1];
+			for (int32_t k = pd_start[t]; k < t_end; k++) {
 				const int32_t e = pd_list[k];
 				const int32_t eo = dv_owner[e];
 				if (eo != nid && war[int64_t(nid) * nc + eo] == 1) {
@@ -529,6 +537,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		double threat = 0.0;
 		for (int32_t k = a_start[f]; k < a_start[f + 1]; k++) {
 			const int32_t q = a_list[k];
+			if (hidden(q)) continue;   // туман войны
 			for (int32_t m = pd_start[q]; m < pd_start[q + 1]; m++) {
 				const int32_t eo = dv_owner[pd_list[m]];
 				if (eo != nid && (!has_ally || ally[int64_t(nid) * nc + eo] == 0))

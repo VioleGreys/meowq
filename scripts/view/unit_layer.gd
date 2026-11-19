@@ -26,6 +26,7 @@ var _ports: Array = []          # отметки портов (кэш, см. _re
 var _ports_key := ""
 var _cities: Array = []         # города (очки ≥ 4): [мировая позиция, имя, очки, провинция], крупные первыми
 var _city_rects: Array = []     # занятые подписями городов прямоугольники (в кадре)
+var fog_on := not "--nofog" in OS.get_cmdline_user_args()   # туман войны (для снимков — `-- --nofog`)
 
 
 
@@ -276,7 +277,7 @@ func build(sel_fleet: int = -1, sel_wing: int = -1) -> Array:
 		_rebuild_labels()
 	for l in _labels:
 		out.append([LABEL, l[0], l[1], l[2], l[3]])
-	_add_cities(out)
+	var city_at := out.size()   # значки городов — под фишками, вставляются после них
 	# Читаем плоские массивы дивизий напрямую (свойства Division — обёртки с
 	# вызовом на каждое чтение; список пересобирается каждый игровой день).
 	var sel := {}
@@ -304,10 +305,27 @@ func build(sel_fleet: int = -1, sel_wing: int = -1) -> Array:
 		nat_cols.append(nn.color)
 		arrow_cols.append(Color(nn.color.darkened(0.5), 0.7))
 	var sc := MapView.SCALE
+	# туман войны (World.fog_table): чужие дивизии — только рядом с нашими и
+	# союзными (FOG_R провинций) или на нашей и союзной земле
+	var fog := PackedByteArray()
+	var fog_base := 0
+	if player >= 0 and fog_on:
+		fog = world.fog_table(PackedInt32Array([player]))
+		fog_base = player * world.prov_count
+	var ctrl := world.p_controller
+	var ally := world.ally
+	var nc := world.nation_count
+	var seen := func(p: int, o: int) -> bool:
+		if fog.is_empty() or o == player or ally[player * nc + o] == 1 or fog[fog_base + p] == 1:
+			return true
+		var c := ctrl[p]
+		return c == player or (c >= 0 and ally[player * nc + c] == 1)
 	# стрелки движения и бои
 	var battle_provs := {}
 	for i in n_div:
 		if a_alive[i] == 0 or a_next[i] < 0 or a_transit[i] > 0:
+			continue
+		if not seen.call(a_prov[i], a_owner[i]):
 			continue
 		var nx := a_next[i]
 		if a_battle[i] != 0:
@@ -364,14 +382,23 @@ func build(sel_fleet: int = -1, sel_wing: int = -1) -> Array:
 	var c_org: PackedFloat64Array = cs[5]
 	var c_sup: PackedFloat64Array = cs[6]
 	var k := 0
+	var prev := -1
+	var troops := {}   # провинция -> есть видимые фишки (значок города — в сторону)
 	for ci in c_prov.size():
 		var p := c_prov[ci]
-		k = k + 1 if ci > 0 and c_prov[ci - 1] == p else 0
 		var o := c_owner[ci]
+		if not seen.call(p, o):
+			continue
+		k = k + 1 if p == prev else 0
+		prev = p
+		troops[p] = true
 		var n := c_n[ci]
 		var m: Array = marks.get(p * 1024 + o, [false, Color(0, 0, 0, 0)])
 		out.append([COUNTER, centers[p] * sc, k, nat_cols[o], n, c_tpl[ci],
 			c_str[ci] / (100.0 * n), c_org[ci] / n, m[0], m[1], c_sup[ci] < 0.3, o == player])
+	var cities: Array = []
+	_add_cities(cities, troops)
+	out = out.slice(0, city_at) + cities + out.slice(city_at)
 	_rebuild_navy_air(out, sel_fleet, sel_wing)
 	return [out, has_battles, fmarks]
 
@@ -540,7 +567,10 @@ func _draw() -> void:
 			BATTLE:
 				pass   # рисует отдельный слой _battles (пульсирует, не трогая фишки)
 			COUNTER:
-				_draw_counter(it, z, counter, font_size, screen)
+				if z < CLUSTER_Z:
+					_cluster_add(it, z)
+				else:
+					_draw_counter(it, z, counter, font_size, screen)
 			PORT:
 				if z < 0.9:
 					continue
@@ -592,12 +622,63 @@ func _draw() -> void:
 				_plane_icon(c, it[2], it[3], it[4])
 				draw_string_outline(font, c + Vector2(14, 5), str(it[5]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, 3, Color.BLACK)
 				draw_string(font, c + Vector2(14, 5), str(it[5]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+	if not _clusters.is_empty():
+		_draw_clusters(z, counter, font_size, screen)
 	for tx in _texts:
 		draw_string(bold, tx[0], tx[1], HORIZONTAL_ALIGNMENT_CENTER, tx[2], tx[3], Color(0.97, 0.95, 0.9))
 	draw_usec = Time.get_ticks_usec() - t0
 	FrameProf.add("фишки", draw_usec)
 	draw_count += 1
 	draw_total_usec += draw_usec
+
+
+## Издали (масштаб < CLUSTER_Z) фишки одной страны в клетке сетки мира (~CLUSTER_PX
+## пикс. экрана; размер клетки — степень двойки, чтобы при плавном масштабе кучки
+## не перестраивались каждый кадр) сливаются в одну: число — сумма дивизий,
+## сила и организация — средние, знак — рода войск большинства, место — среднее.
+const CLUSTER_Z := 0.55
+const CLUSTER_PX := 90.0
+var _clusters := {}   # (клетка, страна) -> [сумма позиций, дивизий, цвет, шаблон->число, сила·n, орг·n, выделена, без снабжения, своя]
+
+
+func _cluster_add(it: Array, z: float) -> void:
+	var cell := pow(2.0, ceil(log(CLUSTER_PX / z) / log(2.0)))
+	var wp: Vector2 = it[1]
+	var key := Vector3i(int(floor(wp.x / cell)), int(floor(wp.y / cell)), it[3].to_rgba32())
+	var n: int = it[4]
+	var c: Array = _clusters.get(key, [])
+	if c.is_empty():
+		c = [Vector2.ZERO, 0, it[3], {}, 0.0, 0.0, false, 0, it[11]]
+		_clusters[key] = c
+	c[0] += wp * float(n)
+	c[1] += n
+	var tp: Dictionary = c[3]
+	tp[it[5]] = int(tp.get(it[5], 0)) + n
+	c[4] += it[6] * n
+	c[5] += it[7] * n
+	c[6] = c[6] or it[8]
+	c[7] += n if it[10] else 0
+
+
+func _draw_clusters(z: float, counter: Vector2, font_size: int, screen: Rect2) -> void:
+	var used := {}   # клетка экрана -> сколько кучек уже стоит (сдвиг вправо, как в стопке)
+	for key in _clusters:
+		var c: Array = _clusters[key]
+		var n: int = c[1]
+		var pos: Vector2 = c[0] / float(n)
+		var tp: Dictionary = c[3]
+		var best := 0
+		var best_n := -1
+		for t in tp:
+			if tp[t] > best_n:
+				best_n = tp[t]
+				best = t
+		var sk := Vector2i((map.world_to_screen(pos) / counter.x).floor())
+		var k: int = used.get(sk, 0)
+		used[sk] = k + 1
+		_draw_counter([COUNTER, pos, k, c[2], n, best, c[4] / n, c[5] / n, c[6], Color(0, 0, 0, 0), c[7] * 2 > n, c[8]],
+			CLUSTER_Z, counter, font_size, screen)
+	_clusters.clear()
 
 
 func _draw_counter(it: Array, z: float, counter: Vector2, font_size: int, screen: Rect2) -> void:
@@ -691,7 +772,7 @@ func _draw_label(l: Array, z: float) -> void:
 ## город (очки 50) — три дома, город (15) — два дома, малые (8, 4) — квадратик.
 ## Чем мельче город, тем ближе масштаб, с которого он виден; подпись — под знаком.
 ## Список городов — один раз; столицы — по странам на каждой сборке.
-func _add_cities(out: Array) -> void:
+func _add_cities(out: Array, troops: Dictionary) -> void:
 	if _cities.is_empty():
 		var re := RegEx.create_from_string("\\s+\\d+$")
 		var order: Array = []
@@ -708,10 +789,10 @@ func _add_cities(out: Array) -> void:
 	# столицы — первыми (подпись столицы не уступает место соседу)
 	for c in _cities:
 		if caps.has(c[3]):
-			out.append([CITY, c[0], c[1], c[2], 3])
+			out.append([CITY, c[0], c[1], c[2], 3, troops.has(c[3])])
 	for c in _cities:
 		if not caps.has(c[3]):
-			out.append([CITY, c[0], c[1], c[2], 2 if c[2] >= 50 else (1 if c[2] >= 15 else 0)])
+			out.append([CITY, c[0], c[1], c[2], 2 if c[2] >= 50 else (1 if c[2] >= 15 else 0), troops.has(c[3])])
 
 
 const CITY_Z := [2.0, 1.25, 0.8, 0.45]   # с какого масштаба виден знак: малый, город, крупный, столица
@@ -729,9 +810,11 @@ func _draw_city(it: Array, z: float, counter: Vector2, screen: Rect2) -> void:
 	if not screen.has_point(base):
 		return
 	var a := clampf((z - z0) * 6.0, 0.0, 1.0)
-	# знак — под фишкой дивизии в центре провинции (фишки рисуются позже, поверх)
-	var c := base + Vector2(0, counter.y * 0.5 + 16)
 	var r: float = [4.0, 8.0, 9.5, 10.5][kind]
+	# знак — в центре провинции; стоят войска (фишка в центре) — слева от фишки
+	var c := base
+	if it[5] and z >= CLUSTER_Z:
+		c = base - Vector2(counter.x * 0.5 + r + 7.0, 0)
 	var nr := Rect2(c - Vector2(r, r), Vector2(r, r) * 2.0)
 	for q: Rect2 in _city_rects:
 		if q.intersects(nr):

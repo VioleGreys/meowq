@@ -1906,6 +1906,85 @@ func k_march() -> Array:
 
 
 ## Снимок для ИИ (dv_*, CSR pd_start/pd_list) прямо из массивов дивизий.
+## Туман войны (решение пользователя, ноябрь 2026): чужие дивизии видны, только
+## если в FOG_R провинциях от них стоят свои или союзные (`ally`) дивизии; своя и
+## союзная земля видна всегда (проверяет читатель по ctrl). nations — для кого
+## считать (пусто — для всех): nc×prov_count, 1 — видно. Только целые числа —
+## одинаково для ядер GDScript и C++ (C++ таблицу лишь читает).
+const FOG_R := 2
+var fog_ai := not "--nofog" in OS.get_cmdline_user_args()   # туман для ИИ (`-- --nofog` — без, для сравнения)
+
+
+func fog_table(nations_for: PackedInt32Array = PackedInt32Array()) -> PackedByteArray:
+	var pc := prov_count
+	var nc := nation_count
+	var by_n: Array = []
+	by_n.resize(nc)
+	for n in nc:
+		by_n[n] = []
+	var stamp := PackedInt32Array()
+	stamp.resize(pc)
+	stamp.fill(-1)
+	for i in d_id.size():
+		if d_alive[i] == 1 and d_transit[i] <= 0:
+			var o := d_owner[i]
+			var pv := d_prov[i]
+			if o >= 0 and o < nc and pv >= 0 and stamp[pv] != o:
+				stamp[pv] = o
+				by_n[o].append(pv)
+	var who: PackedInt32Array = nations_for
+	if who.is_empty():
+		who.resize(nc)
+		for n in nc:
+			who[n] = n
+	var has_ally := ally.size() == nc * nc
+	var need := PackedByteArray()   # чьё видимое нужно: страны из who и их союзники
+	need.resize(nc)
+	for n in who:
+		for m in nc:
+			if m == n or (has_ally and ally[n * nc + m] == 1):
+				need[m] = 1
+	# видимое каждой страной: обход в ширину на FOG_R шагов от её дивизий
+	var seen: Array = []
+	seen.resize(nc)
+	stamp.fill(-1)
+	var depth := PackedInt32Array()
+	depth.resize(pc)
+	for n in nc:
+		var src: Array = by_n[n]
+		var out: Array = []
+		if need[n] == 1 and not src.is_empty():
+			var queue := PackedInt32Array()
+			for pv: int in src:
+				if stamp[pv] != n:
+					stamp[pv] = n
+					depth[pv] = 0
+					queue.append(pv)
+			var head := 0
+			while head < queue.size():
+				var x := queue[head]
+				head += 1
+				out.append(x)
+				if depth[x] >= FOG_R:
+					continue
+				for k in range(adj_start[x], adj_start[x + 1]):
+					var q := adj_list[k]
+					if stamp[q] != n:
+						stamp[q] = n
+						depth[q] = depth[x] + 1
+						queue.append(q)
+		seen[n] = PackedInt32Array(out)
+	var t := PackedByteArray()
+	t.resize(nc * pc)
+	for n in who:
+		var base := n * pc
+		for m in nc:
+			if m == n or (has_ally and ally[n * nc + m] == 1):
+				for pv in seen[m]:
+					t[base + pv] = 1
+	return t
+
+
 func k_snapshot() -> void:
 	dv_id = d_id
 	dv_owner = d_owner
