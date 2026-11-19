@@ -736,13 +736,31 @@ static func trade_zones(world: World, n: int) -> Dictionary:
 	if cached != null and int(cached[0]) > world.day - 30:
 		return cached[1]
 	var res := {}
-	for p in world.prov_count:
-		if world.p_owner[p] == n and world.p_coastal[p] == 1 and world.p_vp[p] >= 3 and world.p_colony[p] == 0:
-			for q in world.p_adj[p]:
-				if world.p_land[q] == 0:
+	# прибрежные города метрополий (берег, очки победы, колонии — постоянны) —
+	# списком один раз на карту; тот же порядок обхода (провинции, соседи)
+	if _tz_of != world.get_instance_id() or _tz_cand.is_empty():
+		var cand := PackedInt32Array()
+		for p in world.prov_count:
+			if world.p_coastal[p] == 1 and world.p_vp[p] >= 3 and world.p_colony[p] == 0:
+				cand.append(p)
+		_tz_cand = cand
+		_tz_of = world.get_instance_id()
+	var own := world.p_owner
+	var land := world.p_land
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	for p in _tz_cand:
+		if own[p] == n:
+			for k in range(a_start[p], a_start[p + 1]):
+				var q := a_list[k]
+				if land[q] == 0:
 					res[q] = true
 	world.trade_cache[n] = [world.day, res]
 	return res
+
+
+static var _tz_of := 0
+static var _tz_cand := PackedInt32Array()
 
 
 static func _build_ships(world: World) -> void:
@@ -1064,25 +1082,36 @@ static func ai_fleets(world: World, n: int) -> void:
 	var en_all := {}
 	var raiders := {}   # свои торговые зоны с рейдерами противника — охота соединениями с ПЛО
 	if not nat.at_war.is_empty():
-		var own_tz := trade_zones(world, n).duplicate()
-		for z in nat.conv_zone_set:
-			own_tz[z] = true   # и на путях своих конвоев
-		for z in world.zone_fleets:
+		var own_tz := trade_zones(world, n)
+		var own_cz := nat.conv_zone_set   # и на путях своих конвоев
+		# флоты зон плоским списком (на день): хозяин и сила в фазе ИИ не меняются,
+		# задача (рейд) — читается сейчас: её меняют решения стран раньше по порядку
+		var ez := _zone_list(world)
+		var zl: PackedInt32Array = ez[0]
+		var zst: PackedInt32Array = ez[1]
+		var fl: Array = ez[2]
+		var fo: PackedInt32Array = ez[3]
+		var fpw: PackedFloat64Array = ez[4]
+		var war := world.war
+		var wb := n * world.nation_count
+		for zi in zl.size():
+			var z := zl[zi]
 			var a := 0.0
 			var b := 0.0
 			var rd := false
-			for o in world.zone_fleets[z]:
-				if world.is_at_war(n, o.owner):
-					b += fleet_power(o)
-					if o.mission != "raid":
-						a += fleet_power(o)
+			for i in range(zst[zi], zst[zi + 1]):
+				var o := fo[i]
+				if o != n and war[wb + o] == 1:
+					b += fpw[i]
+					if fl[i].mission != "raid":
+						a += fpw[i]
 					else:
 						rd = true
 			if b > 0.0:
 				en_all[z] = b
 				if a > 0.0:
 					en_nr[z] = a
-				if rd and own_tz.has(z):
+				if rd and (own_tz.has(z) or own_cz.has(z)):
 					raiders[z] = true
 	var near := {}
 	var paths := {}   # (откуда, куда) -> путь: соединения одной зоны идут вместе
@@ -1169,6 +1198,33 @@ static func ai_fleets(world: World, n: int) -> void:
 				best = f.home
 		if best >= 0 and best != f.zone:
 			f.path = _cached_path(world, paths, f.zone, best)
+
+
+static var _zl_of: Dictionary = {}
+static var _zl: Array = []
+
+
+## Флоты World.zone_fleets плоским списком: [зоны (порядок словаря), начала,
+## флоты, хозяева, сила]. Кэш — к тому же словарю (он новый каждый день).
+static func _zone_list(world: World) -> Array:
+	if is_same(_zl_of, world.zone_fleets) and not _zl.is_empty():
+		return _zl
+	var zl := PackedInt32Array()
+	var zst := PackedInt32Array([0])
+	var fl: Array = []
+	var fo := PackedInt32Array()
+	var fpw := PackedFloat64Array()
+	var zf := world.zone_fleets
+	for z in zf:
+		zl.append(z)
+		for o in zf[z]:
+			fl.append(o)
+			fo.append(o.owner)
+			fpw.append(fleet_power(o))
+		zst.append(fo.size())
+	_zl = [zl, zst, fl, fo, fpw]
+	_zl_of = zf
+	return _zl
 
 
 static func _cached_path(world: World, cache: Dictionary, from: int, to: int) -> PackedInt32Array:

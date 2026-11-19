@@ -30,6 +30,7 @@ const ESCORT_K := 0.7
 const BLOCK_SHARE := 0.3
 const BLOCKADE_LOSS := 0.6
 const SINK := 0.02
+const RES_N := 6             # ресурсов в поставках (World.Nation.res_lost)
 const BUILD_MAX := 3         # конвоев в день, не больше
 const RESERVE := 1.2         # ИИ держит запас сверх нужды
 const RESERVE_MIN := 5.0
@@ -697,128 +698,178 @@ static func _route(bfs: Array, targets: Array) -> PackedInt32Array:
 	return res
 
 
-## Силы бассейна на сегодня (один раз за день на бассейн), по хозяевам флотов
-## (в порядке появления): рейды (с бонусом), охранение (с бонусом) и боевая
-## сила вне порта, есть ли надводный боевой флот вне порта не в рейдах.
-static func _basin_data(world: World, bi: int, memo: Dictionary) -> Array:
-	var bd = memo.get(bi)
-	if bd != null:
-		return bd
-	var idx := {}
-	var ow := PackedInt32Array()
-	var rd := PackedFloat64Array()
-	var es := PackedFloat64Array()
-	var cp := PackedFloat64Array()
-	var surf := PackedByteArray()
-	var zf := world.zone_fleets
-	for j in range(world.bas_zone_start[bi], world.bas_zone_start[bi + 1]):
-		var z := world.bas_zone_list[j]
-		if not zf.has(z):
-			continue
-		var zd := _zone_data(world, z, zf[z], memo)
-		var zo: PackedInt32Array = zd[0]
-		var zm: PackedByteArray = zd[1]
-		var zc: PackedFloat64Array = zd[2]
-		var ze: PackedFloat64Array = zd[3]
-		var zr: PackedFloat64Array = zd[4]
-		for k in zo.size():
-			var o := zo[k]
-			var i: int = idx.get(o, -1)
-			if i < 0:
-				i = ow.size()
-				idx[o] = i
-				ow.append(o)
-				rd.append(0.0)
-				es.append(0.0)
-				cp.append(0.0)
-				surf.append(0)
-			var m := zm[k]
-			if m == 0:
-				continue   # в порту
-			cp[i] += zc[k]
-			es[i] += ze[k]
-			if m == 2:
-				rd[i] += zr[k]
-			elif zc[k] > 0.0:
-				surf[i] = 1
-	bd = [ow, rd, es, cp, surf]
-	memo[bi] = bd
-	return bd
+## Перехват и охранение для пар (страна qn[i], бассейн qb[i]) сегодня:
+## [перехват 0..1, охранение] (PackedFloat32Array — как прежний Vector2).
+## Бассейны делят зоны без пересечений, а потери рейдеров в проходе стран
+## меняют флоты только уже посчитанных бассейнов — поэтому всё сразу, до
+## прохода, даёт то же, что расчёт по мере надобности (до бита).
+## Силы флотов — по зонам (порядок World.zone_fleets), бассейны и опасность —
+## ядро (C++ — MeowqCore.convoy_danger, двойник — _danger_gd).
+static func _danger_all(world: World, qn: PackedInt32Array, qb: PackedInt32Array) -> Array:
+	var t := _danger_t(world, qn, qb)
+	if Native.core != null and Native.core.has_method("convoy_danger"):
+		return Native.core.call("convoy_danger", t)
+	return _danger_gd(t)
 
 
-## Силы флотов зоны на сегодня (зона входит во многие бассейны — один раз):
-## хозяин, задача (0 — порт, 1 — прочее, 2 — рейд), боевая сила, охранение,
-## рейды — те же выражения, что в _basin_data прежде (до бита).
-static func _zone_data(world: World, z: int, fleets: Array, memo: Dictionary) -> Array:
-	var key := -1 - z
-	var zd = memo.get(key)
-	if zd != null:
-		return zd
-	var zo := PackedInt32Array()
-	var zm := PackedByteArray()
-	var zc := PackedFloat64Array()
-	var ze := PackedFloat64Array()
-	var zr := PackedFloat64Array()
-	for f in fleets:
-		if not f.alive:
-			continue
-		var o: int = f.owner
-		zo.append(o)
-		if f.mission == "port":
-			zm.append(0)
-			zc.append(0.0)
-			ze.append(0.0)
-			zr.append(0.0)
-			continue
-		var nat: World.Nation = world.nations[o]
-		zc.append(Forces.combat_power(f))
-		ze.append((f.asw * Forces.NAVY_ESCORT + (f.ships[Forces.SHIP_CR] + f.ships[Forces.SHIP_CV]) * 2.0) * (1.0 + nat.b("escort")))
-		if f.mission == "raid":
-			zm.append(2)
-			zr.append(f.raid * (1.0 + nat.b("sub_raid")))
-		else:
-			zm.append(1)
-			zr.append(0.0)
-	zd = [zo, zm, zc, ze, zr]
-	memo[key] = zd
-	return zd
-
-
-## Перехват в бассейне для страны n сегодня (x, 0..1) и охранение (y — для
-## потерь рейдеров): рейды, охранение и господство — по всем его зонам.
-static func danger(world: World, n: int, bi: int, memo: Dictionary) -> Vector2:
-	var bd := _basin_data(world, bi, memo)
-	var ow: PackedInt32Array = bd[0]
-	if ow.is_empty():
-		return Vector2.ZERO
-	var rd: PackedFloat64Array = bd[1]
-	var es: PackedFloat64Array = bd[2]
-	var cp: PackedFloat64Array = bd[3]
-	var surf: PackedByteArray = bd[4]
+static func _danger_t(world: World, qn: PackedInt32Array, qb: PackedInt32Array) -> Dictionary:
+	var pc := world.prov_count
+	var zs := PackedInt32Array()
+	zs.resize(pc)
+	zs.fill(-1)
+	var zn := PackedInt32Array()
+	zn.resize(pc)
+	var fo := PackedInt32Array()
+	var fm := PackedByteArray()   # 0 — в порту, 1 — прочее, 2 — рейд
+	var fc := PackedFloat64Array()
+	var fe := PackedFloat64Array()
+	var fr := PackedFloat64Array()
+	var nb := world.bas_zone_start.size() - 1
+	var want := PackedByteArray()   # бассейны из запросов — флоты только их зон
+	want.resize(nb)
+	for bi in qb:
+		want[bi] = 1
+	var zb := world.z_basin
 	var nc := world.nation_count
-	var war := world.war
-	var ally := world.ally
-	var raid := 0.0
-	var escort := 0.0
-	var surface := false
-	var mine := 0.0    # господство — как Forces.supremacy (флоты вне порта)
-	var enemy := 0.0
-	for i in ow.size():
-		var o := ow[i]
-		if war[n * nc + o] == 1:
-			raid += rd[i]
-			enemy += cp[i]
-			if surf[i] == 1:
-				surface = true
-		elif o == n or ally[n * nc + o] == 1:
-			escort += es[i]
-			mine += cp[i]
-	var ic := clampf((raid - escort * ESCORT_K) * INTERCEPT, 0.0, INTERCEPT_MAX)
-	if surface:
-		var sup := 0.5 if mine + enemy <= 0.0 else mine / (mine + enemy)
-		if sup < BLOCK_SHARE:
-			ic = maxf(ic, BLOCKADE_LOSS)
-	return Vector2(ic, escort)
+	var b_done := PackedByteArray()   # бонусы охранения и рейдов страны — один раз
+	b_done.resize(nc)
+	var b_esc := PackedFloat64Array()
+	b_esc.resize(nc)
+	var b_raid := PackedFloat64Array()
+	b_raid.resize(nc)
+	var zf := world.zone_fleets
+	for z in zf:
+		var bz := zb[z]
+		if bz < 0 or want[bz] == 0:
+			continue
+		var z0 := fo.size()
+		zs[z] = z0
+		for f in zf[z]:
+			if not f.alive:
+				continue
+			var o: int = f.owner
+			fo.append(o)
+			if f.mission == "port":
+				fm.append(0)
+				fc.append(0.0)
+				fe.append(0.0)
+				fr.append(0.0)
+				continue
+			if b_done[o] == 0:
+				var nat: World.Nation = world.nations[o]
+				b_done[o] = 1
+				b_esc[o] = 1.0 + nat.b("escort")
+				b_raid[o] = 1.0 + nat.b("sub_raid")
+			fc.append(Forces.combat_power(f))
+			fe.append((f.asw * Forces.NAVY_ESCORT + (f.ships[Forces.SHIP_CR] + f.ships[Forces.SHIP_CV]) * 2.0) * b_esc[o])
+			if f.mission == "raid":
+				fm.append(2)
+				fr.append(f.raid * b_raid[o])
+			else:
+				fm.append(1)
+				fr.append(0.0)
+		zn[z] = fo.size() - z0
+	var t := {"nc": nc, "nb": nb, "war": world.war, "ally": world.ally,
+		"bas_start": world.bas_zone_start, "bas_list": world.bas_zone_list, "zs": zs, "zn": zn,
+		"f_owner": fo, "f_mode": fm, "f_cp": fc, "f_es": fe, "f_rd": fr, "qn": qn, "qb": qb,
+		"k": PackedFloat64Array([ESCORT_K, INTERCEPT, INTERCEPT_MAX, BLOCK_SHARE, BLOCKADE_LOSS])}
+	return t
+
+
+## Двойник MeowqCore.convoy_danger: силы бассейна по хозяевам флотов (в порядке
+## появления; флоты в порту — только хозяин) — рейды, охранение, боевая сила,
+## есть ли надводный боевой флот не в рейдах; затем для страны — перехват
+## (рейды против охранения, блокада при слабом господстве) и охранение.
+static func _danger_gd(t: Dictionary) -> Array:
+	var nc: int = t["nc"]
+	var nb: int = t["nb"]
+	var war: PackedByteArray = t["war"]
+	var ally: PackedByteArray = t["ally"]
+	var bs: PackedInt32Array = t["bas_start"]
+	var bl: PackedInt32Array = t["bas_list"]
+	var zs: PackedInt32Array = t["zs"]
+	var zn: PackedInt32Array = t["zn"]
+	var fo: PackedInt32Array = t["f_owner"]
+	var fm: PackedByteArray = t["f_mode"]
+	var fc: PackedFloat64Array = t["f_cp"]
+	var fe: PackedFloat64Array = t["f_es"]
+	var fr: PackedFloat64Array = t["f_rd"]
+	var qn: PackedInt32Array = t["qn"]
+	var qb: PackedInt32Array = t["qb"]
+	var k: PackedFloat64Array = t["k"]
+	var memo: Array = []
+	memo.resize(nb)
+	var out_ic := PackedFloat32Array()
+	out_ic.resize(qn.size())
+	var out_es := PackedFloat32Array()
+	out_es.resize(qn.size())
+	for q in qn.size():
+		var n := qn[q]
+		var bi := qb[q]
+		if memo[bi] == null:
+			var idx := {}
+			var ow := PackedInt32Array()
+			var rd := PackedFloat64Array()
+			var es := PackedFloat64Array()
+			var cp := PackedFloat64Array()
+			var surf := PackedByteArray()
+			for j in range(bs[bi], bs[bi + 1]):
+				var z := bl[j]
+				var z0 := zs[z]
+				if z0 < 0:
+					continue
+				for x in range(z0, z0 + zn[z]):
+					var o := fo[x]
+					var i: int = idx.get(o, -1)
+					if i < 0:
+						i = ow.size()
+						idx[o] = i
+						ow.append(o)
+						rd.append(0.0)
+						es.append(0.0)
+						cp.append(0.0)
+						surf.append(0)
+					var m := fm[x]
+					if m == 0:
+						continue
+					cp[i] += fc[x]
+					es[i] += fe[x]
+					if m == 2:
+						rd[i] += fr[x]
+					elif fc[x] > 0.0:
+						surf[i] = 1
+			memo[bi] = [ow, rd, es, cp, surf]
+		var bd: Array = memo[bi]
+		var ow: PackedInt32Array = bd[0]
+		if ow.is_empty():
+			continue
+		var rd: PackedFloat64Array = bd[1]
+		var es: PackedFloat64Array = bd[2]
+		var cp: PackedFloat64Array = bd[3]
+		var surf: PackedByteArray = bd[4]
+		var raid := 0.0
+		var escort := 0.0
+		var surface := false
+		var mine := 0.0    # господство — как Forces.supremacy (флоты вне порта)
+		var enemy := 0.0
+		for i in ow.size():
+			var o := ow[i]
+			if war[n * nc + o] == 1:
+				raid += rd[i]
+				enemy += cp[i]
+				if surf[i] == 1:
+					surface = true
+			elif o == n or ally[n * nc + o] == 1:
+				escort += es[i]
+				mine += cp[i]
+		var ic := clampf((raid - escort * k[0]) * k[1], 0.0, k[2])
+		if surface:
+			var sup := 0.5 if mine + enemy <= 0.0 else mine / (mine + enemy)
+			if sup < k[3]:
+				ic = maxf(ic, k[4])
+		out_ic[q] = ic
+		out_es[q] = escort
+	return [out_ic, out_es]
 
 
 ## День (фаза флота, вместо прежнего штрафа выпуска): нужда, перехват на
@@ -837,10 +888,41 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 	_t0 = Time.get_ticks_usec()
 	var month_start := world.day > 0 and world.month_of(world.day) != world.month_of(world.day - 1)
 	var by_b: Array = []   # поставки покупателя по продавцам — только когда нужно
-	var memo := {}         # флоты зон на сегодня
 	var esc := {}          # (зона, страна) опасной зоны -> охранение
 	var changed := false
+	# опасность на путях воюющих стран — все пары (страна, бассейн) сразу
+	var _td := Time.get_ticks_usec()
+	var qn := PackedInt32Array()
+	var qb := PackedInt32Array()
 	for nat: World.Nation in world.nations:
+		if nat.alive and not nat.conv_routes.is_empty() and not nat.at_war.is_empty():
+			for bi in nat.conv_basins:
+				qn.append(nat.id)
+				qb.append(int(bi))
+	var d_ic := PackedFloat32Array()
+	var d_es := PackedFloat32Array()
+	if not qn.is_empty():
+		var dr := _danger_all(world, qn, qb)
+		d_ic = dr[0]
+		d_es = dr[1]
+	var q := 0
+	Prof.add("кв:опасность", _td)
+	# подготовка по странам: опасные бассейны, обеспеченность; путь — ядро
+	# (0 — без путей, 1 — всё доходит, 2 — потери: торговля и порты по путям)
+	var mode := PackedByteArray()
+	mode.resize(nc)
+	var s_fill := PackedFloat64Array()
+	s_fill.resize(nc)
+	var t_fill := PackedFloat64Array()
+	t_fill.resize(nc)
+	var s_need := PackedFloat64Array()
+	s_need.resize(nc)
+	var q_ns := PackedInt32Array()
+	q_ns.resize(nc + 1)
+	var need_units := false
+	for nat: World.Nation in world.nations:
+		var n := nat.id
+		q_ns[n] = q
 		if month_start:
 			nat.conv_sunk_last = nat.conv_sunk_month
 			nat.conv_sunk_month = 0.0
@@ -854,76 +936,83 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 			nat.conv_trade = 1.0
 			nat.conv_sup = 1.0
 			continue
-		var n := nat.id
 		var have := maxf(0.0, nat.convoys)
 		var sup_need := nat.conv_sup_need
 		var sup_fill := 1.0 if sup_need <= 0.0 else minf(1.0, have / sup_need)
 		var left := maxf(0.0, have - sup_need - nat.conv_eq_use)   # снабжение, снаряжение складам (Depots), остаток — торговля
 		var trade_fill := 1.0 if nat.conv_trade_need <= 0.0 else minf(1.0, left / nat.conv_trade_need)
 		nat.conv_sup = sup_fill
-		var war := not nat.at_war.is_empty()
-		if war:
-			var _td := Time.get_ticks_usec()
+		if not nat.at_war.is_empty():
 			for bi in nat.conv_basins:
-				var dz := danger(world, n, bi, memo)
-				if dz.x > 0.0:
-					nat.conv_danger[bi] = dz.x
-					esc[bi * nc + n] = dz.y
-			Prof.add("кв:опасность", _td)
-		var calm := nat.conv_danger.is_empty()
-		if calm and trade_fill >= 1.0:
+				var dx := d_ic[q]
+				if dx > 0.0:
+					nat.conv_danger[bi] = dx
+					esc[bi * nc + n] = d_es[q]
+				q += 1
+		s_fill[n] = sup_fill
+		t_fill[n] = trade_fill
+		s_need[n] = sup_need
+		if nat.conv_danger.is_empty() and trade_fill >= 1.0:
 			# всё доходит: потерь нет, порты — по обеспеченности снабжения
 			if had_lost:
 				nat.res_lost.fill(0.0)
 				changed = true
 			nat.trade_penalty = 0.0
 			nat.conv_trade = 1.0
-			for rt in nat.conv_routes:
-				if int(rt[0]) == 1:
-					var pp := int(rt[1])
-					var cut := (rt[2] as PackedInt32Array).is_empty()
-					world.p_conv[pp] = 0.0 if cut else sup_fill
-					nat.conv_safe[pp] = 0.0 if cut else 1.0
+			mode[n] = 1
+		else:
+			mode[n] = 2
+			need_units = true
+	q_ns[nc] = q
+	var rf := _routes_flat(world)
+	var r_ns: PackedInt32Array = rf[0]
+	var r_kind: PackedByteArray = rf[1]
+	var r_key: PackedInt32Array = rf[2]
+	var units := PackedFloat32Array()   # по путям торговли: 6 ресурсов (поставки продавца)
+	var u_has := PackedByteArray()
+	if need_units:
+		by_b = _units_by_buyer(world)
+		var uf := _units_flat(world, by_b, rf)
+		units = uf[0]
+		u_has = uf[1]
+	var t := {"nc": nc, "mode": mode, "s_fill": s_fill, "t_fill": t_fill, "s_need": s_need,
+		"q_ns": q_ns, "qb": qb, "d_ic": d_ic, "nb": world.bas_zone_start.size() - 1,
+		"r_ns": r_ns, "r_kind": r_kind, "r_key": r_key, "r_need": rf[3], "r_zs": rf[4], "r_z": rf[5],
+		"units": units, "u_has": u_has, "vp": world.vp_ai(), "p_conv": world.p_conv, "sink": SINK}
+	var res: Array
+	if Native.core != null and Native.core.has_method("convoy_day"):
+		res = Native.core.call("convoy_day", t)
+		if not kernel_check.is_empty():
+			# сверка ядра с двойником (tests/kernel_check.gd): [проверок, расхождений]
+			kernel_check[0] += 1
+			if var_to_bytes(res) != var_to_bytes(_day_gd(t)):
+				kernel_check[1] += 1
+	else:
+		res = _day_gd(t)
+	world.p_conv = res[0]
+	var r_safe: PackedFloat64Array = res[1]
+	var o_lost: PackedFloat32Array = res[2]
+	var o_trade: PackedFloat64Array = res[3]
+	var o_sunk: PackedFloat64Array = res[4]
+	for nat: World.Nation in world.nations:
+		var n := nat.id
+		var m := mode[n]
+		if m == 0:
 			continue
-		if by_b.is_empty():
-			by_b = _units_by_buyer(world)
-		var old_lost := nat.res_lost.duplicate()
-		nat.res_lost.fill(0.0)
-		# заморские порты: вес по величине — доля конвоев снабжения на путь
-		var wsum := 0.0
-		for rt in nat.conv_routes:
-			if int(rt[0]) == 1:
-				wsum += 1.0 + float(world.vp_ai()[int(rt[1])])
-		var sunk := 0.0
-		var sea_total := 0.0
-		var lost_total := 0.0
-		var contracts: Dictionary = by_b[n] if by_b[n] != null else {}
-		for rt in nat.conv_routes:
-			var route: PackedInt32Array = rt[2]
-			var safe := 1.0
-			if not calm:
-				for z in route:
-					safe *= 1.0 - float(nat.conv_danger.get(z, 0.0))
-			if int(rt[0]) == 0:
-				var units: PackedFloat32Array = contracts.get(int(rt[1]), PackedFloat32Array())
-				var got := trade_fill * safe
-				for r in units.size():
-					nat.res_lost[r] += units[r] * (1.0 - got)
-					sea_total += units[r]
-					lost_total += units[r] * (1.0 - got)
-				sunk += float(rt[3]) * trade_fill * (1.0 - safe) * SINK
-			else:
-				var p: int = rt[1]
-				if route.is_empty():
-					world.p_conv[p] = 0.0
-					nat.conv_safe[p] = 0.0
-					continue
-				world.p_conv[p] = sup_fill * safe
-				nat.conv_safe[p] = safe
-				var share := (1.0 + float(world.vp_ai()[p])) / maxf(1.0, wsum)
-				sunk += sup_need * share * sup_fill * (1.0 - safe) * SINK
-		nat.conv_trade = 1.0 if sea_total <= 0.0 else 1.0 - lost_total / sea_total
+		for i in range(r_ns[n], r_ns[n + 1]):
+			if r_kind[i] == 1:
+				nat.conv_safe[r_key[i]] = r_safe[i]
+		if m == 1:
+			continue
+		var rl := nat.res_lost
+		for r in RES_N:
+			var v := o_lost[n * RES_N + r]
+			if rl[r] != v:
+				rl[r] = v
+				changed = true
+		nat.conv_trade = o_trade[n]
 		nat.trade_penalty = 1.0 - nat.conv_trade
+		var sunk := o_sunk[n]
 		if sunk > 0.0:
 			nat.convoys = maxf(0.0, nat.convoys - sunk)
 			nat.conv_sunk += sunk
@@ -940,8 +1029,6 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 						raiders.append(f)
 			if not raiders.is_empty():
 				Forces._take_losses(world, raiders, e * 0.01 * rng.randf_range(0.5, 1.5), rng, 1)
-		if old_lost != nat.res_lost:
-			changed = true
 	Prof.add("кв:страны", _t0)
 	_t0 = Time.get_ticks_usec()
 	# порты, что больше не заморские (захвачены, путь пропал), — без ограничения
@@ -964,14 +1051,187 @@ static func daily(world: World, rng: RandomNumberGenerator) -> void:
 	Prof.add("кв:fill", _t0)
 
 
+# сверка convoy_day с двойником (tests/kernel_check.gd задаёт [0, 0])
+static var kernel_check: Array = []
+# пути конвоев стран плоскими массивами: кэш, пока у всех стран те же массивы путей
+static var _rf: Array = []
+static var _rf_refs: Array = []
+# поставки по путям торговли: кэш к тем же путям и тому же World.conv_units
+static var _uf: Array = []
+static var _uf_rf: Array = []
+static var _uf_by: Array = []
+
+
+## Пути стран (nat.conv_routes; меняются только при обходе — новым массивом):
+## [начала путей стран (nc + 1), вид, ключ (продавец / порт), нужно конвоев,
+## начала бассейнов путей, бассейны].
+static func _routes_flat(world: World) -> Array:
+	var ok := _rf_refs.size() == world.nations.size()
+	if ok:
+		for nat: World.Nation in world.nations:
+			if not is_same(_rf_refs[nat.id], nat.conv_routes):
+				ok = false
+				break
+	if ok:
+		return _rf
+	var nc := world.nation_count
+	var r_ns := PackedInt32Array()
+	r_ns.resize(nc + 1)
+	var r_kind := PackedByteArray()
+	var r_key := PackedInt32Array()
+	var r_need := PackedFloat64Array()
+	var r_zs := PackedInt32Array([0])
+	var r_z := PackedInt32Array()
+	var refs: Array = []
+	refs.resize(world.nations.size())
+	for nat: World.Nation in world.nations:
+		r_ns[nat.id] = r_key.size()
+		refs[nat.id] = nat.conv_routes
+		for rt in nat.conv_routes:
+			r_kind.append(int(rt[0]))
+			r_key.append(int(rt[1]))
+			r_need.append(float(rt[3]))
+			r_z.append_array(rt[2])
+			r_zs.append(r_z.size())
+	r_ns[nc] = r_key.size()
+	_rf = [r_ns, r_kind, r_key, r_need, r_zs, r_z]
+	_rf_refs = refs
+	return _rf
+
+
+## Поставки покупателя по путям торговли (по RES_N на путь; нет договора — 0).
+static func _units_flat(world: World, by_b: Array, rf: Array) -> Array:
+	if is_same(_uf_rf, rf) and is_same(_uf_by, by_b):
+		return _uf
+
+	var r_ns: PackedInt32Array = rf[0]
+	var r_kind: PackedByteArray = rf[1]
+	var r_key: PackedInt32Array = rf[2]
+	var nr := r_key.size()
+	var units := PackedFloat32Array()
+	units.resize(nr * RES_N)
+	var u_has := PackedByteArray()
+	u_has.resize(nr)
+	for n in world.nation_count:
+		if by_b[n] == null:
+			continue
+		var contracts: Dictionary = by_b[n]
+		for i in range(r_ns[n], r_ns[n + 1]):
+			if r_kind[i] != 0 or not contracts.has(r_key[i]):
+				continue
+			var u: PackedFloat32Array = contracts[r_key[i]]
+			u_has[i] = 1
+			for r in mini(RES_N, u.size()):
+				units[i * RES_N + r] = u[r]
+	_uf = [units, u_has]
+	_uf_rf = rf
+	_uf_by = by_b
+	return _uf
+
+
+## Двойник MeowqCore.convoy_day: пути стран за день. Всё доходит (вид 1) — порты
+## по обеспеченности снабжения; с потерями (вид 2) — доля, что доходит по пути
+## (перехват по опасным бассейнам), недошедший импорт, потопленные конвои
+## (торговля и снабжение заморских портов по их величине).
+## → [подача портов, доля пути (порты), недошедшее (nc × RES_N), доля импорта, потоплено].
+static func _day_gd(t: Dictionary) -> Array:
+	var nc: int = t["nc"]
+	var nb: int = t["nb"]
+	var mode: PackedByteArray = t["mode"]
+	var s_fill: PackedFloat64Array = t["s_fill"]
+	var t_fill: PackedFloat64Array = t["t_fill"]
+	var s_need: PackedFloat64Array = t["s_need"]
+	var q_ns: PackedInt32Array = t["q_ns"]
+	var qb: PackedInt32Array = t["qb"]
+	var d_ic: PackedFloat32Array = t["d_ic"]
+	var r_ns: PackedInt32Array = t["r_ns"]
+	var r_kind: PackedByteArray = t["r_kind"]
+	var r_key: PackedInt32Array = t["r_key"]
+	var r_need: PackedFloat64Array = t["r_need"]
+	var r_zs: PackedInt32Array = t["r_zs"]
+	var r_z: PackedInt32Array = t["r_z"]
+	var units: PackedFloat32Array = t["units"]
+	var u_has: PackedByteArray = t["u_has"]
+	var vp: PackedInt32Array = t["vp"]
+	var pconv: PackedFloat32Array = (t["p_conv"] as PackedFloat32Array).duplicate()
+	var sink: float = t["sink"]
+	var r_safe := PackedFloat64Array()
+	r_safe.resize(r_key.size())
+	var o_lost := PackedFloat32Array()
+	o_lost.resize(nc * RES_N)
+	var o_trade := PackedFloat64Array()
+	o_trade.resize(nc)
+	var o_sunk := PackedFloat64Array()
+	o_sunk.resize(nc)
+	var dz := PackedFloat64Array()   # перехват по бассейнам у текущей страны
+	dz.resize(nb)
+	for n in nc:
+		var m := mode[n]
+		if m == 0:
+			continue
+		var sup_fill := s_fill[n]
+		if m == 1:
+			for i in range(r_ns[n], r_ns[n + 1]):
+				if r_kind[i] == 1:
+					var cut := r_zs[i + 1] == r_zs[i]
+					pconv[r_key[i]] = 0.0 if cut else sup_fill
+					r_safe[i] = 0.0 if cut else 1.0
+			continue
+		var calm := true
+		for q in range(q_ns[n], q_ns[n + 1]):
+			var dx := d_ic[q]
+			if dx > 0.0:
+				dz[qb[q]] = dx
+				calm = false
+		var trade_fill := t_fill[n]
+		var sup_need := s_need[n]
+		var wsum := 0.0
+		for i in range(r_ns[n], r_ns[n + 1]):
+			if r_kind[i] == 1:
+				wsum += 1.0 + float(vp[r_key[i]])
+		var sunk := 0.0
+		var sea_total := 0.0
+		var lost_total := 0.0
+		var lb := n * RES_N
+		for i in range(r_ns[n], r_ns[n + 1]):
+			var safe := 1.0
+			if not calm:
+				for j in range(r_zs[i], r_zs[i + 1]):
+					safe *= 1.0 - dz[r_z[j]]
+			if r_kind[i] == 0:
+				var got := trade_fill * safe
+				if u_has[i] == 1:
+					for r in RES_N:
+						var u := units[i * RES_N + r]
+						o_lost[lb + r] += u * (1.0 - got)
+						sea_total += u
+						lost_total += u * (1.0 - got)
+				sunk += r_need[i] * trade_fill * (1.0 - safe) * sink
+			else:
+				var p := r_key[i]
+				if r_zs[i + 1] == r_zs[i]:
+					pconv[p] = 0.0
+					r_safe[i] = 0.0
+					continue
+				pconv[p] = sup_fill * safe
+				r_safe[i] = safe
+				var share := (1.0 + float(vp[p])) / maxf(1.0, wsum)
+				sunk += sup_need * share * sup_fill * (1.0 - safe) * sink
+		o_trade[n] = 1.0 if sea_total <= 0.0 else 1.0 - lost_total / sea_total
+		o_sunk[n] = sunk
+		for q in range(q_ns[n], q_ns[n + 1]):
+			dz[qb[q]] = 0.0
+	return [pconv, r_safe, o_lost, o_trade, o_sunk]
+
+
 ## Поставки по покупателю: продавец -> единиц по ресурсам. Кэш в мире,
 ## пересборка — когда меняются договоры (подпись: число и взвешенная сумма).
 static func _units_by_buyer(world: World) -> Array:
-	var sig := float(world.contracts.size())
-	var k := 0
-	for c in world.contracts:
-		k += 1
-		sig += float(c[3]) * float(k) + float(int(c[0]) * 7919 + int(c[1]) * 31 + int(c[2])) * 1.0e-3 * float(k)
+	var sig: float
+	if Native.core != null and Native.core.has_method("contracts_sig"):
+		sig = Native.core.call("contracts_sig", world.contracts)   # C++ — MeowqCore.contracts_sig
+	else:
+		sig = contracts_sig_gd(world.contracts)
 	if world.conv_units_sig == sig and world.conv_units.size() == world.nation_count:
 		return world.conv_units
 	var by_b: Array = []
@@ -990,6 +1250,16 @@ static func _units_by_buyer(world: World) -> Array:
 	world.conv_units = by_b
 	world.conv_units_sig = sig
 	return by_b
+
+
+## Подпись договоров (двойник MeowqCore.contracts_sig): число и взвешенная сумма.
+static func contracts_sig_gd(contracts: Array) -> float:
+	var sig := float(contracts.size())
+	var k := 0
+	for c in contracts:
+		k += 1
+		sig += float(c[3]) * float(k) + float(int(c[0]) * 7919 + int(c[1]) * 31 + int(c[2])) * 1.0e-3 * float(k)
+	return sig
 
 
 ## Дивизии за морем (вне земли метрополии) → нужда в конвоях снабжения.

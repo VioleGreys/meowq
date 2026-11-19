@@ -674,3 +674,348 @@ Array MeowqCore::conv_routes(const Dictionary &t) const {
 	r.push_back(r_list);
 	return r;
 }
+
+
+// Опасность на путях конвоев (Convoys._danger_all, двойник _danger_gd): силы
+// бассейна по хозяевам флотов в порядке появления (флот в порту — только
+// хозяин), затем для пары (страна, бассейн) — перехват и охранение. Операция в
+// операцию как в GDScript (double), итог — в float32 (как прежний Vector2).
+// → [перехват, охранение] по парам.
+Array MeowqCore::convoy_danger(const Dictionary &t) const {
+	const int nc = int(t["nc"]), nb = int(t["nb"]);
+	const PackedByteArray war_a = t["war"], ally_a = t["ally"], fm_a = t["f_mode"];
+	const PackedInt32Array bs_a = t["bas_start"], bl_a = t["bas_list"], zs_a = t["zs"], zn_a = t["zn"];
+	const PackedInt32Array fo_a = t["f_owner"], qn_a = t["qn"], qb_a = t["qb"];
+	const PackedFloat64Array fc_a = t["f_cp"], fe_a = t["f_es"], fr_a = t["f_rd"], k_a = t["k"];
+	const uint8_t *war = war_a.ptr(), *ally = ally_a.ptr(), *fm = fm_a.ptr();
+	const int32_t *bs = bs_a.ptr(), *bl = bl_a.ptr(), *zs = zs_a.ptr(), *zn = zn_a.ptr();
+	const int32_t *fo = fo_a.ptr(), *qn = qn_a.ptr(), *qb = qb_a.ptr();
+	const double *fc = fc_a.ptr(), *fe = fe_a.ptr(), *fr = fr_a.ptr(), *k = k_a.ptr();
+	const int nq = int(qn_a.size());
+	PackedFloat32Array out_ic, out_es;
+	out_ic.resize(nq);
+	out_es.resize(nq);
+	float *oic = out_ic.ptrw(), *oes = out_es.ptrw();
+	for (int q = 0; q < nq; q++) {
+		oic[q] = 0.0f;
+		oes[q] = 0.0f;
+	}
+	// бассейн → [начало, число] в общих списках хозяев
+	std::vector<int32_t> b_off(size_t(nb), -1), b_cnt(size_t(nb), 0);
+	std::vector<int32_t> ow;
+	std::vector<double> rd, es, cp;
+	std::vector<uint8_t> surf;
+	std::vector<int32_t> pos(size_t(nc), -1);
+	for (int q = 0; q < nq; q++) {
+		const int n = qn[q], bi = qb[q];
+		if (b_off[bi] < 0) {
+			const int32_t base = int32_t(ow.size());
+			b_off[bi] = base;
+			for (int32_t j = bs[bi]; j < bs[bi + 1]; j++) {
+				const int32_t z = bl[j];
+				const int32_t z0 = zs[z];
+				if (z0 < 0) continue;
+				for (int32_t x = z0; x < z0 + zn[z]; x++) {
+					const int32_t o = fo[x];
+					int32_t i = pos[o];
+					if (i < 0) {
+						i = int32_t(ow.size());
+						pos[o] = i;
+						ow.push_back(o);
+						rd.push_back(0.0);
+						es.push_back(0.0);
+						cp.push_back(0.0);
+						surf.push_back(0);
+					}
+					const uint8_t m = fm[x];
+					if (m == 0) continue;
+					cp[i] += fc[x];
+					es[i] += fe[x];
+					if (m == 2) rd[i] += fr[x];
+					else if (fc[x] > 0.0) surf[i] = 1;
+				}
+			}
+			b_cnt[bi] = int32_t(ow.size()) - base;
+			for (int32_t i = base; i < int32_t(ow.size()); i++) pos[ow[i]] = -1;
+		}
+		const int32_t base = b_off[bi], cnt = b_cnt[bi];
+		if (cnt == 0) continue;
+		double raid = 0.0, escort = 0.0, mine = 0.0, enemy = 0.0;
+		bool surface = false;
+		for (int32_t i = base; i < base + cnt; i++) {
+			const int32_t o = ow[i];
+			if (war[int64_t(n) * nc + o] == 1) {
+				raid += rd[i];
+				enemy += cp[i];
+				if (surf[i] == 1) surface = true;
+			} else if (o == n || ally[int64_t(n) * nc + o] == 1) {
+				escort += es[i];
+				mine += cp[i];
+			}
+		}
+		double ic = (raid - escort * k[0]) * k[1];
+		ic = ic < 0.0 ? 0.0 : (ic > k[2] ? k[2] : ic);
+		if (surface) {
+			const double sup = mine + enemy <= 0.0 ? 0.5 : mine / (mine + enemy);
+			if (sup < k[3]) ic = ic > k[4] ? ic : k[4];
+		}
+		oic[q] = float(ic);
+		oes[q] = float(escort);
+	}
+	Array r;
+	r.push_back(out_ic);
+	r.push_back(out_es);
+	return r;
+}
+
+
+// Разбор пунктов снабжения за день (Depots._scan, двойник _scan_gd): связь
+// пунктов со столицей и отрезанные (веса стран по очкам победы, столица — × cap_w),
+// дивизии за морем по участкам (в порядке появления), группы пунктов за морем
+// по (страна, участок) по возрастанию, у группы — главный порт (лучшая доля
+// пути конвоев, при равенстве — первый), дивизий и подвоз (наибольшая подача
+// портов с путём). → [связь, отрезанные, веса, начала групп стран, участок,
+// начала пунктов, пункты, главный, дивизий, подвоз, ключи участков с
+// дивизиями, их число].
+Array MeowqCore::depots_scan(const Dictionary &t) const {
+	const int nc = int(t["nc"]), pc = int(t["pc"]);
+	const double cap_w = double(t["cap_w"]);
+	const PackedInt32Array ctrl_a = t["ctrl"], comp_a = t["comp"], dl_a = t["dlist"], home_a = t["home"], capn_a = t["capn"];
+	const PackedInt32Array vp_a = t["vp"], lp_a = t["lp"], sl_a = t["slots"], dp_a = t["dprov"], dow_a = t["downer"];
+	const PackedFloat64Array cs_a = t["cs"];
+	const PackedFloat32Array pcv_a = t["pconv"];
+	const int32_t *ctrl = ctrl_a.ptr(), *comp = comp_a.ptr(), *dl = dl_a.ptr(), *home = home_a.ptr(), *capn = capn_a.ptr();
+	const int32_t *vp = vp_a.ptr(), *lp = lp_a.ptr(), *sl = sl_a.ptr(), *dp = dp_a.ptr(), *dow = dow_a.ptr();
+	const double *cs = cs_a.ptr();
+	const float *pcv = pcv_a.ptr();
+	const bool has_comp = comp_a.size() == pc, has_conv = pcv_a.size() == pc;
+	const int nd = int(dl_a.size());
+	PackedInt32Array ln, cut;
+	ln.resize(pc);
+	int32_t *lnp = ln.ptrw();
+	for (int p = 0; p < pc; p++) lnp[p] = -1;
+	PackedFloat64Array weight;
+	weight.resize(nc);
+	double *wt = weight.ptrw();
+	for (int c = 0; c < nc; c++) wt[c] = 0.0;
+	for (int i = 0; i < nd; i++) {
+		const int32_t p = dl[i], c = ctrl[p];
+		if (c < 0) continue;
+		const double w = double(vp[p] > 1 ? vp[p] : 1) * (capn[c] == p ? cap_w : 1.0);
+		if (has_comp && (home[c] < 0 || comp[p] != home[c])) {
+			if (lp[p] == c) {
+				cut.push_back(p);
+				wt[c] += w;
+			}
+		} else {
+			lnp[p] = c;
+			wt[c] += w;
+		}
+	}
+	// дивизии за морем: ключ «страна * pc + участок» → число (порядок появления)
+	std::unordered_map<int64_t, int32_t> dv_idx;
+	std::vector<int64_t> dv_keys;
+	std::vector<int32_t> dv_cnt;
+	const int ns = int(sl_a.size());
+	for (int i = 0; i < ns; i++) {
+		const int32_t s = sl[i];
+		const int32_t cpv = comp[dp[s]];
+		if (cpv < 0) continue;
+		const int64_t key = int64_t(dow[s]) * pc + cpv;
+		auto it = dv_idx.find(key);
+		if (it == dv_idx.end()) {
+			dv_idx.emplace(key, int32_t(dv_keys.size()));
+			dv_keys.push_back(key);
+			dv_cnt.push_back(1);
+		} else {
+			dv_cnt[it->second]++;
+		}
+	}
+	// пункты за морем: (ключ, порядок в списке) — устойчиво по ключу
+	std::vector<std::pair<int64_t, int32_t>> gp;
+	for (int i = 0; i < nd; i++) {
+		const int32_t p = dl[i], c = ctrl[p];
+		if (c < 0 || comp[p] < 0 || comp[p] == home[c]) continue;
+		gp.emplace_back(int64_t(c) * pc + comp[p], p);
+	}
+	std::stable_sort(gp.begin(), gp.end(), [](const std::pair<int64_t, int32_t> &a, const std::pair<int64_t, int32_t> &b) {
+		return a.first < b.first;
+	});
+	PackedInt32Array g_ns, g_comp, g_start, g_pts, g_best, g_dv;
+	PackedFloat64Array g_f;
+	g_ns.resize(nc + 1);
+	int32_t *gns = g_ns.ptrw();
+	g_start.push_back(0);
+	int cn = 0;
+	size_t i = 0;
+	while (i < gp.size()) {
+		const int64_t key = gp[i].first;
+		const int c = int(key / pc);
+		while (cn <= c) gns[cn++] = int32_t(g_comp.size());
+		g_comp.push_back(int32_t(key % pc));
+		int32_t best = gp[i].second;
+		double bs = -1.0, f = 0.0;
+		size_t j = i;
+		for (; j < gp.size() && gp[j].first == key; j++) {
+			const int32_t p = gp[j].second;
+			const double sf = cs[p];
+			if (sf > bs) {
+				bs = sf;
+				best = p;
+			}
+			if (sf != -1.0 && has_conv) {
+				const double x = double(pcv[p]);
+				f = f > x ? f : x;
+			}
+			g_pts.push_back(p);
+		}
+		g_start.push_back(int32_t(g_pts.size()));
+		g_best.push_back(best);
+		auto it = dv_idx.find(key);
+		g_dv.push_back(it == dv_idx.end() ? 0 : dv_cnt[it->second]);
+		g_f.push_back(f);
+		i = j;
+	}
+	while (cn <= nc) gns[cn++] = int32_t(g_comp.size());
+	PackedInt32Array o_key, o_cnt;
+	o_key.resize(int64_t(dv_keys.size()));
+	o_cnt.resize(int64_t(dv_keys.size()));
+	for (size_t k = 0; k < dv_keys.size(); k++) {
+		o_key.set(int64_t(k), int32_t(dv_keys[k]));
+		o_cnt.set(int64_t(k), dv_cnt[k]);
+	}
+	Array r;
+	r.push_back(ln);
+	r.push_back(cut);
+	r.push_back(weight);
+	r.push_back(g_ns);
+	r.push_back(g_comp);
+	r.push_back(g_start);
+	r.push_back(g_pts);
+	r.push_back(g_best);
+	r.push_back(g_dv);
+	r.push_back(g_f);
+	r.push_back(o_key);
+	r.push_back(o_cnt);
+	return r;
+}
+
+
+// Пути конвоев стран за день (Convoys.daily, двойник _day_gd): вид 1 — всё
+// доходит, порты по обеспеченности снабжения; вид 2 — доля, что доходит по пути
+// (перехват по опасным бассейнам), недошедший импорт (float32, как
+// res_lost), потопленные конвои. Операция в операцию как в GDScript (double).
+// → [подача портов, доля пути, недошедшее (nc × 6), доля импорта, потоплено].
+Array MeowqCore::convoy_day(const Dictionary &t) const {
+	const int RES_N = 6;
+	const int nc = int(t["nc"]), nb = int(t["nb"]);
+	const double sink = double(t["sink"]);
+	const PackedByteArray mode_a = t["mode"], rk_a = t["r_kind"], uh_a = t["u_has"];
+	const PackedFloat64Array sf_a = t["s_fill"], tf_a = t["t_fill"], sn_a = t["s_need"], rn_a = t["r_need"];
+	const PackedInt32Array qns_a = t["q_ns"], qb_a = t["qb"], rns_a = t["r_ns"], rkey_a = t["r_key"], rzs_a = t["r_zs"], rz_a = t["r_z"], vp_a = t["vp"];
+	const PackedFloat32Array dic_a = t["d_ic"], un_a = t["units"];
+	PackedFloat32Array pconv = t["p_conv"];
+	pconv = pconv.duplicate();
+	const uint8_t *mode = mode_a.ptr(), *rk = rk_a.ptr(), *uh = uh_a.ptr();
+	const double *sf = sf_a.ptr(), *tf = tf_a.ptr(), *sn = sn_a.ptr(), *rn = rn_a.ptr();
+	const int32_t *qns = qns_a.ptr(), *qb = qb_a.ptr(), *rns = rns_a.ptr(), *rkey = rkey_a.ptr(), *rzs = rzs_a.ptr(), *rz = rz_a.ptr(), *vp = vp_a.ptr();
+	const float *dic = dic_a.ptr(), *un = un_a.ptr();
+	float *pc = pconv.ptrw();
+	const int nr = int(rkey_a.size());
+	PackedFloat64Array r_safe, o_trade, o_sunk;
+	PackedFloat32Array o_lost;
+	r_safe.resize(nr);
+	o_lost.resize(int64_t(nc) * RES_N);
+	o_trade.resize(nc);
+	o_sunk.resize(nc);
+	double *rs = r_safe.ptrw(), *otr = o_trade.ptrw(), *osk = o_sunk.ptrw();
+	float *ol = o_lost.ptrw();
+	for (int i = 0; i < nr; i++) rs[i] = 0.0;
+	for (int i = 0; i < nc * RES_N; i++) ol[i] = 0.0f;
+	for (int n = 0; n < nc; n++) {
+		otr[n] = 0.0;
+		osk[n] = 0.0;
+	}
+	std::vector<double> dz(size_t(nb), 0.0);
+	for (int n = 0; n < nc; n++) {
+		const uint8_t m = mode[n];
+		if (m == 0) continue;
+		const double sup_fill = sf[n];
+		if (m == 1) {
+			for (int32_t i = rns[n]; i < rns[n + 1]; i++) {
+				if (rk[i] != 1) continue;
+				const bool cut = rzs[i + 1] == rzs[i];
+				pc[rkey[i]] = cut ? 0.0f : float(sup_fill);
+				rs[i] = cut ? 0.0 : 1.0;
+			}
+			continue;
+		}
+		bool calm = true;
+		for (int32_t q = qns[n]; q < qns[n + 1]; q++) {
+			const double dx = double(dic[q]);
+			if (dx > 0.0) {
+				dz[qb[q]] = dx;
+				calm = false;
+			}
+		}
+		const double trade_fill = tf[n], sup_need = sn[n];
+		double wsum = 0.0;
+		for (int32_t i = rns[n]; i < rns[n + 1]; i++)
+			if (rk[i] == 1) wsum += 1.0 + double(vp[rkey[i]]);
+		double sunk = 0.0, sea_total = 0.0, lost_total = 0.0;
+		float *lb = ol + int64_t(n) * RES_N;
+		for (int32_t i = rns[n]; i < rns[n + 1]; i++) {
+			double safe = 1.0;
+			if (!calm)
+				for (int32_t j = rzs[i]; j < rzs[i + 1]; j++) safe *= 1.0 - dz[rz[j]];
+			if (rk[i] == 0) {
+				const double got = trade_fill * safe;
+				if (uh[i] == 1) {
+					for (int r = 0; r < RES_N; r++) {
+						const double u = double(un[int64_t(i) * RES_N + r]);
+						lb[r] = float(double(lb[r]) + u * (1.0 - got));
+						sea_total += u;
+						lost_total += u * (1.0 - got);
+					}
+				}
+				sunk += rn[i] * trade_fill * (1.0 - safe) * sink;
+			} else {
+				const int32_t p = rkey[i];
+				if (rzs[i + 1] == rzs[i]) {
+					pc[p] = 0.0f;
+					rs[i] = 0.0;
+					continue;
+				}
+				pc[p] = float(sup_fill * safe);
+				rs[i] = safe;
+				const double share = (1.0 + double(vp[p])) / (wsum > 1.0 ? wsum : 1.0);
+				sunk += sup_need * share * sup_fill * (1.0 - safe) * sink;
+			}
+		}
+		otr[n] = sea_total <= 0.0 ? 1.0 : 1.0 - lost_total / sea_total;
+		osk[n] = sunk;
+		for (int32_t q = qns[n]; q < qns[n + 1]; q++) dz[qb[q]] = 0.0;
+	}
+	Array r;
+	r.push_back(pconv);
+	r.push_back(r_safe);
+	r.push_back(o_lost);
+	r.push_back(o_trade);
+	r.push_back(o_sunk);
+	return r;
+}
+
+
+// Подпись договоров (Convoys._units_by_buyer, двойник contracts_sig_gd): число
+// и взвешенная сумма — операция в операцию как в GDScript (double, int64).
+double MeowqCore::contracts_sig(const Array &contracts) const {
+	const int64_t n = contracts.size();
+	double sig = double(n);
+	for (int64_t i = 0; i < n; i++) {
+		const Array c = contracts[i];
+		const double k = double(i + 1);
+		const int64_t key = int64_t(c[0]) * 7919 + int64_t(c[1]) * 31 + int64_t(c[2]);
+		sig += double(c[3]) * k + double(key) * 1.0e-3 * k;
+	}
+	return sig;
+}

@@ -138,6 +138,7 @@
 - Стенд нагрузки (кадры, тик, фризы, действия игрока; `engine.md`): `godot --headless --path . -- --stress [--seg=4 --from=1939-09-10]`,
   как телефон — `taskset -c 0,1 godot --headless --path . -- --stress --phone`; на телефоне — «Настройки» → «Проверка нагрузки».
 - Сверка окон (все окна 1936–41 гг. против свежей сборки, цена окон): `godot --headless --path . -- --patchtest`
+- Ядра C++ против двойников (конвои, пункты): `godot --headless --path . --script res://tests/kernel_check.gd`
 - Тест детерминизма и скорости: `godot --headless --path . --script res://tests/sim_bench.gd`
   (`-- --large` — большая карта). Однопоточный и многопоточный результаты
   обязаны совпадать.
