@@ -488,8 +488,16 @@ func _rebuild_navy_air(out: Array, sel_fleet: int, sel_wing: int) -> void:
 			for q in f.path:
 				pts.append(_wp(q))
 		var relevant: bool = f.owner == player or world.is_at_war(player, f.owner)
+		# силуэт — по роду с наибольшей силой (линкоры, крейсеры, эсминцы, подлодки, авианосцы)
+		var fam := ShipDesigns.FAM_CR
+		var fp: PackedFloat64Array = f.fam_power
+		var best := -1.0
+		for k in fp.size():
+			if fp[k] > best:
+				best = fp[k]
+				fam = k
 		out.append([FLEET, _wp(f.zone), world.nations[f.owner].color, f.mission == "raid", Forces.fleet_size(f),
-			f.id == sel_fleet, f.in_battle, pts, relevant])
+			f.id == sel_fleet, f.in_battle, pts, relevant, fam])
 	# авиация игрока (и вражеская при войне): один значок на район и тип
 	var groups := {}
 	for wg in world.wings:
@@ -499,15 +507,27 @@ func _rebuild_navy_air(out: Array, sel_fleet: int, sel_wing: int) -> void:
 			continue
 		var key := "%d:%d:%d" % [wg.region, 0 if wg.owner == player else 1, wg.kind]
 		if not groups.has(key):
-			groups[key] = [wg.region, wg.owner, wg.kind, 0.0, false]
+			groups[key] = [wg.region, wg.owner, wg.kind, 0.0, false, {}]
 		groups[key][3] += wg.planes
 		if wg.id == sel_wing:
 			groups[key][4] = true
+		# силуэт бомбардировщиков — по заданию большинства: поддержка войск,
+		# бомбёжка заводов (тяжёлые), удары по флоту
+		var ms: Dictionary = groups[key][5]
+		ms[wg.mission] = float(ms.get(wg.mission, 0.0)) + wg.planes
 	for key in groups:
 		var g: Array = groups[key]
 		var mine: bool = g[1] == player
-		out.append([PLANES, _wp(world.region_anchor[g[0]]), world.nations[g[1]].color if mine else Color(0.9, 0.3, 0.25),
-			g[2], g[4], int(g[3]), mine])
+		var sub := 0
+		if g[2] == 1:
+			sub = 1
+			var ms: Dictionary = g[5]
+			var bm := -1.0
+			for m in ms:
+				if ms[m] > bm:
+					bm = ms[m]
+					sub = 2 if m == "bomb" else (3 if m == "naval" else 1)
+		out.append([PLANES, _wp(world.region_anchor[g[0]]), world.nations[g[1]].color, g[2], g[4], int(g[3]), mine, sub])
 
 
 var draw_usec := 0   # время последней отрисовки слоя (для нижней строки)
@@ -519,6 +539,7 @@ func _draw() -> void:
 	var t0 := Time.get_ticks_usec()
 	_texts.clear()
 	_city_rects.clear()
+	_occ.clear()
 	var z := map.zoom_level()
 	var vp := get_viewport_rect().size
 	# с запасом: при сдвиге слой не перерисовывается, пока запас не кончится
@@ -598,34 +619,30 @@ func _draw() -> void:
 			FLEET:
 				if not it[8] and z < 0.6:
 					continue
-				var c := map.world_to_screen(it[1])
-				if it[3]:
-					c += Vector2(0, 16)
-				if not screen.has_point(c):
+				var c0 := map.world_to_screen(it[1])
+				if not screen.has_point(c0):
 					continue
+				var c := _place(c0 + Vector2(0, 14 if it[3] else 0), Vector2(58, 22))
 				var wpts: PackedVector2Array = it[7]
 				if not wpts.is_empty():
 					var pts := PackedVector2Array([c])
 					for wpt in wpts:
 						pts.append(map.world_to_screen(wpt))
 					draw_polyline(pts, Color(0.6, 0.9, 1.0), 2.5)
-				_ship_icon(c, it[2], 0.8 if it[3] else 1.0, it[3])
-				if it[5]:
-					draw_arc(c, 18, 0, TAU, 20, Color.WHITE, 2.0)
-				draw_string(font, c + Vector2(13, 5), str(it[4]), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
-				if it[6]:
-					draw_circle(c + Vector2(-14, -10), 5, Color(0.9, 0.2, 0.1))
+				_navair_plate(c, Vector2(58, 22), it[2], "ship_%d" % it[9], Vector2(36, 14), str(it[4]), it[5], it[6], it[3])
 			PLANES:
-				var c := map.world_to_screen(it[1]) + Vector2(-30 + (0 if it[6] else 56), -34 - it[3] * 18)
-				if not screen.has_point(c):
+				var c0 := map.world_to_screen(it[1])
+				if not screen.has_point(c0):
 					continue
-				_plane_icon(c, it[2], it[3], it[4])
-				draw_string_outline(font, c + Vector2(14, 5), str(it[5]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, 3, Color.BLACK)
-				draw_string(font, c + Vector2(14, 5), str(it[5]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+				var c := _place(c0 + Vector2(0, -34), Vector2(50, 22))
+				_navair_plate(c, Vector2(50, 22), it[2], "plane_%d" % it[7], Vector2(20, 20), str(it[5]), it[4], false, not it[6])
 	if not _clusters.is_empty():
 		_draw_clusters(z, counter, font_size, screen)
 	for tx in _texts:
 		draw_string(bold, tx[0], tx[1], HORIZONTAL_ALIGNMENT_CENTER, tx[2], tx[3], Color(0.97, 0.95, 0.9))
+	for tx in _texts_dark:
+		draw_string(bold, tx[0], tx[1], HORIZONTAL_ALIGNMENT_CENTER, tx[2], 13, Color(0.08, 0.07, 0.06))
+	_texts_dark.clear()
 	draw_usec = Time.get_ticks_usec() - t0
 	FrameProf.add("фишки", draw_usec)
 	draw_count += 1
@@ -723,6 +740,7 @@ func _draw_counter(it: Array, z: float, counter: Vector2, font_size: int, screen
 	# полоски под плашкой: зелёная — сила, жёлтая — организация (со скруглёнными краями)
 	var bx := pos.x + rad * 0.5
 	var bw := counter.x - rad
+	_occ.append(Rect2(pos, counter + Vector2(0, 9)))
 	draw_texture_rect_region(_atlas, Rect2(bx - 1, pos.y + counter.y + 1, bw + 2, 7), _r_bars)
 	if it[6] > 0.02:
 		draw_texture_rect_region(_atlas, Rect2(bx, pos.y + counter.y + 2, bw * it[6], 2.5), _r_white, Color(0.40, 0.85, 0.38))
@@ -1066,6 +1084,89 @@ func _icon_outlined(tex: Texture2D, c: Vector2, size: float, col: Color) -> void
 	for o in [Vector2(-1.5, 0), Vector2(1.5, 0), Vector2(0, -1.5), Vector2(0, 1.5)]:
 		draw_texture_rect(tex, Rect2(r.position + o, r.size), false, dark)
 	draw_texture_rect(tex, r, false, col)
+
+
+## Раскладка флотов и авиации без наложений: плашка ищет ближайшее свободное
+## место вокруг своей точки (кольцами по размеру плашки), не налезая на фишки
+## дивизий и уже поставленные плашки. Флоты выбираются списком (вкладка флота),
+## поэтому сдвиг значка на выбор не влияет.
+var _texts_dark: Array = []   # числа на плашках флотов и авиации: [позиция, текст, ширина]
+var _occ: Array = []   # занятые в кадре прямоугольники (фишки, флоты, авиация)
+
+
+func _place(c: Vector2, size: Vector2) -> Vector2:
+	var step := size + Vector2(4, 4)
+	var best := c
+	for ring in 4:
+		var found := false
+		var cands: Array = [Vector2.ZERO] if ring == 0 else []
+		if ring > 0:
+			for dy in range(-ring, ring + 1):
+				for dx in range(-ring, ring + 1):
+					if maxi(absi(dx), absi(dy)) == ring:
+						cands.append(Vector2(dx, dy))
+			# ближние к точке — первыми (по горизонтали дешевле)
+			cands.sort_custom(func(a, b): return a.x * a.x * 0.5 + a.y * a.y < b.x * b.x * 0.5 + b.y * b.y)
+		for o: Vector2 in cands:
+			var q := c + o * step
+			var r := Rect2(q - size * 0.5, size)
+			var free := true
+			for o2: Rect2 in _occ:
+				if o2.intersects(r):
+					free = false
+					break
+			if free:
+				best = q
+				found = true
+				break
+		if found:
+			break
+	_occ.append(Rect2(best - size * 0.5, size))
+	return best
+
+
+## Плашка флота или авиации: светлая подложка цвета страны с тёмной каймой (как у
+## фишки дивизии), слева силуэт (свой класс кораблей / тип самолётов), справа число.
+## raid — рейдеры (полоса снизу), battle — в бою (красная точка), dim — чужие.
+func _navair_plate(c: Vector2, size: Vector2, col: Color, icon: String, isz: Vector2, num: String, sel: bool, battle: bool, mark: bool) -> void:
+	var r := Rect2(c - size * 0.5, size)
+	draw_texture_rect_region(_atlas, Rect2(r.position + Vector2(1.5, 2.5), size), _r_shadow)
+	draw_texture_rect_region(_atlas, r, _r_plate, col.lightened(0.35))
+	if sel:
+		draw_texture_rect_region(_atlas, r, _r_sel)
+	var ic := Vector2(r.position.x + 6.0 + isz.x * 0.5, c.y)
+	var tex := _navair_tex(icon)
+	if tex != null:
+		draw_texture_rect(tex, Rect2(ic - isz * 0.5, isz), false, Color(0.09, 0.08, 0.07))
+	var tx := ic.x + isz.x * 0.5 + 2.0
+	_texts_dark.append([Vector2(tx, c.y + 5.0), num, r.end.x - tx - 3.0])
+	if mark:
+		draw_texture_rect_region(_atlas, Rect2(r.position.x + 8, r.end.y - 3.5, size.x - 16, 2.5), _r_white, Color(0.75, 0.15, 0.1))
+	if battle:
+		draw_circle(r.position + Vector2(2, 2), 5, Color(0.9, 0.2, 0.1), true, -1.0, true)
+
+
+## Силуэты флотов и авиации: assets/icons/navair.json (имя -> SVG), иначе — общие иконки.
+var _navair := {}
+
+
+func _navair_tex(name: String) -> Texture2D:
+	if _navair.has(name):
+		return _navair[name]
+	var tex: Texture2D = null
+	var path := "res://assets/icons/navair.json"
+	if FileAccess.file_exists(path):
+		var d = JSON.parse_string(FileAccess.get_file_as_string(path))
+		if typeof(d) == TYPE_DICTIONARY and d.has("icons") and d["icons"].has(name):
+			var e: Dictionary = d["icons"][name]
+			var img := Image.new()
+			if img.load_svg_from_string(e["svg"], float(e.get("scale", 1.0))) == OK:
+				img.generate_mipmaps()
+				tex = ImageTexture.create_from_image(img)
+	if tex == null:
+		tex = UiStyle.icon("sub" if name == "ship_3" else ("fleet" if name.begins_with("ship") else ("fighter" if name == "plane_0" else "bomber")), 64)
+	_navair[name] = tex
+	return tex
 
 
 func _ship_icon(c: Vector2, col: Color, s: float, sub := false) -> void:
