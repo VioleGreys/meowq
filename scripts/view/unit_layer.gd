@@ -59,10 +59,34 @@ class BattleMarks:
 		layer._draw_battles(self)
 
 
+## Подписи стран и знаки городов — свой холст под фишками (show_behind_parent):
+## меняются редко, а слой фишек на скорости перерисовывается каждый день
+## (знаков городов ~1800 — было до 2/3 времени перерисовки).
+class StaticMarks:
+	extends Node2D
+	var layer: UnitLayer
+
+	func _draw() -> void:
+		layer._draw_static(self)
+
+
 var _battles: BattleMarks
+var _static: StaticMarks
+var _static_n := 0            # в начале items: подписи и города (рисует _static)
+var _static_dirty := true
+var _shown_st_ver := -1       # версия подписей и городов, что сейчас нарисована
+var _st_ver := 0              # (поток сборки) версия, ключ городов и версия подписей
+var _st_key := PackedByteArray()
+var _st_lver := -1
+var _labels_ver := 0
 
 
 func _ready() -> void:
+	_static = StaticMarks.new()
+	_static.layer = self
+	_static.use_parent_material = true
+	_static.show_behind_parent = true
+	add_child(_static)
 	_battles = BattleMarks.new()
 	_battles.layer = self
 	_battles.use_parent_material = true
@@ -175,6 +199,7 @@ func _process(_dt: float) -> void:
 		if _dirty:
 			_dirty = false
 			queue_redraw()
+			_static.queue_redraw()
 		return
 	var now := Time.get_ticks_msec()
 	var pos := map.camera.position
@@ -194,6 +219,7 @@ func _process(_dt: float) -> void:
 				or shift.x > m or shift.y > m \
 				or (th > 0.0 and (now - _draw_msec >= WARP_TILT_MSEC or not moved_now)):
 			_dirty = true   # при наклоне после остановки — точный кадр
+			_static_dirty = true
 		else:
 			redraw_skipped += 1
 	if _dirty:
@@ -203,6 +229,12 @@ func _process(_dt: float) -> void:
 		_r_tilt = th
 		_draw_msec = now
 		queue_redraw()
+		if _static_dirty or not _static_cam(pos, z, th):
+			_static_dirty = false
+			_s_pos = pos
+			_s_zoom = z
+			_s_tilt = th
+			_static.queue_redraw()
 		_battles.queue_redraw()
 		_anim_msec = now
 	elif _has_battles and now - _anim_msec >= 80:
@@ -210,6 +242,15 @@ func _process(_dt: float) -> void:
 		_anim_msec = now
 		_battles.queue_redraw()
 	_set_warp(pos, z, th)
+
+
+var _s_pos := Vector2.ZERO          # камера, с которой нарисованы подписи и города
+var _s_zoom := 0.0
+var _s_tilt := -1.0
+
+
+func _static_cam(pos: Vector2, z: float, th: float) -> bool:
+	return pos == _s_pos and z == _s_zoom and th == _s_tilt
 
 
 ## Перенос слоя под текущую камеру (вершинный шейдер).
@@ -246,7 +287,7 @@ func _wp(p: int) -> Vector2:
 ## Собрать список отрисовки. Вызывать ТОЛЬКО под блокировкой мира.
 func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
 	var r := build(sel_fleet, sel_wing)
-	items = r[0]
+	_set_items(r[0], r[3], r[4])
 	_has_battles = r[1]
 	if map != null:
 		map.set_front(r[2])
@@ -254,12 +295,22 @@ func rebuild(sel_fleet: int = -1, sel_wing: int = -1) -> void:
 
 
 ## Принять список, собранный потоком симуляции (конвейер экрана, main._publish).
-func take(list: Array, battles: bool, marks: Dictionary = {}) -> void:
-	items = list
+func take(list: Array, battles: bool, marks: Dictionary = {}, st_ver := -1, st_n := 0) -> void:
+	_set_items(list, st_ver, st_n)
 	_has_battles = battles
 	if map != null:
 		map.set_front(marks)
 	_dirty = true
+
+
+## Новый список: подписи и города (первые st_n) перерисовываются, только если
+## сменилась их версия (build).
+func _set_items(list: Array, st_ver: int, st_n: int) -> void:
+	if st_ver != _shown_st_ver or st_ver < 0:
+		_static_dirty = true
+	_shown_st_ver = st_ver
+	items = list
+	_static_n = st_n
 
 
 ## Собрать список отрисовки по миру → [список, есть ли бои]. Только чтение мира
@@ -268,7 +319,7 @@ func take(list: Array, battles: bool, marks: Dictionary = {}) -> void:
 func build(sel_fleet: int = -1, sel_wing: int = -1) -> Array:
 	var out: Array = []
 	if world == null:
-		return [out, false]
+		return [out, false, {}, -1, 0]
 	# подписи стран пересчитываются (заливка по провинциям) только когда менялись
 	# владельцы — не чаще раза в 5 дней
 	var pv := map.palette_version if map != null else 0
@@ -398,9 +449,20 @@ func build(sel_fleet: int = -1, sel_wing: int = -1) -> Array:
 			c_str[ci] / (100.0 * n), c_org[ci] / n, m[0], m[1], c_sup[ci] < 0.3, o == player])
 	var cities: Array = []
 	_add_cities(cities, troops)
+	# версия подписей и городов: новая — только если они изменились (сверка здесь,
+	# в потоке симуляции, а не в кадре)
+	var skey := PackedByteArray()
+	skey.resize(cities.size())
+	for i in cities.size():
+		skey[i] = cities[i][4] * 2 + (1 if cities[i][5] else 0)
+	if skey != _st_key or _labels_ver != _st_lver:
+		_st_key = skey
+		_st_lver = _labels_ver
+		_st_ver += 1
+	var static_n := city_at + cities.size()
 	out = out.slice(0, city_at) + cities + out.slice(city_at)
 	_rebuild_navy_air(out, sel_fleet, sel_wing)
-	return [out, has_battles, fmarks]
+	return [out, has_battles, fmarks, _st_ver, static_n]
 
 
 ## Отметки фронтов армий игрока для шейдера карты: провинция -> [роль, цвет]
@@ -538,7 +600,6 @@ func _draw() -> void:
 		return
 	var t0 := Time.get_ticks_usec()
 	_texts.clear()
-	_city_rects.clear()
 	_occ.clear()
 	var z := map.zoom_level()
 	var vp := get_viewport_rect().size
@@ -546,12 +607,9 @@ func _draw() -> void:
 	var screen := Rect2(Vector2.ZERO, vp).grow(40.0 + maxf(vp.x, vp.y) * DRAW_MARGIN)
 	var counter := Vector2(40, 22) * clampf(0.75 + z * 0.25, 0.8, 1.5)
 	var font_size := int(clampf(12 + z * 2, 12, 20))
-	for it in items:
+	for i in range(_static_n, items.size()):
+		var it: Array = items[i]
 		match it[0]:
-			LABEL:
-				_draw_label(it, map.local_zoom(it[1]))
-			CITY:
-				_draw_city(it, map.local_zoom(it[1]), counter, screen)
 			ARROW:
 				if not it[5] and z < 1.4:
 					continue
@@ -652,6 +710,75 @@ func _draw() -> void:
 	FrameProf.add("фишки", draw_usec)
 	draw_count += 1
 	draw_total_usec += draw_usec
+
+
+## Подписи стран и знаки городов (холст _static, под фишками; камера — та же,
+## что у слоя, перенос — общий шейдер).
+func _draw_static(ci: CanvasItem) -> void:
+	if map == null:
+		return
+	var t0 := Time.get_ticks_usec()
+	_city_rects.clear()
+	var z := map.zoom_level()
+	var vp := get_viewport_rect().size
+	var screen := Rect2(Vector2.ZERO, vp).grow(40.0 + maxf(vp.x, vp.y) * DRAW_MARGIN)
+	var counter := Vector2(40, 22) * clampf(0.75 + z * 0.25, 0.8, 1.5)
+	# Отсев до вызова (тот же итог, что проверки внутри _draw_city): прямоугольник
+	# мира, который виден в screen (при наклоне — по углам; горизонт в кадре —
+	# без отсева), и наибольший масштаб в кадре (у нижнего края).
+	var th := map.tilt()
+	var zmax := z
+	var wbox := Rect2()
+	var cull := true
+	if th > 0.0:
+		var f := map.cam_focal()
+		if cos(th) + sin(th) * (screen.position.y - vp.y * 0.5) / f < 0.05:
+			cull = false
+		else:
+			zmax = maxf(z, map.local_zoom(map.screen_to_world(Vector2(vp.x * 0.5, screen.end.y)))) * 1.01
+	if cull:
+		var c0 := map.screen_to_world(screen.position)
+		wbox = Rect2(c0, Vector2.ZERO)
+		for q: Vector2 in [Vector2(screen.end.x, screen.position.y), screen.end, Vector2(screen.position.x, screen.end.y)]:
+			wbox = wbox.expand(map.screen_to_world(q))
+		wbox = wbox.grow(maxf(wbox.size.x, wbox.size.y) * 0.01 + 1.0)
+	var n := mini(_static_n, items.size())
+	var first_city := n
+	for i in n:
+		var it: Array = items[i]
+		if it[0] != LABEL:
+			first_city = i
+			break
+		_draw_label(ci, it, map.local_zoom(it[1]))
+	# города: не все — только из клеток сетки, попавших в кадр; столицы, затем
+	# остальные по убыванию очков (от порядка зависит, чья подпись уступает место)
+	var idx: Array
+	if zmax < CITY_Z[3]:
+		n = first_city   # издали знаков городов нет совсем
+	if cull:
+		if _cgrid.is_empty():
+			_build_cgrid(first_city, n)
+		var g0 := (wbox.position / CGRID).floor()
+		var g1 := (wbox.end / CGRID).floor()
+		for gy in range(int(g0.y), int(g1.y) + 1):
+			for gx in range(int(g0.x), int(g1.x) + 1):
+				var cell: Array = _cgrid.get(Vector2i(gx, gy), [])
+				idx.append_array(cell)
+		idx.sort()
+	else:
+		idx = range(n - first_city)
+	for pass_caps: bool in [true, false]:
+		for k: int in idx:
+			var it: Array = items[first_city + k]
+			var kind: int = it[4]
+			if (kind == 3) != pass_caps:
+				continue
+			if not pass_caps and zmax < _city_z0(kind, it[3]):
+				break   # дальше — только города мельче: все не видны
+			if cull and not wbox.has_point(it[1]):
+				continue
+			_draw_city(ci, it, map.local_zoom(it[1]), counter, screen)
+	FrameProf.add("фишки:города", Time.get_ticks_usec() - t0)
 
 
 ## Издали (масштаб < CLUSTER_Z) фишки одной страны в клетке сетки мира (~CLUSTER_PX
@@ -760,7 +887,7 @@ const LBL_PX := 48
 var _lbl_w := {}   # ширина подписи при LBL_PX
 
 
-func _draw_label(l: Array, z: float) -> void:
+func _draw_label(ci: CanvasItem, l: Array, z: float) -> void:
 	if z > 1.6:
 		return
 	var text: String = l[2]
@@ -785,10 +912,10 @@ func _draw_label(l: Array, z: float) -> void:
 	var k := size / LBL_PX
 	# строка — серединой заглавных по точке страны (базовая линия ниже на половину
 	# высоты заглавных ~0.7 кегля); раньше вся подпись стояла над точкой
-	draw_set_transform(pos - Vector2(w * 0.5, -size * 0.35), 0.0, Vector2(k, k))
-	draw_string_outline(label_font, Vector2.ZERO, text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX, int(4.0 / k), Color(0.95, 0.92, 0.84, alpha * 0.45))
-	draw_string(label_font, Vector2.ZERO, text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX, Color(0.10, 0.08, 0.06, alpha))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	ci.draw_set_transform(pos - Vector2(w * 0.5, -size * 0.35), 0.0, Vector2(k, k))
+	ci.draw_string_outline(label_font, Vector2.ZERO, text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX, int(4.0 / k), Color(0.95, 0.92, 0.84, alpha * 0.45))
+	ci.draw_string(label_font, Vector2.ZERO, text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX, Color(0.10, 0.08, 0.06, alpha))
+	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 ## Значки городов (как в жанре): столица — золотая звезда в медальоне, крупный
@@ -809,24 +936,39 @@ func _add_cities(out: Array, troops: Dictionary) -> void:
 	for nn in world.nations:
 		if nn.alive and nn.capital >= 0:
 			caps[nn.capital] = true
-	# столицы — первыми (подпись столицы не уступает место соседу)
+	# порядок — всегда как в _cities (по убыванию очков): по нему строится
+	# сетка мест (_cgrid); столицы — первыми — при отрисовке (_draw_static)
 	for c in _cities:
-		if caps.has(c[3]):
-			out.append([CITY, c[0], c[1], c[2], 3, troops.has(c[3])])
-	for c in _cities:
-		if not caps.has(c[3]):
-			out.append([CITY, c[0], c[1], c[2], 2 if c[2] >= 50 else (1 if c[2] >= 15 else 0), troops.has(c[3])])
+		var kind: int = 3 if caps.has(c[3]) else (2 if c[2] >= 50 else (1 if c[2] >= 15 else 0))
+		out.append([CITY, c[0], c[1], c[2], kind, troops.has(c[3])])
 
 
+var _city_w := {}   # ширина подписи города: «имя|вид» -> пикс.
 const CITY_Z := [2.0, 1.25, 0.8, 0.45]   # с какого масштаба виден знак: малый, город, крупный, столица
 
 
-func _draw_city(it: Array, z: float, counter: Vector2, screen: Rect2) -> void:
+const CGRID := 256.0          # клетка сетки городов, единиц мира
+var _cgrid := {}              # Vector2i клетки -> номера городов в _cities (по возрастанию)
+
+
+## Сетка знаков городов по месту (города не двигаются — один раз).
+func _build_cgrid(from: int, to: int) -> void:
+	for i in range(from, to):
+		var key := Vector2i((items[i][1] / CGRID).floor())
+		if not _cgrid.has(key):
+			_cgrid[key] = []
+		_cgrid[key].append(i - from)
+
+
+## С какого масштаба виден знак города (растёт с убыванием очков — на этом
+## держится ранний выход в _draw_static).
+static func _city_z0(kind: int, vp: int) -> float:
+	return 3.0 if kind == 0 and vp < 8 else CITY_Z[kind]
+
+
+func _draw_city(ci: CanvasItem, it: Array, z: float, counter: Vector2, screen: Rect2) -> void:
 	var kind: int = it[4]
-	var vp: int = it[3]
-	var z0: float = CITY_Z[kind]
-	if kind == 0 and vp < 8:
-		z0 = 3.0
+	var z0 := _city_z0(kind, it[3])
 	if z < z0:
 		return
 	var base := map.world_to_screen(it[1])
@@ -846,20 +988,20 @@ func _draw_city(it: Array, z: float, counter: Vector2, screen: Rect2) -> void:
 			break
 	var dark := Color(0.08, 0.07, 0.06, 0.9 * a)
 	if kind == 0:
-		draw_rect(nr.grow(1.5), dark)
-		draw_rect(nr, Color(0.93, 0.90, 0.82, a))
+		ci.draw_rect(nr.grow(1.5), dark)
+		ci.draw_rect(nr, Color(0.93, 0.90, 0.82, a))
 	else:
 		var ring := Color(0.86, 0.68, 0.27, a) if kind == 3 else Color(0.80, 0.77, 0.70, a)
-		draw_circle(c + Vector2(1, 1.5), r + 1.5, Color(0, 0, 0, 0.35 * a), true, -1.0, true)
-		draw_circle(c, r + 1.5, ring, true, -1.0, true)
-		draw_circle(c, r, Color(0.13, 0.12, 0.11, 0.95 * a), true, -1.0, true)
+		ci.draw_circle(c + Vector2(1, 1.5), r + 1.5, Color(0, 0, 0, 0.35 * a), true, -1.0, true)
+		ci.draw_circle(c, r + 1.5, ring, true, -1.0, true)
+		ci.draw_circle(c, r, Color(0.13, 0.12, 0.11, 0.95 * a), true, -1.0, true)
 		if kind == 3:
 			# пятиконечная звезда (своя: у набора иконок звёзды с узором)
 			var pts := PackedVector2Array()
 			for k in 10:
 				var ang := -PI * 0.5 + k * PI / 5.0
 				pts.append(c + Vector2(cos(ang), sin(ang)) * r * (0.78 if k % 2 == 0 else 0.33))
-			draw_colored_polygon(pts, Color(0.98, 0.80, 0.30, a))
+			ci.draw_colored_polygon(pts, Color(0.98, 0.80, 0.30, a))
 		else:
 			# силуэт домов (свой: иконки набора на 14 пикс. не читаются): крупный — три
 			# дома разной высоты, город — два
@@ -868,7 +1010,7 @@ func _draw_city(it: Array, z: float, counter: Vector2, screen: Rect2) -> void:
 			var bl := c.y + 4.5 * u
 			var hs: Array = [[-4.5, 2.6, 6.0], [-1.5, 3.0, 9.0], [1.9, 2.6, 4.5]] if kind == 2 else [[-3.6, 3.2, 7.5], [0.4, 3.2, 5.0]]
 			for b: Array in hs:
-				draw_rect(Rect2(c.x + b[0] * u, bl - b[2] * u, b[1] * u, b[2] * u), wc)
+				ci.draw_rect(Rect2(c.x + b[0] * u, bl - b[2] * u, b[1] * u, b[2] * u), wc)
 	_city_rects.append(nr)
 	# подпись — чуть позже знака, если не налезает на другие
 	if z < z0 + 0.25:
@@ -876,7 +1018,11 @@ func _draw_city(it: Array, z: float, counter: Vector2, screen: Rect2) -> void:
 	var text: String = it[2]
 	var fs: int = [11, 12, 13, 15][kind]
 	var f: Font = font if kind == 0 else bold
-	var tw := f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var wk := text + "|" + str(kind)
+	var tw: float = _city_w.get(wk, -1.0)
+	if tw < 0.0:
+		tw = f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		_city_w[wk] = tw
 	var tp := Vector2(c.x - tw * 0.5, c.y + r + 3 + fs * 0.8)
 	var tr := Rect2(tp.x - 2, tp.y - fs * 0.8, tw + 4, fs * 1.05)
 	for q: Rect2 in _city_rects:
@@ -884,11 +1030,12 @@ func _draw_city(it: Array, z: float, counter: Vector2, screen: Rect2) -> void:
 			return
 	_city_rects.append(tr)
 	var ta := clampf((z - z0 - 0.25) * 6.0, 0.0, 1.0) * a
-	draw_string_outline(f, tp, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0.08, 0.07, 0.06, 0.8 * ta))
-	draw_string(f, tp, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.96, 0.93, 0.85, ta) if kind > 0 else Color(0.90, 0.87, 0.80, ta))
+	ci.draw_string_outline(f, tp, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0.08, 0.07, 0.06, 0.8 * ta))
+	ci.draw_string(f, tp, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.96, 0.93, 0.85, ta) if kind > 0 else Color(0.90, 0.87, 0.80, ta))
 
 
 func _rebuild_labels() -> void:
+	_labels_ver += 1
 	# Подпись — по связному куску территории со столицей (иначе «Великобритания»
 	# уезжает в Африку, «Дания» — в Гренландию), без столицы — по самому большому.
 	_labels_day = world.day
@@ -1099,19 +1246,29 @@ var _texts_dark: Array = []   # числа на плашках флотов и �
 var _occ: Array = []   # занятые в кадре прямоугольники (фишки, флоты, авиация)
 
 
+var _rings: Array = []   # смещения мест по кольцам (одни и те же — считаются один раз)
+
+
+func _place_rings() -> Array:
+	if _rings.is_empty():
+		for ring in 4:
+			var cands: Array = [Vector2.ZERO] if ring == 0 else []
+			if ring > 0:
+				for dy in range(-ring, ring + 1):
+					for dx in range(-ring, ring + 1):
+						if maxi(absi(dx), absi(dy)) == ring:
+							cands.append(Vector2(dx, dy))
+				# ближние к точке — первыми (по горизонтали дешевле)
+				cands.sort_custom(func(a, b): return a.x * a.x * 0.5 + a.y * a.y < b.x * b.x * 0.5 + b.y * b.y)
+			_rings.append(cands)
+	return _rings
+
+
 func _place(c: Vector2, size: Vector2) -> Vector2:
 	var step := size + Vector2(4, 4)
 	var best := c
-	for ring in 4:
+	for cands: Array in _place_rings():
 		var found := false
-		var cands: Array = [Vector2.ZERO] if ring == 0 else []
-		if ring > 0:
-			for dy in range(-ring, ring + 1):
-				for dx in range(-ring, ring + 1):
-					if maxi(absi(dx), absi(dy)) == ring:
-						cands.append(Vector2(dx, dy))
-			# ближние к точке — первыми (по горизонтали дешевле)
-			cands.sort_custom(func(a, b): return a.x * a.x * 0.5 + a.y * a.y < b.x * b.x * 0.5 + b.y * b.y)
 		for o: Vector2 in cands:
 			var q := c + o * step
 			var r := Rect2(q - size * 0.5, size)

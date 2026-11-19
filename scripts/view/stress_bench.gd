@@ -191,7 +191,13 @@ func _segment(s: int, sec: float, me: int) -> void:
 				if not saved and now >= sec * 400.0:
 					saved = true
 					_action = "сохранение"
-					_timed(_action, func(): g.save_game(TMP, "Стенд нагрузки"))
+					# заказ потоку симуляции: в кадре — только сам заказ, запись — фоном
+					var t_s := Time.get_ticks_usec()
+					g.save_game_bg(TMP, "Стенд нагрузки", func(_e: String):
+						var bg: int = g.last_save_msec * 1000
+						_acts["сохранение (фон)"] = [bg, bg, 1])
+					var us_s := Time.get_ticks_usec() - t_s
+					_acts[_action] = [us_s, us_s, 1]
 		# события и мир — сразу, чтобы скорость не вставала на паузу
 		if not g.world.event_front().is_empty() or not g.world.pending_peace.is_empty():
 			g.act(func(): _clear_events())

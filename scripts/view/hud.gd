@@ -135,6 +135,7 @@ var _tb_res: Control
 var _tb_date: Control
 var _tb_tags: Array = []
 var _tb_key := ""
+var _top_shown = null   # снимок top_data, по которому уже выставлены надписи
 
 
 func _build_top_bar() -> void:
@@ -1133,24 +1134,23 @@ func show_top() -> void:
 	var d := top_data
 	if d.is_empty():
 		return
-	if swatch.spec != d["flag"]:
-		swatch.spec = d["flag"]
-	nation_label.text = d["name"]
-	_show_badges(d.get("alerts", {}))
-	date_label.text = d["date"]
-	res_label.text = d["res"]
-	var key := nation_label.text + "|" + date_label.text + "|" + res_label.text
-	if key != _tb_key:
-		_tb_key = key
-		_layout_top()
+	# надписи — только по новому снимку (раз в игровой день), а не каждый кадр
+	if not is_same(d, _top_shown):
+		_top_shown = d
+		if swatch.spec != d["flag"]:
+			swatch.spec = d["flag"]
+		_show_badges(d.get("alerts", {}))
+		var key: String = d["name"] + "|" + d["date"] + "|" + d["res"]
+		if key != _tb_key:
+			_tb_key = key
+			nation_label.text = d["name"]
+			date_label.text = d["date"]
+			res_label.text = d["res"]
+			_layout_top()
 	for i in speed_buttons.size():
-		speed_buttons[i].button_pressed = game.speed == i
-	var phases := ""
-	var ph: Dictionary = d["phases"]
-	for k in ph:
-		phases += " %s %.1f" % [k, ph[k] / 1000.0]
-	if Device.mobile():
-		phases = ""   # на телефоне без фаз — они закрывали бы карту
+		var on: bool = game.speed == i
+		if speed_buttons[i].button_pressed != on:
+			speed_buttons[i].button_pressed = on
 	var gpu: Vector2 = game.map_view.gpu_ms()
 	if gpu.x <= 0.0:
 		gpu.x = game.map_view.last_cost_ms   # OpenGL ES: оценка по времени кадра
@@ -1160,6 +1160,11 @@ func show_top() -> void:
 	if not perf_label.is_visible_in_tree():
 		_toast_tick()
 		return   # строка замеров скрыта — не собирать её (и не перерисовывать экран)
+	var phases := ""
+	if not Device.mobile():   # на телефоне без фаз — они закрывали бы карту
+		var ph: Dictionary = d["phases"]
+		for k in ph:
+			phases += " %s %.1f" % [k, ph[k] / 1000.0]
 	phases += "\nкадр: логика %.1f · фишки %.1f · ГП карта %.1f (%d%%) · ГП экран %.1f мс · карта %d раз/с\nдень (макс. за с): панели %.1f · палитра %.1f · список %.1f · строка %.1f мс" % [
 		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, game.unit_layer.draw_usec / 1000.0,
 		gpu.x, int(game.map_view.res_scale * 100), gpu.y, _redraw_rate(), game.ui_prof[0] / 1000.0, game.ui_prof[1] / 1000.0,
@@ -4354,13 +4359,16 @@ func _do_save(title: String) -> void:
 		_rebuild_popup()
 		return
 	_confirm = ""
-	var err: String = game.save_game(name, title.strip_edges())
-	if err == "":
-		toast("Игра сохранена: «%s»" % title.strip_edges())
-		_save_title = ""
-	else:
-		toast("Не удалось сохранить: " + err)
-	_rebuild_popup()
+	var t := title.strip_edges()
+	toast("Сохранение «%s»…" % t)
+	game.save_game_bg(name, t, func(err: String):
+		if err == "":
+			toast("Игра сохранена: «%s»" % t)
+			_save_title = ""
+		else:
+			toast("Не удалось сохранить: " + err)
+		if is_instance_valid(popup_body) and popup.visible:
+			_rebuild_popup())
 
 
 func _build_load() -> void:

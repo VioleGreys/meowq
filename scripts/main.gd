@@ -820,6 +820,47 @@ func _note_camera() -> void:
 	_cam_mode = map_view.map_mode
 
 
+## Сохранение вручную без замирания экрана: снимок мира (~165 мс на ПК в
+## 1939 г.) и запись — в потоке симуляции между днями; done(err) — в главном
+## потоке после записи. Без фонового потока — сразу.
+func save_game_bg(name: String, title: String, done: Callable) -> void:
+	_note_camera()
+	if single_thread or sim_thread == null or not sim_thread.is_started():
+		world_lock()
+		var err := save_game(name, title)
+		sim_mutex.unlock()
+		done.call(err)
+		return
+	_cmd_mutex.lock()
+	_save_reqs.append([name, title, done])
+	_cmd_mutex.unlock()
+	saves_waiting += 1
+	sim_sem.post()
+
+
+var _save_reqs: Array = []        # заказы сохранения потоку симуляции (под _cmd_mutex)
+var saves_waiting := 0            # заказано и ещё не записано (меняет только главный поток)
+
+
+## Поток симуляции: выполнить один заказ сохранения (true — заказ был).
+func _take_save_req() -> bool:
+	_cmd_mutex.lock()
+	var req: Array = _save_reqs.pop_front() if not _save_reqs.is_empty() else []
+	_cmd_mutex.unlock()
+	if req.is_empty():
+		return false
+	sim_mutex.lock()
+	var err := save_game(req[0], req[1])
+	sim_mutex.unlock()
+	_save_done.call_deferred(req[2], err)
+	return true
+
+
+func _save_done(done: Callable, err: String) -> void:
+	saves_waiting -= 1
+	done.call(err)
+
+
 ## Автосохранение (при выходе в меню, сворачивании, закрытии; мир — под замком).
 func autosave() -> void:
 	if state != "play" or not autosave_on:
@@ -960,7 +1001,7 @@ func _take_frame() -> void:
 	if _frame_new:
 		hud.top_data = _frame_top
 		if not _frame_taken and not _frame_list.is_empty():
-			unit_layer.take(_frame_list[0], _frame_list[1], _frame_list[2])
+			unit_layer.take(_frame_list[0], _frame_list[1], _frame_list[2], _frame_list[3], _frame_list[4])
 			_frame_taken = true
 			_frame_list = []
 		_fresh_note()
@@ -1024,6 +1065,8 @@ func _sim_loop() -> void:
 		sim_sem.wait()
 		if _quitting:
 			return
+		if _take_save_req():   # у заказа сохранения свой post — день не считается
+			continue
 		sim_mutex.lock()
 		# на паузе заказанные дни сбрасываются — остановка сразу
 		if state == "play" and sim != null and speed > 0:
