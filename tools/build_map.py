@@ -179,7 +179,10 @@ NATIONS = {
 }
 
 # столица — по названию города, если точка из NATIONS попадает в соседнюю провинцию
-CAPITAL_PROV = {"HUN": "Будапешт"}
+CAPITAL_PROV = {"HUN": "Будапешт", "YUN": "Куньмин"}
+# город столицы не попал в провинцию (Стокгольм на островах — точка GeoNames
+# в воде): провинции столицы без города — название и население отсюда
+CAPITAL_CITY = {"SWE": ("Стокгольм", 975551)}
 
 # Современная страна -> государство 1936 г. (колонии и мандаты пока принадлежат
 # метрополии; марионетки и доминионы — этап 3).
@@ -1380,6 +1383,10 @@ def main():
         if p_land[i]:
             r = region_info[p_region[i]] if p_region[i] > 0 else {"name_ru": "?", "adm0": ""}
             pop, cname = city_best.get(i, (0, ""))
+            ctag = tags[p_owner[i]]
+            if not cname and capitals.get(ctag) == i and ctag in CAPITAL_CITY:
+                cname, pop = CAPITAL_CITY[ctag]
+                city_pop[i] = max(int(city_pop[i]), pop)
             name = cname if cname else alt_name.get(i, r["name_ru"])
             used[name] = used.get(name, 0) + 1
             terrain = 0
