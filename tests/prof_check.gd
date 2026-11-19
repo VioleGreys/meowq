@@ -1,19 +1,25 @@
 extends SceneTree
 ## Профиль участков кода в позднем прогоне (Prof.add): разгон до даты, затем
 ## N дней с замером.  godot --headless --path . --script res://tests/prof_check.gd [-- --days=30 --until=1940-09-01]
+## --load=имя — вместо разгона загрузить сохранение (одинаковые условия для «до/после»)
 
 func _init() -> void:
 	var days := 30
 	var until := "1940-09-01"
+	var load := ""
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--days="):
 			days = int(a.split("=")[1])
 		if a.begins_with("--until="):
 			until = a.split("=")[1]
+		if a.begins_with("--load="):
+			load = a.split("=")[1]
 	var w := World.new()
 	MapLoader.load_world(w)
 	var sim := Simulation.new(w)
-	while w.day < w.day_of(until):
+	if load != "":
+		SaveGame.load_into(load, w, sim)
+	while load == "" and w.day < w.day_of(until):
 		if not w.pending_peace.is_empty():
 			sim.resolve_peace("annex")
 		sim.tick()

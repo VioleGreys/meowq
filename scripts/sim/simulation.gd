@@ -623,6 +623,7 @@ func _phase_ai() -> void:
 	if world.day % AI_PERIOD != 0:
 		return
 	var _pa := Time.get_ticks_usec()
+	_bc = PackedInt32Array()
 	# дивизии по странам — один проход вместо прохода на каждую страну
 	# (шаги наступления и осады владельцев дивизий не меняют)
 	var by_nation: Array = []
@@ -992,7 +993,10 @@ func _staging_enemy(nat: World.Nation) -> int:
 		return -1
 	var keys: Array = nat.planned_wars.keys()
 	keys.sort()
-	var ctrl := world.p_controller
+	var nc := world.nation_count
+	var foes := {}   # нынешние враги — множество, как at_war.has
+	for q in nat.at_war:
+		foes[int(q)] = true
 	var best := -1
 	var best_v := -1
 	for x in keys:
@@ -1001,20 +1005,45 @@ func _staging_enemy(nat: World.Nation) -> int:
 			continue
 		var touch := false
 		var v := 0
-		for p in world.prov_count:
-			var c := ctrl[p]
-			if c != nat.id and c != xi:
-				continue
-			for k in range(world.adj_start[p], world.adj_start[p + 1]):
-				var q := ctrl[world.adj_list[k]]
-				if c == nat.id and q == xi:
-					touch = true
-				elif c == xi and q >= 0 and q != xi and nat.at_war.has(q):
-					v += 1
+		# границы стран — одна таблица на день ИИ (контроль провинций в фазе не меняется):
+		# касание — пары «наша провинция — его», длина — его провинции у наших врагов
+		var bc := _borders()
+		touch = bc[nat.id * nc + xi] > 0
+		for q: int in foes:
+			if q >= 0 and q < nc and q != xi:
+				v += bc[xi * nc + q]
 		if touch and v > best_v:
 			best = xi
 			best_v = v
 	return best
+
+
+var _bc := PackedInt32Array()   # границы стран на текущий день ИИ (пусто — не считались)
+
+
+func _borders() -> PackedInt32Array:
+	if _bc.is_empty():
+		if Native.core != null and Native.core.has_method("border_counts"):
+			_bc = Native.core.call("border_counts", world.p_controller, world.adj_start, world.adj_list, world.nation_count)
+		else:
+			_bc = border_gd(world.p_controller, world.adj_start, world.adj_list, world.nation_count)
+	return _bc
+
+
+## Двойник MeowqCore.border_counts: nc×nc, [c * nc + q] — пары «провинция
+## страны c, её сосед под q».
+static func border_gd(ctrl: PackedInt32Array, a_start: PackedInt32Array, a_list: PackedInt32Array, nc: int) -> PackedInt32Array:
+	var res := PackedInt32Array()
+	res.resize(nc * nc)
+	for p in ctrl.size():
+		var c := ctrl[p]
+		if c < 0 or c >= nc:
+			continue
+		for k in range(a_start[p], a_start[p + 1]):
+			var q := ctrl[a_list[k]]
+			if q >= 0 and q < nc:
+				res[c * nc + q] += 1
+	return res
 
 
 func _finish_ai() -> void:

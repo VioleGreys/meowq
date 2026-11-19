@@ -1916,8 +1916,41 @@ var fog_ai := not "--nofog" in OS.get_cmdline_user_args()   # туман для 
 
 
 func fog_table(nations_for: PackedInt32Array = PackedInt32Array()) -> PackedByteArray:
-	var pc := prov_count
-	var nc := nation_count
+	var who: PackedInt32Array = nations_for
+	if who.is_empty():
+		who.resize(nation_count)
+		for n in nation_count:
+			who[n] = n
+	var t := {"nc": nation_count, "pc": prov_count, "r": FOG_R, "who": who, "ally": ally,
+		"adj_start": adj_start, "adj_list": adj_list, "d_alive": d_alive, "d_transit": d_transit,
+		"d_owner": d_owner, "d_prov": d_prov}
+	if Native.core != null and Native.core.has_method("fog_table"):
+		var tc: PackedByteArray = Native.core.call("fog_table", t)
+		if fog_check.size() == 2:
+			fog_check[0] += 1
+			if tc != fog_gd(t):
+				fog_check[1] += 1
+		return tc
+	return fog_gd(t)
+
+
+static var fog_check: Array = []   # [проверок, расхождений] — сверка ядра (tests/kernel_check.gd)
+
+
+## Двойник MeowqCore.fog_table: видимое каждой страной из who — провинции не
+## дальше r шагов по соседству от её дивизий и дивизий союзников (ally).
+static func fog_gd(t: Dictionary) -> PackedByteArray:
+	var pc: int = t["pc"]
+	var nc: int = t["nc"]
+	var fog_r: int = t["r"]
+	var who: PackedInt32Array = t["who"]
+	var ally: PackedByteArray = t["ally"]
+	var adj_start: PackedInt32Array = t["adj_start"]
+	var adj_list: PackedInt32Array = t["adj_list"]
+	var d_alive: PackedByteArray = t["d_alive"]
+	var d_transit: PackedInt32Array = t["d_transit"]
+	var d_owner: PackedInt32Array = t["d_owner"]
+	var d_prov: PackedInt32Array = t["d_prov"]
 	var by_n: Array = []
 	by_n.resize(nc)
 	for n in nc:
@@ -1925,18 +1958,13 @@ func fog_table(nations_for: PackedInt32Array = PackedInt32Array()) -> PackedByte
 	var stamp := PackedInt32Array()
 	stamp.resize(pc)
 	stamp.fill(-1)
-	for i in d_id.size():
+	for i in d_owner.size():
 		if d_alive[i] == 1 and d_transit[i] <= 0:
 			var o := d_owner[i]
 			var pv := d_prov[i]
 			if o >= 0 and o < nc and pv >= 0 and stamp[pv] != o:
 				stamp[pv] = o
 				by_n[o].append(pv)
-	var who: PackedInt32Array = nations_for
-	if who.is_empty():
-		who.resize(nc)
-		for n in nc:
-			who[n] = n
 	var has_ally := ally.size() == nc * nc
 	var need := PackedByteArray()   # чьё видимое нужно: страны из who и их союзники
 	need.resize(nc)
@@ -1944,7 +1972,7 @@ func fog_table(nations_for: PackedInt32Array = PackedInt32Array()) -> PackedByte
 		for m in nc:
 			if m == n or (has_ally and ally[n * nc + m] == 1):
 				need[m] = 1
-	# видимое каждой страной: обход в ширину на FOG_R шагов от её дивизий
+	# видимое каждой страной: обход в ширину на fog_r шагов от её дивизий
 	var seen: Array = []
 	seen.resize(nc)
 	stamp.fill(-1)
@@ -1965,7 +1993,7 @@ func fog_table(nations_for: PackedInt32Array = PackedInt32Array()) -> PackedByte
 				var x := queue[head]
 				head += 1
 				out.append(x)
-				if depth[x] >= FOG_R:
+				if depth[x] >= fog_r:
 					continue
 				for k in range(adj_start[x], adj_start[x + 1]):
 					var q := adj_list[k]
@@ -1974,15 +2002,15 @@ func fog_table(nations_for: PackedInt32Array = PackedInt32Array()) -> PackedByte
 						depth[q] = depth[x] + 1
 						queue.append(q)
 		seen[n] = PackedInt32Array(out)
-	var t := PackedByteArray()
-	t.resize(nc * pc)
+	var res := PackedByteArray()
+	res.resize(nc * pc)
 	for n in who:
 		var base := n * pc
 		for m in nc:
 			if m == n or (has_ally and ally[n * nc + m] == 1):
 				for pv in seen[m]:
-					t[base + pv] = 1
-	return t
+					res[base + pv] = 1
+	return res
 
 
 func k_snapshot() -> void:

@@ -107,6 +107,11 @@ public:
 	Array depots_scan(const Dictionary &t) const;
 	Array convoy_day(const Dictionary &t) const;
 	double contracts_sig(const Array &contracts) const;
+	PackedByteArray fog_table(const Dictionary &t) const;
+	PackedInt32Array border_counts(const PackedInt32Array &ctrl, const PackedInt32Array &adj_start,
+			const PackedInt32Array &adj_list, int nc) const;
+	PackedInt32Array side_provs(const PackedInt32Array &ctrl, const PackedByteArray &land,
+			const PackedByteArray &ally, const PackedByteArray &excl, int nid, int nc) const;
 	Array trade_sweep(const Dictionary &t) const;
 	PackedByteArray border_band(const PackedByteArray &ids, int W, int H, int step, const PackedInt32Array &ctrl, int maxd) const;
 	Array trade_geo(const PackedInt32Array &ctrl, const PackedByteArray &land, const PackedByteArray &coastal,
@@ -168,7 +173,7 @@ public:
 			const PackedInt32Array &owner, const PackedInt32Array &ctrl, const PackedInt32Array &adj_start,
 			const PackedInt32Array &adj_list, const PackedByteArray &land, const PackedByteArray &hostile, int nc,
 			const PackedFloat64Array &plan_in, double gain, double active, double rear) const;
-	String version() const { return "meowq-core 67"; }
+	String version() const { return "meowq-core 68"; }
 	// Воздушный бой района i снимка t (Forces.air_begin): пачки по 100, обнаружение,
 	// день и ночь, превосходство; двойник — Forces.air_region_gd.
 	PackedFloat64Array air_region(const Dictionary &t, int i) const;

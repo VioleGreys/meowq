@@ -35,6 +35,9 @@ void MeowqCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("depots_scan", "t"), &MeowqCore::depots_scan);
 	ClassDB::bind_method(D_METHOD("convoy_day", "t"), &MeowqCore::convoy_day);
 	ClassDB::bind_method(D_METHOD("contracts_sig", "contracts"), &MeowqCore::contracts_sig);
+	ClassDB::bind_method(D_METHOD("fog_table", "t"), &MeowqCore::fog_table);
+	ClassDB::bind_method(D_METHOD("border_counts", "ctrl", "adj_start", "adj_list", "nc"), &MeowqCore::border_counts);
+	ClassDB::bind_method(D_METHOD("side_provs", "ctrl", "land", "ally", "excl", "nid", "nc"), &MeowqCore::side_provs);
 	ClassDB::bind_method(D_METHOD("trade_sweep", "t"), &MeowqCore::trade_sweep);
 	ClassDB::bind_method(D_METHOD("border_band", "ids", "W", "H", "step", "ctrl", "maxd"), &MeowqCore::border_band);
 	ClassDB::bind_method(D_METHOD("trade_geo", "ctrl", "land", "coastal", "adj_start", "adj_list", "mass", "nc"), &MeowqCore::trade_geo);

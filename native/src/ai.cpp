@@ -763,3 +763,127 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	}
 	return result;
 }
+
+// Туман войны для ИИ (World.fog_table, двойник — World.fog_gd): nc×pc, 1 —
+// провинция видна стране n из who: не дальше r шагов по соседству от живых
+// дивизий не в пути (своих или союзников по ally). Итог — множество, от
+// порядка обхода не зависит.
+PackedByteArray MeowqCore::fog_table(const Dictionary &t) const {
+	const int nc = int(t["nc"]), pc = int(t["pc"]), r = int(t["r"]);
+	const PackedInt32Array who_a = t["who"], as_a = t["adj_start"], al_a = t["adj_list"];
+	const PackedInt32Array tr_a = t["d_transit"], ow_a = t["d_owner"], pv_a = t["d_prov"];
+	const PackedByteArray ally_a = t["ally"], al_d = t["d_alive"];
+	const int32_t *as = as_a.ptr(), *al = al_a.ptr(), *tr = tr_a.ptr(), *ow = ow_a.ptr(), *pvs = pv_a.ptr();
+	const uint8_t *ally = ally_a.ptr(), *alive = al_d.ptr();
+	const bool has_ally = int64_t(ally_a.size()) == int64_t(nc) * nc;
+	const int nd = int(ow_a.size());
+	// источники по странам
+	std::vector<std::vector<int32_t>> src(static_cast<size_t>(nc));
+	std::vector<int32_t> stamp(size_t(pc), -1);
+	for (int i = 0; i < nd; i++) {
+		if (alive[i] == 1 && tr[i] <= 0) {
+			const int o = ow[i], pv = pvs[i];
+			if (o >= 0 && o < nc && pv >= 0 && stamp[pv] != o) {
+				stamp[pv] = o;
+				src[o].push_back(pv);
+			}
+		}
+	}
+	std::vector<uint8_t> need(size_t(nc), 0);
+	for (int64_t w = 0; w < who_a.size(); w++) {
+		const int n = who_a[w];
+		for (int m = 0; m < nc; m++)
+			if (m == n || (has_ally && ally[int64_t(n) * nc + m] == 1))
+				need[m] = 1;
+	}
+	std::vector<std::vector<int32_t>> seen(static_cast<size_t>(nc));
+	std::fill(stamp.begin(), stamp.end(), -1);
+	std::vector<int32_t> depth(size_t(pc), 0);
+	std::vector<int32_t> queue;
+	for (int n = 0; n < nc; n++) {
+		if (need[n] != 1 || src[n].empty())
+			continue;
+		queue.clear();
+		for (int32_t pv : src[n]) {
+			if (stamp[pv] != n) {
+				stamp[pv] = n;
+				depth[pv] = 0;
+				queue.push_back(pv);
+			}
+		}
+		for (size_t head = 0; head < queue.size(); head++) {
+			const int32_t x = queue[head];
+			if (depth[x] >= r)
+				continue;
+			for (int32_t k = as[x]; k < as[x + 1]; k++) {
+				const int32_t q = al[k];
+				if (stamp[q] != n) {
+					stamp[q] = n;
+					depth[q] = depth[x] + 1;
+					queue.push_back(q);
+				}
+			}
+		}
+		seen[n] = queue;
+	}
+	PackedByteArray res;
+	res.resize(int64_t(nc) * pc);
+	uint8_t *o = res.ptrw();
+	std::fill(o, o + int64_t(nc) * pc, uint8_t(0));
+	for (int64_t w = 0; w < who_a.size(); w++) {
+		const int n = who_a[w];
+		uint8_t *row = o + int64_t(n) * pc;
+		for (int m = 0; m < nc; m++)
+			if (m == n || (has_ally && ally[int64_t(n) * nc + m] == 1))
+				for (int32_t pv : seen[m])
+					row[pv] = 1;
+	}
+	return res;
+}
+
+// Границы стран (Simulation.border_gd — двойник): nc×nc, [c * nc + q] — число
+// пар «провинция p страны c, её сосед под q» (q ≥ 0; провинции без хозяина
+// пропускаются).
+PackedInt32Array MeowqCore::border_counts(const PackedInt32Array &ctrl, const PackedInt32Array &adj_start,
+		const PackedInt32Array &adj_list, int nc) const {
+	PackedInt32Array res;
+	res.resize(int64_t(nc) * nc);
+	int32_t *o = res.ptrw();
+	std::fill(o, o + int64_t(nc) * nc, 0);
+	const int32_t *ct = ctrl.ptr(), *as = adj_start.ptr(), *al = adj_list.ptr();
+	const int pc = int(ctrl.size());
+	for (int p = 0; p < pc; p++) {
+		const int c = ct[p];
+		if (c < 0 || c >= nc)
+			continue;
+		for (int32_t k = as[p]; k < as[p + 1]; k++) {
+			const int q = ct[al[k]];
+			if (q >= 0 && q < nc)
+				o[int64_t(c) * nc + q]++;
+		}
+	}
+	return res;
+}
+
+// Рубеж операций (AIPlanner.war_limit_fronts, двойник — там же): провинции
+// суши по возрастанию — наши и союзные (ally), кроме отмеченных в excl.
+PackedInt32Array MeowqCore::side_provs(const PackedInt32Array &ctrl, const PackedByteArray &land,
+		const PackedByteArray &ally, const PackedByteArray &excl, int nid, int nc) const {
+	PackedInt32Array res;
+	const int pc = int(ctrl.size());
+	const int32_t *ct = ctrl.ptr();
+	const uint8_t *ld = land.ptr(), *al = ally.ptr(), *ex = excl.ptr();
+	const int64_t base = int64_t(nid) * nc;
+	std::vector<int32_t> out;
+	for (int p = 0; p < pc; p++) {
+		if (ld[p] == 0 || ex[p] == 1)
+			continue;
+		const int c = ct[p];
+		if (c < 0 || (c != nid && al[base + c] != 1))
+			continue;
+		out.push_back(p);
+	}
+	res.resize(int64_t(out.size()));
+	std::copy(out.begin(), out.end(), res.ptrw());
+	return res;
+}

@@ -87,7 +87,7 @@ static func nation_args(world: World, nid: int, mine: PackedInt32Array) -> Array
 		opts["objective"] = obj
 	var lim := war_limit_fronts(world, nat)
 	if not lim.is_empty():
-		opts["fronts"] = lim
+		opts["fronts"] = lim   # готовый список (по возрастанию — как ключи словаря)
 	return military_args(world, nid, mine, opts)
 
 
@@ -97,41 +97,77 @@ static func nation_args(world: World, nid: int, mine: PackedInt32Array) -> Array
 ## 1937 г. — Северный Китай и низовья Янцзы, 1938-й — до Уханя и Кантон).
 ## Цель атаки — у допустимого участка, так что за рамку фронт заходит не
 ## дальше чем на провинцию. Пусто — ограничения нет.
-static func war_limit_fronts(world: World, nat: World.Nation) -> Dictionary:
+static func war_limit_fronts(world: World, nat: World.Nation) -> PackedInt32Array:
 	if nat.war_limit.is_empty():
-		return {}
-	var code: String = nat.war_limit[0]
-	var boxes: Array = nat.war_limit[1]
-	var out := {}
+		return PackedInt32Array()
 	var ctrl := world.p_controller
 	var land := world.p_land
 	var nc := world.nation_count
 	var al := world.ally
 	var fresh := al.size() == nc * nc   # = Diplomacy.same_side (Simulation._refresh_sides)
+	var excl := _wl_excl(world, nat.war_limit)
+	if fresh and Native.core != null and Native.core.has_method("side_provs"):
+		var r: PackedInt32Array = Native.core.call("side_provs", ctrl, land, al, excl, nat.id, nc)
+		if wl_check.size() == 2:
+			wl_check[0] += 1
+			if r != _side_provs_gd(world, nat, excl):
+				wl_check[1] += 1
+		return r
+	return _side_provs_gd(world, nat, excl)
+
+
+static var wl_check: Array = []   # [проверок, расхождений] — сверка ядра (tests/kernel_check.gd)
+
+
+## Двойник MeowqCore.side_provs: наши и союзные провинции суши по возрастанию,
+## кроме excl.
+static func _side_provs_gd(world: World, nat: World.Nation, excl: PackedByteArray) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var ctrl := world.p_controller
+	var land := world.p_land
+	var nc := world.nation_count
+	var al := world.ally
+	var fresh := al.size() == nc * nc
 	var base := nat.id * nc
-	# провинции страны-кода — по указателю, без сравнения строк на каждой
-	var in_code := PackedByteArray()
-	in_code.resize(world.prov_count)
-	for p in _adm0_index(world).get(code, PackedInt32Array()):
-		in_code[p] = 1
 	for p in world.prov_count:
 		# и союзная земля: японские войска в Таиланде идут на Малайю и Бирму
-		if land[p] == 0:
+		if land[p] == 0 or excl[p] == 1:
 			continue
 		var c := ctrl[p]
 		if c < 0 or (c != nat.id and not (al[base + c] == 1 if fresh else Diplomacy.same_side(world, c, nat.id))):
 			continue
-		if in_code[p] == 1:
-			var ll: Vector2 = world.p_lonlat[p]
-			var inside := false
-			for b in boxes:
-				if ll.x >= float(b[0]) and ll.y >= float(b[1]) and ll.x <= float(b[2]) and ll.y <= float(b[3]):
-					inside = true
-					break
-			if not inside:
-				continue
-		out[p] = true
+		out.append(p)
 	return out
+
+
+static var _wl_key := ""
+static var _wl_mask := PackedByteArray()
+static var _wl_of := 0
+
+
+## Провинции страны-кода рубежа вне его рамок (код и координаты провинций за
+## партию не меняются — маска по самому рубежу).
+static func _wl_excl(world: World, wl: Array) -> PackedByteArray:
+	var key := var_to_str(wl)
+	if key == _wl_key and _wl_of == world.get_instance_id() and _wl_mask.size() == world.prov_count:
+		return _wl_mask
+	var code: String = wl[0]
+	var boxes: Array = wl[1]
+	var m := PackedByteArray()
+	m.resize(world.prov_count)
+	for p in _adm0_index(world).get(code, PackedInt32Array()):
+		var ll: Vector2 = world.p_lonlat[p]
+		var inside := false
+		for b in boxes:
+			if ll.x >= float(b[0]) and ll.y >= float(b[1]) and ll.x <= float(b[2]) and ll.y <= float(b[3]):
+				inside = true
+				break
+		if not inside:
+			m[p] = 1
+	_wl_key = key
+	_wl_mask = m
+	_wl_of = world.get_instance_id()
+	return m
 
 
 ## Текущая веха плана наступления страны (-1 — плана нет или война с целью не идёт).
@@ -222,9 +258,10 @@ static func besieged_table(world: World) -> PackedByteArray:
 static func military_args(world: World, nid: int, divs: PackedInt32Array, opts: Dictionary) -> Array:
 	var nat: World.Nation = world.nations[nid]
 	var objective: int = opts.get("objective", -1)
-	var allowed: Dictionary = opts.get("fronts", {})
+	var fr: Variant = opts.get("fronts", {})
+	var allowed: PackedInt32Array = fr if fr is PackedInt32Array else PackedInt32Array((fr as Dictionary).keys())
 	return [nid, divs, ["auto", "hold", "attack"].find(opts.get("mode", "auto")), int(opts.get("enemy", -1)), objective,
-		PackedInt32Array(allowed.keys()), float(opts.get("ratio", 1.15 if objective >= 0 else 1.3)), nat.capital,
+		allowed, float(opts.get("ratio", 1.15 if objective >= 0 else 1.3)), nat.capital,
 		PackedInt32Array(nat.at_war.keys())]
 
 
@@ -1064,11 +1101,22 @@ static func hold_table(world: World) -> PackedByteArray:
 	var vp := world.p_vp
 	var land := world.p_land
 	var ctrl := world.p_controller
+	# без войны врага рядом нет (_enemy_near смотрит war) — города мирных стран
+	# не обходим
+	var nc := world.nation_count
+	var war := world.war
+	var at_war := PackedByteArray()
+	at_war.resize(nc)
+	for n in nc:
+		for m in nc:
+			if war[n * nc + m] == 1:
+				at_war[n] = 1
+				break
 	for c in pc:
 		if vp[c] < CAP_VP or land[c] == 0:
 			continue
 		var n := ctrl[c]
-		if n < 0:
+		if n < 0 or at_war[n] == 0:
 			continue
 		var on: World.Nation = world.nations[n]
 		if on.is_player or not on.alive or not Claims.is_core(world, n, c) or not _enemy_near(world, n, c, CAP_NEAR):
