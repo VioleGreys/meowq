@@ -92,9 +92,10 @@ var _wheel := false          # масштаб колесом/жестом тач
 var redraws := 0             # сколько раз перерисована карта (для замеров)
 var view_version := 0        # растёт при каждом изменении вида (сдвиг, масштаб, наклон)
 var palette_version := 0     # растёт при каждом обновлении палитры (смена владельцев)
-var _pal_ctrl := PackedInt32Array()   # чем покрашена провинция в палитре (политическая карта)
-var _pal_own := PackedInt32Array()
+var _pal_c := PackedInt32Array()   # цвета провинций в палитре (RGBA8): контролёр в режиме
+var _pal_o := PackedInt32Array()   # и владелец (update_palette)
 var _pal_mode := -1
+var _band_ctrl := PackedInt32Array()   # контролёры, по которым посчитана кайма границ
 
 var _touches := {}           # index -> Vector2 (экранные координаты)
 var _gesture_moved := 0.0
@@ -109,9 +110,10 @@ func setup(w: World) -> void:
 	_band_pending = PackedInt32Array()
 	_band_again = false
 	world = w
-	_pal_ctrl.clear()
-	_pal_own.clear()
+	_pal_c.clear()
+	_pal_o.clear()
 	_pal_mode = -1
+	_band_ctrl.clear()
 	for c in get_children():
 		c.queue_free()
 	mat = ShaderMaterial.new()
@@ -606,7 +608,8 @@ func _band_async(provs: PackedInt32Array) -> void:
 	if _band_task >= 0:
 		_band_again = true   # посчитаем ещё раз по свежим владельцам, когда этот закончит
 		return
-	_band_task = WorkerThreadPool.add_task(_band_job.bind(world.p_controller.duplicate()))
+	_band_ctrl = world.p_controller.duplicate()
+	_band_task = WorkerThreadPool.add_task(_band_job.bind(_band_ctrl))
 
 
 func _band_poll() -> void:
@@ -628,10 +631,18 @@ func _band_poll() -> void:
 	_band_pending = PackedInt32Array()
 	if _band_again:
 		_band_again = false
-		_band_task = WorkerThreadPool.add_task(_band_job.bind(world.p_controller.duplicate()))
+		_band_ctrl = world.p_controller.duplicate()
+		_band_task = WorkerThreadPool.add_task(_band_job.bind(_band_ctrl))
 
 
 func _update_band() -> void:
+	if _band_task >= 0:
+		# фоновый расчёт по старым контролёрам не должен лечь поверх этого
+		WorkerThreadPool.wait_for_task_completion(_band_task)
+		_band_task = -1
+		_band_again = false
+		_band_pending = PackedInt32Array()
+	_band_ctrl = world.p_controller.duplicate()
 	if Native.core == null or not Native.core.has_method("border_band") or world.id_image == null:
 		_param("has_band", false)
 		return
@@ -1845,107 +1856,155 @@ func set_map_mode(m: int) -> void:
 func update_palette() -> void:
 	if world == null:
 		return
-	# политическая карта: перекрашиваем только провинции со сменой владельца
-	# (полный проход по всем — при смене режима или первом показе)
-	var incremental := map_mode == MapMode.POLITICAL and _pal_mode == MapMode.POLITICAL \
-		and _pal_ctrl.size() == world.prov_count
-	_pal_mode = map_mode
-	if map_mode == MapMode.POLITICAL and _pal_ctrl.size() != world.prov_count:
-		_pal_ctrl.resize(world.prov_count)
-		_pal_own.resize(world.prov_count)
-	var res_at := {}
-	var max_res := 0.1
-	if map_mode == MapMode.RESOURCES:
-		for i in world.res_prov.size():
-			res_at[world.res_prov[i]] = i
-			var tot := 0.0
-			for r in Economy.RES_COUNT:
-				tot += world.res_val[i * Economy.RES_COUNT + r] / RES_SCALE[r]
-			max_res = maxf(max_res, tot)
-	var max_ind := 1
-	if map_mode == MapMode.INDUSTRY:
-		for p in world.prov_count:
-			max_ind = maxi(max_ind, world.p_civ[p] + world.p_mil[p])
+	# Цвет провинции — 32 бита RGBA8 (как set_pixel: усечение c·255) для двух
+	# разделов палитры: контролёр (цвет режима, в альфе номер страны + 1) и
+	# владелец. Весь проход — по таблицам стран и местным массивам, без set_pixel;
+	# перекрашиваются и перерисовываются только провинции, чей цвет сменился, —
+	# в любом режиме. Целиком — при смене режима или первом показе. Кайма границ
+	# зависит только от контролёров: при том же их наборе не пересчитывается.
+	var n := world.prov_count
+	var size := _pal_rows * 64
+	var full := _pal_mode != map_mode or _pal_c.size() != size
+	var nc := PackedInt32Array()
+	nc.resize(size)
+	var no := PackedInt32Array()
+	no.resize(size)
+	var nn := world.nations.size()
+	var a_of := PackedInt32Array()   # альфа: номер страны + 1 (через float32, как в Color)
+	a_of.resize(nn)
+	var rgb_of := PackedInt32Array()   # цвет страны без альфы
+	rgb_of.resize(nn)
+	for i in nn:
+		a_of[i] = int(clampf(Color(0, 0, 0, (i + 1) / 255.0).a * 255.0, 0, 255)) << 24
+		rgb_of[i] = _rgb24(world.nations[i].color)
 	var pc := world.p_controller
 	var po := world.p_owner
-	var changed := 0
-	var ch_list := PackedInt32Array()
-	for p in world.prov_count:
-		if incremental:
-			if _pal_ctrl[p] == pc[p] and _pal_own[p] == po[p]:
-				continue
-		changed += 1
-		if incremental:
-			ch_list.append(p)
-		if map_mode == MapMode.POLITICAL:
-			_pal_ctrl[p] = pc[p]
-			_pal_own[p] = po[p]
-		var x := p % 64
-		var y := p / 64
-		if world.p_land[p] == 0:
-			ctrl_img.set_pixel(x, y, Color(0, 0, 0, 0))
-			owner_img.set_pixel(x, y, Color(0, 0, 0, 0))
-			continue
-		var c := world.p_controller[p]
-		var o := world.p_owner[p]
-		var col: Color = world.nations[c].color
-		match map_mode:
-			MapMode.TERRAIN:
-				col = World.TERRAIN_COLORS[world.p_terrain[p]]
-			MapMode.SUPPLY:
-				# снабжение игрока: зелёный — хорошо, красный — далеко или мало дорог
-				var me := world.player_nation()
-				col = Color(0.55, 0.55, 0.52)
-				if me >= 0 and world.supply_dist.size() > me and not world.supply_dist[me].is_empty():
-					var dist: PackedInt32Array = world.supply_dist[me]
+	var land := world.p_land
+	var mode_of := rgb_of   # цвет режима по контролёру (политика, стороны)
+	match map_mode:
+		MapMode.FACTIONS:
+			mode_of = PackedInt32Array()
+			mode_of.resize(nn)
+			for c in nn:
+				var r := Diplomacy.root(world, c)
+				var f: int = world.nations[r].faction
+				var col: Color = world.factions[f].color if f >= 0 else Color(0.62, 0.6, 0.55)
+				if world.nations[c].overlord >= 0 and f < 0:
+					col = world.nations[r].color
+				mode_of[c] = _rgb24(col)
+		MapMode.TERRAIN:
+			var t_of := PackedInt32Array()
+			for col in World.TERRAIN_COLORS:
+				t_of.append(_rgb24(col))
+			var ter := world.p_terrain
+			for p in n:
+				if land[p] != 0:
+					nc[p] = t_of[ter[p]] | a_of[pc[p]]
+		MapMode.SUPPLY:
+			# снабжение игрока: зелёный — хорошо, красный — далеко или мало дорог
+			var me := world.player_nation()
+			var grey := _rgb24(Color(0.55, 0.55, 0.52))
+			var ally_dark := _rgb24(Color(0.35, 0.1, 0.1))
+			var dist := PackedInt32Array()
+			if me >= 0 and world.supply_dist.size() > me:
+				dist = world.supply_dist[me]
+			var cap := world.p_supply_cap
+			var ally := world.ally
+			var base := me * world.nation_count
+			for p in n:
+				if land[p] == 0:
+					continue
+				var c := pc[p]
+				var rgb := grey
+				if not dist.is_empty():
 					var h: int = dist[p]
 					if h >= 0:
 						var reach := 1.0 if h <= 5 else maxf(0.35, 1.0 - (h - 5) * 0.06)
-						var v := reach * minf(1.0, world.p_supply_cap[p] / 4.0)
-						col = Color(0.85, 0.25, 0.2).lerp(Color(0.3, 0.75, 0.3), v)
-					elif world.ally[me * world.nation_count + c] == 1:
-						col = Color(0.35, 0.1, 0.1)
-			MapMode.FACTIONS:
-				var r := Diplomacy.root(world, c)
-				var f: int = world.nations[r].faction
-				col = world.factions[f].color if f >= 0 else Color(0.62, 0.6, 0.55)
-				if world.nations[c].overlord >= 0 and f < 0:
-					col = world.nations[r].color
-			MapMode.RESOURCES:
-				# главный ресурс провинции, насыщенность — по объёму
-				col = Color(0.86, 0.84, 0.78)
-				if res_at.has(p):
-					var i: int = res_at[p]
-					var best := 0
-					var bv := -1.0
-					var tot := 0.0
-					for r in Economy.RES_COUNT:
-						var v: float = world.res_val[i * Economy.RES_COUNT + r] / RES_SCALE[r]
-						tot += v
-						if v > bv:
-							bv = v
-							best = r
-					col = Color(0.86, 0.84, 0.78).lerp(RES_COLORS[best], 0.45 + 0.55 * sqrt(tot / max_res))
-			MapMode.INDUSTRY:
-				var v := float(world.p_civ[p] + world.p_mil[p]) / max_ind
-				var mil_share := float(world.p_mil[p]) / maxf(1.0, world.p_civ[p] + world.p_mil[p])
-				col = Color(0.85, 0.85, 0.8).lerp(Color(0.85, 0.35, 0.2).lerp(Color(0.3, 0.45, 0.8), 1.0 - mil_share), sqrt(v))
-		col.a = (c + 1) / 255.0
-		ctrl_img.set_pixel(x, y, col)
-		var oc: Color = world.nations[o].color
-		oc.a = (o + 1) / 255.0
-		owner_img.set_pixel(x, y, oc)
+						var v := reach * minf(1.0, cap[p] / 4.0)
+						rgb = _rgb24(Color(0.85, 0.25, 0.2).lerp(Color(0.3, 0.75, 0.3), v))
+					elif ally[base + c] == 1:
+						rgb = ally_dark
+				nc[p] = rgb | a_of[c]
+		MapMode.RESOURCES:
+			# главный ресурс провинции, насыщенность — по объёму
+			var max_res := 0.1
+			var rc: int = Economy.RES_COUNT
+			var rv := world.res_val
+			for i in world.res_prov.size():
+				var tot := 0.0
+				for r in rc:
+					tot += rv[i * rc + r] / RES_SCALE[r]
+				max_res = maxf(max_res, tot)
+			var plain := Color(0.86, 0.84, 0.78)
+			var plain_rgb := _rgb24(plain)
+			for p in n:
+				if land[p] != 0:
+					nc[p] = plain_rgb | a_of[pc[p]]
+			for i in world.res_prov.size():
+				var p: int = world.res_prov[i]
+				if land[p] == 0:
+					continue
+				var best := 0
+				var bv := -1.0
+				var tot := 0.0
+				for r in rc:
+					var v: float = rv[i * rc + r] / RES_SCALE[r]
+					tot += v
+					if v > bv:
+						bv = v
+						best = r
+				nc[p] = _rgb24(plain.lerp(RES_COLORS[best], 0.45 + 0.55 * sqrt(tot / max_res))) | a_of[pc[p]]
+		MapMode.INDUSTRY:
+			var civ := world.p_civ
+			var mil := world.p_mil
+			var max_ind := 1
+			for p in n:
+				max_ind = maxi(max_ind, civ[p] + mil[p])
+			for p in n:
+				if land[p] == 0:
+					continue
+				var v := float(civ[p] + mil[p]) / max_ind
+				var mil_share := float(mil[p]) / maxf(1.0, civ[p] + mil[p])
+				nc[p] = _rgb24(Color(0.85, 0.85, 0.8).lerp(Color(0.85, 0.35, 0.2).lerp(Color(0.3, 0.45, 0.8), 1.0 - mil_share), sqrt(v))) | a_of[pc[p]]
+	if map_mode == MapMode.POLITICAL or map_mode == MapMode.FACTIONS:
+		for p in n:
+			if land[p] != 0:
+				var c := pc[p]
+				nc[p] = mode_of[c] | a_of[c]
+	for p in n:
+		if land[p] != 0:
+			var o := po[p]
+			no[p] = rgb_of[o] | a_of[o]
 	world.palette_dirty = false
-	if changed == 0:
-		return   # владельцы не менялись — ни текстуры, ни перерисовки
+	var ch := PackedInt32Array()
+	if not full:
+		if nc == _pal_c and no == _pal_o:
+			return   # цвета не менялись — ни текстуры, ни перерисовки
+		for p in n:
+			if nc[p] != _pal_c[p] or no[p] != _pal_o[p]:
+				ch.append(p)
+	_pal_c = nc
+	_pal_o = no
+	_pal_mode = map_mode
+	ctrl_img.set_data(64, _pal_rows, false, Image.FORMAT_RGBA8, nc.to_byte_array())
+	owner_img.set_data(64, _pal_rows, false, Image.FORMAT_RGBA8, no.to_byte_array())
 	pal_img.blit_rect(ctrl_img, Rect2i(0, 0, 64, _pal_rows), Vector2i(0, 0))
 	_pal_push(1, owner_img)
 	palette_version += 1
-	if incremental:
-		_band_async(ch_list)
-	else:
-		_update_band()
+	var band_ok := _band_ctrl == pc
+	if full:
+		if not band_ok:
+			_update_band()
 		redraw()
+	elif band_ok:
+		redraw_provs(ch)
+	else:
+		_band_async(ch)
+
+
+## Цвет без альфы в RGBA8, как его пишет Image.set_pixel (усечение c·255).
+static func _rgb24(c: Color) -> int:
+	return int(clampf(c.r * 255.0, 0, 255)) | int(clampf(c.g * 255.0, 0, 255)) << 8 | int(clampf(c.b * 255.0, 0, 255)) << 16
 
 
 
