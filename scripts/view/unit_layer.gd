@@ -9,7 +9,7 @@ extends Node2D
 ##  * _draw() — каждый кадр рисует только из этого списка (мир не трогает),
 ##    поэтому сдвиг и масштаб карты плавные, даже пока считается игровой день.
 
-enum { ARROW, FRONT, OBJECTIVE, BATTLE, COUNTER, LABEL, PORT, PLAN, TRANSIT, FLEET, PLANES }
+enum { ARROW, FRONT, OBJECTIVE, BATTLE, COUNTER, LABEL, PORT, PLAN, TRANSIT, FLEET, PLANES, CITY }
 
 var map: MapView
 var world: World
@@ -24,6 +24,8 @@ var _labels_day := -1
 var _labels_pv := -1
 var _ports: Array = []          # отметки портов (кэш, см. _rebuild_navy_air)
 var _ports_key := ""
+var _cities: Array = []         # города (очки ≥ 4): [мировая позиция, имя, очки, провинция], крупные первыми
+var _city_rects: Array = []     # занятые подписями городов прямоугольники (в кадре)
 
 
 
@@ -274,6 +276,7 @@ func build(sel_fleet: int = -1, sel_wing: int = -1) -> Array:
 		_rebuild_labels()
 	for l in _labels:
 		out.append([LABEL, l[0], l[1], l[2], l[3]])
+	_add_cities(out)
 	# Читаем плоские массивы дивизий напрямую (свойства Division — обёртки с
 	# вызовом на каждое чтение; список пересобирается каждый игровой день).
 	var sel := {}
@@ -488,6 +491,7 @@ func _draw() -> void:
 		return
 	var t0 := Time.get_ticks_usec()
 	_texts.clear()
+	_city_rects.clear()
 	var z := map.zoom_level()
 	var vp := get_viewport_rect().size
 	# с запасом: при сдвиге слой не перерисовывается, пока запас не кончится
@@ -498,6 +502,8 @@ func _draw() -> void:
 		match it[0]:
 			LABEL:
 				_draw_label(it, map.local_zoom(it[1]))
+			CITY:
+				_draw_city(it, map.local_zoom(it[1]), counter, screen)
 			ARROW:
 				if not it[5] and z < 1.4:
 					continue
@@ -679,6 +685,101 @@ func _draw_label(l: Array, z: float) -> void:
 	draw_string_outline(label_font, Vector2.ZERO, text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX, int(4.0 / k), Color(0.95, 0.92, 0.84, alpha * 0.45))
 	draw_string(label_font, Vector2.ZERO, text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX, Color(0.10, 0.08, 0.06, alpha))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Значки городов (как в жанре): столица — золотая звезда в медальоне, крупный
+## город (очки 50) — три дома, город (15) — два дома, малые (8, 4) — квадратик.
+## Чем мельче город, тем ближе масштаб, с которого он виден; подпись — под знаком.
+## Список городов — один раз; столицы — по странам на каждой сборке.
+func _add_cities(out: Array) -> void:
+	if _cities.is_empty():
+		var re := RegEx.create_from_string("\\s+\\d+$")
+		var order: Array = []
+		for p in world.prov_count:
+			if world.p_land[p] and world.p_vp[p] >= 4:
+				order.append(p)
+		order.sort_custom(func(a, b): return world.p_vp[a] > world.p_vp[b] or (world.p_vp[a] == world.p_vp[b] and a < b))
+		for p in order:
+			_cities.append([_wp(p), re.sub(world.p_name[p], ""), world.p_vp[p], p])
+	var caps := {}
+	for nn in world.nations:
+		if nn.alive and nn.capital >= 0:
+			caps[nn.capital] = true
+	# столицы — первыми (подпись столицы не уступает место соседу)
+	for c in _cities:
+		if caps.has(c[3]):
+			out.append([CITY, c[0], c[1], c[2], 3])
+	for c in _cities:
+		if not caps.has(c[3]):
+			out.append([CITY, c[0], c[1], c[2], 2 if c[2] >= 50 else (1 if c[2] >= 15 else 0)])
+
+
+const CITY_Z := [2.0, 1.25, 0.8, 0.45]   # с какого масштаба виден знак: малый, город, крупный, столица
+
+
+func _draw_city(it: Array, z: float, counter: Vector2, screen: Rect2) -> void:
+	var kind: int = it[4]
+	var vp: int = it[3]
+	var z0: float = CITY_Z[kind]
+	if kind == 0 and vp < 8:
+		z0 = 3.0
+	if z < z0:
+		return
+	var base := map.world_to_screen(it[1])
+	if not screen.has_point(base):
+		return
+	var a := clampf((z - z0) * 6.0, 0.0, 1.0)
+	# знак — под фишкой дивизии в центре провинции (фишки рисуются позже, поверх)
+	var c := base + Vector2(0, counter.y * 0.5 + 16)
+	var r: float = [4.0, 8.0, 9.5, 10.5][kind]
+	var nr := Rect2(c - Vector2(r, r), Vector2(r, r) * 2.0)
+	for q: Rect2 in _city_rects:
+		if q.intersects(nr):
+			if kind < 2:
+				return
+			break
+	var dark := Color(0.08, 0.07, 0.06, 0.9 * a)
+	if kind == 0:
+		draw_rect(nr.grow(1.5), dark)
+		draw_rect(nr, Color(0.93, 0.90, 0.82, a))
+	else:
+		var ring := Color(0.86, 0.68, 0.27, a) if kind == 3 else Color(0.80, 0.77, 0.70, a)
+		draw_circle(c + Vector2(1, 1.5), r + 1.5, Color(0, 0, 0, 0.35 * a), true, -1.0, true)
+		draw_circle(c, r + 1.5, ring, true, -1.0, true)
+		draw_circle(c, r, Color(0.13, 0.12, 0.11, 0.95 * a), true, -1.0, true)
+		if kind == 3:
+			# пятиконечная звезда (своя: у набора иконок звёзды с узором)
+			var pts := PackedVector2Array()
+			for k in 10:
+				var ang := -PI * 0.5 + k * PI / 5.0
+				pts.append(c + Vector2(cos(ang), sin(ang)) * r * (0.78 if k % 2 == 0 else 0.33))
+			draw_colored_polygon(pts, Color(0.98, 0.80, 0.30, a))
+		else:
+			# силуэт домов (свой: иконки набора на 14 пикс. не читаются): крупный — три
+			# дома разной высоты, город — два
+			var wc := Color(0.93, 0.90, 0.82, a)
+			var u := r / 8.0
+			var bl := c.y + 4.5 * u
+			var hs: Array = [[-4.5, 2.6, 6.0], [-1.5, 3.0, 9.0], [1.9, 2.6, 4.5]] if kind == 2 else [[-3.6, 3.2, 7.5], [0.4, 3.2, 5.0]]
+			for b: Array in hs:
+				draw_rect(Rect2(c.x + b[0] * u, bl - b[2] * u, b[1] * u, b[2] * u), wc)
+	_city_rects.append(nr)
+	# подпись — чуть позже знака, если не налезает на другие
+	if z < z0 + 0.25:
+		return
+	var text: String = it[2]
+	var fs: int = [11, 12, 13, 15][kind]
+	var f: Font = font if kind == 0 else bold
+	var tw := f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var tp := Vector2(c.x - tw * 0.5, c.y + r + 3 + fs * 0.8)
+	var tr := Rect2(tp.x - 2, tp.y - fs * 0.8, tw + 4, fs * 1.05)
+	for q: Rect2 in _city_rects:
+		if q.intersects(tr):
+			return
+	_city_rects.append(tr)
+	var ta := clampf((z - z0 - 0.25) * 6.0, 0.0, 1.0) * a
+	draw_string_outline(f, tp, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0.08, 0.07, 0.06, 0.8 * ta))
+	draw_string(f, tp, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.96, 0.93, 0.85, ta) if kind > 0 else Color(0.90, 0.87, 0.80, ta))
 
 
 func _rebuild_labels() -> void:

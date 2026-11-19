@@ -953,7 +953,11 @@ void fragment() {
 		float mc = 1.0;
 		for (int i = 0; i < 4; i++) {
 			for (int j = i + 1; j < 4; j++) {
-				if (rl[i] > 0.15 && rl[j] > 0.15) {
+				// средняя линия между руслами — векторы смотрят ПРОЧЬ друг от друга;
+				// по разные стороны одной реки они смотрят навстречу (это не развилка:
+				// иначе тонкая река, идущая между текселями, рвалась пунктиром)
+				vec2 oij = vec2(ivec2(j & 1, j >> 1) - ivec2(i & 1, i >> 1));
+				if (rl[i] > 0.15 && rl[j] > 0.15 && dot(rn[i], oij) < 0.0 && dot(rn[j], oij) > 0.0) {
 					mc = min(mc, dot(rn[i], rn[j]));
 				}
 			}
@@ -1750,23 +1754,50 @@ void fragment() {
 			rv_d = min(rv_d, mix(rv_d, rv_ds, smoothstep(0.35, 0.7, hw)));
 			float has = step(0.01, rv.g) * (rv.g > 0.5 ? 1.0 : smoothstep(0.4, 0.9, zoom));   // малые — тоньше, с масштаба ~0,5
 			river = (1.0 - smoothstep(hw - aa, hw + aa, rv_d)) * has;
-			float bw = 0.11 * nk + 0.35 * rv_fw * nk + 0.9 * rv_fw * (1.0 - nk);          // берег: узкая мягкая кромка (как в жанре)
+			// берег вблизи — неровной ширины (пляжи и отмели по шуму), вдали — узкая кромка
+			mediump float bn = has_detail && nk > 0.0 ? textureGrad(tile_tex, vec3(px / (DETAIL_TILE * 2.3 * id_k) + vec2(0.21, 0.77), 1.0), q_gx / (DETAIL_TILE * 2.3), q_gy / (DETAIL_TILE * 2.3)).g : 0.5;
+			float bw = (0.16 + 0.50 * smoothstep(0.40, 0.65, bn)) * nk + 0.35 * rv_fw * nk + 0.9 * rv_fw * (1.0 - nk);
 			float bank = (1.0 - smoothstep(hw + bw - aa, hw + bw + aa, rv_d)) * has - river;
 			river_m = river + max(bank, 0.0);   // лента вместе с берегами
 			river_out = (hw + bw) * step(0.5, has);
 			river_nk = nk;
-			// вода: темнее у берега, светлее к середине; рябь — нормали волн
-			float mid = clamp(1.0 - rv_d / max(hw, 1e-3), 0.0, 1.0);
-			vec3 rw = mix(vec3(0.20, 0.30, 0.38), vec3(0.42, 0.52, 0.60), mid * mid * nk);
+			// вода вблизи: глубина — синяя, к берегу мель зеленовато-бурая; струи течения
+			// вдоль русла, блики, тень берега с северо-запада, светлая кромка у уреза
+			float mid = clamp(1.0 - rv_d / max(hw, 1e-3), 0.0, 1.0);   // 1 — ось, 0 — урез
+			vec2 rq = rv4.rg * 255.0 - 128.0;
+			vec2 sd = -rq / max(length(rq), 1e-3);   // от оси к точке
+			vec2 fl = vec2(-sd.y, sd.x);             // вдоль русла (за осью знак меняется)
+			float deep = smoothstep(0.05, 0.8, mid);
+			vec3 rw = mix(vec3(0.34, 0.41, 0.36), vec3(0.15, 0.27, 0.35), deep);
 			if (has_water && nk > 0.0) {
+				// координаты вдоль/поперёк русла; выборки в (a, b) и (−a, −b) —
+				// сумма не меняется при смене знака за осью, шва нет
+				vec2 q = px / id_k;
+				vec2 ka = vec2(0.10, 0.55);
+				vec2 fc = vec2(dot(q, fl), dot(q, sd)) * ka;
+				vec2 fgx = vec2(dot(q_gx, fl), dot(q_gx, sd)) * ka;
+				vec2 fgy = vec2(dot(q_gy, fl), dot(q_gy, sd)) * ka;
+				float s1 = textureGrad(tile_tex, vec3(fc, 0.0), fgx, fgy).r;
+				float s2 = textureGrad(tile_tex, vec3(-fc + vec2(0.31, 0.57), 0.0), fgx, fgy).r;
+				float streak = s1 + s2 - 1.0;   // −1…1
 				vec2 wn = textureGrad(tile_tex, vec3(wv_uv * 3.0, 0.0), wv_gx * 3.0, wv_gy * 3.0).rg - 0.5;
-				rw *= 1.0 + (wn.x - wn.y) * 0.35 * nk;
+				rw *= 1.0 + (streak * 0.45 * (0.35 + 0.65 * deep) + (wn.x - wn.y) * 0.18) * nk;
+				rw += vec3(0.38, 0.42, 0.40) * smoothstep(0.18, 0.40, streak) * deep * 0.45 * nk;   // блики
+				float shade = max(dot(sd, vec2(-0.707, -0.707)), 0.0) * (1.0 - smoothstep(0.0, 0.45, mid));
+				rw *= 1.0 - 0.35 * shade * nk;   // тень берега
+				rw = mix(rw, vec3(0.52, 0.56, 0.50), (1.0 - smoothstep(0.0, 0.12, mid)) * (1.0 - shade) * 0.45 * nk);   // урез
 			}
 			rw = mix(vec3(0.27, 0.43, 0.60), rw, nk);   // вдали — спокойная синяя линия
 #ifdef BAKED
 			mediump float light = bank > 0.0 && nk > 0.0 ? light_at(muv) : 0.0;
 #endif
-			col = mix(col, mix(col * 0.62, vec3(0.56, 0.49, 0.36) * (0.85 + 0.25 * light), nk), bank * mix(0.18, 0.5, nk));   // вдали — едва заметная кромка, вблизи — берег
+			// берег вблизи: у воды мокрый ил, дальше песок, к траве — тростник пятнами
+			float bt = clamp((rv_d - hw) / max(bw, 1e-3), 0.0, 1.0);
+			vec3 bc = mix(vec3(0.33, 0.29, 0.21), vec3(0.63, 0.57, 0.43), smoothstep(0.0, 0.45, bt));
+			mediump float reed = smoothstep(0.55, 0.75, bn * 0.6 + (has_detail ? textureGrad(tile_tex, vec3(px / (DETAIL_TILE * 0.35 * id_k), 1.0), q_gx / (DETAIL_TILE * 0.35), q_gy / (DETAIL_TILE * 0.35)).r : 0.5) * 0.6 - 0.1) * smoothstep(0.3, 0.8, bt) * nk;
+			bc = mix(bc, vec3(0.22, 0.28, 0.14), reed * 0.85);
+			bc *= 0.85 + 0.25 * light;
+			col = mix(col, mix(col * 0.62, bc, nk), bank * mix(0.18, mix(0.9, 0.35, smoothstep(0.6, 1.0, bt)), nk));   // вдали — едва заметная кромка
 			col = mix(col, rw, river * smoothstep(0.3, 0.7, zoom));
 			// мосты: улица города поперёк реки — каменный настил вдоль улицы, парапеты,
 			// тень на воде к юго-востоку (вблизи, высокое качество)
