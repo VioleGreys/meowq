@@ -263,16 +263,18 @@ func setup(w: World) -> void:
 	# массивом растягивает слои до 8192²)
 	var art := world.width == 5632
 	for k in ["color_w", "color_e", "normal_w", "normal_e"]:
-		art = art and ResourceLoader.exists(ART_DIR + ART_FILES[k])
+		art = art and art_exists(ART_DIR + ART_FILES[k])
 	var tex_c: Texture2DArray = null
 	var tex_n: Texture2DArray = null
 	if art:
-		var cw: Texture2D = load(ART_DIR + ART_FILES["color_w"])
+		var cw := art_image(ART_DIR + ART_FILES["color_w"])
 		var w2 := float(world.width * 2)
-		_param("art_geom", Vector4(w2, w2 * 0.5 - ART_PAD, float(cw.get_width()), float(cw.get_height())))
-		tex_c = _layers([cw.get_image(), (load(ART_DIR + ART_FILES["color_e"]) as Texture2D).get_image()])
-		tex_n = _layers([(load(ART_DIR + ART_FILES["normal_w"]) as Texture2D).get_image(),
-			(load(ART_DIR + ART_FILES["normal_e"]) as Texture2D).get_image()])
+		# размер исходной картинки, а не данных (сжатые дополнены до кратного 4)
+		var csz := art_size(ART_DIR + ART_FILES["color_w"])
+		_param("art_geom", Vector4(w2, w2 * 0.5 - ART_PAD, float(csz.x), float(csz.y)))
+		tex_c = _layers([cw, art_image(ART_DIR + ART_FILES["color_e"])])
+		tex_n = _layers([art_image(ART_DIR + ART_FILES["normal_w"]),
+			art_image(ART_DIR + ART_FILES["normal_e"])])
 		art = tex_c != null and tex_n != null
 	if art:
 		_param("color_tex", tex_c)
@@ -308,8 +310,8 @@ func setup(w: World) -> void:
 		_param("ids_off", 0)
 	# плитки: нормали волн (tools/build_water.py) и фактура местности вблизи — массивом
 	var wpath := "res://data/world1936/water.png.bin"
-	var wimg := Image.new()
-	var has_w := FileAccess.file_exists(wpath) and wimg.load_png_from_buffer(FileAccess.get_file_as_bytes(wpath)) == OK
+	var wimg := ImgPrefetch.image(wpath)
+	var has_w := wimg != null
 	var has_d := world.detail_image != null
 	var dimg: Image = (world.detail_image.duplicate() as Image) if has_d else null
 	if not has_w:
@@ -320,8 +322,8 @@ func setup(w: World) -> void:
 		dimg.fill(Color(0.5, 0.5, 0.5, 0.5))
 	# атлас построек и деревьев (tools/render_sprites.gd) — третьим слоем
 	var spath := "res://data/world1936/sprites.png.bin"
-	var simg := Image.new()
-	var has_s := FileAccess.file_exists(spath) and simg.load_png_from_buffer(FileAccess.get_file_as_bytes(spath)) == OK
+	var simg := ImgPrefetch.image(spath)
+	var has_s := simg != null
 	# атлас — шесть слоёв 512×512 один под другим (512×3072)
 	var slayers: Array = []
 	has_s = has_s and simg.get_width() == 512 and simg.get_height() == 3072
@@ -335,9 +337,8 @@ func setup(w: World) -> void:
 		slayers.append(li)
 	# покрытия дорог и мостов (ambientCG, CC0): брусчатка, грунт, камень — слои 8–10
 	var rpath2 := "res://data/world1936/road_tex.png.bin"
-	var rimg2 := Image.new()
-	var has_rt := FileAccess.file_exists(rpath2) and rimg2.load_png_from_buffer(FileAccess.get_file_as_bytes(rpath2)) == OK \
-		and rimg2.get_width() == 512 and rimg2.get_height() == 1536
+	var rimg2 := ImgPrefetch.image(rpath2)
+	var has_rt := rimg2 != null and rimg2.get_width() == 512 and rimg2.get_height() == 1536
 	for l in 3:
 		var li: Image
 		if has_rt:
@@ -359,28 +360,21 @@ func setup(w: World) -> void:
 	_param("has_detail", has_d)
 	# рельеф (relief.png.bin) и поле расстояний до рек (tools/build_rivers.py) —
 	# массивом из двух слоёв одного размера; без поля рек — рельеф в обоих
-	var rel := world.height_image.duplicate() as Image
-	rel.convert(Image.FORMAT_RGBA8)
+	var rel := ImgPrefetch.take("relief")
+	if rel == null:
+		rel = _relief_layer(world.height_image)
 	var rpath := "res://data/world1936/rivers.png.bin"
-	var rimg := Image.new()
-	var has_r := world.width == 5632 and FileAccess.file_exists(rpath) \
-		and rimg.load_png_from_buffer(FileAccess.get_file_as_bytes(rpath)) == OK \
-		and rimg.get_width() == rel.get_width() and rimg.get_height() == rel.get_height()
+	var rimg: Image = ImgPrefetch.image(rpath, Image.FORMAT_RGBA8, true) if world.width == 5632 else null
+	var has_r := rimg != null and rimg.get_width() == rel.get_width() and rimg.get_height() == rel.get_height()
 	if not has_r:
 		rimg = rel.duplicate() as Image
-	rimg.convert(Image.FORMAT_RGBA8)
 	# покров суши (tools/build_cover.py): лес, болото, застройка, рис — третьим слоём
 	var cpath := "res://data/world1936/cover.png.bin"
-	var cimg := Image.new()
-	var has_c := world.width == 5632 and FileAccess.file_exists(cpath) \
-		and cimg.load_png_from_buffer(FileAccess.get_file_as_bytes(cpath)) == OK \
-		and cimg.get_width() == rel.get_width() and cimg.get_height() == rel.get_height()
+	var cimg: Image = ImgPrefetch.image(cpath, Image.FORMAT_RGBA8, true) if world.width == 5632 else null
+	var has_c := cimg != null and cimg.get_width() == rel.get_width() and cimg.get_height() == rel.get_height()
 	if not has_c:
 		cimg = Image.create(rel.get_width(), rel.get_height(), false, Image.FORMAT_RGBA8)
-	cimg.convert(Image.FORMAT_RGBA8)
-	rel.generate_mipmaps()
-	rimg.generate_mipmaps()
-	cimg.generate_mipmaps()
+		cimg.generate_mipmaps()
 	_param("base_tex", _layers([rel, rimg, cimg]))
 	_param("has_rivers", has_r)
 	_param("has_cover", has_c)
@@ -390,6 +384,8 @@ func setup(w: World) -> void:
 	if not sdf.is_empty():
 		_param("sdf_tex", sdf[0])
 		_param("sdf_wd", float(sdf[1]))
+
+	ImgPrefetch.drop_all()   # незабранное (нет файла нужного размера и т. п.)
 
 	# замеры: -- --mapoff=art,rivers,sdf,... — выключить части шейдера (has_*)
 	for arg in OS.get_cmdline_user_args():
@@ -549,13 +545,9 @@ static func _ids2() -> Array:
 		return _ids2_cache
 	var res: Array = []
 	for k in ["w", "e"]:
-		var path := "res://data/world1936/ids2_%s.png.bin" % k
-		if not FileAccess.file_exists(path):
+		var img := ImgPrefetch.image("res://data/world1936/ids2_%s.png.bin" % k, Image.FORMAT_RG8)
+		if img == null:
 			return []
-		var img := Image.new()
-		if img.load_png_from_buffer(FileAccess.get_file_as_bytes(path)) != OK:
-			return []
-		img.convert(Image.FORMAT_RG8)
 		res.append(img)
 	_ids2_imgs = res
 	var arr := _layers(res)
@@ -723,20 +715,143 @@ static func _sdf2() -> Array:
 		return _sdf_cache
 	var imgs: Array = []
 	for k in ["w", "e"]:
-		var path := "res://data/world1936/sdf_%s.png.bin" % k
-		if not FileAccess.file_exists(path):
+		var img := ImgPrefetch.image("res://data/world1936/sdf_%s.png.bin" % k, Image.FORMAT_L8, true)
+		if img == null:
 			return []
-		var img := Image.new()
-		if img.load_png_from_buffer(FileAccess.get_file_as_bytes(path)) != OK:
-			return []
-		img.convert(Image.FORMAT_L8)
-		img.generate_mipmaps()
 		imgs.append(img)
 	var arr := _layers(imgs)
 	if arr == null:
 		return []
 	_sdf_cache = [arr, (imgs[0] as Image).get_width()]
 	return _sdf_cache
+
+
+## Картинка импортированной текстуры как есть — сжатая в видеопамяти, с
+## mip-уровнями — прямо из её .ctex. Раньше брали load(src).get_image(): на
+## телефоне (GLES) движок перерисовывает сжатую текстуру в RGBA8 (ETC2 → вчетверо
+## больше) — четыре слоя карты 5664×5252 занимали ~630 МБ видеопамяти вместо
+## ~150, а загрузка шла лишней отрисовкой и чтением с видеокарты. Не вышло —
+## прежний путь.
+static func art_image(src: String) -> Image:
+	var img := ImgPrefetch.take("art:" + src)
+	if img == null:
+		img = _ctex_read(_art_src(src))
+	if img != null:
+		return img
+	var tex := load(src) as Texture2D if ResourceLoader.exists(src) else null
+	return tex.get_image() if tex != null else null
+
+
+## Есть ли графика карты src (импорт или упакованная для APK).
+static func art_exists(src: String) -> bool:
+	return ResourceLoader.exists(src) or _art_src(src) != ""
+
+
+## Размер исходной картинки текстуры (как Texture2D.get_size): у сжатых данные
+## дополнены до кратного 4 (5664×5250 → 5252 строки).
+static func art_size(src: String) -> Vector2i:
+	var path := _art_src(src)
+	var f := FileAccess.open(path, FileAccess.READ) if path != "" else null
+	if f != null:
+		var magic := f.get_buffer(4).get_string_from_ascii()
+		if magic == "GST2":
+			f.get_32()   # версия
+		elif magic == ART_PACK_MAGIC:
+			f.get_32()   # размер .ctex
+		var w := f.get_32()
+		var h := f.get_32()
+		if (magic == "GST2" or magic == ART_PACK_MAGIC) and w > 0 and h > 0:
+			return Vector2i(w, h)
+	var tex := load(src) as Texture2D if ResourceLoader.exists(src) else null
+	return Vector2i(tex.get_size()) if tex != null else Vector2i.ONE
+
+
+## Графика карты в APK (tools/pack_art.gd, при сборке): .ctex формата ETC2,
+## сжатый zstd. Godot кладёт .ctex в APK без сжатия (4 × 40 МБ), а сжатые они
+## ~60 МБ на все четыре; assets/map в APK не входит (export_presets.cfg).
+## Заголовок: ART_PACK_MAGIC, размер .ctex, ширина и высота исходной картинки (u32).
+const ART_PACK_DIR := "res://data/art/"
+const ART_PACK_MAGIC := "MQZ1"
+
+
+## Файл с данными текстуры src: .ctex импорта (ПК) или упакованный (APK); "" — нет.
+static func _art_src(src: String) -> String:
+	var p := _ctex_path(src)
+	if p != "":
+		return p
+	var z := ART_PACK_DIR + src.get_file() + ".etc2.zst"
+	return z if OS.has_feature("etc2") and FileAccess.file_exists(z) else ""
+
+
+## Файл .ctex, который выбрал бы движок: первый path.<формат> из .import,
+## поддержанный устройством (ResourceFormatImporter), — и который есть в сборке.
+static func _ctex_path(src: String) -> String:
+	var cf := ConfigFile.new()
+	if not FileAccess.file_exists(src + ".import") or cf.load(src + ".import") != OK or not cf.has_section("remap"):
+		return ""
+	for key in cf.get_section_keys("remap"):
+		var kp := str(cf.get_value("remap", key))
+		if key.begins_with("path.") and OS.has_feature(key.get_slice(".", 1)) and FileAccess.file_exists(kp):
+			return kp
+	var p := str(cf.get_value("remap", "path", ""))
+	return p if p != "" and FileAccess.file_exists(p) else ""
+
+
+## Байты .ctex (упакованный — распаковать).
+static func _ctex_bytes(path: String) -> PackedByteArray:
+	var buf := FileAccess.get_file_as_bytes(path)
+	if buf.size() < 16 or buf.slice(0, 4).get_string_from_ascii() != ART_PACK_MAGIC:
+		return buf
+	return buf.slice(16).decompress(buf.decode_u32(4), FileAccess.COMPRESSION_ZSTD)
+
+
+## Разбор .ctex (CompressedTexture2D::load_image_from_file, DATA_FORMAT_IMAGE);
+## можно в рабочем потоке. null — нет файла или не тот формат.
+static func _ctex_read(path: String) -> Image:
+	if path == "":
+		return null
+	var b := _ctex_bytes(path)
+	# GST2, версия, ширина, высота, флаги, предел mip, 3 запасных — 36 байт
+	if b.size() < 52 or b.slice(0, 4).get_string_from_ascii() != "GST2":
+		return null
+	if b.decode_u32(36) != 0:  # DATA_FORMAT_IMAGE: сырые данные (сжатие в видеопамяти)
+		return null
+	var w := b.decode_u16(40)
+	var h := b.decode_u16(42)
+	var mips := b.decode_u32(44)
+	var fmt := b.decode_u32(48)
+	if w == 0 or h == 0 or fmt >= Image.FORMAT_MAX:
+		return null
+	var img := Image.create_from_data(w, h, mips > 0, fmt as Image.Format, b.slice(52))
+	return img if img != null and not img.is_empty() else null
+
+
+## Рельеф слоем массива base_tex (RGBA8 с mip-уровнями).
+static func _relief_layer(h: Image) -> Image:
+	var rel := h.duplicate() as Image
+	rel.convert(Image.FORMAT_RGBA8)
+	rel.generate_mipmaps()
+	return rel
+
+
+## Картинки карты — распаковать заранее в рабочих потоках (ImgPrefetch; до
+## MapLoader.load_world). Поля и карта 2× — только если ещё не в кэше.
+static func prefetch() -> void:
+	var d := "res://data/world1936/"
+	if _ids2_cache.is_empty():
+		for k in ["w", "e"]:
+			ImgPrefetch.file(d + "ids2_%s.png.bin" % k, Image.FORMAT_RG8)
+	if _sdf_cache.is_empty():
+		for k in ["w", "e"]:
+			ImgPrefetch.file(d + "sdf_%s.png.bin" % k, Image.FORMAT_L8, true)
+	ImgPrefetch.file(d + "cover.png.bin", Image.FORMAT_RGBA8, true)
+	ImgPrefetch.file(d + "rivers.png.bin", Image.FORMAT_RGBA8, true)
+	for k in ["color_w", "color_e", "normal_w", "normal_e"]:
+		var src: String = ART_DIR + ART_FILES[k]
+		ImgPrefetch.run("art:" + src, _ctex_read.bind(_art_src(src)))
+	ImgPrefetch.file(d + "sprites.png.bin")
+	ImgPrefetch.file(d + "road_tex.png.bin")
+	ImgPrefetch.file(d + "water.png.bin")
 
 
 ## Массив текстур из слоёв одного размера и формата (null — не вышло).

@@ -9,6 +9,15 @@ extends RefCounted
 const DEFAULT_DIR := "res://data/world1936"
 
 
+## Картинки мира — распаковать заранее в рабочих потоках (ImgPrefetch): пока
+## главный поток разбирает map.json, они готовятся.
+static func prefetch(dir: String = DEFAULT_DIR) -> void:
+	ImgPrefetch.file(dir + "/provinces.png.bin")
+	ImgPrefetch.file(dir + "/relief.png.bin")
+	ImgPrefetch.file(dir + "/terrain.jpg.bin")
+	ImgPrefetch.file(dir + "/detail.png.bin", -1, true)
+
+
 static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	var timings := {}
 	var t := Time.get_ticks_usec()
@@ -20,10 +29,12 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	timings["json"] = Time.get_ticks_usec() - t
 
 	t = Time.get_ticks_usec()
-	var id_img := Image.new()
-	id_img.load_png_from_buffer(FileAccess.get_file_as_bytes(dir + "/provinces.png.bin"))
-	var rel_img := Image.new()
-	rel_img.load_png_from_buffer(FileAccess.get_file_as_bytes(dir + "/relief.png.bin"))
+	var id_img := ImgPrefetch.image(dir + "/provinces.png.bin")
+	if id_img == null:
+		id_img = Image.new()
+	var rel_img := ImgPrefetch.image(dir + "/relief.png.bin")
+	if rel_img == null:
+		rel_img = Image.new()
 	timings["images"] = Time.get_ticks_usec() - t
 
 	t = Time.get_ticks_usec()
@@ -33,16 +44,13 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	world.id_image = id_img
 	world.height_image = rel_img
 	# подложка рельефа (спутниковый снимок NASA, tools/build_terrain.py) — только для вида
-	if FileAccess.file_exists(dir + "/terrain.jpg.bin"):
-		var t_img := Image.new()
-		if t_img.load_jpg_from_buffer(FileAccess.get_file_as_bytes(dir + "/terrain.jpg.bin")) == OK:
-			world.terrain_image = t_img
+	var t_img := ImgPrefetch.image(dir + "/terrain.jpg.bin")
+	if t_img != null:
+		world.terrain_image = t_img
 	# детальные текстуры местности (ambientCG, tools/build_detail.py) — только для вида
-	if FileAccess.file_exists(dir + "/detail.png.bin"):
-		var d_img := Image.new()
-		if d_img.load_png_from_buffer(FileAccess.get_file_as_bytes(dir + "/detail.png.bin")) == OK:
-			d_img.generate_mipmaps()
-			world.detail_image = d_img
+	var d_img := ImgPrefetch.image(dir + "/detail.png.bin", -1, true)
+	if d_img != null:
+		world.detail_image = d_img
 	world.province_ids = PackedInt32Array()
 	world.ai_wars = false
 

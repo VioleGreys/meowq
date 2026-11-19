@@ -11,3 +11,4 @@ native/src/*.os
 __pycache__/
 meowq.gdextension.uid
 data/bake/
+data/art/

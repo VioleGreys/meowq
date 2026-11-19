@@ -68,6 +68,14 @@ if [ "$RENDERER" = compat ]; then
 	echo "Рендерер: Compatibility (OpenGL ES 3)"
 fi
 "$GODOT" --headless --editor --quit --path . >/dev/null 2>&1 || true
+# графика карты (assets/map, 4 × 40 МБ .ctex — Godot кладёт их в APK без сжатия) —
+# в APK упакованной zstd (~51 МБ, data/art; tools/pack_art.gd); assets/map
+# исключён из экспорта (export_presets.cfg)
+"$GODOT" --headless --path . --script res://tools/pack_art.gd 2>&1 | grep -E "pack_art: всего|ERROR"
+for k in colormap_w.webp colormap_e.webp normal_w.png normal_e.png; do
+	[ -s "data/art/$k.etc2.zst" ] || { echo "Нет data/art/$k.etc2.zst — APK без графики карты не собираем"; exit 1; }
+	[ "data/art/$k.etc2.zst" -nt "assets/map/$k" ] || { echo "data/art/$k.etc2.zst старее assets/map/$k"; exit 1; }
+done
 # заготовки карты для масштабов до ×2.8 (MapBake, docs/notes/ui.md): рисует сама
 # игра (нужен экран — xvfb-run) без потерь, tools/bake_compress.py пережимает
 # (нужен cwebp: apt-get install webp). Пересобираются, если шейдер, модуль или

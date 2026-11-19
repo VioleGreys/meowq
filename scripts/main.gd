@@ -712,7 +712,12 @@ func new_world(seed_value: int, then := "select") -> void:
 	if procedural:
 		MapGen.generate(world, seed_value, 800, 500, 14 if large_map else 22, 22 if large_map else 12)
 	else:
+		# картинки мира и карты распаковываются в рабочих потоках, пока главный
+		# разбирает данные (ImgPrefetch)
+		MapLoader.prefetch()
+		MapView.prefetch()
 		MapLoader.load_world(world)
+		ImgPrefetch.run("relief", MapView._relief_layer.bind(world.height_image))
 	var load_ms := Time.get_ticks_msec() - t
 	sim = Simulation.new(world)
 	map_view.setup(world)
