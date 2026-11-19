@@ -615,27 +615,32 @@ func _draw() -> void:
 				var a := map.world_to_screen(it[1])
 				var b := map.world_to_screen(it[2])
 				draw_line(a, b, Color(1, 1, 1, 0.4), 1.5)
-				_ship_icon(a.lerp(b, it[3]), it[4], 0.8)
+				var tc := a.lerp(b, it[3])
+				var tr := Rect2(tc - Vector2(17, 6), Vector2(34, 12))
+				for o in [Vector2(-1.2, 0), Vector2(1.2, 0), Vector2(0, -1.2), Vector2(0, 1.2)]:
+					_navair_draw("ship_5", Rect2(tr.position + o, tr.size), Color(0.04, 0.04, 0.04, 0.85))
+				if not _navair_draw("ship_5", tr, it[4].lightened(0.3)):
+					_ship_icon(tc, it[4], 0.8)
 			FLEET:
 				if not it[8] and z < 0.6:
 					continue
 				var c0 := map.world_to_screen(it[1])
 				if not screen.has_point(c0):
 					continue
-				var c := _place(c0 + Vector2(0, 14 if it[3] else 0), Vector2(58, 22))
+				var c := _place(c0 + Vector2(0, 14 if it[3] else 0), Vector2(66, 22))
 				var wpts: PackedVector2Array = it[7]
 				if not wpts.is_empty():
 					var pts := PackedVector2Array([c])
 					for wpt in wpts:
 						pts.append(map.world_to_screen(wpt))
 					draw_polyline(pts, Color(0.6, 0.9, 1.0), 2.5)
-				_navair_plate(c, Vector2(58, 22), it[2], "ship_%d" % it[9], Vector2(36, 14), str(it[4]), it[5], it[6], it[3])
+				_navair_plate(c, Vector2(66, 22), it[2], "ship_%d" % it[9], Vector2(46, 17), str(it[4]), it[5], it[6], it[3])
 			PLANES:
 				var c0 := map.world_to_screen(it[1])
 				if not screen.has_point(c0):
 					continue
-				var c := _place(c0 + Vector2(0, -34), Vector2(50, 22))
-				_navair_plate(c, Vector2(50, 22), it[2], "plane_%d" % it[7], Vector2(20, 20), str(it[5]), it[4], false, not it[6])
+				var c := _place(c0 + Vector2(0, -34), Vector2(52, 22))
+				_navair_plate(c, Vector2(52, 22), it[2], "plane_%d" % it[7], Vector2(21, 21), str(it[5]), it[4], false, false)
 	if not _clusters.is_empty():
 		_draw_clusters(z, counter, font_size, screen)
 	for tx in _texts:
@@ -1127,17 +1132,18 @@ func _place(c: Vector2, size: Vector2) -> Vector2:
 
 ## Плашка флота или авиации: светлая подложка цвета страны с тёмной каймой (как у
 ## фишки дивизии), слева силуэт (свой класс кораблей / тип самолётов), справа число.
-## raid — рейдеры (полоса снизу), battle — в бою (красная точка), dim — чужие.
+## mark — рейдеры (красная полоса снизу), battle — в бою (красная точка).
 func _navair_plate(c: Vector2, size: Vector2, col: Color, icon: String, isz: Vector2, num: String, sel: bool, battle: bool, mark: bool) -> void:
 	var r := Rect2(c - size * 0.5, size)
 	draw_texture_rect_region(_atlas, Rect2(r.position + Vector2(1.5, 2.5), size), _r_shadow)
 	draw_texture_rect_region(_atlas, r, _r_plate, col.lightened(0.35))
 	if sel:
 		draw_texture_rect_region(_atlas, r, _r_sel)
-	var ic := Vector2(r.position.x + 6.0 + isz.x * 0.5, c.y)
-	var tex := _navair_tex(icon)
-	if tex != null:
-		draw_texture_rect(tex, Rect2(ic - isz * 0.5, isz), false, Color(0.09, 0.08, 0.07))
+	var ic := Vector2(r.position.x + 5.0 + isz.x * 0.5, c.y)
+	if not _navair_draw(icon, Rect2(ic - isz * 0.5, isz), Color(0.09, 0.08, 0.07)):
+		var tex := UiStyle.icon("fleet" if icon.begins_with("ship") else "bomber", 64)
+		if tex != null:
+			draw_texture_rect(tex, Rect2(ic - Vector2(isz.y, isz.y) * 0.5, Vector2(isz.y, isz.y)), false, Color(0.09, 0.08, 0.07))
 	var tx := ic.x + isz.x * 0.5 + 2.0
 	_texts_dark.append([Vector2(tx, c.y + 5.0), num, r.end.x - tx - 3.0])
 	if mark:
@@ -1146,27 +1152,37 @@ func _navair_plate(c: Vector2, size: Vector2, col: Color, icon: String, isz: Vec
 		draw_circle(r.position + Vector2(2, 2), 5, Color(0.9, 0.2, 0.1), true, -1.0, true)
 
 
-## Силуэты флотов и авиации: assets/icons/navair.json (имя -> SVG), иначе — общие иконки.
-var _navair := {}
+## Силуэты флотов и авиации: атлас assets/icons/navair.png.bin + navair.json
+## (tools/build_navair.py): белый силуэт по альфе, окрашивается при рисовании.
+var _navair_atlas: Texture2D
+var _navair_rects := {}
 
 
-func _navair_tex(name: String) -> Texture2D:
-	if _navair.has(name):
-		return _navair[name]
-	var tex: Texture2D = null
-	var path := "res://assets/icons/navair.json"
-	if FileAccess.file_exists(path):
-		var d = JSON.parse_string(FileAccess.get_file_as_string(path))
-		if typeof(d) == TYPE_DICTIONARY and d.has("icons") and d["icons"].has(name):
-			var e: Dictionary = d["icons"][name]
-			var img := Image.new()
-			if img.load_svg_from_string(e["svg"], float(e.get("scale", 1.0))) == OK:
-				img.generate_mipmaps()
-				tex = ImageTexture.create_from_image(img)
-	if tex == null:
-		tex = UiStyle.icon("sub" if name == "ship_3" else ("fleet" if name.begins_with("ship") else ("fighter" if name == "plane_0" else "bomber")), 64)
-	_navair[name] = tex
-	return tex
+func _navair_load() -> void:
+	if _navair_atlas != null or not FileAccess.file_exists("res://assets/icons/navair.png.bin"):
+		return
+	var img := Image.new()
+	if img.load_png_from_buffer(FileAccess.get_file_as_bytes("res://assets/icons/navair.png.bin")) != OK:
+		return
+	img.generate_mipmaps()
+	_navair_atlas = ImageTexture.create_from_image(img)
+	var d = JSON.parse_string(FileAccess.get_file_as_string("res://assets/icons/navair.json"))
+	if typeof(d) == TYPE_DICTIONARY:
+		for k in d.get("icons", {}):
+			var r: Array = d["icons"][k]
+			_navair_rects[k] = Rect2(r[0], r[1], r[2], r[3])
+
+
+## Силуэт в прямоугольник r (с сохранением пропорций, по центру).
+func _navair_draw(name: String, r: Rect2, col: Color) -> bool:
+	_navair_load()
+	if _navair_atlas == null or not _navair_rects.has(name):
+		return false
+	var src: Rect2 = _navair_rects[name]
+	var k := minf(r.size.x / src.size.x, r.size.y / src.size.y)
+	var sz := src.size * k
+	draw_texture_rect_region(_navair_atlas, Rect2(r.get_center() - sz * 0.5, sz), src, col)
+	return true
 
 
 func _ship_icon(c: Vector2, col: Color, s: float, sub := false) -> void:

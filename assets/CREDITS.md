@@ -46,6 +46,8 @@
 | Текстуры Grass004, Rock030, Ground054, Snow006 | фактура местности вблизи, `data/world1936/detail.png.bin` (`tools/build_detail.py`) | ambientCG.com | CC0 |
 | Шрифт Oswald | заголовки, кнопки, подписи стран | Vernon Adams и др., Google Fonts | SIL Open Font License 1.1 (`fonts/OFL-Oswald.txt`) |
 | Иконки родов войск, флота, авиации, меню (21 шт., список — `tools/build_icons.py`) | фишки на карте, боковое меню, `assets/icons/icons.json` | game-icons.net (авторы — Lorc, Delapouite и др.), через npm-пакет @iconify-json/game-icons | CC BY 3.0 — указать авторов на экране «Авторы» |
+| Силуэты самолётов сверху (Bf 109E, Blenheim, B-17, TBM-3 Avenger) из «Top Down Planes Sprites Pack», sujit1717 (Unlucky Studio), https://opengameart.org/content/top-down-planes-sprites-pack | плашки авиации на карте, `assets/icons/navair.png.bin` (`tools/build_navair.py`) | OpenGameArt | CC0 |
+| Силуэты кораблей (линкор, крейсер, эсминец, подлодка, авианосец, транспорт) | плашки флотов и войска в море, `navair.png.bin` | свои, рисует `tools/build_navair.py` | наши |
 | Звуки нажатия кнопок (`assets/sounds/`) | интерфейс | свои, синтезированы `tools/build_sounds.py` | наши |
 | Картон, кожа, износ (пятна, царапины, ржавчина) | интерфейс «Досье», `assets/ui/` | ambientCG.com: Cardboard002, Leather026, SurfaceImperfections001/013, Scratches003/005, Rust009 | CC0 |
 | Лист старой бумаги | листы окон, кнопки, наклейки | OpenGameArt «horror game note page background old paper» | CC0 |
