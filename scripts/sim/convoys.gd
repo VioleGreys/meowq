@@ -267,6 +267,27 @@ static func build_basins(world: World) -> void:
 		world.bas_adj_start.append(world.bas_adj_list.size())
 
 
+static var _bs: Array = []
+static var _bs_of := 0
+static var _bs_n := -1
+
+## Зоны каждого бассейна словарём {зона: true} (по порядку bas_zone_list);
+## бассейны постоянны — один раз на мир.
+static func _basin_sets(world: World) -> Array:
+	if _bs_of == world.get_instance_id() and _bs_n == world.bas_zone_list.size():
+		return _bs
+	var res: Array = []
+	for bi in world.bas_zone_start.size() - 1:
+		var d := {}
+		for j in range(world.bas_zone_start[bi], world.bas_zone_start[bi + 1]):
+			d[world.bas_zone_list[j]] = true
+		res.append(d)
+	_bs = res
+	_bs_of = world.get_instance_id()
+	_bs_n = world.bas_zone_list.size()
+	return res
+
+
 ## Пути конвоев всех стран (раз в SWEEP_DAYS, после обхода поставок).
 ## open_by: страна -> открытые для неё зоны (Economy.refresh_blockade; нет — всё открыто).
 static func refresh_routes(world: World, open_by: Dictionary) -> void:
@@ -292,6 +313,7 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 		_routes_native(world, open_by, sel)
 		Prof.add("кв:пути", _t0)
 		return
+	Economy.open_dicts(open_by)   # открытые зоны из ядра блокады — словарями
 	var zb := world.z_basin
 	# бассейны у портов: все и у портов метрополии
 	var zl: Array = []
@@ -415,9 +437,9 @@ static func refresh_routes(world: World, open_by: Dictionary) -> void:
 				bn.conv_basins[bi] = true
 		var bks: Array = bn.conv_basins.keys()
 		bks.sort()
+		var bset := _basin_sets(world)
 		for bi in bks:
-			for j in range(world.bas_zone_start[bi], world.bas_zone_start[bi + 1]):
-				bn.conv_zone_set[world.bas_zone_list[j]] = true
+			bn.conv_zone_set.merge(bset[bi])   # = зоны бассейна по порядку, без повторов
 	Prof.add("кв:пути", _t0)
 
 
@@ -458,6 +480,14 @@ static func _routes_native(world: World, open_by: Dictionary, sellers: Array) ->
 	var st_closed := PackedByteArray()
 	st_closed.resize(nc * nst)
 	var war := world.war
+	# открытые зоны — плоско из ядра блокады, если словари не заполнены
+	var ob_flat: Array = Economy._ob_flat if is_same(Economy._ob_for, open_by) else []
+	var ob_i := PackedInt32Array()
+	if not ob_flat.is_empty():
+		ob_i.resize(nc)
+		var ob_n: PackedInt32Array = ob_flat[0]
+		for i in ob_n.size():
+			ob_i[ob_n[i]] = i
 	for b in nc:
 		var bn: World.Nation = world.nations[b]
 		bn.conv_routes = []
@@ -475,7 +505,12 @@ static func _routes_native(world: World, open_by: Dictionary, sellers: Array) ->
 					if war[h * nc + b] == 1:
 						st_closed[b * nst + i] = 1
 						break
-			if open_by.has(b):
+			if not ob_flat.is_empty():
+				if (ob_flat[3] as PackedByteArray)[b] == 1:
+					op_has[b] = 1
+					var i := ob_i[b]
+					op_l.append_array((ob_flat[2] as PackedInt32Array).slice((ob_flat[1] as PackedInt32Array)[i], (ob_flat[1] as PackedInt32Array)[i + 1]))
+			elif open_by.has(b):
 				op_has[b] = 1
 				op_l.append_array(PackedInt32Array(open_by[b].keys()))
 			var ks: Array = sellers[b].keys()
@@ -485,13 +520,10 @@ static func _routes_native(world: World, open_by: Dictionary, sellers: Array) ->
 			start_key[b] = -1
 		op_s.append(op_l.size())
 		sel_s.append(sel_l.size())
-	var tm_keys := PackedInt32Array()
-	var tm_start := PackedInt32Array([0])
-	var tm_list := PackedInt32Array()
-	for key in world.trade_mass:
-		tm_keys.append(int(key))
-		tm_list.append_array(world.trade_mass[key])
-		tm_start.append(tm_list.size())
+	var mf := Economy.mass_flat(world)
+	var tm_keys: PackedInt32Array = mf[0]
+	var tm_start: PackedInt32Array = mf[1]
+	var tm_list: PackedInt32Array = mf[2]
 	var t := {"nc": nc, "nb": nb, "bas_start": world.bas_adj_start, "bas_list": world.bas_adj_list,
 		"adj_start": world.adj_start, "adj_list": world.adj_list, "zb": zb, "land": world.p_land, "war": war,
 		"n_alive": n_do, "n_do": n_do, "op_has": op_has, "st_a": st_a, "st_b": st_b, "st_t": st_t,
@@ -499,7 +531,9 @@ static func _routes_native(world: World, open_by: Dictionary, sellers: Array) ->
 		"start_key": start_key, "tm_keys": tm_keys, "tm_start": tm_start, "tm_list": tm_list,
 		"points": Depots.sea_points(world), "ctrl": world.p_controller, "comp": world.p_comp, "dhome": dhome,
 		"dmask": Depots.mask(world)}
+	var _tk := Time.get_ticks_usec()
 	var r: Array = Native.core.call("conv_routes", t)
+	Prof.add("кв:ядро", _tk)
 	var r_nat: PackedInt32Array = r[0]
 	var r_kind: PackedInt32Array = r[1]
 	var r_tgt: PackedInt32Array = r[2]
@@ -525,9 +559,9 @@ static func _routes_native(world: World, open_by: Dictionary, sellers: Array) ->
 				bn.conv_basins[bi] = true
 		var bks: Array = bn.conv_basins.keys()
 		bks.sort()
+		var bset := _basin_sets(world)
 		for bi in bks:
-			for j in range(world.bas_zone_start[bi], world.bas_zone_start[bi + 1]):
-				bn.conv_zone_set[world.bas_zone_list[j]] = true
+			bn.conv_zone_set.merge(bset[bi])   # = зоны бассейна по порядку, без повторов
 
 
 ## Узел графа World.trade_mass → номер связной части (по живым странам) и

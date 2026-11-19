@@ -300,6 +300,60 @@ const BLOCK_OPEN := 0.4    # перевес в округе, чтобы прор
 const BLOCK_RANGE := 5
 const BLOCK_FALL := 0.7
 
+static var _mf_ref = null
+static var _mf: Array = []
+
+## Граф World.trade_mass плоско (для ядер C++): [ключи, начала, списки, транзит по
+## странам — соседи по суше на одном материке, по возрастанию]. Граф меняется
+## только в refresh_geo (новый словарь) — кэш по самому словарю.
+static func mass_flat(world: World) -> Array:
+	if is_same(_mf_ref, world.trade_mass) and _mf.size() == 4 and (_mf[3] as Array).size() == world.nation_count:
+		return _mf
+	var nc := world.nation_count
+	var tm_keys := PackedInt32Array()
+	var tm_start := PackedInt32Array([0])
+	var tm_list := PackedInt32Array()
+	var tl: Array = []
+	tl.resize(nc)
+	for x in nc:
+		tl[x] = {}
+	for key in world.trade_mass:
+		var x: int = int(key) % nc
+		tm_keys.append(int(key))
+		tm_list.append_array(world.trade_mass[key])
+		tm_start.append(tm_list.size())
+		for k2 in world.trade_mass[key]:
+			tl[x][int(k2) % nc] = true
+	var transit: Array = []
+	transit.resize(nc)
+	for x in nc:
+		var ks: Array = tl[x].keys()
+		ks.sort()
+		transit[x] = PackedInt32Array(ks)
+	_mf = [tm_keys, tm_start, tm_list, transit]
+	_mf_ref = world.trade_mass
+	return _mf
+
+
+## Открытые зоны из ядра блокады — плоско ([страны, начала, зоны]); словари
+## open_by заполняются по требованию (open_dicts) — ядру путей они не нужны.
+static var _ob_for = null
+static var _ob_flat: Array = []
+
+static func open_dicts(open_by: Dictionary) -> void:
+	if not is_same(_ob_for, open_by):
+		return
+	var ob_n: PackedInt32Array = _ob_flat[0]
+	var ob_s: PackedInt32Array = _ob_flat[1]
+	var ob_l: PackedInt32Array = _ob_flat[2]
+	for i in ob_n.size():
+		var open := {}
+		for j in range(ob_s[i], ob_s[i + 1]):
+			open[ob_l[j]] = true
+		open_by[ob_n[i]] = open
+	_ob_for = null
+
+
 ## Возвращает открытые зоны воюющих стран (страна -> {зона: true}) — по ним
 ## идут пути конвоев (Convoys.refresh_routes); страны без записи — всё открыто.
 static func refresh_blockade(world: World) -> Dictionary:
@@ -339,22 +393,7 @@ static func refresh_blockade(world: World) -> Dictionary:
 		zones[x] = PackedInt32Array(zl[x])
 	var war := world.war
 	# соседи по суше (на одном материке) — для транзита через их порты
-	var transit: Array = []
-	transit.resize(nc)
-	for x in nc:
-		transit[x] = PackedInt32Array()
-	var tl: Array = []
-	tl.resize(nc)
-	for x in nc:
-		tl[x] = {}
-	for key in world.trade_mass:
-		var x: int = int(key) % nc
-		for k2 in world.trade_mass[key]:
-			tl[x][int(k2) % nc] = true
-	for x in nc:
-		var ks: Array = tl[x].keys()
-		ks.sort()
-		transit[x] = PackedInt32Array(ks)
+	var transit: Array = mass_flat(world)[3]
 	Prof.add("бл:порты", _pb)
 	_pb = Time.get_ticks_usec()
 	if Native.core != null and Native.core.has_method("blockade"):
@@ -551,15 +590,27 @@ static func _blockade_native(world: World, zones: Array, transit: Array, open_by
 	var zf_alive := PackedByteArray()
 	var zf_port := PackedByteArray()
 	var zf_pw := PackedFloat64Array()
-	for z in pc:
-		zf_start[z] = zf_owner.size()
-		if zf.has(z):
-			for f in zf[z]:
-				zf_owner.append(f.owner)
-				zf_alive.append(1 if f.alive else 0)
-				zf_port.append(1 if f.mission == "port" else 0)
-				zf_pw.append(Forces.combat_power(f))
-	zf_start[pc] = zf_owner.size()
+	# по зонам с флотами (по возрастанию), без прохода по всем провинциям
+	var zks: Array = zf.keys()
+	zks.sort()
+	var z0 := 0
+	for zk in zks:
+		var z: int = zk
+		if z < 0 or z >= pc:
+			continue
+		var at := zf_owner.size()
+		while z0 <= z:
+			zf_start[z0] = at
+			z0 += 1
+		for f in zf[z]:
+			zf_owner.append(f.owner)
+			zf_alive.append(1 if f.alive else 0)
+			zf_port.append(1 if f.mission == "port" else 0)
+			zf_pw.append(Forces.combat_power(f))
+	var at_end := zf_owner.size()
+	while z0 <= pc:
+		zf_start[z0] = at_end
+		z0 += 1
 	var n_alive := PackedByteArray()
 	n_alive.resize(nc)
 	var n_war := PackedByteArray()
@@ -570,13 +621,10 @@ static func _blockade_native(world: World, zones: Array, transit: Array, open_by
 		n_alive[nat.id] = 1 if nat.alive else 0
 		n_war[nat.id] = 0 if nat.at_war.is_empty() else 1
 		n_cap[nat.id] = nat.capital
-	var tm_keys := PackedInt32Array()
-	var tm_start := PackedInt32Array([0])
-	var tm_list := PackedInt32Array()
-	for key in world.trade_mass:
-		tm_keys.append(int(key))
-		tm_list.append_array(world.trade_mass[key])
-		tm_start.append(tm_list.size())
+	var mf := mass_flat(world)
+	var tm_keys: PackedInt32Array = mf[0]
+	var tm_start: PackedInt32Array = mf[1]
+	var tm_list: PackedInt32Array = mf[2]
 	var t := {"nc": nc, "pc": pc, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
 		"war": world.war, "ally": world.ally, "z_start": z_start, "z_list": z_list, "tr_start": tr_start, "tr_list": tr_list,
 		"fr_owner": fr_owner, "fr_zone": fr_zone, "fr_pw": fr_pw, "zf_start": zf_start, "zf_owner": zf_owner,
@@ -584,16 +632,17 @@ static func _blockade_native(world: World, zones: Array, transit: Array, open_by
 		"p_mass": world.p_mass if world.p_mass.size() == pc else PackedInt32Array(),
 		"tm_keys": tm_keys, "tm_start": tm_start, "tm_list": tm_list,
 		"k": PackedFloat64Array([BLOCK_RANGE, BLOCK_FALL, BLOCK_SHARE, BLOCK_OPEN])}
+	var _tk := Time.get_ticks_usec()
 	var r: Array = Native.core.call("blockade", t)
+	Prof.add("бл:ядро", _tk)
 	world.trade_block = r[0]
-	var ob_n: PackedInt32Array = r[1]
-	var ob_s: PackedInt32Array = r[2]
-	var ob_l: PackedInt32Array = r[3]
-	for i in ob_n.size():
-		var open := {}
-		for j in range(ob_s[i], ob_s[i + 1]):
-			open[ob_l[j]] = true
-		open_by[ob_n[i]] = open
+	_ob_flat = [r[1], r[2], r[3]]
+	_ob_for = open_by
+	var has_n: PackedByteArray = PackedByteArray()
+	has_n.resize(nc)
+	for b in (r[1] as PackedInt32Array):
+		has_n[b] = 1
+	_ob_flat.append(has_n)
 
 
 static func _zone_open(world: World, b: int, z: int, zf: Dictionary, near: Dictionary,
