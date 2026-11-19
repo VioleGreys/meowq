@@ -754,8 +754,12 @@ void road_prov(int id, vec2 q, inout float d_rail, inout float s_rail, inout flo
 		vec2 k1 = rd_pt(pal(RD_SEC + 2 + 2 * pp.y, id));
 		vec2 w1 = rd_pt(pal(RD_SEC + 3 + 2 * pp.y, id));
 		float L = length(w1 - w0);
-		k0 = w0 + (k0 - w0) * min(1.0, 0.4 * L / max(length(k0 - w0), 1e-4));
-		k1 = w1 + (k1 - w1) * min(1.0, 0.4 * L / max(length(k1 - w1), 1e-4));
+		// опоры: 0,25…0,4 расстояния W0–W1, при крутом повороте короче — скруглённый
+		// угол (как build_roads.thr_ctrl)
+		float dt = dot(normalize(k0 - w0 + vec2(1e-5, 0.0)), normalize(k1 - w1 + vec2(1e-5, 0.0)));
+		float f = 0.25 + 0.15 * clamp(-dt, 0.0, 1.0);
+		k0 = w0 + (k0 - w0) * min(1.0, f * L / max(length(k0 - w0), 1e-4));
+		k1 = w1 + (k1 - w1) * min(1.0, f * L / max(length(k1 - w1), 1e-4));
 		vec2 mid = 0.125 * (w0 + w1) + 0.375 * (k0 + k1);
 		float s = 0.0;
 		float d = 9.0;

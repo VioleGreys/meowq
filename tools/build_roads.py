@@ -58,6 +58,8 @@ RAIL_R = 160.0     # пары городов не дальше, пикс.
 RAIL_MAX = 230.0   # цена пути не больше
 SUP_R = 280.0      # пары пунктов снабжения — не дальше, пикс.
 SUP_MAX = 420.0    # и цена пути не больше
+THR_DOT = 0.5      # сквозная кривая — если выходы расходятся больше чем на 60°
+LINK_MAX = 400.0   # оторванный кусок жд — к соседнему, если путь не дороже
 SUP_NEAR = 12.0    # реальная линия у пункта ближе — подключить и без цепочки вдоль неё
 # переходы железных дорог через границу — только исторические (решение пользователя:
 # «между странами жд пути, только если так было исторически»), около 1936 г.:
@@ -144,6 +146,8 @@ DEV_K = {
     "TAN": 0.03, "PRC": 0.1,
 }
 DEV_DEFAULT = 0.3
+# в 1936 г. железных дорог не было (Улан-Батор — 1949 г.): только переходы из CROSS
+NO_RAIL = {"MON", "TIB", "AFG", "SAU", "YEM", "OMA", "BHU", "TAN", "PRC"}
 COLONY_K = {"JAP": 0.6}
 COLONY_DEFAULT = 0.25
 ROAD_T_POOR = 1.4      # прибавка к ROAD_T у самой бедной страны
@@ -231,12 +235,14 @@ def centers(ids, provs, land):
 
 
 class Checker:
-    def __init__(self, ids, landf):
+    def __init__(self, ids, landf, clear=CLEAR, land_min=0.5, loose=0.0):
+        self.land_min = land_min
+        self.loose = loose   # у точки W ближе loose — любые провинции (вода у берега)
         self.ids = ids
         self.landf = landf
         self.H2, self.W2 = ids.shape
-        r = int(math.ceil(CLEAR * 2))
-        self.off = [(dy, dx) for dy in range(-r, r + 1) for dx in range(-r, r + 1) if dx * dx + dy * dy <= (CLEAR * 2) ** 2 + 0.5]
+        r = int(math.ceil(clear * 2))
+        self.off = [(dy, dx) for dy in range(-r, r + 1) for dx in range(-r, r + 1) if dx * dx + dy * dy <= (clear * 2) ** 2 + 0.5]
 
     def ok(self, poly, a, b, w):
         """Линия poly (точки 1×) лежит в провинции a (у w — ещё в b), без воды и
@@ -254,11 +260,14 @@ class Checker:
                 gx, gy = int(x * 2), int(y * 2)
                 if not (0 <= gx < self.W2 and 0 <= gy < self.H2):
                     return False
-                near_w = min(math.dist((x, y), w) for w in ends) < 0.6
+                dw = min(math.dist((x, y), w) for w in ends)
+                if dw < self.loose:
+                    continue
+                near_w = dw < 0.6
                 c = self.ids[gy, gx]
                 if c != a and not (near_w and c in allow):
                     return False
-                if self.landf[min(int(y), self.landf.shape[0] - 1), min(int(x), self.landf.shape[1] - 1)] < 0.5:
+                if self.landf[min(int(y), self.landf.shape[0] - 1), min(int(x), self.landf.shape[1] - 1)] < self.land_min:
                     return False
                 for dy, dx in self.off:
                     yy, xx = gy + dy, gx + dx
@@ -270,15 +279,20 @@ class Checker:
 
 
 def thr_ctrl(w0, k0, k1, w1):
-    """Опоры кривой насквозь (как в шейдере road_prov): не длиннее 0,4 расстояния
-    W0–W1; None — выходы почти в одну сторону (была бы петля)."""
+    """Опоры кривой насквозь (как в шейдере road_prov): длина 0,25…0,4 расстояния
+    W0–W1 — для крутого поворота короче (скруглённый угол, решение пользователя:
+    «поворот плавнее, не 90°»); None — выходы почти в одну сторону (петля)."""
     L = math.dist(w0, w1)
     d0 = (k0[0] - w0[0], k0[1] - w0[1])
     d1 = (k1[0] - w1[0], k1[1] - w1[1])
     l0, l1 = math.hypot(*d0), math.hypot(*d1)
-    if l0 < 1e-3 or l1 < 1e-3 or (d0[0] * d1[0] + d1[1] * d0[1]) / (l0 * l1) > -0.2:
+    if l0 < 1e-3 or l1 < 1e-3:
         return None
-    s0, s1 = min(1.0, 0.4 * L / l0), min(1.0, 0.4 * L / l1)
+    dt = (d0[0] * d1[0] + d1[1] * d0[1]) / (l0 * l1)
+    if dt > THR_DOT:
+        return None
+    f = 0.25 + 0.15 * min(1.0, max(0.0, -dt))
+    s0, s1 = min(1.0, f * L / l0), min(1.0, f * L / l1)
     return (w0[0] + d0[0] * s0, w0[1] + d0[1] * s0), (w1[0] + d1[0] * s1, w1[1] + d1[1] * s1)
 
 
@@ -299,7 +313,7 @@ def half(c, w, u, k_frac):
     return [c, (round(kk[0] * Q) / Q, round(kk[1] * Q) / Q), w]
 
 
-def edge_geom(a, b, ca, cb, pts, chk):
+def edge_geom(a, b, ca, cb, pts, chk, prefer=None):
     """Точка W на границе a–b и половины обеих провинций; None — не провести."""
     dx, dy = cb[0] - ca[0], cb[1] - ca[1]
     L = math.hypot(dx, dy)
@@ -311,6 +325,9 @@ def edge_geom(a, b, ca, cb, pts, chk):
     along = rel @ np.array(u)
     perp = np.abs(rel @ np.array([-u[1], u[0]]))
     sc = perp + np.maximum(0.0, -along) * 2 + np.maximum(0.0, along - L) * 2
+    if prefer is not None:
+        # точка перехода — там, где границу пересекает реальная линия
+        sc = np.hypot(pts[:, 0] - prefer[0], pts[:, 1] - prefer[1]) + 0.1 * sc
     order = np.argsort(sc)
     tried = 0
     seen = set()
@@ -339,6 +356,35 @@ def edge_geom(a, b, ca, cb, pts, chk):
             hb = half(cb, w, (-uw[0], -uw[1]), kf)
             if _bend(ha) and _bend(hb) and chk.ok(ha, a, b, w) and chk.ok(hb, b, a, w):
                 return ha, hb, la + lb
+    return None
+
+
+def edge_geom_free(a, b, ca, cb, pts, chk, prefer):
+    """Последний вариант для пар, через которые точно идёт реальная линия: точка K
+    перебором (и в сторону от прямой), пока путь лежит в своей провинции; у W
+    возможен излом (провинции изогнуты — у Байкала путь задевал третью)."""
+    d = np.hypot(pts[:, 0] - prefer[0], pts[:, 1] - prefer[1])
+    for k in np.argsort(d)[:10]:
+        w = (round(pts[k, 0] * Q) / Q, round(pts[k, 1] * Q) / Q)
+        ha = _free_half(ca, w, a, b, chk)
+        hb = _free_half(cb, w, b, a, chk) if ha else None
+        if ha and hb:
+            return ha, hb, math.dist(ca, w) + math.dist(w, cb)
+    return None
+
+
+def _free_half(c, w, a, b, chk):
+    L = math.dist(c, w)
+    if L < 0.8:
+        return None
+    u = ((w[0] - c[0]) / L, (w[1] - c[1]) / L)
+    nrm = (-u[1], u[0])
+    for t in (0.5, 0.35, 0.65, 0.2, 0.8):
+        for o in (0.0, 0.15, -0.15, 0.3, -0.3, 0.5, -0.5, 0.7, -0.7):
+            kk = (c[0] + (w[0] - c[0]) * t + nrm[0] * L * o, c[1] + (w[1] - c[1]) * t + nrm[1] * L * o)
+            h = [c, (round(kk[0] * Q) / Q, round(kk[1] * Q) / Q), w]
+            if chk.ok(h, a, b, w):
+                return h
     return None
 
 
@@ -439,6 +485,29 @@ def ne_rail_dist(path, w, h):
     return ndimage.distance_transform_edt(~m)
 
 
+def ne_cross(dist, prov1):
+    """Пары соседних провинций, общую границу которых пересекает реальная линия
+    (пиксели растра линий в разных провинциях рядом), и средняя точка пересечения."""
+    mask = dist == 0
+    acc = {}
+    H, W = mask.shape
+    for dy, dx in ((0, 1), (1, 0), (1, 1), (1, -1)):
+        y0, y1 = 0, H - dy
+        xa0, xa1 = max(0, -dx), W - max(0, dx)
+        a = mask[y0:y1, xa0:xa1] & mask[y0 + dy:y1 + dy, xa0 + dx:xa1 + dx]
+        pa = prov1[y0:y1, xa0:xa1]
+        pb = prov1[y0 + dy:y1 + dy, xa0 + dx:xa1 + dx]
+        sel = a & (pa != pb)
+        yy, xx = np.nonzero(sel)
+        for y, x, u, v in zip(yy, xx, pa[sel], pb[sel]):
+            k = (int(min(u, v)), int(max(u, v)))
+            q = acc.setdefault(k, [0.0, 0.0, 0])
+            q[0] += x + xa0 + 0.5 + dx * 0.5
+            q[1] += y + 0.5 + dy * 0.5
+            q[2] += 1
+    return {k: (v[0] / v[2], v[1] / v[2]) for k, v in acc.items()}
+
+
 def on_rail(geom_e, dist, near):
     """Доля точек ребра (обе половины) не дальше near от реальной линии."""
     ha, hb, _ = geom_e
@@ -511,13 +580,15 @@ def main():
             continue
         cross.add(best)
     print(f"переходов через границу {len(cross)} из {len(CROSS)}")
-    redges_ok = [e for e in geom if grp[e[0]] == grp[e[1]] or e in cross]
+    redges_ok = [e for e in geom if (grp[e[0]] == grp[e[1]] or e in cross)
+                 and (e in cross or (grp[e[0]] not in NO_RAIL and grp[e[1]] not in NO_RAIL))]
     # запасной граф для пунктов снабжения — без гор (через хребты пути не шли)
     flat = [e for e in redges_ok if provs[e[0]]["terrain"] != 3 and provs[e[1]]["terrain"] != 3]
     G2 = csr_matrix((np.array([cost[e] for e in flat] * 2),
                      (np.array([e[0] for e in flat] + [e[1] for e in flat]),
                       np.array([e[1] for e in flat] + [e[0] for e in flat]))), shape=(n, n))
     nd = None
+    ncr_edges = set()
     if args.ne_rail:
         nd = ne_rail_dist(args.ne_rail, W1, meta["height"])
         def real(e):
@@ -527,7 +598,45 @@ def main():
                 # в горах — строго (иначе длинное ребро напрямую через хребет)
                 return on_rail(geom[e], nd, NE_NEAR) >= NE_FRAC_MNT
             return on_rail(geom[e], nd, max(NE_NEAR, 0.12 * length[e])) >= NE_FRAC
-        redges_ok = [e for e in redges_ok if real(e)]
+        # пары, общую границу которых пересекает реальная линия, — жд есть всегда
+        # (в больших провинциях Сибири путь центр — центр далеко от линии, и проверка
+        # по близости рвала Транссиб); точка W — у места пересечения
+        rgb = np.asarray(Image.open(os.path.join(DATA, "provinces.png.bin")).convert("RGB")).astype(np.int32)
+        ncr = ne_cross(nd, rgb[..., 0] + rgb[..., 1] * 256)
+        pts = border_points(ids, land)
+        chk = Checker(ids, landf)
+        chk2 = Checker(ids, landf, clear=0.2, land_min=0.3)
+        chk3 = Checker(ids, landf, clear=0.0, land_min=0.0, loose=2.0)   # линия точно есть: мост, дамба
+        moved = added = 0
+        for e, pt in ncr.items():
+            if e[0] not in cen or e[1] not in cen or not (land[e[0]] and land[e[1]]):
+                continue
+            # не соседи на карте 2× (у Слюдянки их разделяет краешек Байкала), но
+            # линия идёт из одной в другую — точка перехода в месте пересечения
+            bp = pts[e] if e in pts else np.array([pt])
+            if grp[e[0]] != grp[e[1]] and e not in cross:
+                continue
+            g = edge_geom(e[0], e[1], cen[e[0]], cen[e[1]], bp, chk, pt) \
+                or edge_geom(e[0], e[1], cen[e[0]], cen[e[1]], bp, chk2, pt) \
+                or edge_geom(e[0], e[1], cen[e[0]], cen[e[1]], bp, chk3, pt) \
+                or edge_geom_free(e[0], e[1], cen[e[0]], cen[e[1]], bp, chk3, pt)
+            if g is None:
+                continue
+            if e in geom:
+                moved += 1
+            else:
+                added += 1
+                length[e] = g[2]
+                cost[e] = g[2] * 0.5 * (T_COST[provs[e[0]]["terrain"]] + T_COST[provs[e[1]]["terrain"]])
+                ke[e] = 0.5 * (kdev[e[0]] + kdev[e[1]])
+            geom[e] = g
+        ncr_edges = set(e for e in ncr if e in geom)
+        print(f"рёбер по пересечению реальных линий: {moved} с новой точкой W, {added} новых")
+        if os.environ.get("RD_DEBUG"):
+            dbg = tuple(int(x) for x in os.environ["RD_DEBUG"].split(","))
+            print("отладка", dbg, dbg in ncr, dbg in geom, dbg in pts)
+        redges_ok = [e for e in geom if (grp[e[0]] == grp[e[1]] or e in cross) and (e in ncr or real(e))
+                     and (e in cross or (grp[e[0]] not in NO_RAIL and grp[e[1]] not in NO_RAIL))]
         print(f"рёбер вдоль реальных линий {len(redges_ok)}")
     ea = np.array([e[0] for e in redges_ok] + [e[1] for e in redges_ok])
     eb = np.array([e[1] for e in redges_ok] + [e[0] for e in redges_ok])
@@ -621,6 +730,53 @@ def main():
         wild = [e for e in redges_ok if max(rdev[e[0]], rdev[e[1]]) < RAIL_DEV_WILD]
         wild = [e for e in wild if e not in rails]
         rails |= set(spanner(n, wild, {e: RAIL_T_SPAN + RAIL_T_POOR * (1.0 - ke[e]) for e in wild}, cost, radj))
+    # тупиковые ветви оставляем (решение пользователя: «так живее для карты»)
+    if ncr_edges:
+        # оторванные куски сети (Кировская дорога обрывалась у Медвежьегорска) —
+        # к соседнему куску кратчайшим путём вдоль реальных линий, если недлинный
+        ne_e = [e for e in ncr_edges if e in geom and (grp[e[0]] == grp[e[1]] or e in cross)
+                and (e in cross or (grp[e[0]] not in NO_RAIL and grp[e[1]] not in NO_RAIL))]
+        Gn = csr_matrix((np.array([cost[e] for e in ne_e] * 2),
+                         (np.array([e[0] for e in ne_e] + [e[1] for e in ne_e]),
+                          np.array([e[1] for e in ne_e] + [e[0] for e in ne_e]))), shape=(n, n))
+        linked = 0
+        for _ in range(4):
+            comp = {}
+            for e in rails:
+                for v in e:
+                    comp.setdefault(v, v)
+
+            def find(v):
+                while comp[v] != v:
+                    comp[v] = comp[comp[v]]
+                    v = comp[v]
+                return v
+            for a, b in rails:
+                ra, rb = find(a), find(b)
+                if ra != rb:
+                    comp[ra] = rb
+            groups = {}
+            for v in comp:
+                groups.setdefault(find(v), []).append(v)
+            done = 0
+            for root, mem in groups.items():
+                ms = set(mem)
+                dist, pred, src = dijkstra(Gn, indices=mem, limit=LINK_MAX, min_only=True,
+                                           return_predecessors=True)
+                cand = [v for v in comp if v not in ms and dist[v] < LINK_MAX]
+                if not cand:
+                    continue
+                v = min(cand, key=lambda v: dist[v])
+                while v not in ms:
+                    u = int(pred[v])
+                    e = (min(u, v), max(u, v))
+                    rails.add(e)
+                    v = u
+                done += 1
+            linked += done
+            if done == 0:
+                break
+        print(f"оторванных кусков жд подключено {linked}")
     print(f"дорог {len(roads)}, жд {len(rails)} рёбер")
     # половины по провинциям
     per = {}
