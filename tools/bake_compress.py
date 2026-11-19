@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Сжатие пакетов заготовок карты для APK (MapBake, docs/notes/ui.md).
 
-Игра рисует пакеты без потерь (`--bake_pack=DIR`, WebP lossless, ~110 МБ);
-здесь каждый тайл пережимается cwebp с потерями: цвет V — q95 с точным
-пересчётом цвета (-sharp_yuv), альфа (1 − S/2) — без потерь, цвет под
-прозрачным не трогается (-exact). Ошибка цвета карты — в среднем ~2 уровня
-из 255, на глаз не видна; объём — в ~3 раза меньше. Ссылки «зима как лето»
-сохраняются.
+Игра рисует пакеты без потерь (`--bake_pack=DIR`, WebP lossless);
+здесь каждый тайл пережимается cwebp с потерями: цвет V — q90 с точным
+пересчётом цвета (-sharp_yuv), альфа (1 − S/2) — с потерями a70, цвет под
+прозрачным не трогается (-exact). Ошибка цвета карты — в среднем ~3 уровня
+из 255 (суша ~4.8, 99% ≤ 12), на глаз не видна; объём — в ~5 раз меньше
+(q95 и альфа без потерь — в 3.2 раза: ноябрь 2026, выбор по замеру, ui.md).
+Ссылки «зима как лето» сохраняются.
 
   sudo apt-get install webp
-  python3 tools/bake_compress.py RAW_DIR data/bake [--q=95]
+  python3 tools/bake_compress.py RAW_DIR data/bake [--q=90 --aq=70]
 """
 import os
 import struct
@@ -31,14 +32,14 @@ def read_pack(path):
     return d[:head_end], w, h, tiles
 
 
-def recode(blob, q, tmp, i):
+def recode(blob, q, aq, tmp, i):
     src = os.path.join(tmp, "%d.webp" % i)
     png = os.path.join(tmp, "%d.png" % i)
     dst = os.path.join(tmp, "%d_o.webp" % i)
     open(src, "wb").write(blob)
     subprocess.run(["dwebp", "-quiet", src, "-o", png], check=True)
-    subprocess.run(["cwebp", "-quiet", "-q", str(q), "-sharp_yuv", "-alpha_q", "100",
-                    "-exact", "-m", "6", png, "-o", dst], check=True)
+    subprocess.run(["cwebp", "-quiet", "-q", str(q), "-sharp_yuv", "-alpha_q", str(aq),
+                    "-alpha_filter", "best", "-exact", "-m", "6", png, "-o", dst], check=True)
     out = open(dst, "rb").read()
     for p in (src, png, dst):
         os.remove(p)
@@ -47,10 +48,13 @@ def recode(blob, q, tmp, i):
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    q = 95
+    q = 90
+    aq = 70
     for a in sys.argv[1:]:
         if a.startswith("--q="):
             q = int(a.split("=")[1])
+        if a.startswith("--aq="):
+            aq = int(a.split("=")[1])
     src_dir, out_dir = args
     os.makedirs(out_dir, exist_ok=True)
     total_in = total_out = 0
@@ -59,7 +63,7 @@ def main():
             if not (fn.startswith("b") and fn.endswith(".bin")):
                 continue
             head, w, h, tiles = read_pack(os.path.join(src_dir, fn))
-            jobs = {i: ex.submit(recode, t, q, tmp, i) for i, t in enumerate(tiles) if isinstance(t, bytes)}
+            jobs = {i: ex.submit(recode, t, q, aq, tmp, i) for i, t in enumerate(tiles) if isinstance(t, bytes)}
             body = bytearray()
             tab = bytearray()
             base = len(head) + w * h * 8

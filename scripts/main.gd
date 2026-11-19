@@ -301,6 +301,8 @@ func _auto_screenshot(path: String) -> void:
 		await _motion_test(path)
 	if "--baketest" in OS.get_cmdline_user_args():
 		await _bake_test(path)
+	if "--aheadtest" in OS.get_cmdline_user_args():
+		await _ahead_test()
 	if _arg("bake_sample") != "":
 		await map_view.bake.sample_packs(_arg("bake_sample"), [6, 7, 8, 9, 10], 24)
 	if _arg("bake_pack") != "":
@@ -323,6 +325,40 @@ func _bake_warm() -> void:
 		for i in 3:
 			await get_tree().process_frame
 		n += 1
+
+
+## Тайлы впрок (-- --aheadtest [--idle=N --zin=2 --noahead]): дождаться заготовок
+## вида, постоять N кадров (рисуются тайлы впрок), приблизить в zin раз (к точке
+## zat — доля экрана от середины) — сколько кадров и времени карта живая до заготовок.
+func _ahead_test() -> void:
+	await _bake_warm()
+	var bk := map_view.bake
+	var idle := int(_arg("idle")) if _arg("idle") != "" else 600
+	var t0 := Time.get_ticks_msec()
+	for i in idle:
+		await get_tree().process_frame
+	print("aheadtest: впрок в списке %d, нарисовано %d за %.1f с, кэш %.1f МБ" % [bk._ahead.size(),
+		bk.ahead_tiles, (Time.get_ticks_msec() - t0) / 1000.0, bk.cache_mb()])
+	var zin := float(_arg("zin")) if _arg("zin") != "" else 2.0
+	var cam := map_view.camera
+	var zat := Vector2(0.1, 0.05)   # точка приближения — доля экрана от середины
+	if _arg("zat") != "":
+		zat = Vector2(float(_arg("zat").split(",")[0]), float(_arg("zat").split(",")[1]))
+	cam.position += get_viewport().get_visible_rect().size * zat / cam.zoom.x
+	cam.zoom *= zin
+	map_view.redraw()
+	for i in 3:
+		await get_tree().process_frame
+	var n := 0
+	var f0 := Time.get_ticks_usec()
+	while n < 3000 and not bk.want(map_view._screen_keys):
+		await get_tree().process_frame
+		n += 1
+	map_view.redraw()
+	for i in 4:
+		await get_tree().process_frame
+	print("aheadtest: после приближения ×%.2f до всех тайлов вида %d кадров (%.1f с), с заготовками %s, нарисовано вида %d" % [zin,
+		n, (Time.get_ticks_usec() - f0) / 1e6, map_view._full_baked, bk.baked_tiles - bk.ahead_tiles])
 
 
 ## Проверка заготовок карты (-- --baketest): буфер карты живым шейдером

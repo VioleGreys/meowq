@@ -83,7 +83,7 @@ done
 if [ "${BAKE:-1}" = 1 ]; then
 	STALE=0
 	[ -f data/bake/b0_9.bin ] || STALE=1
-	for f in shaders/map_core.gdshaderinc scripts/view/map_bake.gd data/world1936/*.bin assets/map/*; do
+	for f in shaders/map_core.gdshaderinc scripts/view/map_bake.gd tools/bake_compress.py data/world1936/*.bin assets/map/*; do
 		[ "$STALE" = 1 ] || [ ! "$f" -nt data/bake/b0_9.bin ] || STALE=1
 	done
 	if [ "$STALE" = 1 ]; then

@@ -58,6 +58,9 @@ var _mx := Mutex.new()
 var _saves: Array = []          # [key, номер задачи] — пишутся в потоках
 var _wish := {}                 # key → кадр запроса (нет нигде — нарисовать)
 var _pending := {}              # блок, отданный на отрисовку (читать в следующем кадре)
+var _ahead := PackedInt64Array()  # впрок (шаг 11): по важности, рисуются, когда запросов нет
+var _ahead_i := 0
+var ahead_tiles := 0            # нарисовано впрок (для замеров)
 # сборка пакетов (--bake_pack): key → байты webp
 var packing := false
 var _pack_out := {}
@@ -154,6 +157,7 @@ func set_r(r: float) -> void:
 	slot_key.fill(-1)
 	key_slot.clear()
 	_wish.clear()
+	_ahead = PackedInt64Array()
 	_pending = {}
 	_wait_jobs()
 	_done.clear()
@@ -473,6 +477,8 @@ func tick(may_bake: bool = true) -> void:
 			FrameProf.add("заготовки: чтение тайла", Time.get_ticks_usec() - t_rd)
 	elif not _wish.is_empty() and may_bake:
 		_bake_next()
+	elif _ahead_i < _ahead.size() and may_bake:
+		_bake_ahead()
 	if _page_dirty:
 		_page_dirty = false
 		var t_pg := Time.get_ticks_usec()
@@ -480,7 +486,7 @@ func tick(may_bake: bool = true) -> void:
 		FrameProf.add("заготовки: таблица", Time.get_ticks_usec() - t_pg)
 
 
-func _put(key: int, img: Image) -> void:
+func _put(key: int, img: Image, free_only := false) -> void:
 	if key_slot.has(key):
 		return
 	var sl := -1
@@ -489,6 +495,8 @@ func _put(key: int, img: Image) -> void:
 		if slot_key[i] < 0:
 			sl = i
 			break
+		if free_only:
+			continue
 		if slot_use[i] < best and slot_use[i] < frame - 1:
 			best = slot_use[i]
 			sl = i
@@ -536,6 +544,62 @@ func _bake_next() -> void:
 	var tx0 := key_tx(key) - key_tx(key) % blk
 	var ty0 := key_ty(key) - key_ty(key) % blk
 	bake_block(s, k, tx0, ty0)
+
+
+## Впрок (шаг 11): тайлы, которые понадобятся при приближении, отдалении и сдвиге
+## от вида (центр cam, масштаб zoom, логический размер scr), — по важности; рисуются
+## по одному блоку за кадр, когда карта стоит и запросов вида нет, — в кэш на диске
+## (в атлас — только в свободные слои: нужное не вытеснять). Иначе после
+## приближения кадры живые (~300 мс на llvmpipe), пока тайлы не дорисуются.
+func plan_ahead(cam: Vector2, zoom: float, scr: Vector2, s: int) -> void:
+	_ahead = PackedInt64Array()
+	_ahead_i = 0
+	if not ok or zoom <= 0.0:
+		return
+	var l := lv_of(zoom)
+	var k0 := int(l.x)
+	var half := scr * 0.5 / zoom
+	var view := Rect2(cam - half, half * 2.0)
+	var mid := Rect2(cam - half * 0.6, half * 1.2)
+	# [уровень, рамка]: приближение ×1.4 где угодно на экране, отдаление ×1.4,
+	# сдвиг на четверть экрана, приближение ×2 к середине, отдаление ×2
+	var groups := [[k0 + 2, view], [k0 - 1, view.grow_individual(half.x, half.y, half.x, half.y)],
+		[k0, view.grow_individual(half.x * 0.5, half.y * 0.5, half.x * 0.5, half.y * 0.5)],
+		[k0 + 1, view.grow_individual(half.x * 0.5, half.y * 0.5, half.x * 0.5, half.y * 0.5)],
+		[k0 + 3, mid], [k0 - 2, view.grow_individual(half.x * 3.0, half.y * 3.0, half.x * 3.0, half.y * 3.0)]]
+	var seen := {}
+	for g in groups:
+		var k: int = g[0]
+		if k < 0 or k >= NLV:
+			continue
+		var keys := {}
+		_add_rect(keys, s, k, g[1])
+		var z := lv_zoom(k) * r_cls
+		var c := cam * z / T
+		var list: Array = []
+		for key in keys:
+			if seen.has(key) or key_slot.has(key) or _pack.has(key) or _cache.has(key):
+				continue
+			seen[key] = true
+			var d := Vector2(key_tx(key) + 0.5, key_ty(key) + 0.5).distance_squared_to(c)
+			list.append([d, key])
+		list.sort()   # от середины к краям
+		for e in list:
+			_ahead.append(e[1])
+		if _ahead.size() >= CAP * 3:
+			break
+
+
+func _bake_ahead() -> void:
+	while _ahead_i < _ahead.size():
+		var key := _ahead[_ahead_i]
+		_ahead_i += 1
+		if key_slot.has(key) or _jobs.has(key) or _pack.has(key) or _cache.has(key):
+			continue
+		var k := key_k(key)
+		bake_block(key_s(key), k, key_tx(key) - key_tx(key) % blk, key_ty(key) - key_ty(key) % blk)
+		_pending["ahead"] = true
+		return
 
 
 ## Нарисовать блок тайлов (до blk × blk) уровня k сезона s с тайла (tx0, ty0).
@@ -605,6 +669,12 @@ func _read_block() -> void:
 			if packing:
 				_pack_out[key] = t.save_webp_to_buffer(false)
 				continue
+			if p.get("ahead", false):
+				ahead_tiles += 1
+				if not _cache.has(key):
+					_put(key, t, true)
+					_save(key, t)
+				continue
 			_put(key, t)
 			_save(key, t)
 
@@ -613,11 +683,12 @@ func _save(key: int, t: Image) -> void:
 	var path := _cache_file(key)
 	_cache[key] = 0
 	_cache_use[key] = frame
-	# с потерями (q 0.95, альфа без потерь): в среднем ~2 уровня цвета, в 2.4 раза
-	# меньше файла без потерь (27 против 63 КБ ближнего тайла) — в предел кэша
-	# влезает больше карты; кодируется даже быстрее (~12 мс на ПК)
+	# с потерями (q 0.9, альфа без потерь — так кодирует Godot): в среднем ~2.8
+	# уровня цвета, в ~3.5 раза меньше файла без потерь (q 0.95 — на 19 % больше
+	# при 2.4 уровня; на глаз не отличить, ui.md) — в предел кэша влезает больше
+	# карты; кодируется даже быстрее, чем без потерь (~12 мс на ПК)
 	var task := WorkerThreadPool.add_task(func():
-		t.save_webp(path, true, 0.95))
+		t.save_webp(path, true, 0.9))
 	_saves.append([key, task])
 
 

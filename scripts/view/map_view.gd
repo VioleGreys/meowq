@@ -60,6 +60,8 @@ var bake: MapBake
 var _bake_off := false
 var _full_baked := false       # кадр экрана нарисован с заготовками (частичные — так же)
 var _screen_keys := PackedInt64Array()
+var _bk_logical := Vector2.ZERO  # логический размер буфера кадра (тайлы впрок)
+var _ahead_off := false          # тайлы впрок выключены (замеры: --noahead)
 var _bake_still := 0           # кадров подряд, когда карта стоит
 var baked_draws := 0           # для замеров: кадров и полос с заготовками
 var live_draws := 0
@@ -134,6 +136,7 @@ func setup(w: World) -> void:
 	add_child(bake)
 	bake.setup(self, {})
 	_bake_off = "--nobake" in OS.get_cmdline_user_args()
+	_ahead_off = "--noahead" in OS.get_cmdline_user_args()
 	_full_baked = false
 	quad = ColorRect.new()
 	quad.material = mat
@@ -1606,6 +1609,8 @@ func _process_map(dt: float) -> void:
 	_bake_still = _bake_still + 1 if _moving <= 0.0 and not _dirty and _strip_n == 0 \
 		and _c_build_n == 0 and not _fading_in and _touches.is_empty() else 0
 	var tb := Time.get_ticks_usec()
+	if _bake_still == 30 and not _ahead_off and _bake_ok() and _bk_logical != Vector2.ZERO:
+		bake.plan_ahead(camera.position, camera.zoom.x, _bk_logical, _season())
 	bake.tick(_bake_still >= 30)
 	FrameProf.add("заготовки", Time.get_ticks_usec() - tb)
 	# прогрев: шейдер вывода кэша компилируется при загрузке, а не при первом
@@ -1679,6 +1684,7 @@ func _screen_bake(logical: Vector2, rk: float, need_mode: int, partial := false)
 		return 0
 	_bake_sync_r(rk)
 	var keys := bake.need(camera.position, camera.zoom.x, tilt(), cam_focal(), logical, _season())
+	_bk_logical = logical
 	if partial:
 		return 1 if bake.want(keys, true, _season()) else 0
 	_screen_keys = keys
