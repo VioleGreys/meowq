@@ -19,6 +19,7 @@ var info_actions: HFlowContainer
 var popup: PanelContainer
 var popup_title: Label
 var popup_body: VBoxContainer
+var _popup_scroll: ScrollContainer
 var popup_tab := ""
 var log_box: VBoxContainer
 var perf_label: Label
@@ -644,10 +645,8 @@ func _build_popup() -> void:
 	# SHOW_NEVER, не DISABLED: с DISABLED ширина содержимого раздувала лист за край экрана
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	v.add_child(scroll)
-	popup_body = VBoxContainer.new()
-	popup_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	popup_body.add_theme_constant_override("separation", 6)
-	scroll.add_child(popup_body)
+	_popup_scroll = scroll
+	popup_body = _tab_body("")
 	popup_clip = _nine("clipboard_clip.png", 1)
 	popup.add_child(popup_clip)
 	# разворот папки-«дела» целиком (как в макете): левая створка с наклейкой,
@@ -817,8 +816,8 @@ func _fill_cover() -> void:
 		cover_photo.texture = pt if pt != null else UiStyle.ui_tex("nophoto.png")
 		cover_stamp.texture = UiStyle.ui_tex("stamp_threat.png") if popup_tab == "nation" and \
 			w.nations[game.player()].at_war.has(nid) else UiStyle.ui_tex("stamp_top_secret.png")
-		# анкета страны
-		_clear(cover_rows)
+		# анкета страны — сборка вне дерева и сверка (UiPatch): обычно меняются цифры
+		var stage := VBoxContainer.new()
 		var rows := [["Глава", n.leader], ["Строй", w.ideology_names.get(n.ideology, n.ideology)],
 			["Фракция", Diplomacy.faction_name(w, nid) if Diplomacy.faction_name(w, nid) != "" else "нет"],
 			["Армия", "%d див." % n.division_count], ["Заводы", "%d / %d" % [n.civ, n.mil]]]
@@ -832,7 +831,9 @@ func _fill_cover() -> void:
 			vl.add_theme_font_override("font", UiStyle.mono_bold())
 			vl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			line.add_child(vl)
-			cover_rows.add_child(line)
+			stage.add_child(line)
+		UiPatch.patch(cover_rows, stage)
+		stage.free()
 	cover_sub.text = sub
 
 
@@ -912,6 +913,7 @@ func _label(text: String, size := 20, color := Color(0.93, 0.9, 0.82), raw := fa
 # --- Экраны ------------------------------------------------------------------
 
 func show_loading(text := "Загрузка мира…") -> void:
+	reset_windows()
 	top_bar.hide()
 	side.hide()
 	info_panel.hide()
@@ -1770,15 +1772,186 @@ func _cycle_map_mode() -> void:
 	toast(["Политическая карта", "Местность", "Промышленность", "Фракции", "Снабжение", "Ресурсы"][m])
 
 
+## Пересобрать окно: сборка — вне дерева, потом сверка со стоящим на экране
+## (UiPatch): совпавшие узлы остаются, меняются только отличия. У каждого окна
+## своё тело под прокруткой (прочие скрыты) — повторное открытие окна сверяет
+## с его же прошлым видом, а не с другим окном.
+var _bodies := {}
+var patch_check := false   # стенд `--patchcheck`: после сверки сравнить со свежей сборкой
+var patch_checks := 0
+var patch_fails := 0
+var _in_build := false
+var _build_again := false
+
+
 func _rebuild_popup() -> void:
-	_fit_width.call_deferred()
-	popup_title.add_theme_font_size_override("font_size", 26)
-	popup_title.show()
-	popup_close.show()
-	popup_rule.show()
-	_clear(popup_body)
+	if _in_build:
+		_build_again = true
+		return
+	_pw_cancel()
+	_in_build = true
+	var t0 := Time.get_ticks_usec()
+	var body := _tab_body(_body_key())
+	popup_body = VBoxContainer.new()
+	_fill_popup()
+	var stage := popup_body
+	popup_body = body
+	var map := UiPatch.patch(body, stage)
+	stage.free()
+	for k in _dynamic:
+		if map.has(_dynamic[k]):
+			_dynamic[k] = map[_dynamic[k]]
+	_in_build = false
+	FrameProf.add("окно: сборка", Time.get_ticks_usec() - t0)
+	if patch_check:
+		verify_popup()
+	if _build_again:
+		_build_again = false
+		_rebuild_popup()
+
+
+## Заготовка окон (решение: шаг 4 `optimization.md`): в простое — партия идёт,
+## окна закрыты, карта стоит — главные окна по одному собираются вне дерева и
+## переезжают в свои скрытые тела понемногу (PREWARM_USEC за кадр). Первое
+## открытие окна — уже сверка с заготовкой, а не сборка с нуля.
+const PREWARM := ["army", "navy", "diplomacy", "production"]
+const PREWARM_USEC := 3000
+var _pw_i := 0
+var _pw_stage: Node = null
+var _pw_body: VBoxContainer = null
+var _pw_wait := 0   # кадров до начала (после входа в партию)
+var _prewarming := false
+
+
+## Шаг заготовки; зовёт main под замком мира.
+func prewarm_step(still: bool) -> void:
+	if popup.visible or event_sheet.visible or game == null or game.state != "play" or game.player() < 0:
+		return
+	if _pw_wait > 0:
+		_pw_wait -= 1
+		return
+	if _pw_stage == null:
+		if not still or _pw_i >= PREWARM.size():
+			return
+		var saved := popup_tab
+		var active := popup_body
+		popup_tab = PREWARM[_pw_i]
+		_pw_i += 1
+		var key := _body_key()
+		if _bodies.has(key) and _bodies[key].get_child_count() > 0:
+			popup_tab = saved
+			return
+		var t0 := Time.get_ticks_usec()
+		_pw_body = _tab_body(key)
+		popup_body = VBoxContainer.new()
+		_prewarming = true
+		_fill_popup()
+		_prewarming = false
+		_pw_stage = popup_body
+		popup_body = active
+		popup_tab = saved
+		_dynamic.clear()
+		FrameProf.add("окна: заготовка", Time.get_ticks_usec() - t0)
+		return   # сборка — свой кадр, перенос — следующие
+	var t1 := Time.get_ticks_usec()
+	while _pw_stage.get_child_count() > 0 and Time.get_ticks_usec() - t1 < PREWARM_USEC:
+		var c := _pw_stage.get_child(0)
+		_pw_stage.remove_child(c)
+		_pw_body.add_child(c)
+	if _pw_stage.get_child_count() == 0:
+		_pw_stage.free()
+		_pw_stage = null
+	FrameProf.add("окна: заготовка", Time.get_ticks_usec() - t1)
+
+
+## Прервать заготовку (окно открывают): недоделанное тело доделает сверка.
+func _pw_cancel() -> void:
+	if _pw_stage != null:
+		_pw_stage.free()
+		_pw_stage = null
+
+
+## Новая партия или загрузка: тела окон держат лямбды со ссылками на прежний мир.
+func reset_windows() -> void:
+	_pw_cancel()
+	for k in _bodies:
+		_bodies[k].queue_free()
+	_bodies.clear()
+	popup_body = _tab_body("")
 	_dynamic.clear()
-	if popup_tab != "event" and popup_cover != null and game != null and game.world != null:
+	_pw_i = 0
+	_pw_wait = 90
+
+
+## Проверка сверки: окно на экране против свежей сборки того же состояния.
+func verify_popup() -> String:
+	var body := popup_body
+	var keep := _dynamic.duplicate()
+	popup_body = VBoxContainer.new()
+	_in_build = true
+	_fill_popup()
+	_in_build = false
+	var fresh := popup_body
+	popup_body = body
+	_dynamic = keep
+	var why := UiPatch.diff(body, fresh)
+	fresh.free()
+	patch_checks += 1
+	if why != "":
+		patch_fails += 1
+		push_error("сверка окна %s: %s" % [popup_tab, why])
+	return why
+
+
+## Ключ тела окна: страницы и конструкторы внутри окна устроены по-разному —
+## у каждой своё тело (сверка с её же прошлым видом).
+func _body_key() -> String:
+	match popup_tab:
+		"army":
+			if _tk_open:
+				return "army:tank"
+			if _tpl_edit != -2:
+				return "army:tpl"
+			if not _retrain_divs.is_empty():
+				return "army:retrain"
+			if not _join_divs.is_empty():
+				return "army:join"
+		"navy":
+			if _pl_open:
+				return "navy:plane"
+			if _sh_open:
+				return "navy:ship"
+		"diplomacy":
+			return "diplomacy:" + _dip_page
+		"production":
+			return "production:" + _prod_page
+	return popup_tab
+
+
+## Тело окна (VBox под прокруткой); тела прочих окон скрыты.
+func _tab_body(tab: String) -> VBoxContainer:
+	var key := tab if tab != "" else "-"
+	var body: VBoxContainer = _bodies.get(key)
+	if body == null:
+		body = VBoxContainer.new()
+		body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		body.add_theme_constant_override("separation", 6)
+		_popup_scroll.add_child(body)
+		_bodies[key] = body
+	for k in _bodies:
+		_bodies[k].visible = k == key
+	return body
+
+
+func _fill_popup() -> void:
+	if not _prewarming:
+		_fit_width.call_deferred()
+		popup_title.add_theme_font_size_override("font_size", 26)
+		popup_title.show()
+		popup_close.show()
+		popup_rule.show()
+	_dynamic.clear()
+	if not _prewarming and popup_tab != "event" and popup_cover != null and game != null and game.world != null:
 		_fill_cover()
 	var w: World = game.world
 	if popup_tab == "nations":

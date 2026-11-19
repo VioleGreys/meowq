@@ -13,7 +13,8 @@ extends Node
 ## Подробности и как читать — docs/notes/engine.md «Стенд нагрузки».
 
 const LONG_MS := 50.0
-const INSIDE_MAIN := ["буфер", "действия", "интерфейс", "панели дня", "палитра", "список фишек", "верхняя строка"]
+const INSIDE_MAIN := ["буфер", "действия", "интерфейс", "панели дня", "палитра", "список фишек", "верхняя строка",
+	"окно: сборка", "окна: заготовка"]
 const SEGMENTS := ["пауза, карта стоит", "скорость 5 (8 дн/с)", "скорость 5 + сдвиг и масштаб",
 	"скорость 5 + окна", "скорость 5 + выделение и приказы", "скорость 5 + режимы карты",
 	"скорость 5 + сохранение", "без ограничения скорости"]
@@ -62,6 +63,7 @@ func run(g, in_game := false) -> void:
 	ingame = in_game
 	var t_start := Time.get_ticks_msec()   # от запуска движка: загрузка + выбор страны
 	var seg_sec := float(g._arg("seg")) if g._arg("seg") != "" else 5.0
+	g.hud.patch_check = "--patchcheck" in OS.get_cmdline_user_args()
 	var me: int
 	var from := ""
 	var t_ff := 0
@@ -286,6 +288,8 @@ static func _pct(a: PackedFloat32Array, q: float) -> float:
 
 func _report() -> void:
 	_p("")
+	if game.hud.patch_check:
+		_p("Сверка окон: проверок %d, расхождений %d" % [game.hud.patch_checks, game.hud.patch_fails])
 	_p("Кадры (мс: медиана / 95% / 99% / худший; кадров > 33 / > 50 / > 100 мс):")
 	for s in SEGMENTS.size():
 		var a: PackedFloat32Array = _frames[s]

@@ -86,7 +86,8 @@ func _ready() -> void:
 		# на телефоне — пониже главного потока: кадры важнее, запас по дням есть
 		sim_thread.start(_sim_loop, Thread.PRIORITY_LOW if Device.mobile() else Thread.PRIORITY_NORMAL)
 	# инструменты (скриншот, замер) идут сразу к выбору страны, игрок — в главное меню
-	var tool := _arg("screenshot") != "" or _arg("bench_rt") != "" or "--stress" in OS.get_cmdline_user_args()
+	var tool := _arg("screenshot") != "" or _arg("bench_rt") != "" or "--stress" in OS.get_cmdline_user_args() \
+		or "--patchtest" in OS.get_cmdline_user_args()
 	# кадр рисуется, только когда на экране что-то изменилось (решение
 	# пользователя, ноябрь 2026: телефон меньше греется — дольше держит частоты);
 	# в инструментах — только с -- --lowproc
@@ -97,6 +98,10 @@ func _ready() -> void:
 		_auto_screenshot(_arg("screenshot"))
 	elif _arg("bench_rt") != "":
 		_bench_realtime(float(_arg("bench_rt")))
+	elif "--patchtest" in OS.get_cmdline_user_args():
+		var pt := PatchTest.new()
+		add_child(pt)
+		pt.run(self)
 	elif "--stress" in OS.get_cmdline_user_args():
 		var sb := StressBench.new()
 		add_child(sb)
@@ -1274,6 +1279,7 @@ func _ui_update() -> void:
 	_ui_prof_note(1, t2 - t1)
 	_ui_prof_note(2, t3 - t2)
 	_ui_prof_note(3, t4 - t3)
+	hud.prewarm_step(map_view._moving <= 0.0 and map_view._touches.is_empty())
 
 
 # Худшее время участков обновления интерфейса за последнюю секунду (мкс):
