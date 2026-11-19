@@ -530,17 +530,33 @@ static func ai_retrain(world: World, nat: World.Nation) -> int:
 	var battle := world.d_battle
 	var transit := world.d_transit
 	var war := not nat.at_war.is_empty()
+	var d_tpl := world.d_tpl
+	var d_prov := world.d_prov
+	# у фронта (сосед — враг): то же, что _at_front_p, с массивами в локальных
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	var ctl := world.p_controller
+	var wt := world.war
+	var wrow := nat.id * world.nation_count
 	for i in world.slots_of(nat.id):   # = живые с owner == nat.id, по возрастанию
 		if done >= budget:
 			break
 		if battle[i] == 1 or transit[i] > 0:
 			continue
-		var tp := world.d_tpl[i]
+		var tp := d_tpl[i]
 		var t: int = memo.get(tp, -2)
 		if t == tp:
 			continue   # уже на нынешнем шаблоне — фронт не проверяем
-		if war and _at_front_p(world, world.d_prov[i], nat.id):
-			continue   # на войне — только не стоящие у фронта (организация падает)
+		if war:
+			var p := d_prov[i]
+			var front := false
+			for k in range(a_start[p], a_start[p + 1]):
+				var c := ctl[a_list[k]]
+				if c >= 0 and wt[wrow + c] == 1:
+					front = true
+					break
+			if front:
+				continue   # на войне — только не стоящие у фронта (организация падает)
 		if t == -2:
 			if int(world.templates[tp]["owner"]) >= 0:
 				t = tp   # свои шаблоны игрока ИИ не трогает

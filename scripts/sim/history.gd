@@ -239,7 +239,12 @@ static func focus_block(world: World, n: int, fd: Dictionary) -> String:
 ## То же, что focus_block(...) == "", но без строк причин (для ИИ): условия
 ## проверяются в том же порядке.
 static func focus_open(world: World, n: int, fd: Dictionary) -> bool:
-	var nat: World.Nation = world.nations[n]
+	return _focus_free(world.nations[n], fd) and check_ok(world, n, fd.get("available", {}), int(fd.get("days", 70)))
+
+
+## Часть focus_open без условий мира: не взят, требования выполнены, развилка
+## свободна (зависит только от выполненных фокусов и текущего).
+static func _focus_free(nat: World.Nation, fd: Dictionary) -> bool:
 	var id: String = fd["id"]
 	if nat.focus_done.has(id) or nat.focus_current == id:
 		return false
@@ -258,7 +263,28 @@ static func focus_open(world: World, n: int, fd: Dictionary) -> bool:
 				break
 		if not ok:
 			return false
-	return check_ok(world, n, fd.get("available", {}), int(fd.get("days", 70)))
+	return true
+
+
+# страна (объект) -> [ключ, фокусы дерева, свободные по _focus_free]; фокусы
+# только добавляются в focus_done, так что его размер — версия
+static var _free_memo := {}
+
+
+## Фокусы дерева страны, свободные по _focus_free, в порядке дерева.
+static func _free_focuses(world: World, n: int) -> Array:
+	var nat: World.Nation = world.nations[n]
+	var tree := tree_of(world, n)
+	var mk := nat.get_instance_id()
+	var e: Variant = _free_memo.get(mk)
+	if e != null and is_same(e[1], tree) and e[0] == "%s|%d" % [nat.focus_current, nat.focus_done.size()]:
+		return e[2]
+	var res: Array = []
+	for fd in tree:
+		if _focus_free(nat, fd):
+			res.append(fd)
+	_free_memo[mk] = ["%s|%d" % [nat.focus_current, nat.focus_done.size()], tree, res]
+	return res
 
 
 static func start_focus(world: World, n: int, id: String) -> bool:
@@ -470,8 +496,8 @@ static func _ai_pick_focus(world: World, n: int, rng: RandomNumberGenerator) -> 
 		return
 	var _pf := Time.get_ticks_usec()
 	var avail: Array = []
-	for fd in tree_of(world, n):
-		if focus_open(world, n, fd):
+	for fd in _free_focuses(world, n):
+		if check_ok(world, n, fd.get("available", {}), int(fd.get("days", 70))):
 			avail.append(fd["id"])
 	Prof.add("фок:доступные", _pf)
 	_pf = Time.get_ticks_usec()

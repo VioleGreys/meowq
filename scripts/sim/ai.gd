@@ -1037,12 +1037,30 @@ static func attack_limit_table(world: World) -> PackedByteArray:
 	return t
 
 
+static var _lim_memo := {}   # hash(рамки) -> [рамки, провинции вне них]
+static var _lim_of := 0
+
+
 static func _attack_limit_fill(world: World, t: PackedByteArray, nid: int, lim: Array) -> void:
-	var pc := world.prov_count
+	# провинции вне рамок зависят только от рамок (p_adm0, p_lonlat неизменны)
+	if _lim_of != world.get_instance_id():
+		_lim_memo = {}
+		_lim_of = world.get_instance_id()
+	var h := hash(lim)
+	var e: Variant = _lim_memo.get(h)
+	if e == null or e[0] != lim:
+		e = [lim.duplicate(true), _attack_limit_provs(world, lim)]
+		_lim_memo[h] = e
+	var base: int = nid * world.prov_count
+	for p in e[1]:
+		t[base + p] = 1
+
+
+static func _attack_limit_provs(world: World, lim: Array) -> PackedInt32Array:
+	var out := PackedInt32Array()
 	var codes: Array = lim[0]
 	var boxes: Array = lim[1]
 	var excl: Array = lim[2] if lim.size() > 2 else []
-	var base: int = nid * pc
 	var by_code := _adm0_index(world)
 	var lonlat := world.p_lonlat
 	var seen := {}
@@ -1063,7 +1081,8 @@ static func _attack_limit_fill(world: World, t: PackedByteArray, nid: int, lim: 
 					inside = false
 					break
 			if not inside:
-				t[base + p] = 1
+				out.append(p)
+	return out
 
 
 static var _adm0_idx := {}
@@ -1088,6 +1107,11 @@ static func _adm0_index(world: World) -> Dictionary:
 
 ## Гарнизоны (Nation.hold): nc×prov_count — не меньше дивизий на участке фронта;
 ## пусто — гарнизонов нет.
+static var _big := PackedInt32Array()
+static var _big_of := 0
+static var _big_pc := 0
+
+
 static func hold_table(world: World) -> PackedByteArray:
 	var t := PackedByteArray()
 	var pc := world.prov_count
@@ -1108,13 +1132,18 @@ static func hold_table(world: World) -> PackedByteArray:
 	var at_war := PackedByteArray()
 	at_war.resize(nc)
 	for n in nc:
-		for m in nc:
-			if war[n * nc + m] == 1:
-				at_war[n] = 1
-				break
-	for c in pc:
-		if vp[c] < CAP_VP or land[c] == 0:
-			continue
+		var w := war.find(1, n * nc)
+		if w >= 0 and w < (n + 1) * nc:
+			at_war[n] = 1
+	if _big_of != world.get_instance_id() or _big_pc != pc:
+		# крупные города суши (очки победы задаются картой и не меняются)
+		_big = PackedInt32Array()
+		for c in pc:
+			if vp[c] >= CAP_VP and land[c] != 0:
+				_big.append(c)
+		_big_of = world.get_instance_id()
+		_big_pc = pc
+	for c in _big:
 		var n := ctrl[c]
 		if n < 0 or at_war[n] == 0:
 			continue

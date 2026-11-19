@@ -346,11 +346,18 @@ static func _assign(world: World, nat: World.Nation, only: Array) -> void:
 	var todo: Array = []
 	var rear: Array = []
 	var divs: Array = world.divisions
+	var ok_g := {}      # генерал -> годен (своё, жив, в срок) — один раз на генерала
+	var ncmd := cmd.size()
 	for i in world.slots_of(nat.id):   # = живые с owner == nat.id
 		var d: World.Division = divs[i]
 		var g := d._lead
-		if g >= 0 and (g >= cmd.size() or cmd[g].owner != nat.id or not available(world, cmd[g])):
-			g = -1
+		if g >= 0:
+			var ok: Variant = ok_g.get(g)
+			if ok == null:
+				ok = g < ncmd and cmd[g].owner == nat.id and available(world, cmd[g])
+				ok_g[g] = ok
+			if not ok:
+				g = -1
 		if g >= 0:
 			cnt[g] = int(cnt.get(g, 0)) + 1
 		elif only.is_empty():
