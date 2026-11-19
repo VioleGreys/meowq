@@ -715,10 +715,14 @@ static func _basin_data(world: World, bi: int, memo: Dictionary) -> Array:
 		var z := world.bas_zone_list[j]
 		if not zf.has(z):
 			continue
-		for f in zf[z]:
-			if not f.alive:
-				continue
-			var o: int = f.owner
+		var zd := _zone_data(world, z, zf[z], memo)
+		var zo: PackedInt32Array = zd[0]
+		var zm: PackedByteArray = zd[1]
+		var zc: PackedFloat64Array = zd[2]
+		var ze: PackedFloat64Array = zd[3]
+		var zr: PackedFloat64Array = zd[4]
+		for k in zo.size():
+			var o := zo[k]
 			var i: int = idx.get(o, -1)
 			if i < 0:
 				i = ow.size()
@@ -728,19 +732,56 @@ static func _basin_data(world: World, bi: int, memo: Dictionary) -> Array:
 				es.append(0.0)
 				cp.append(0.0)
 				surf.append(0)
-			if f.mission == "port":
-				continue
-			var nat: World.Nation = world.nations[o]
-			var c := Forces.combat_power(f)
-			cp[i] += c
-			es[i] += (f.asw * Forces.NAVY_ESCORT + (f.ships[Forces.SHIP_CR] + f.ships[Forces.SHIP_CV]) * 2.0) * (1.0 + nat.b("escort"))
-			if f.mission == "raid":
-				rd[i] += f.raid * (1.0 + nat.b("sub_raid"))
-			elif c > 0.0:
+			var m := zm[k]
+			if m == 0:
+				continue   # в порту
+			cp[i] += zc[k]
+			es[i] += ze[k]
+			if m == 2:
+				rd[i] += zr[k]
+			elif zc[k] > 0.0:
 				surf[i] = 1
 	bd = [ow, rd, es, cp, surf]
 	memo[bi] = bd
 	return bd
+
+
+## Силы флотов зоны на сегодня (зона входит во многие бассейны — один раз):
+## хозяин, задача (0 — порт, 1 — прочее, 2 — рейд), боевая сила, охранение,
+## рейды — те же выражения, что в _basin_data прежде (до бита).
+static func _zone_data(world: World, z: int, fleets: Array, memo: Dictionary) -> Array:
+	var key := -1 - z
+	var zd = memo.get(key)
+	if zd != null:
+		return zd
+	var zo := PackedInt32Array()
+	var zm := PackedByteArray()
+	var zc := PackedFloat64Array()
+	var ze := PackedFloat64Array()
+	var zr := PackedFloat64Array()
+	for f in fleets:
+		if not f.alive:
+			continue
+		var o: int = f.owner
+		zo.append(o)
+		if f.mission == "port":
+			zm.append(0)
+			zc.append(0.0)
+			ze.append(0.0)
+			zr.append(0.0)
+			continue
+		var nat: World.Nation = world.nations[o]
+		zc.append(Forces.combat_power(f))
+		ze.append((f.asw * Forces.NAVY_ESCORT + (f.ships[Forces.SHIP_CR] + f.ships[Forces.SHIP_CV]) * 2.0) * (1.0 + nat.b("escort")))
+		if f.mission == "raid":
+			zm.append(2)
+			zr.append(f.raid * (1.0 + nat.b("sub_raid")))
+		else:
+			zm.append(1)
+			zr.append(0.0)
+	zd = [zo, zm, zc, ze, zr]
+	memo[key] = zd
+	return zd
 
 
 ## Перехват в бассейне для страны n сегодня (x, 0..1) и охранение (y — для

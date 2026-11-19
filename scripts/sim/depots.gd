@@ -180,6 +180,14 @@ static func sea_points(world: World) -> PackedInt32Array:
 
 ## Участки суши сторон: обход от каждой провинции по соседям той же стороны
 ## (своя или союзная), через безлюдную пустыню — не дальше.
+# прошлый обход участков: входы (копии) и ответ — суша и соседство у карты постоянны
+static var _cmp_of := 0
+static var _cmp_ctrl := PackedInt32Array()
+static var _cmp_ally := PackedByteArray()
+static var _cmp_waste := PackedByteArray()
+static var _cmp_res := PackedInt32Array()
+
+
 static func components(world: World) -> void:
 	var pc := world.prov_count
 	var nc := world.nation_count
@@ -192,11 +200,23 @@ static func components(world: World) -> void:
 	var waste := world.p_waste
 	var has_waste := waste.size() == pc
 	var comp := PackedInt32Array()
-	if Native.core != null and Native.core.has_method("land_components"):
+	var fresh := true
+	if _cmp_of == world.get_instance_id() and _cmp_ctrl == ctrl and _cmp_ally == ally and _cmp_waste == waste \
+			and _cmp_res.size() == pc:
+		# контролёры, союзы и пустыни те же, что при прошлом обходе, — участки те же
+		comp = _cmp_res
+		fresh = false
+	elif Native.core != null and Native.core.has_method("land_components"):
 		# C++ — MeowqCore.land_components, тот же обход и номера
 		comp = Native.core.call("land_components", ctrl, land, ally, a_start, a_list, waste, nc)
 	else:
 		comp = _components_gd(pc, nc, ctrl, land, ally, has_ally, a_start, a_list, waste, has_waste)
+	if fresh:
+		_cmp_of = world.get_instance_id()
+		_cmp_ctrl = ctrl.duplicate()
+		_cmp_ally = ally.duplicate()
+		_cmp_waste = waste.duplicate()
+		_cmp_res = comp
 	world.p_comp = comp
 	for nat in world.nations:
 		var cp: int = nat.capital
@@ -454,10 +474,20 @@ static func ai_ports(world: World, divs: Dictionary, by_nat: Array) -> void:
 	var pc := world.prov_count
 	var ctrl := world.p_controller
 	var comp := world.p_comp
+	# страны, чей сегодня день (раз в 30 дней), — маской: без них прохода нет
+	var turn := PackedByteArray()
+	turn.resize(world.nation_count)
+	var any := false
+	for nat in world.nations:
+		if not nat.is_player and (world.day + nat.id) % 30 == 19:
+			turn[nat.id] = 1
+			any = true
+	if not any:
+		return
 	var best := {}   # страна * pc + участок -> порт с наибольшими очками
 	for p in world.port_list:
 		var c := ctrl[p]
-		if c < 0 or comp[p] < 0 or world.nations[c].is_player or (world.day + c) % 30 != 19:
+		if c < 0 or turn[c] == 0 or comp[p] < 0:
 			continue
 		var key := c * pc + comp[p]
 		if not divs.has(key) or (by_nat[c] != null and by_nat[c].has(comp[p])):
