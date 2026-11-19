@@ -67,6 +67,39 @@ static func key_of(world: World, p: int) -> int:
 	return -1
 
 
+## key_of для всех провинций сразу (то же правило, без вызова на каждую).
+static func keys_all(world: World) -> PackedInt32Array:
+	var pc := world.prov_count
+	var kp := PackedInt32Array()
+	kp.resize(pc)
+	kp.fill(-1)
+	var own := world.p_owner
+	var ctl := world.p_controller
+	var land := world.p_land
+	var from := world.p_from
+	var nfrom := from.size()
+	var nc := world.nation_count
+	var ally := world.ally
+	var has_ally := ally.size() == nc * nc
+	var cores := world.cores
+	for p in pc:
+		var o := own[p]
+		var c := ctl[p]
+		if c < 0 or o < 0 or land[p] == 0:
+			continue
+		if c != o:
+			if has_ally and ally[c * nc + o] == 1:
+				continue
+			if cores.has(p * 4096 + c):
+				continue
+			kp[p] = c * 4096 + o
+		elif p < nfrom:
+			var f := from[p]
+			if f >= 0 and f != c:
+				kp[p] = c * 4096 + f
+	return kp
+
+
 static func law_of(world: World, k: int) -> int:
 	if world.occ_law.has(k):
 		return world.occ_law[k]
@@ -125,26 +158,31 @@ static func daily(world: World) -> void:
 static func step(world: World) -> void:
 	_ensure(world)
 	var pc := world.prov_count
-	var kp := PackedInt32Array()
-	kp.resize(pc)
+	var kp := keys_all(world)
 	var need := {}
 	var provs := PackedInt32Array()
+	var p_resist := world.p_resist
+	var p_comply := world.p_comply
+	var p_yield := world.p_yield
+	var p_yield_mp := world.p_yield_mp
+	var p_pop := world.p_population
 	for p in pc:
-		var k := key_of(world, p)
-		kp[p] = k
+		var k := kp[p]
 		if k < 0:
-			if world.p_resist[p] >= 0.0:
-				world.p_resist[p] = -1.0
-				world.p_comply[p] = 0.0
-			world.p_yield[p] = 1.0
-			world.p_yield_mp[p] = 1.0
+			if p_resist[p] >= 0.0:
+				p_resist[p] = -1.0
+				p_comply[p] = 0.0
+			p_yield[p] = 1.0
+			p_yield_mp[p] = 1.0
 			continue
-		if world.p_resist[p] < 0.0:
-			world.p_resist[p] = RESIST_START
-			world.p_comply[p] = 0.0
-		need[k] = float(need.get(k, 0.0)) + 0.5 + float(world.p_population[p]) / 2000.0
+		if p_resist[p] < 0.0:
+			p_resist[p] = RESIST_START
+			p_comply[p] = 0.0
+		need[k] = float(need.get(k, 0.0)) + 0.5 + float(p_pop[p]) / 2000.0
 		provs.append(p)
 	var stats := {}
+	var own := world.p_owner
+	var ctl := world.p_controller
 	# закон, прикрытие и бонусы стран — одни на пару «оккупант, владелец»
 	var kmemo := {}
 	for p in provs:
@@ -162,9 +200,9 @@ static func step(world: World) -> void:
 			kmemo[k] = km
 		var law: Dictionary = km[0]
 		var cover: float = km[1]
-		var integ: bool = km[5] and world.p_owner[p] == world.p_controller[p]
-		var r := world.p_resist[p]
-		var cm := world.p_comply[p]
+		var integ: bool = km[5] and own[p] == ctl[p]
+		var r := p_resist[p]
+		var cm := p_comply[p]
 		var rk: float = km[2]
 		var dr := RESIST_GAIN * float(law["resist"]) * rk * (1.0 - cover) * (1.0 - 0.7 * cm / 100.0) - RESIST_SUPPRESS * cover * float(km[3])
 		r = clampf(r + dr * STEP, 0.0, 100.0)
@@ -175,22 +213,23 @@ static func step(world: World) -> void:
 		if integ:
 			dc += INTEG_GAIN
 		cm = clampf(cm + dc * STEP, 0.0, 100.0)
-		world.p_resist[p] = r
-		world.p_comply[p] = cm
+		p_resist[p] = r
+		p_comply[p] = cm
 		var soft := float(law["soft"]) * cm / 100.0 * (1.0 if integ else NO_INTEG)
 		var keep := 1.0 - RESIST_YIELD * r / 100.0
 		var take: float = law["take"]
 		var mp: float = law["mp"]
-		world.p_yield[p] = (take + (1.0 - take) * soft) * keep
-		world.p_yield_mp[p] = (mp + (1.0 - mp) * soft) * keep
+		var yv := (take + (1.0 - take) * soft) * keep
+		p_yield[p] = yv
+		p_yield_mp[p] = (mp + (1.0 - mp) * soft) * keep
 		if not stats.has(k):
 			stats[k] = [0, 0.0, 0.0, 0.0, 0]
 		var s: Array = stats[k]
 		s[0] += 1
 		s[1] += r
 		s[2] += cm
-		s[3] += world.p_yield[p]
-		if world.p_owner[p] == world.p_controller[p]:
+		s[3] += p_yield[p]
+		if own[p] == ctl[p]:
 			s[4] += 1   # присоединённых (не занятых в войне)
 	# гарнизон: потери от сопротивления; территории без земли распускаются
 	var gks: Array = world.occ_garrison.keys()

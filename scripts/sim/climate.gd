@@ -87,13 +87,18 @@ static func refresh_nations(world: World) -> void:
 	var cnt := PackedInt32Array()
 	cnt.resize(nc)
 	var has_col := world.p_colony.size() == world.prov_count
+	var own := world.p_owner
+	var land := world.p_land
+	var col := world.p_colony
+	var lonlat := world.p_lonlat
+	var terrain := world.p_terrain
 	for p in world.prov_count:
-		var o := world.p_owner[p]
-		if world.p_land[p] == 0 or o < 0 or (has_col and world.p_colony[p] == 1):
+		var o := own[p]
+		if land[p] == 0 or o < 0 or (has_col and col[p] == 1):
 			continue
 		cnt[o] += 1
-		var lat := world.p_lonlat[p].y
-		var terr := world.p_terrain[p]
+		var lat := lonlat[p].y
+		var terr := terrain[p]
 		if terr == World.T_DESERT:
 			hot[o] += 1.0
 		if lat >= 55.0 or lat <= -45.0 or terr == World.T_MOUNTAIN:

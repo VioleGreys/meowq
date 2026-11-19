@@ -836,27 +836,43 @@ func month_of(at: int) -> int:
 ## Оборона провинций: местность + укрепления + зима. Зима (как погода в жанре):
 ## декабрь–март севернее 60° — +0,4, севернее 55° — +0,25, декабрь–февраль
 ## 48–55° — +0,12. Пересчёт раз в месяц; одинаково для GDScript и C++ (массив).
-func refresh_def_mult() -> void:
+## true — пересчитано (месяц сменился), false — уже было на этот месяц.
+func refresh_def_mult() -> bool:
 	var m := month_of(day)
 	if m == _def_month and p_def_mult.size() == prov_count:
-		return
+		return false
 	_def_month = m
 	Climate.refresh_provinces(self, m)
 	p_def_mult.resize(prov_count)
 	var deep := m == 11 or m <= 2
 	var mid := m == 11 or m <= 1
 	for p in prov_count:
-		var v: float = TERRAIN_DEFENSE[p_terrain[p]] + (p_fort[p] if p < p_fort.size() else 0.0)
-		if p_land[p] == 1:
-			var lat := p_lonlat[p].y
-			if deep and lat >= 60.0:
-				v += 0.4   # полярная зима: Карелия, Финляндия, север России
-			elif deep and lat >= 55.0:
-				v += 0.25
-			elif mid and lat >= 48.0:
-				v += 0.12
-		# в бою атака × (1 − 0,6 × оборона): выше 1,5 множитель ушёл бы к нулю и в минус
-		p_def_mult[p] = minf(v, DEF_CAP)
+		p_def_mult[p] = _def_of(p, deep, mid)
+	return true
+
+
+## Оборона одной провинции (местность, укрепления, зима месяца).
+func _def_of(p: int, deep: bool, mid: bool) -> float:
+	var v: float = TERRAIN_DEFENSE[p_terrain[p]] + (p_fort[p] if p < p_fort.size() else 0.0)
+	if p_land[p] == 1:
+		var lat := p_lonlat[p].y
+		if deep and lat >= 60.0:
+			v += 0.4   # полярная зима: Карелия, Финляндия, север России
+		elif deep and lat >= 55.0:
+			v += 0.25
+		elif mid and lat >= 48.0:
+			v += 0.12
+	# в бою атака × (1 − 0,6 × оборона): выше 1,5 множитель ушёл бы к нулю и в минус
+	return minf(v, DEF_CAP)
+
+
+## Укрепления провинции изменились: пересчитать только её оборону (климат
+## месяца от укреплений не зависит); если месяц ещё не считан — всё целиком.
+func refresh_def_prov(p: int) -> void:
+	var m := month_of(day)
+	if m != _def_month or p_def_mult.size() != prov_count:
+		return   # весь пересчёт — следом, в refresh_def_mult
+	p_def_mult[p] = _def_of(p, m == 11 or m <= 2, m == 11 or m <= 1)
 
 
 func day_of(date: String) -> int:

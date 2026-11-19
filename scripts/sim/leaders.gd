@@ -468,13 +468,64 @@ static func refresh(world: World) -> void:
 		for o in keys:
 			_assign(world, world.nations[o], by[o])
 		return
+	# полный пересчёт — то же, что _entry по каждой живой, с массивами в локальных
 	var player := _players(world)
 	var mults := {}
 	var divs: Array = world.divisions
 	var alive := world.d_alive
+	var cmd: Array = world.commanders
+	var ncmd := cmd.size()
+	var groups: Array = world.groups
+	var fronts: Array = world.fronts
+	var d_owner := world.d_owner
+	var d_tpl := world.d_tpl
+	var tpl_cls := world.tpl_cls
+	var ntc := tpl_cls.size()
+	var gen := world.ld_gen
+	var mar := world.ld_mar
+	var atk := world.ld_atk
+	var dfn := world.ld_def
+	var spd := world.ld_spd
+	var pln := world.ld_plan
 	for i in mini(n, divs.size()):
-		if alive[i] == 1:
-			_entry(world, i, divs[i], player, mults)
+		if alive[i] != 1:
+			continue
+		var d: World.Division = divs[i]
+		var o := d_owner[i]
+		var g := -1
+		var m := -1
+		var grp := d._group
+		if grp >= 0:
+			var a: World.ArmyGroup = groups[grp]
+			if a.alive:
+				g = a.general
+				if a.front >= 0 and fronts[a.front].alive:
+					m = fronts[a.front].marshal
+		elif d._lead >= 0 and d._lead < ncmd and player[o] == 0:
+			g = d._lead
+			m = cmd[g].boss
+		var cls := 0
+		var tp := d_tpl[i]
+		if tp >= 0 and tp < ntc:
+			cls = tpl_cls[tp]
+		var key := ((g + 1) * 65536 + m + 1) * 8 + cls
+		var mv: Variant = mults.get(key)
+		if mv == null:
+			var gg := g
+			var mm_ := m
+			if gg >= 0 and (cmd[gg].owner != o or not available(world, cmd[gg])):
+				gg = -1
+			if mm_ >= 0 and (cmd[mm_].owner != o or not available(world, cmd[mm_])):
+				mm_ = -1
+			mv = _mults(cmd, gg, mm_, cls)
+			mults[key] = mv
+		var mm: Array = mv
+		gen[i] = mm[4]
+		mar[i] = mm[5]
+		atk[i] = mm[0]
+		dfn[i] = mm[1]
+		spd[i] = mm[2]
+		pln[i] = mm[3]
 
 
 ## Род войск дивизии сменился (переучивание) — пересчитать её множители.

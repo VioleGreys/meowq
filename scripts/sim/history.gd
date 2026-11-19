@@ -1311,8 +1311,11 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 					var fp := prov_of(world, String(city))
 					if fp >= 0:
 						world.p_fort[fp] = maxf(0.0, world.p_fort[fp] + float(e.get("v", 0.5)))
-				world._def_month = -1
-				world.refresh_def_mult()
+						world.refresh_def_prov(fp)
+				# полный пересчёт заодно обновлял привычку стран к климату (по
+				# нынешним владельцам) — оставить его, результаты те же
+				if not world.refresh_def_mult():
+					Climate.refresh_nations(world)
 			"spirit_add":
 				nat.spirits[String(e["id"])] = float(e.get("v", 1.0))
 				world.recalc_spirits(nat)
@@ -1532,16 +1535,21 @@ static func place_factory(world: World, nid: int, mode: String) -> void:
 static func nearest_held(world: World, who: int, ll: Vector2) -> int:
 	var best := -1
 	var best_d := INF
+	var land := world.p_land
+	var ctl := world.p_controller
+	var lonlat := world.p_lonlat
+	# сначала расстояние (дёшево), владельца — только у кандидата в лучшие
 	for p in world.prov_count:
-		if world.p_land[p] == 0:
+		if land[p] == 0:
 			continue
-		var c := world.p_controller[p]
+		var d := lonlat[p].distance_squared_to(ll)
+		if d >= best_d:
+			continue
+		var c := ctl[p]
 		if c < 0 or (c != who and not Diplomacy.same_side(world, c, who)):
 			continue
-		var d := world.p_lonlat[p].distance_squared_to(ll)
-		if d < best_d:
-			best_d = d
-			best = p
+		best_d = d
+		best = p
 	return best
 
 
