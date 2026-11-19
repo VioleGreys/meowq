@@ -178,6 +178,9 @@ NATIONS = {
     "SAF": ("Южно-Африканский Союз", (200, 160, 100), (28.19, -25.75)),
 }
 
+# столица — по названию города, если точка из NATIONS попадает в соседнюю провинцию
+CAPITAL_PROV = {"HUN": "Будапешт"}
+
 # Современная страна -> государство 1936 г. (колонии и мандаты пока принадлежат
 # метрополии; марионетки и доминионы — этап 3).
 ADM0_TAG = {
@@ -1355,6 +1358,13 @@ def main():
         xi, yi = int(np.clip(x, 0, WIDTH - 1)), int(np.clip(y, 0, HEIGHT - 1))
         ly, lx = land_idx[0][yi, xi], land_idx[1][yi, xi]
         capitals[t] = int(prov[ly, lx])
+    # точка столицы попала в соседнюю провинцию (Буда, 19,04° в. д., — в
+    # «Татабанью»): столица — провинция города с этим названием
+    for t, nm in CAPITAL_PROV.items():
+        for i, (_, cname) in city_best.items():
+            if cname == nm:
+                capitals[t] = int(i)
+                break
 
     home_adm0 = {t: set() for t in tags}
     for a0, t in ADM0_TAG.items():
