@@ -8,7 +8,7 @@ signal view_changed
 
 const SCALE := 2.0
 const MIN_ZOOM := 0.1
-const MAX_ZOOM := 8.0   # было 5: постройки вблизи как в жанре (дом ~25 пикс. экрана)
+const MAX_ZOOM := 5.6   # было 8 (дом ~25 пикс. экрана), до того 5; решение пользователя ноябрь 2026: ×5.6
 const TAP_SLOP := 14.0
 
 enum MapMode { POLITICAL, TERRAIN, INDUSTRY, FACTIONS, SUPPLY, RESOURCES }

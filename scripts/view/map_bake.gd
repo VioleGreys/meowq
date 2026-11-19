@@ -567,10 +567,12 @@ func plan_ahead(cam: Vector2, zoom: float, scr: Vector2, s: int) -> void:
 		[k0, view.grow_individual(half.x * 0.5, half.y * 0.5, half.x * 0.5, half.y * 0.5)],
 		[k0 + 1, view.grow_individual(half.x * 0.5, half.y * 0.5, half.x * 0.5, half.y * 0.5)],
 		[k0 + 3, mid], [k0 - 2, view.grow_individual(half.x * 3.0, half.y * 3.0, half.x * 3.0, half.y * 3.0)]]
+	var lm := lv_of(MapView.MAX_ZOOM)   # ближе предела приближения — не нужно
+	var kmax := int(lm.x) + (1 if lm.y > 0.001 else 0)
 	var seen := {}
 	for g in groups:
 		var k: int = g[0]
-		if k < 0 or k >= NLV:
+		if k < 0 or k > kmax:
 			continue
 		var keys := {}
 		_add_rect(keys, s, k, g[1])
