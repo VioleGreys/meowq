@@ -674,12 +674,56 @@ float rd_seg(vec2 q, vec2 a, vec2 b, out float h) {
 	return length(q - a - ba * h);
 }
 
+// расстояние до кривой Безье (квадратичной — p1 = p2) ломаной из RD_N частей; дуга от
+// p0 (s, растянута до целого числа шагов шпал — у концов фаза шпал 0); сбоку
+// на off0 → off1 (дорога рядом с жд; слева по ходу p0 → p3)
+const int RD_N = 6;
+void rd_bez(vec2 q, vec2 p0, vec2 p1, vec2 p2, vec2 p3, float off0, float off1, inout float dm, inout float sm) {
+	vec2 pr = p0;
+	float len = 0.0;
+	for (int k = 1; k <= RD_N; k++) {
+		float t = float(k) / float(RD_N);
+		float u = 1.0 - t;
+		vec2 pt = u * u * u * p0 + 3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t * p3;
+		len += length(pt - pr);
+		pr = pt;
+	}
+	float sc = max(1.0, floor(len / TIE_P + 0.5)) * TIE_P / max(len, 1e-4);
+	vec2 a = p0;
+	vec2 ta = normalize(p1 - p0 + vec2(1e-5, 0.0));
+	a += vec2(-ta.y, ta.x) * off0;
+	float acc = 0.0;
+	for (int k = 1; k <= RD_N; k++) {
+		float t = float(k) / float(RD_N);
+		float u = 1.0 - t;
+		vec2 pt = u * u * u * p0 + 3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t * p3;
+		vec2 tg = normalize(3.0 * u * u * (p1 - p0) + 6.0 * u * t * (p2 - p1) + 3.0 * t * t * (p3 - p2) + vec2(1e-5, 0.0));
+		pt += vec2(-tg.y, tg.x) * mix(off0, off1, smoothstep(0.25, 0.75, t));
+		float h;
+		float d = rd_seg(q, a, pt, h);
+		float sl = length(pt - a);
+		if (d < dm) {
+			dm = d;
+			sm = (acc + h * sl) * sc;
+		}
+		acc += sl;
+		a = pt;
+	}
+}
+
+// плавное петляние линий (по месту на карте — с обеих сторон границы одно и то же)
+vec2 rd_warp(vec2 q, float f) {
+	return vec2(vnoise(q * f + vec2(3.1, 9.7)), vnoise(q * f + vec2(17.3, 4.4))) - 0.5;
+}
+
 // половины дорог провинции id у точки q (пикс. карты 1×): расстояние до жд (d_rail),
-// дуга вдоль жд от точки W на границе (s_rail — для шпал: у W обе стороны дают 0),
-// расстояние до дороги (d_road)
+// дуга вдоль жд (s_rail — для шпал: у точки W на границе 0 с обеих сторон),
+// расстояние до дороги (d_road). Ровно два выхода вида и бит «насквозь» — кривая
+// от границы до границы мимо центра; иначе — дуги центр → K → W (в W касательная
+// по прямой центр — центр, как у соседа: линия без излома)
 void road_prov(int id, vec2 q, inout float d_rail, inout float s_rail, inout float d_road) {
 	vec4 m = floor(pal(RD_SEC + 1, id) * 255.0 + 0.5);
-	int n = int(m.r);
+	int n = int(m.r) & 15;
 	if (n == 0) {
 		return;
 	}
@@ -689,37 +733,75 @@ void road_prov(int id, vec2 q, inout float d_rail, inout float s_rail, inout flo
 	}
 	int tb = int(m.g) | (int(m.b) << 8);
 	int fb = int(m.a);
+	bool thr_r = (int(m.r) & 16) != 0;
+	bool thr_d = (int(m.r) & 32) != 0;
+	vec4 m2 = floor(pal(RD_SEC + 18, id) * 255.0 + 0.5);
+	vec2 qr = q + rd_warp(q, 0.12) * 0.30;   // жд — едва петляет
+	vec2 qd = q + rd_warp(q, 0.22) * 0.55;   // грунтовка — заметнее
+	// сквозная кривая: два самых противоположных выхода; середина — для отворотов
+	ivec2 pr = ivec2(int(m2.r) & 7, int(m2.r) >> 3);
+	ivec2 pd = ivec2(int(m2.g) & 7, int(m2.g) >> 3);
+	vec2 end_r = c;
+	vec2 end_d = c;
+	for (int j = 0; j < 2; j++) {
+		bool on = j == 0 ? thr_r : thr_d;
+		if (!on) {
+			continue;
+		}
+		ivec2 pp = j == 0 ? pr : pd;
+		vec2 k0 = rd_pt(pal(RD_SEC + 2 + 2 * pp.x, id));
+		vec2 w0 = rd_pt(pal(RD_SEC + 3 + 2 * pp.x, id));
+		vec2 k1 = rd_pt(pal(RD_SEC + 2 + 2 * pp.y, id));
+		vec2 w1 = rd_pt(pal(RD_SEC + 3 + 2 * pp.y, id));
+		float L = length(w1 - w0);
+		k0 = w0 + (k0 - w0) * min(1.0, 0.4 * L / max(length(k0 - w0), 1e-4));
+		k1 = w1 + (k1 - w1) * min(1.0, 0.4 * L / max(length(k1 - w1), 1e-4));
+		vec2 mid = 0.125 * (w0 + w1) + 0.375 * (k0 + k1);
+		float s = 0.0;
+		float d = 9.0;
+		if (j == 0) {
+			end_r = mid;
+			rd_bez(qr, w0, k0, k1, w1, 0.0, 0.0, d, s);
+			if (d < d_rail) {
+				d_rail = d;
+				s_rail = s;
+			}
+		} else {
+			end_d = mid;
+			int t0 = (tb >> (2 * pd.x)) & 3;
+			int t1 = (tb >> (2 * pd.y)) & 3;
+			float o0 = t0 == 3 ? (((fb >> pd.x) & 1) == 1 ? RD_OFF : -RD_OFF) : 0.0;
+			float o1 = t1 == 3 ? (((fb >> pd.y) & 1) == 1 ? RD_OFF : -RD_OFF) : 0.0;
+			rd_bez(qd, w0, k0, k1, w1, o0, -o1, d_road, s);
+		}
+	}
 	for (int i = 0; i < 8; i++) {
 		if (i >= n) {
 			break;
 		}
 		int tp = (tb >> (2 * i)) & 3;
+		bool sk_r = thr_r && (i == pr.x || i == pr.y);
+		bool sk_d = thr_d && (i == pd.x || i == pd.y);
+		if (((tp & 2) == 0 || sk_r) && ((tp & 1) == 0 || sk_d)) {
+			continue;
+		}
 		vec2 k = rd_pt(pal(RD_SEC + 2 + 2 * i, id));
 		vec2 w = rd_pt(pal(RD_SEC + 3 + 2 * i, id));
-		vec2 u2 = normalize(w - k + vec2(1e-5, 0.0));
-		vec2 u1 = normalize(k - c + vec2(1e-5, 0.0));
-		vec2 we = w + u2 * 0.7;   // за W — по той же прямой, что и у соседа
-		float h1;
-		float h2;
-		float d1 = rd_seg(q, c, k, h1);
-		float d2 = rd_seg(q, k, we, h2);
-		if ((tp & 2) != 0) {
-			float d = min(d1, d2);
+		// отворот W → K → (середина сквозной или центр); в W касательная — как у соседа
+		if ((tp & 2) != 0 && !sk_r) {
+			float s = 0.0;
+			float d = 9.0;
+			rd_bez(qr, w, k, mix(k, end_r, 0.5), end_r, 0.0, 0.0, d, s);
 			if (d < d_rail) {
 				d_rail = d;
-				s_rail = d2 <= d1 ? dot(q - w, u2) : dot(q - k, u1) - length(w - k);
+				s_rail = s;
 			}
 		}
-		if ((tp & 1) != 0) {
-			if (tp == 3) {
-				// рядом с жд — сбоку (с обеих провинций по одну сторону)
-				float sg = ((fb >> i) & 1) == 1 ? -RD_OFF : RD_OFF;
-				vec2 n1 = vec2(-u1.y, u1.x) * sg;
-				vec2 n2 = vec2(-u2.y, u2.x) * sg;
-				d1 = rd_seg(q, c + n1, k + n1, h1);
-				d2 = rd_seg(q, k + n2, we + n2, h2);
-			}
-			d_road = min(d_road, min(d1, d2));
+		if ((tp & 1) != 0 && !sk_d) {
+			// рядом с жд — сбоку (с обеих провинций по одну сторону; по ходу W → центр)
+			float sg = tp == 3 ? (((fb >> i) & 1) == 1 ? RD_OFF : -RD_OFF) : 0.0;
+			float s = 0.0;
+			rd_bez(qd, w, k, mix(k, end_d, 0.5), end_d, sg, sg * 0.3, d_road, s);
 		}
 	}
 }

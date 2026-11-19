@@ -26,11 +26,11 @@ var ctrl_img: Image
 var owner_img: Image
 # палитры провинций — одной текстурой (шейдеру на телефоне не хватает текстурных
 # блоков: не больше 8 текстур, см. shaders/map.gdshader): разделы по _pal_rows строк —
-# 0 контролёр, 1 владелец, 2 область, 3 фронт; 4…21 — дороги (_roads_pal)
+# 0 контролёр, 1 владелец, 2 область, 3 фронт; 4…22 — дороги (_roads_pal)
 var pal_img: Image
 var pal_tex: ImageTexture
 var _pal_rows := 1
-const PAL_SECS := 4 + 2 + 2 * ROAD_HALVES
+const PAL_SECS := 4 + 3 + 2 * ROAD_HALVES
 const ROAD_HALVES := 8
 const ART_DIR := "res://assets/map/"
 const ART_FILES := {"color_w": "colormap_w.webp", "color_e": "colormap_e.webp", "normal_w": "normal_w.png", "normal_e": "normal_e.png"}
@@ -663,9 +663,11 @@ func _update_band() -> void:
 
 ## Дороги и железные дороги вблизи (data/world1936/roads.json, tools/build_roads.py) —
 ## в разделы палитры 4…21: 4 — центр провинции (x, y по 16 бит, 1/8 пикс. карты 1×),
-## 5 — r число половин, g/b — типы половин по 2 бита (1 — дорога, 2 — жд), a — биты
+## 5 — r число половин (+16 — жд насквозь кривой, +32 — дорога насквозь), g/b — типы половин по 2 бита (1 — дорога, 2 — жд), a — биты
 ## стороны (дорога рядом с жд — по одну сторону с обеих провинций); 6 + 2i — точка K,
-## 7 + 2i — точка W половины i (центр → K → W, W — на общей границе с соседом).
+## 7 + 2i — точка W половины i (центр → K → W, W — на общей границе с соседом);
+## 22 — пара сквозных выходов (r — жд, g — дорога: i0 + i1·8), остальные — отвороты к
+## середине сквозной кривой.
 func _roads_pal(rows: int) -> bool:
 	var path := "res://data/world1936/roads.json"
 	if not FileAccess.file_exists(path):
@@ -676,7 +678,7 @@ func _roads_pal(rows: int) -> bool:
 	var q: float = float((data as Dictionary).get("q", 8.0))
 	var prov: Dictionary = (data as Dictionary).get("prov", {})
 	var secs: Array[Image] = []
-	for k in 2 + 2 * ROAD_HALVES:
+	for k in 3 + 2 * ROAD_HALVES:
 		secs.append(Image.create(64, rows, false, Image.FORMAT_RGBA8))
 	for key in prov:
 		var p := int(key)
@@ -697,7 +699,9 @@ func _roads_pal(rows: int) -> bool:
 			fb |= (int(h[1]) & 1) << i
 			secs[2 + 2 * i].set_pixel(x, y, _road_pt(float(h[2]), float(h[3]), q))
 			secs[3 + 2 * i].set_pixel(x, y, _road_pt(float(h[4]), float(h[5]), q))
-		secs[1].set_pixel(x, y, Color8(n, tb & 255, (tb >> 8) & 255, fb))
+		secs[1].set_pixel(x, y, Color8(n | (int(v.get("t", 0)) & 48), tb & 255, (tb >> 8) & 255, fb))
+		var pr: Array = v.get("p", [0, 0])
+		secs[2 + 2 * ROAD_HALVES].set_pixel(x, y, Color8(int(pr[0]), int(pr[1]), 0, 0))
 	for k in secs.size():
 		pal_img.blit_rect(secs[k], Rect2i(0, 0, 64, rows), Vector2i(0, (4 + k) * rows))
 	return true

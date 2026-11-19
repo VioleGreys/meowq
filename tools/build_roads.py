@@ -46,7 +46,7 @@ DATA = os.path.join(os.path.dirname(__file__), "..", "data", "world1936")
 Q = 8.0            # координаты в данных — кратны 1/8 пикс. карты (16 бит)
 CLEAR = 0.45       # до третьих провинций, пикс. карты 1×
 MAX_H = 8          # половин на провинцию (больше — дороги отбрасываются)
-ROAD_T = 1.45
+ROAD_T = 1.7
 ROAD_DEV = 0.004   # застройка округи (cover.b, размытая σ DEV_SIGMA) — ниже глушь
 DEV_SIGMA = 10.0
 RAIL_VP = 4
@@ -122,13 +122,36 @@ CROSS = [
     ("SPR", "POR", -7.03, 38.88), ("SPR", "POR", -8.64, 42.03), ("SPR", "POR", -6.82, 40.60),
     ("SPR", "POR", -6.93, 41.03),
 ]
+# развитость дорог и жд страны около 1936 г. (решение пользователя: где снабжение было
+# плохим или страна бедная — дорог и жд меньше); 1 — густая сеть Западной Европы и США.
+# Колонии — COLONY_K (у Японии — Корея, Тайвань: сеть строилась — выше)
+DEV_K = {
+    "GER": 1.0, "ENG": 1.0, "FRA": 1.0, "BEL": 1.0, "HOL": 1.0, "LUX": 1.0, "SWI": 1.0,
+    "DEN": 1.0, "USA": 1.0, "CZE": 0.95, "AUS": 0.95, "SWE": 0.9, "DNZ": 0.9,
+    "ITA": 0.85, "NOR": 0.8, "CAN": 0.8, "AST": 0.75, "NZL": 0.75, "JAP": 0.85, "FIN": 0.75,
+    "HUN": 0.8, "IRE": 0.7, "ARG": 0.7, "SAF": 0.65, "URU": 0.6, "EST": 0.6, "LAT": 0.6,
+    "LIT": 0.55, "POL": 0.6, "SPR": 0.6, "CHL": 0.55, "MAN": 0.6, "SOV": 0.5, "POR": 0.5,
+    "ROM": 0.5, "CUB": 0.5, "YUG": 0.45, "BUL": 0.45, "GRE": 0.45, "RAJ": 0.45, "MEX": 0.45,
+    "EGY": 0.45, "BRA": 0.4, "ICE": 0.3, "TUR": 0.35, "CHN": 0.3, "SIA": 0.35, "PHI": 0.35,
+    "COL": 0.3, "VEN": 0.3, "PRU": 0.3, "ECU": 0.25, "BOL": 0.25, "PAR": 0.25, "COS": 0.3,
+    "PAN": 0.3, "GUA": 0.25, "ELS": 0.25, "HON": 0.2, "NIC": 0.2, "DOM": 0.25, "HAI": 0.15,
+    "PER": 0.25, "IRQ": 0.25, "ALB": 0.15, "LIB": 0.15, "ETH": 0.08, "AFG": 0.06,
+    "SAU": 0.06, "YEM": 0.05, "OMA": 0.05, "MON": 0.06, "TIB": 0.03, "NEP": 0.1, "BHU": 0.03,
+    "TAN": 0.03, "PRC": 0.1,
+}
+DEV_DEFAULT = 0.3
+COLONY_K = {"JAP": 0.6}
+COLONY_DEFAULT = 0.25
+ROAD_T_POOR = 1.4      # прибавка к ROAD_T у самой бедной страны
+RAIL_T_POOR = 2.0      # прибавка к t жд-остовов у самой бедной страны
+
 # одна страна для железных дорог: Китай 1936 г. раздроблен (дороги строились до раскола)
 GROUP = {"GXC": "CHN", "YUN": "CHN", "SHX": "CHN", "XSM": "CHN", "SIK": "CHN", "CHI": "CHN",
          "NSP": "SPR"}
 
 NE_NEAR = 4.0      # жд-ребро — вдоль реальной линии: точек ближе NE_NEAR пикс.
 NE_FRAC = 0.6      # не меньше этой доли
-RAIL_T_SPAN = 1.5
+RAIL_T_SPAN = 2.6
 RAIL_DEV_WILD = 0.01   # застройка округи ниже — все рёбра вдоль реальных линий
 
 # цена местности для железной дороги (World.T_*: равнина, лес, холмы, горы, город, —, пустыня, болото)
@@ -213,6 +236,10 @@ class Checker:
     def ok(self, poly, a, b, w):
         """Линия poly (точки 1×) лежит в провинции a (у w — ещё в b), без воды и
         без третьих провинций ближе CLEAR."""
+        return self.ok_ends(poly, a, {b}, [w])
+
+    def ok_ends(self, poly, a, allow, ends):
+        """То же для линии с концами ends на границах с провинциями allow."""
         for p0, p1 in zip(poly[:-1], poly[1:]):
             L = math.dist(p0, p1)
             n = max(2, int(L / 0.15) + 1)
@@ -222,9 +249,9 @@ class Checker:
                 gx, gy = int(x * 2), int(y * 2)
                 if not (0 <= gx < self.W2 and 0 <= gy < self.H2):
                     return False
-                near_w = math.dist((x, y), w) < 0.6
+                near_w = min(math.dist((x, y), w) for w in ends) < 0.6
                 c = self.ids[gy, gx]
-                if c != a and not (near_w and c == b):
+                if c != a and not (near_w and c in allow):
                     return False
                 if self.landf[min(int(y), self.landf.shape[0] - 1), min(int(x), self.landf.shape[1] - 1)] < 0.5:
                     return False
@@ -232,9 +259,32 @@ class Checker:
                     yy, xx = gy + dy, gx + dx
                     if 0 <= yy < self.H2 and 0 <= xx < self.W2:
                         q = self.ids[yy, xx]
-                        if q != a and q != b:
+                        if q != a and q not in allow:
                             return False
         return True
+
+
+def thr_ctrl(w0, k0, k1, w1):
+    """Опоры кривой насквозь (как в шейдере road_prov): не длиннее 0,4 расстояния
+    W0–W1; None — выходы почти в одну сторону (была бы петля)."""
+    L = math.dist(w0, w1)
+    d0 = (k0[0] - w0[0], k0[1] - w0[1])
+    d1 = (k1[0] - w1[0], k1[1] - w1[1])
+    l0, l1 = math.hypot(*d0), math.hypot(*d1)
+    if l0 < 1e-3 or l1 < 1e-3 or (d0[0] * d1[0] + d1[1] * d0[1]) / (l0 * l1) > -0.2:
+        return None
+    s0, s1 = min(1.0, 0.4 * L / l0), min(1.0, 0.4 * L / l1)
+    return (w0[0] + d0[0] * s0, w0[1] + d0[1] * s0), (w1[0] + d1[0] * s1, w1[1] + d1[1] * s1)
+
+
+def bezier(w0, k0, k1, w1, n=24):
+    """Кубическая кривая W0 → W1 (опоры K0, K1)."""
+    out = []
+    for t in np.linspace(0.0, 1.0, n + 1):
+        u = 1.0 - t
+        out.append((u * u * u * w0[0] + 3 * u * u * t * k0[0] + 3 * u * t * t * k1[0] + t * t * t * w1[0],
+                    u * u * u * w0[1] + 3 * u * u * t * k0[1] + 3 * u * t * t * k1[1] + t * t * t * w1[1]))
+    return out
 
 
 def half(c, w, u, k_frac):
@@ -300,13 +350,13 @@ def _bend(h):
 
 def spanner(n, edges, t, length, adj=None):
     """Жадный остов: рёбра (a, b) по возрастанию длины; берём, если путь по взятым > t·длины
-    (adj — уже проложенные: дополняются)."""
+    (t — число или словарь по рёбрам; adj — уже проложенные: дополняются)."""
     if adj is None:
         adj = [[] for _ in range(n)]
     out = []
     for e in sorted(edges, key=lambda e: length[e]):
         a, b = e
-        lim = t * length[e]
+        lim = (t[e] if isinstance(t, dict) else t) * length[e]
         if _dist(adj, a, b, lim) > lim:
             adj[a].append((b, length[e]))
             adj[b].append((a, length[e]))
@@ -427,8 +477,13 @@ def main():
         rdev[i] = covb[min(int(c[1]), covb.shape[0] - 1), min(int(c[0]), covb.shape[1] - 1)]
     length = {e: g[2] for e, g in geom.items()}
     # дороги: в глуши (обе провинции почти без застройки) — нет
-    redges = [e for e in geom if max(rdev[e[0]], rdev[e[1]]) >= ROAD_DEV]
-    roads = set(spanner(n, redges, ROAD_T, length))
+    # развитость страны: бедные — реже (порог застройки выше, остов реже)
+    grp0 = [GROUP.get(p["owner"], p["owner"]) for p in provs]
+    kdev = np.array([(COLONY_K.get(grp0[i], COLONY_DEFAULT) if p.get("colony") else DEV_K.get(grp0[i], DEV_DEFAULT))
+                     for i, p in enumerate(provs)])
+    ke = {e: 0.5 * (kdev[e[0]] + kdev[e[1]]) for e in geom}
+    redges = [e for e in geom if max(rdev[e[0]], rdev[e[1]]) * ke[e] >= ROAD_DEV]
+    roads = set(spanner(n, redges, {e: ROAD_T + ROAD_T_POOR * (1.0 - ke[e]) for e in redges}, length))
     # железные дороги: через границу стран — только исторические переходы (CROSS)
     grp = [GROUP.get(p["owner"], p["owner"]) for p in provs]
     cost = {e: length[e] * 0.5 * (T_COST[provs[e[0]]["terrain"]] + T_COST[provs[e[1]]["terrain"]]) for e in geom}
@@ -480,7 +535,8 @@ def main():
         radj[e[0]].append((e[1], cost[e]))
         radj[e[1]].append((e[0], cost[e]))
     for c, a, b in pairs:
-        t = RAIL_T + RAIL_T_WILD * (1.0 - min(1.0, 0.5 * (rdev[a] + rdev[b]) / RAIL_DEV))
+        t = RAIL_T + RAIL_T_WILD * (1.0 - min(1.0, 0.5 * (rdev[a] + rdev[b]) / RAIL_DEV)) \
+            + RAIL_T_POOR * (1.0 - 0.5 * (kdev[a] + kdev[b]))
         if _dist(radj, a, b, t * c) <= t * c:
             continue
         v = b
@@ -498,7 +554,8 @@ def main():
         # вглубь), а не только пути между городами
         # (прореженные остовом: связность та же, лишних параллелей нет)
         wild = [e for e in redges_ok if max(rdev[e[0]], rdev[e[1]]) < RAIL_DEV_WILD]
-        rails |= set(spanner(n, [e for e in wild if e not in rails], RAIL_T_SPAN, cost, radj))
+        wild = [e for e in wild if e not in rails]
+        rails |= set(spanner(n, wild, {e: RAIL_T_SPAN + RAIL_T_POOR * (1.0 - ke[e]) for e in wild}, cost, radj))
     print(f"дорог {len(roads)}, жд {len(rails)} рёбер")
     # половины по провинциям
     per = {}
@@ -506,16 +563,59 @@ def main():
         a, b = e
         ha, hb, _ = geom[e]
         tp = (1 if e in roads else 0) | (2 if e in rails else 0)
-        per.setdefault(a, []).append((tp, 0, ha))
-        per.setdefault(b, []).append((tp, 1, hb))
+        per.setdefault(a, []).append((tp, 0, ha, b))
+        per.setdefault(b, []).append((tp, 1, hb, a))
     cut = 0
     out = {}
+    chk = Checker(ids, landf)
+    thr_n = [0, 0]
     for p, hs in per.items():
         hs.sort(key=lambda h: -(h[0] & 2))
         if len(hs) > MAX_H:
             cut += len(hs) - MAX_H
             hs = hs[:MAX_H]
-        out[str(p)] = {"c": list(cen[p]), "h": [[tp, fl, h[1][0], h[1][1], h[2][0], h[2][1]] for tp, fl, h in hs]}
+        # насквозь: два самых противоположных выхода вида — плавная кривая от границы
+        # до границы мимо центра, остальные выходы — ответвления к её середине (не
+        # «звезда» в каждом центре — сеть не «шестигранная», решение пользователя)
+        thr = 0
+        pair = [0, 0]
+        for bit, kind, slot in ((16, 2, 0), (32, 1, 1)):
+            idx = [i for i, h in enumerate(hs) if h[0] & kind]
+            if len(idx) < 2:
+                continue
+            best = None
+            for x in range(len(idx)):
+                for y in range(x + 1, len(idx)):
+                    h0, h1 = hs[idx[x]][2], hs[idx[y]][2]
+                    kk = thr_ctrl(h0[2], h0[1], h1[1], h1[2])
+                    if kk is None:
+                        continue
+                    d0 = (h0[1][0] - h0[2][0], h0[1][1] - h0[2][1])
+                    d1 = (h1[1][0] - h1[2][0], h1[1][1] - h1[2][1])
+                    dt = (d0[0] * d1[0] + d0[1] * d1[1]) / max(1e-6, math.hypot(*d0) * math.hypot(*d1))
+                    if best is None or dt < best[0]:
+                        best = (dt, idx[x], idx[y], kk)
+            if best is None:
+                continue
+            _, i0, i1, kk = best
+            h0, h1 = hs[i0][2], hs[i1][2]
+            cv = bezier(h0[2], kk[0], kk[1], h1[2])
+            mid = cv[len(cv) // 2]
+            ends = [h0[2], h1[2]]
+            allow = {hs[i0][3], hs[i1][3]}
+            ok = chk.ok_ends(cv, p, allow, ends)
+            for i in idx:
+                if ok and i not in (i0, i1):
+                    hw = hs[i][2]
+                    k2 = ((hw[1][0] + mid[0]) / 2, (hw[1][1] + mid[1]) / 2)
+                    ok = chk.ok_ends(bezier(hw[2], hw[1], k2, mid), p, {hs[i][3]}, [hw[2]])
+            if ok:
+                thr |= bit
+                pair[slot] = i0 | (i1 << 3)
+                thr_n[kind - 1] += 1
+        out[str(p)] = {"c": list(cen[p]), "t": thr, "p": pair,
+                       "h": [[tp, fl, h[1][0], h[1][1], h[2][0], h[2][1]] for tp, fl, h, _ in hs]}
+    print(f"насквозь кривой: дорог {thr_n[0]}, жд {thr_n[1]}")
     print(f"провинций с дорогами {len(out)}, отброшено половин {cut}")
     path = os.path.abspath(os.path.join(DATA, "roads.json"))
     json.dump({"q": Q, "prov": out}, open(path, "w"), separators=(",", ":"))
@@ -537,11 +637,29 @@ def preview(path, out, rel, own, box, S):
     img[bd & (rel[..., 2] > 128)] = (150, 150, 150)
     base = Image.fromarray(img[y0:y1, x0:x1]).resize((int((x1 - x0) * S), int((y1 - y0) * S)))
     d = ImageDraw.Draw(base)
+    def tr(pt):
+        return ((pt[0] - x0) * S, (pt[1] - y0) * S)
     for p, v in out.items():
         c = v["c"]
-        for tp, fl, kx, ky, wx, wy in v["h"]:
-            line = [((c[0] - x0) * S, (c[1] - y0) * S), ((kx - x0) * S, (ky - y0) * S), ((wx - x0) * S, (wy - y0) * S)]
-            d.line(line, fill=(200, 30, 30) if tp & 2 else (60, 120, 220), width=2 if (tp & 2 and S > 1) else 1)
+        for bit, kind, col in ((16, 2, (200, 30, 30)), (32, 1, (60, 120, 220))):
+            hs = [h for h in v["h"] if h[0] & kind]
+            wd = 2 if (kind == 2 and S > 1) else 1
+            if v.get("t", 0) & bit:
+                pc = v["p"][0 if kind == 2 else 1]
+                i0, i1 = pc & 7, pc >> 3
+                h0, h1 = v["h"][i0], v["h"][i1]
+                w0, w1 = (h0[4], h0[5]), (h1[4], h1[5])
+                kk = thr_ctrl(w0, (h0[2], h0[3]), (h1[2], h1[3]), w1)
+                cv = bezier(w0, kk[0], kk[1], w1)
+                mid = cv[len(cv) // 2]
+                d.line([tr(q) for q in cv], fill=col, width=wd)
+                for i, h in enumerate(v["h"]):
+                    if h[0] & kind and i not in (i0, i1):
+                        k2 = ((h[2] + mid[0]) / 2, (h[3] + mid[1]) / 2)
+                        d.line([tr(q) for q in bezier((h[4], h[5]), (h[2], h[3]), k2, mid)], fill=col, width=wd)
+            else:
+                for tp, fl, kx, ky, wx, wy in hs:
+                    d.line([tr(c), tr((kx, ky)), tr((wx, wy))], fill=col, width=wd)
     base.save(path)
 
 
