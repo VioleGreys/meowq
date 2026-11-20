@@ -38,7 +38,11 @@
   ближние (k ≥ 7, 522 МБ) — в ветке `bake-data` этого (публичного) репозитория,
   телефон качает их с raw.githubusercontent.com кнопкой «Настройки» → «Карта
   высокого качества». `build_apk.sh` (REMOTE=1 по умолчанию; REMOTE=0 — всё в APK)
-  вызывает `tools/bake_split.py`: части по 50 МБ (GitHub не берёт файлы > 100 МБ) в
+  вызывает `tools/bake_split.py`: части по 19 МБ (GitHub не берёт файлы > 100 МБ,
+  CDN jsDelivr — > 20 МБ; зеркала: raw.githubusercontent.com и
+  cdn.jsdelivr.net/gh/…@bake-data — jsDelivr кэширует ветку до суток, поэтому
+  папка версии меняется вместе с картой, а при той же версии старые части с CDN
+  отбрасываются по SHA-256 и качаются с raw) в
   `export/bake-data/<версия>/`, список с размерами и SHA-256 — `data/bake_remote.json`
   (только в APK, в git не идёт). Версия — SHA-1 метки пакетов: новая карта — новая
   папка. Отправка: `sh tools/publish_bake.sh` — ветка заменяется целиком (без

@@ -2,7 +2,7 @@ extends SceneTree
 ## Докачка пакетов заготовок (BakeDownload) против локального сервера:
 ##   python3 -m http.server 8765 -d export/bake-data/<версия> &   (или любая папка частей)
 ##   godot --headless --path . --script res://tests/bake_dl_check.gd -- --base=http://127.0.0.1:8765/
-## Список — data/bake_remote.json (tools/bake_split.py). Проверяет: скачивание с
+## Несколько зеркал — через запятую (--base=URL1,URL2). Список — data/bake_remote.json (tools/bake_split.py). Проверяет: скачивание с
 ## остановкой посередине и продолжением, склейку, совпадение пакетов с data/bake
 ## (SHA-256), ошибку на неверном адресе.
 
@@ -30,7 +30,7 @@ func _begin() -> void:
 		d.remove(fn)
 	dl = BakeDownload.new()
 	root.add_child(dl)
-	dl._m["base"] = base
+	dl.set_mirrors(Array(base.split(",")))
 	dl.finished.connect(_on_finished)
 	t0 = Time.get_ticks_msec()
 	dl.start()
@@ -64,6 +64,8 @@ func _on_finished() -> void:
 		return
 	phase = 1
 	print("скачано %.1f МБ за %.1f с" % [dl.total_bytes() / 1048576.0, (Time.get_ticks_msec() - t0) / 1000.0])
+	for m in dl._mirrors.size():
+		print("  зеркало %d: %.1f МБ, %.1f МБ/с" % [m, dl._mir_bytes[m] / 1048576.0, dl._mir_bytes[m] / 1048576.0 / maxf(dl._mir_time[m], 0.001)])
 	var bad := 0
 	for f in dl._m["files"]:
 		var a := FileAccess.get_sha256(MapBake.DL_DIR + str(f["name"]))
@@ -79,5 +81,5 @@ func _on_finished() -> void:
 	# неверный адрес: удалить один пакет и качать с несуществующей папки
 	phase = 2
 	DirAccess.remove_absolute(MapBake.DL_DIR + str(dl._m["files"][0]["name"]))
-	dl._m["base"] = base + "nope/"
+	dl.set_mirrors([base.split(",")[0] + "nope/"])
 	dl.start()

@@ -2,11 +2,11 @@
 """Пакеты заготовок ближних масштабов — не в APK, а на докачку (решение пользователя,
 ноябрь 2026: ветка bake-data репозитория на GitHub, кнопка в «Настройках»).
 
-  python3 tools/bake_split.py BAKE_DIR MOVE_DIR OUT_DIR [--min-k=7] [--part-mb=50]
+  python3 tools/bake_split.py BAKE_DIR MOVE_DIR OUT_DIR [--min-k=7] [--part-mb=19]
 
 Пакеты BAKE_DIR/b{s}_{k}.bin с k >= min-k переносятся в MOVE_DIR (build_apk.sh
 возвращает их после экспорта — для проверки свежести пакетов), их части
-(≤ part-mb МБ: GitHub не берёт файлы > 100 МБ) пишутся в OUT_DIR/<версия>/, а
+(≤ part-mb МБ: GitHub не берёт файлы > 100 МБ, CDN jsDelivr — > 20 МБ) пишутся в OUT_DIR/<версия>/, а
 список — в data/bake_remote.json (идёт в APK; читает scripts/view/bake_download.gd).
 Версия — первые 12 знаков SHA-1 от метки пакета (шейдер и данные карты): новая
 сборка карты — новая папка, старый APK не скачает чужие пакеты.
@@ -30,7 +30,7 @@ def main():
 	opt = dict(a[2:].split("=", 1) for a in sys.argv[1:] if a.startswith("--"))
 	bake, move, out = args
 	min_k = int(opt.get("min-k", 7))
-	part = int(float(opt.get("part-mb", 50)) * 1048576)
+	part = int(float(opt.get("part-mb", 19)) * 1048576)
 	names = []
 	for fn in sorted(os.listdir(bake)):
 		if fn.startswith("b") and fn.endswith(".bin"):
@@ -68,8 +68,11 @@ def main():
 		files.append({"name": fn, "size": size, "parts": parts})
 		total += size
 		shutil.move(src, os.path.join(move, fn))
-	man = {"base": "https://raw.githubusercontent.com/%s/%s/%s/" % (REPO, BRANCH, vid),
-		"version": vid, "files": files}
+	# зеркала: GitHub напрямую и CDN jsDelivr (тот же GitHub; одно соединение с
+	# raw на телефоне давало ~50–80 КБ/с) — игра берёт быстрейшее по замеру
+	mirrors = ["https://raw.githubusercontent.com/%s/%s/%s/" % (REPO, BRANCH, vid),
+		"https://cdn.jsdelivr.net/gh/%s@%s/%s/" % (REPO, BRANCH, vid)]
+	man = {"base": mirrors[0], "mirrors": mirrors, "version": vid, "files": files}
 	with open("data/bake_remote.json", "w") as f:
 		json.dump(man, f, ensure_ascii=False, indent=1)
 	print("bake_split: %d файлов, %.1f МБ на докачку → %s" % (len(files), total / 1048576, vdir))

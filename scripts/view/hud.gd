@@ -4710,7 +4710,7 @@ func _bake_dl_section() -> void:
 		dl.finished.connect(_on_bake_dl_finished)
 	var total_mb := roundi(dl.total_bytes() / 1048576.0)
 	popup_body.add_child(_label("Карта высокого качества", 20))
-	popup_body.add_child(_label("Ближние масштабы (×1.4–×5.6) нарисованы заранее и скачиваются отдельно — %d МБ с GitHub, лучше по Wi-Fi. Без них телефон рисует их сам там, куда вы смотрите (дольше и греется). После обрыва скачивание продолжится с того же места." % total_mb, 15, Color(0.75, 0.75, 0.7)))
+	popup_body.add_child(_label("Ближние масштабы (×1.4–×5.6) нарисованы заранее и скачиваются отдельно — %d МБ с GitHub, лучше по Wi-Fi. Без них телефон рисует их сам там, куда вы смотрите (дольше и греется). Качается в 4 потока с GitHub или его CDN — с того, что быстрее; после обрыва продолжится с того же места." % total_mb, 15, Color(0.75, 0.75, 0.7)))
 	var st := _label("", 15)
 	popup_body.add_child(st)
 	var go := _button("", func():
@@ -4727,11 +4727,9 @@ func _bake_dl_section() -> void:
 		var have := roundi(dl.have_bytes() / 1048576.0)
 		match dl.state:
 			"run":
-				st.text = "Скачивается: %d из %d МБ" % [have, total_mb]
+				var sp := dl.speed_mb_min()
+				st.text = "Скачивается: %d из %d МБ" % [have, total_mb] + (", %.0f МБ/мин" % sp if sp > 0.0 else "")
 				go.text = "Остановить"
-			"join":
-				st.text = "Собирается: %d из %d МБ" % [have, total_mb]
-				go.text = "Скачать"
 			"done":
 				st.text = "Скачано, %d МБ" % total_mb
 				go.text = "Проверить заново"
@@ -4741,8 +4739,7 @@ func _bake_dl_section() -> void:
 			_:
 				st.text = "Скачано %d из %d МБ" % [have, total_mb] if have > 0 else "Не скачано"
 				go.text = "Продолжить" if have > 0 else "Скачать (%d МБ)" % total_mb
-		go.disabled = dl.state == "join"
-		rm.disabled = dl.state == "join" or dl.disk_bytes() <= 0
+		rm.disabled = dl.disk_bytes() <= 0
 	upd.call()
 	var tm := Timer.new()
 	tm.wait_time = 0.5
