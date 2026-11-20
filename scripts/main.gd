@@ -323,7 +323,7 @@ func _bake_warm() -> void:
 	if not map_view._bake_ok():
 		return
 	var n := 0
-	while not map_view._full_baked and n < 400:
+	while (not map_view._full_baked or map_view._full_soft) and n < 400:
 		if n % 20 == 0:
 			map_view.redraw()
 		for i in 3:
@@ -353,6 +353,11 @@ func _ahead_test() -> void:
 	map_view.redraw()
 	for i in 3:
 		await get_tree().process_frame
+	print("aheadtest: первый кадр после приближения — %s" % ("с подменой" if map_view._full_soft
+		else ("с заготовками" if map_view._full_baked else "живой")))
+	var shot := _arg("screenshot")
+	if shot != "":
+		map_view.map_vp.get_texture().get_image().save_png(shot.replace(".png", "_zin.png"))
 	var n := 0
 	var f0 := Time.get_ticks_usec()
 	while n < 3000 and not bk.want(map_view._screen_keys):
@@ -363,6 +368,8 @@ func _ahead_test() -> void:
 		await get_tree().process_frame
 	print("aheadtest: после приближения ×%.2f до всех тайлов вида %d кадров (%.1f с), с заготовками %s, нарисовано вида %d" % [zin,
 		n, (Time.get_ticks_usec() - f0) / 1e6, map_view._full_baked, bk.baked_tiles - bk.ahead_tiles])
+	if _arg("screenshot") != "":
+		map_view.map_vp.get_texture().get_image().save_png(_arg("screenshot").replace(".png", "_done.png"))
 
 
 ## Проверка заготовок карты (-- --baketest): буфер карты живым шейдером
@@ -389,8 +396,32 @@ func _bake_test(path: String) -> void:
 	var t0 := Time.get_ticks_msec()
 	var n := 0
 	var bk := map_view.bake
+	# первый кадр с заготовками — с подменой дальним уровнем (тайлов ещё нет)
+	# (подмену — те же места двумя ступенями дальше, как после приближения, —
+	# дорисовать заранее)
+	var base := bk.coarse(bk.need(map_view.camera.position, map_view.camera.zoom.x, map_view.tilt(),
+		map_view.cam_focal(), map_view.get_viewport_rect().size, map_view._season()), 2)
+	for j in 4000:
+		if bk.want(base):
+			break
+		await get_tree().process_frame
+	map_view.redraw()
+	for i in 3:
+		await get_tree().process_frame
+	if map_view._full_soft:
+		map_view.map_vp.get_texture().get_image().save_png(path.replace(".png", "_soft.png"))
+		print("baketest: кадр с подменой дальним уровнем — %s" % path.replace(".png", "_soft.png"))
+		var ts0: Array = []
+		for i in 8:
+			map_view.redraw()
+			var f0 := Time.get_ticks_usec()
+			await get_tree().process_frame
+			if i >= 2:
+				ts0.append(Time.get_ticks_usec() - f0)
+		ts0.sort()
+		print("baketest: кадр с подменой: %.1f мс (медиана)" % (ts0[ts0.size() / 2] / 1000.0))
 	# тайлы рисуются, пока карта стоит (_bake_still): перерисовка — раз в 60 кадров
-	while not map_view._full_baked and n < 400:
+	while (not map_view._full_baked or map_view._full_soft) and n < 400:
 		if n % 20 == 0:
 			map_view.redraw()
 		for i in 3:

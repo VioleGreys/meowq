@@ -158,9 +158,9 @@ vec4 bake_lv(int k, vec2 wp, bool land, bool coast, out bool ok) {
 	return clamp(r / ws, 0.0, 1.0);
 }
 
-// два ближайших уровня по масштабу точки, смешение по log2; нет тайла — самый
-// дальний уровень (всегда в атласе). Берег — по доле суши, огрублённой до
-// размера окна выборки (mipmap)
+// два ближайших уровня по масштабу точки, смешение по log2; нет тайла — ближний
+// из 4 более дальних, что есть, иначе самый дальний (всегда в атласе). Берег —
+// по доле суши, огрублённой до размера окна выборки (mipmap)
 vec4 bake_at(vec2 wp, float zoom, bool land) {
 	float lf = clamp(2.0 * log2(max(zoom, 1e-4)) + 6.0, 0.0, 12.0);
 	int k0 = min(int(floor(lf)), 11);
@@ -184,6 +184,18 @@ vec4 bake_at(vec2 wp, float zoom, bool land) {
 	}
 	if (ok1) {
 		return b;
+	}
+	// тайла нет (кадр с подменой, пока дорисовываются) — ближний более дальний уровень
+	for (int d = 1; d <= 4; d++) {
+		int kc = k0 - d;
+		if (kc < 1) {
+			break;
+		}
+		bool okc;
+		vec4 c = bake_lv(kc, wp, land, coast, okc);
+		if (okc) {
+			return c;
+		}
 	}
 	bool okf;
 	return bake_lv(0, wp, land, coast, okf);

@@ -413,6 +413,74 @@ func want(keys: PackedInt64Array, partial: bool = false, s: int = 0) -> bool:
 	return all
 
 
+## Тайлы уровнем на dk (чётное) ступеней дальше, покрывающие те же места (на
+## чётную ступень масштаб ровно вдвое меньше: тайл (tx, ty) — в (tx/2, ty/2)).
+func coarse(keys: PackedInt64Array, dk: int) -> PackedInt64Array:
+	var out := {}
+	var sh := dk / 2
+	for key in keys:
+		var k := key_k(key) - dk
+		if k >= 1:
+			out[key_of(key_s(key), k, mini(key_tx(key) >> sh, gw[k] - 1), mini(key_ty(key) >> sh, gh[k] - 1))] = true
+	return PackedInt64Array(out.keys())
+
+
+## Кадр с подменой (MapView._full_soft): каждое место тайлов keys, которых нет в
+## атласе, есть в нём уровнем на 1–4 ступени дальше (шейдер bake_at берёт ближний
+## из них)? Тогда — использованные тайлы подмены (отмечены), иначе пусто.
+func cover(keys: PackedInt64Array) -> PackedInt64Array:
+	var out := {}
+	for key in keys:
+		if key_slot.has(key):
+			continue
+		var s := key_s(key)
+		var k := key_k(key)
+		var tx := key_tx(key)
+		var ty := key_ty(key)
+		var found := false
+		for d in range(1, 5):
+			var kc := k - d
+			if kc < 1:
+				break
+			var f := lv_zoom(kc) / lv_zoom(k)
+			var x0 := mini(floori(tx * f), gw[kc] - 1)
+			var x1 := mini(floori((tx + 1) * f - 1e-6), gw[kc] - 1)
+			var y0 := mini(floori(ty * f), gh[kc] - 1)
+			var y1 := mini(floori((ty + 1) * f - 1e-6), gh[kc] - 1)
+			var got := []
+			for cy in range(y0, y1 + 1):
+				for cx in range(x0, x1 + 1):
+					var ck := key_of(s, kc, cx, cy)
+					if not key_slot.has(ck):
+						got = []
+						break
+					got.append(ck)
+				if got.is_empty():
+					break
+			if not got.is_empty():
+				for ck in got:
+					out[ck] = true
+				found = true
+				break
+		if not found:
+			return PackedInt64Array()
+	var r := PackedInt64Array(out.keys())
+	have(r)
+	return r
+
+
+## Все тайлы уже в атласе? Отмечает их использованными, недостающие не просит.
+func have(keys: PackedInt64Array) -> bool:
+	var all := true
+	for key in keys:
+		var sl: int = key_slot.get(key, -1)
+		if sl >= 0:
+			slot_use[sl] = frame
+		else:
+			all = false
+	return all
+
+
 var _base_cache := {}
 
 

@@ -58,7 +58,11 @@ var mat_b: ShaderMaterial
 var cmats_b: Array = []
 var bake: MapBake
 var _bake_off := false
+var _soft_off := false         # без подмены дальним уровнем (замеры: --nosoft)
 var _full_baked := false       # кадр экрана нарисован с заготовками (частичные — так же)
+var _full_soft := false        # …но не все тайлы были в атласе (шейдер взял дальний уровень):
+                               # как только дорисуются — перерисовать (вид станет точным)
+var _soft_keys := PackedInt64Array()  # подмена: те же места на 1–4 ступени дальше
 var _screen_keys := PackedInt64Array()
 var _bk_logical := Vector2.ZERO  # логический размер буфера кадра (тайлы впрок)
 var _ahead_off := false          # тайлы впрок выключены (замеры: --noahead)
@@ -137,6 +141,7 @@ func setup(w: World) -> void:
 	bake.setup(self, {})
 	_bake_off = "--nobake" in OS.get_cmdline_user_args()
 	_ahead_off = "--noahead" in OS.get_cmdline_user_args()
+	_soft_off = "--nosoft" in OS.get_cmdline_user_args()
 	_full_baked = false
 	quad = ColorRect.new()
 	quad.material = mat
@@ -1006,8 +1011,8 @@ func _draw_strip() -> void:
 	var y0 := floori(float(size.y) * _strip_i / _strip_n)
 	var y1 := floori(float(size.y) * (_strip_i + 1) / _strip_n)
 	if _strip_i == 0:
-		_full_baked = _screen_bake(logical, float(size.x) / maxf(1.0, logical.x), -1) == 1
-	elif _screen_bake(logical, float(size.x) / maxf(1.0, logical.x), 1 if _full_baked else 0) < 0:
+		_set_full(_screen_bake(logical, float(size.x) / maxf(1.0, logical.x), -1))
+	elif not _part_bake(logical, float(size.x) / maxf(1.0, logical.x)):
 		_strip_n = 0
 		_dirty = true
 		return
@@ -1426,7 +1431,7 @@ func _draw_part() -> void:
 	var p0 := r.position.floor()
 	var p1 := (r.position + r.size).ceil()
 	r = Rect2(p0, p1 - p0)
-	if _screen_bake(logical, float(size.x) / maxf(1.0, logical.x), 1 if _full_baked else 0) < 0:
+	if not _part_bake(logical, float(size.x) / maxf(1.0, logical.x)):
 		_dirty = true
 		return
 	_use_screen(_full_baked)
@@ -1562,7 +1567,7 @@ func _process_map(dt: float) -> void:
 				# новый буфер ни разу не очищен — без очистки GLES3 его не выводит
 				map_vp.render_target_clear_mode = SubViewport.CLEAR_MODE_ONCE
 			quad.size = Vector2(size)
-			_full_baked = _screen_bake(logical, rk, -1) == 1
+			_set_full(_screen_bake(logical, rk, -1))
 			_use_screen(_full_baked)
 			map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 			_full_cam = camera.position
@@ -1601,7 +1606,13 @@ func _process_map(dt: float) -> void:
 		cache_rect.visible = false
 	_cache_tick()
 	_cache_flush()
-	if _full_baked and not _screen_keys.is_empty():
+	if _full_soft and not _screen_keys.is_empty():
+		# кадр с подменой дальним уровнем: недостающие тайлы рисуются фоном —
+		# все на месте → перерисовать точным (дальний уровень держим до того)
+		bake.have(_soft_keys)
+		if bake.want(_screen_keys):
+			redraw()
+	elif _full_baked and not _screen_keys.is_empty():
 		bake.want(_screen_keys)   # тайлы показанного кадра — не вытеснять
 	# рисовать тайлы — когда карта стоит (при сдвиге видеокарта занята кадром)
 	# и не трогают экран: касание — скорее всего выбор провинции или сдвиг, кадр с
@@ -1679,6 +1690,8 @@ func _bake_sync_r(rk: float) -> void:
 
 ## Кадр экрана (полный, полоса, частичный) с заготовками? baked — каким нарисован
 ## прежний кадр (для полос и частичных: не смешивать в одном кадре); -1 — любой.
+## 1 — все тайлы в атласе; 2 — не все, но их места есть на 1–4 ступени дальше
+## (шейдер подменит: на секунды мягче, зато не живой кадр, втрое дороже); 0 — живым.
 func _screen_bake(logical: Vector2, rk: float, need_mode: int, partial := false) -> int:
 	if not _bake_ok():
 		return 0
@@ -1689,11 +1702,35 @@ func _screen_bake(logical: Vector2, rk: float, need_mode: int, partial := false)
 		return 1 if bake.want(keys, true, _season()) else 0
 	_screen_keys = keys
 	var r := 1 if bake.want(_screen_keys) else 0
+	if r == 0 and need_mode != 0 and not _soft_off:
+		# подмена — только если те же места на 1–4 ступени дальше уже в атласе
+		# (обычно — после приближения): иначе вблизи каша самого дальнего уровня
+		var ck := bake.cover(keys)
+		if not ck.is_empty() and keys.size() + ck.size() <= MapBake.CAP * 3 / 4:
+			r = 2
+			_soft_keys = ck
 	if need_mode == 1 and r == 0:
 		return -1   # кадр с заготовками, а тайлов уже нет — перерисовать целиком
 	if need_mode == 0:
 		return 0
 	return r
+
+
+## Полный кадр (или первая полоса) нарисован так (_screen_bake).
+func _set_full(r: int) -> void:
+	_full_baked = r >= 1
+	_full_soft = r == 2
+
+
+## Полоса или частичный кадр — тем же шейдером, что прежний полный; false — его
+## уже не повторить (тайлов нет) — перерисовать целиком.
+func _part_bake(logical: Vector2, rk: float) -> bool:
+	var r := _screen_bake(logical, rk, 1 if _full_baked else 0)
+	if r < 0:
+		return false
+	if r == 2:
+		_full_soft = true   # часть тайлов вытеснена — дорисуются, кадр обновим
+	return true
 
 
 func _use_screen(baked: bool) -> void:
