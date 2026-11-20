@@ -99,17 +99,30 @@ uniform bool terrain_mode = false;              // режим «Местност
 uniform sampler2DArray color_tex : filter_linear_mipmap;
 uniform sampler2DArray normal_tex : filter_linear_mipmap;
 #else
+// <bake-read> (до </bake-read> — чтение заготовок; в версию заготовок MapBake.ver не входит)
 // заготовки (MapBake): атлас тайлов 256² (248 + поля по 4) и таблица страниц —
 // на уровень k (масштаб 2^(k/2 − 3) · bk_r пикселей на единицу мира) строки с
 // pg_row[k]; тексель — номер слоя + 1 (r + g·256), 0 — тайла нет
 uniform sampler2D page_tex : filter_nearest;
-uniform sampler2DArray atlas_tex : filter_linear;
+// атлас — холст 16×16 тайлов (MapBake.atlas_vp: тайлы рисует видеокарта — загрузка
+// слоя массива с ЦП на Adreno 619 стоила 35–55 мс на тайл); слой → место в холсте
+uniform sampler2D atlas_tex : filter_linear;
 uniform int pg_row[13];
 uniform float bk_r = 1.0;
 // тайлы пакетов APK (плотность 1) при bk_r ≠ 1 — подмена, пока свои не нарисованы
 // (тот же вид, реже пиксели); строки — pg_row1[k], −1 — нет
 uniform int pg_row1[13];
 const float BK_T = 248.0;
+const float BK_AN = 16.0;   // тайлов в строке холста атласа
+
+vec2 bk_org(int layer) {
+	return vec2(float(layer % 16), float(layer / 16)) * 256.0;
+}
+
+// как textureLod(массив, vec3(uv, слой)) — uv в долях тайла
+vec4 bk_tex(vec2 uv, vec2 org) {
+	return textureLod(atlas_tex, (org + uv * 256.0) / (BK_AN * 256.0), 0.0);
+}
 
 // выборка тайла: вдали от берега — Catmull-Rom (5 билинейных выборок: резче
 // билинейной при сдвиге на долю пикселя), у берега — только тексели своей
@@ -121,7 +134,7 @@ vec4 bake_lv(int k, int row, float dens, vec2 wp, bool land, bool coast, out boo
 	vec4 e = texelFetch(page_tex, ivec2(t.x, row + t.y), 0);
 	int layer = int(e.r * 255.0 + 0.5) + int(e.g * 255.0 + 0.5) * 256 - 1;
 	ok = layer >= 0;
-	float lf = float(max(layer, 0));
+	vec2 lf = bk_org(max(layer, 0));
 	vec2 q = p - vec2(t) * BK_T + 4.0;   // пиксели тайла (центры — +0.5)
 	vec2 c = q - 0.5;
 	vec2 tc = floor(c);
@@ -132,7 +145,7 @@ vec4 bake_lv(int k, int row, float dens, vec2 wp, bool land, bool coast, out boo
 		float ws = 0.0;
 		for (int j = 0; j < 4; j++) {
 			ivec2 o = ivec2(j & 1, j >> 1);
-			vec4 v = texelFetch(atlas_tex, ivec3(i0 + o, max(layer, 0)), 0);
+			vec4 v = texelFetch(atlas_tex, ivec2(lf) + i0 + o, 0);
 			float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
 			if ((v.a < 0.996) == land) {
 				acc += v * w;
@@ -142,7 +155,7 @@ vec4 bake_lv(int k, int row, float dens, vec2 wp, bool land, bool coast, out boo
 		if (ws > 1e-4) {
 			return acc / ws;
 		}
-		return textureLod(atlas_tex, vec3(q / 256.0, lf), 0.0);
+		return bk_tex(q / 256.0, lf);
 	}
 	vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
 	vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
@@ -152,11 +165,11 @@ vec4 bake_lv(int k, int row, float dens, vec2 wp, bool land, bool coast, out boo
 	vec2 c0 = (tc - 0.5) / 256.0;
 	vec2 c3 = (tc + 2.5) / 256.0;
 	vec2 c12 = (tc + 0.5 + w2 / w12) / 256.0;
-	vec4 r = textureLod(atlas_tex, vec3(c12.x, c0.y, lf), 0.0) * (w12.x * w0.y)
-		+ textureLod(atlas_tex, vec3(c0.x, c12.y, lf), 0.0) * (w0.x * w12.y)
-		+ textureLod(atlas_tex, vec3(c12, lf), 0.0) * (w12.x * w12.y)
-		+ textureLod(atlas_tex, vec3(c3.x, c12.y, lf), 0.0) * (w3.x * w12.y)
-		+ textureLod(atlas_tex, vec3(c12.x, c3.y, lf), 0.0) * (w12.x * w3.y);
+	vec4 r = bk_tex(vec2(c12.x, c0.y), lf) * (w12.x * w0.y)
+		+ bk_tex(vec2(c0.x, c12.y), lf) * (w0.x * w12.y)
+		+ bk_tex(c12, lf) * (w12.x * w12.y)
+		+ bk_tex(vec2(c3.x, c12.y), lf) * (w3.x * w12.y)
+		+ bk_tex(vec2(c12.x, c3.y), lf) * (w12.x * w3.y);
 	float ws = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
 	return clamp(r / ws, 0.0, 1.0);
 }
@@ -222,6 +235,7 @@ vec4 bake_at(vec2 wp, float zoom, bool land) {
 	bool okf;
 	return bake_lv(0, pg_row[0], bk_r, wp, land, coast, okf);
 }
+// </bake-read>
 #endif
 uniform vec4 art_geom = vec4(11264.0, 5600.0, 5664.0, 5250.0);
 uniform bool has_art = false;

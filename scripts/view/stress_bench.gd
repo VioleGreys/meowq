@@ -292,6 +292,12 @@ func _report() -> void:
 	_p("")
 	if game.hud.patch_check:
 		_p("Сверка окон: проверок %d, расхождений %d" % [game.hud.patch_checks, game.hud.patch_fails])
+	var mv = game.map_view
+	if mv != null and mv.bake != null and mv.bake.ok:
+		var bk = mv.bake
+		_p("Заготовки карты: плотность %.2f · тайлов в пакетах %d (докачанных пакетов %d) · загружено %d, нарисовано %d · кадров из заготовок %d, живых %d" % [
+			bk.r_cls, bk._pack.size(), DirAccess.get_files_at(MapBake.DL_DIR).size() if DirAccess.dir_exists_absolute(MapBake.DL_DIR) else 0,
+			bk.loaded_tiles, bk.baked_tiles, mv.baked_draws, mv.live_draws])
 	_p("Кадры (мс: медиана / 95% / 99% / худший; кадров > 33 / > 50 / > 100 мс):")
 	for s in SEGMENTS.size():
 		var a: PackedFloat32Array = _frames[s]

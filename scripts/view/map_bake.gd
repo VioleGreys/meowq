@@ -9,21 +9,28 @@ extends Node
 ## мира; кадр карты берёт два ближайших уровня по масштабу точки (map_baked).
 ## Источники: пакеты из APK (res://data/bake, уровни ≤ ×1, `--bake_pack`) и кэш
 ## в user://bake (рисуется здесь, на устройстве, там, куда смотрят; предел —
-## Settings.bake_cache). На видеокарте — атлас из CAP слоёв (Texture2DArray) и
-## таблица страниц (номер слоя + 1 на тайл, строки уровней, лето / зима).
+## Settings.bake_cache). На видеокарте — атлас из CAP мест (холст 16×16 тайлов,
+## atlas_vp) и таблица страниц (номер места + 1 на тайл, строки уровней, лето / зима).
+## В атлас тайл кладёт видеокарта: маленькая текстура тайла рисуется в холст
+## (glTexSubImage3D в слой массива, которым занята видеокарта, на Adreno 619 стоил
+## 35–55 мс на тайл — отчёт ноября 2026); в таблицу — через кадр, когда нарисован.
 
 const T := 248                  # своих пикселей тайла
 const TS := 256                 # с полями
 const PAD := 4
 const NLV := 13
 const APK_MAX_K := 11           # уровни в APK: до ×5.6 — вся карта (решение пользователя ноябрь 2026; пакеты — AVIF)
-const CAP := 256                # слоёв атласа (минимум GLES3 — 256)
+const CAP := 256                # мест в атласе (холст AN × AN тайлов)
+const AN := 16
 const PACK_DIR := "res://data/bake/"
 const DL_DIR := "user://bake_dl/"   # докачанные пакеты (BakeDownload; ветка bake-data на GitHub)
 const CACHE_ROOT := "user://bake/"
 const BAKE_VERSION := 1         # поднять, если заготовки меняются не из шейдера
 const SUB := 1 << 29            # ключ тайла пакета (плотность 1) при r_cls ≠ 1 — подмена
 const UPLOADS := 24             # тайлов в атлас за кадр (ПК; телефон — uploads)
+# версии заготовок, совпадающие по содержанию тайлов (новая метка → прежняя): правка
+# только чтения заготовок (<bake-read> в шейдере) пакеты не обесценивает
+const VER_SAME := {"3483ed1d": "0d3331cc"}   # ноябрь 2026: атлас — холст вместо массива
 var uploads := UPLOADS
 
 var view: MapView
@@ -34,7 +41,14 @@ var world_px := Vector2.ONE     # размер мира, единиц
 var r_cls := 1.0                # плотность заготовок (класс разрешения экрана)
 var ver := ""                   # хэш шейдера и формата
 var pack_stamp := ""            # метка пакетов APK (данные карты при сборке), "" — нет
-var atlas: Texture2DArray
+var atlas: Texture2D            # холст atlas_vp
+var atlas_vp: SubViewport
+var _up_root: Node2D            # тайлы, которые видеокарта рисует в холст в этом кадре
+var _up_mat: ShaderMaterial
+var _staged: Array = []         # [key, место, узел] — рисуются в холст; в таблицу — после кадра
+var _staged_keys := {}
+var _slot_busy := PackedByteArray()
+var _up_drawn := false
 var page_img: Image
 var page_tex: ImageTexture
 var _page_dirty := false
@@ -129,19 +143,34 @@ func setup(v: MapView, shader_params: Dictionary) -> void:
 	# список и размеры файлов внутри APK читались иначе, чем на ПК, — пакеты
 	# отвергались (ноябрь 2026). Пакет помечает сборка своей меткой (данные карты
 	# на ПК при сборке, data_stamp) — она же ключ кэша на устройстве
-	ver = "%08x" % (hash(inc.code + "|%d|%d|%s" % [BAKE_VERSION, T, str(world_px)]) & 0xffffffff)
+	ver = "%08x" % (hash(bake_code(inc.code) + "|%d|%d|%s" % [BAKE_VERSION, T, str(world_px)]) & 0xffffffff)
+	ver = VER_SAME.get(ver, ver)
 	pack_stamp = ""
-	var blank := Image.create(TS, TS, false, Image.FORMAT_RGBA8)
-	var imgs: Array[Image] = []
-	for i in CAP:
-		imgs.append(blank)
-	atlas = Texture2DArray.new()
-	atlas.create_from_images(imgs)
+	atlas_vp = SubViewport.new()
+	atlas_vp.disable_3d = true
+	atlas_vp.transparent_bg = true
+	atlas_vp.size = Vector2i(AN * TS, AN * TS)
+	atlas_vp.render_target_clear_mode = SubViewport.CLEAR_MODE_ONCE   # пустой — один раз
+	atlas_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	add_child(atlas_vp)
+	_up_root = Node2D.new()
+	atlas_vp.add_child(_up_root)
+	_up_mat = ShaderMaterial.new()
+	_up_mat.shader = load("res://shaders/bake_upload.gdshader")
+	atlas = atlas_vp.get_texture()
+	_slot_busy.resize(CAP)
 	slot_key.resize(CAP)
 	slot_key.fill(-1)
 	slot_use.resize(CAP)
 	slot_use.fill(0)
 	set_r(1.0)
+
+
+## Код шейдера, от которого зависят тайлы: без чтения заготовок (<bake-read>).
+static func bake_code(code: String) -> String:
+	var a := code.find("// <bake-read>")
+	var b := code.find("// </bake-read>")
+	return code.substr(0, a) + code.substr(b) if a >= 0 and b > a else code
 
 
 ## Плотность заготовок (пикселей на логический пиксель экрана; классы — в
@@ -172,6 +201,7 @@ func set_r(r: float) -> void:
 		rows1_total += gh1[k]
 	slot_key.fill(-1)
 	key_slot.clear()
+	_unstage()
 	_wish.clear()
 	_ahead = PackedInt64Array()
 	_pending = {}
@@ -198,6 +228,15 @@ func _exit_tree() -> void:
 	for sv in _saves:
 		WorkerThreadPool.wait_for_task_completion(sv[1])
 	_saves.clear()
+
+
+## Забыть тайлы, ещё не легшие в таблицу (новая сетка: места свободны).
+func _unstage() -> void:
+	for st in _staged:
+		(st[2] as Node).queue_free()
+	_staged.clear()
+	_staged_keys.clear()
+	_slot_busy.fill(0)
 
 
 func _wait_jobs() -> void:
@@ -433,7 +472,7 @@ func want(keys: PackedInt64Array, partial: bool = false, s: int = 0) -> bool:
 			slot_use[sl] = frame
 			continue
 		all = false
-		if _jobs.has(key):
+		if _jobs.has(key) or _staged_keys.has(key):
 			continue
 		var src: Array = _pack.get(key, [])
 		if src.is_empty() and _cache.has(key):
@@ -540,7 +579,7 @@ func have_quiet(keys: PackedInt64Array) -> bool:
 ## Загрузить тайлы пакета (подмену) с диска; рисовать их не нужно — нет в пакете, нет и подмены.
 func _sub_load(keys: PackedInt64Array) -> void:
 	for key in keys:
-		if not key_slot.has(key) and not _jobs.has(key) and _pack.has(key):
+		if not key_slot.has(key) and not _jobs.has(key) and not _staged_keys.has(key) and _pack.has(key):
 			_jobs[key] = WorkerThreadPool.add_task(_load_job.bind(key, _pack[key]))
 
 
@@ -600,6 +639,20 @@ func tick(may_bake: bool = true) -> void:
 	if not ok:
 		return
 	frame += 1
+	# нарисованные видеокартой в холст (кадр прошёл) — в таблицу страниц
+	if _up_drawn:
+		_up_drawn = false
+		for st in _staged:
+			var sk: int = st[0]
+			var ssl: int = st[1]
+			_slot_busy[ssl] = 0
+			if slot_key[ssl] == sk:
+				key_slot[sk] = ssl
+				slot_use[ssl] = frame
+				_page_set(sk, ssl + 1)
+			(st[2] as Node).queue_free()
+		_staged.clear()
+		_staged_keys.clear()
 	# в атлас — не больше UPLOADS тайлов за кадр (256 КБ каждый): без рывка
 	_mx.lock()
 	var done := _done.slice(0, uploads)
@@ -628,6 +681,7 @@ func tick(may_bake: bool = true) -> void:
 		if _warm_n == 0:
 			_warm_rect.queue_free()
 			_warm_rect = null
+		_page_flush()
 		return
 	if packing:
 		return
@@ -645,6 +699,10 @@ func tick(may_bake: bool = true) -> void:
 		_bake_next()
 	elif _ahead_i < _ahead.size() and may_bake:
 		_bake_ahead()
+	_page_flush()
+
+
+func _page_flush() -> void:
 	if _page_dirty:
 		_page_dirty = false
 		var t_pg := Time.get_ticks_usec()
@@ -652,12 +710,17 @@ func tick(may_bake: bool = true) -> void:
 		FrameProf.add("заготовки: таблица", Time.get_ticks_usec() - t_pg)
 
 
+## Положить тайл в атлас: место (свободное или давнее), прежний тайл места — из
+## таблицы сразу (видеокарта перерисует место в этом кадре), новый — в таблицу
+## в следующем тике, после кадра (MapView в этом кадре его ещё не просит).
 func _put(key: int, img: Image, free_only := false) -> void:
-	if key_slot.has(key):
+	if key_slot.has(key) or _staged_keys.has(key):
 		return
 	var sl := -1
 	var best := 1 << 62
 	for i in CAP:
+		if _slot_busy[i] != 0:
+			continue
 		if slot_key[i] < 0:
 			sl = i
 			break
@@ -674,9 +737,22 @@ func _put(key: int, img: Image, free_only := false) -> void:
 		_page_set(old, 0)
 	slot_key[sl] = key
 	slot_use[sl] = frame
-	key_slot[key] = sl
-	atlas.update_layer(img, sl)
-	_page_set(key, sl + 1)
+	_slot_busy[sl] = 1
+	var spr := Sprite2D.new()
+	spr.centered = false
+	spr.texture = ImageTexture.create_from_image(img)
+	spr.material = _up_mat
+	spr.position = Vector2((sl % AN) * TS, (sl / AN) * TS)
+	_up_root.add_child(spr)
+	_staged.append([key, sl, spr])
+	_staged_keys[key] = true
+	atlas_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	if not RenderingServer.frame_post_draw.is_connected(_on_up_drawn):
+		RenderingServer.frame_post_draw.connect(_on_up_drawn, CONNECT_ONE_SHOT)
+
+
+func _on_up_drawn() -> void:
+	_up_drawn = true
 
 
 func _page_set(key: int, v: int) -> void:
@@ -714,7 +790,7 @@ func _bake_next() -> void:
 			fr = _wish[k]
 			key = k
 	_wish.erase(key)
-	if key_slot.has(key) or _jobs.has(key) or _pack.has(key) or _cache.has(key):
+	if key_slot.has(key) or _jobs.has(key) or _staged_keys.has(key) or _pack.has(key) or _cache.has(key):
 		return
 	var s := key_s(key)
 	var k := key_k(key)
@@ -773,7 +849,7 @@ func _bake_ahead() -> void:
 	while _ahead_i < _ahead.size():
 		var key := _ahead[_ahead_i]
 		_ahead_i += 1
-		if key_slot.has(key) or _jobs.has(key) or _pack.has(key) or _cache.has(key):
+		if key_slot.has(key) or _jobs.has(key) or _staged_keys.has(key) or _pack.has(key) or _cache.has(key):
 			continue
 		var k := key_k(key)
 		bake_block(key_s(key), k, key_tx(key) - key_tx(key) % blk, key_ty(key) - key_ty(key) % blk)
