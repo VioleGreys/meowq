@@ -266,6 +266,9 @@ func _gpu_probe() -> void:
 	var auto0 := mv.res_auto
 	var rs0 := mv.res_scale
 	var q0 := mv.quality
+	# на низком качестве заготовок нет (MapView._bake_ok) — пробы на среднем и выше
+	var qb := maxi(q0, 1)
+	mv.quality = qb
 	var mode0: int = mv.map_mode
 	mv.res_auto = false
 	mv.strips = 1
@@ -287,7 +290,7 @@ func _gpu_probe() -> void:
 	# шейдер с заготовками, обрезанный на этапе CUT (<probe> в map_core): цена
 	# всего, что нужно до этого места (вид 10; 99 — весь, сверка с «кадр с заготовками»)
 	var cuts := [[1, "до 1: луч камеры"], [2, "до 2: + реки и поле границ"],
-		[3, "до 3: + окно 4×4 провинций"], [4, "до 4: + выборка заготовок"],
+		[3, "до 3: + окно 4×4 провинций"], [6, "до 3б: + веса соперников для границ"], [4, "до 4: + выборка заготовок"],
 		[5, "до 5: + реки, кайма (без линий границ)"], [99, "весь (копия материала)"]]
 	var cut_mats := {}
 	for c in cuts:
@@ -363,13 +366,14 @@ func _gpu_probe() -> void:
 			mv.quad.material = qmat0
 		mv._bake_off = false
 		mv.res_scale = rs0
-		mv.quality = q0
+		mv.quality = qb
 		if prm != "":
 			mv._param(prm, true)
 		if kind == 3:
 			g.set_map_mode(MapView.MapMode.POLITICAL)
 	mv.strips = strips0
 	mv.res_auto = auto0
+	mv.quality = q0
 	g.set_map_mode(mode0)
 	mv.redraw()
 
