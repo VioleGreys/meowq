@@ -167,10 +167,21 @@ func setup(v: MapView, shader_params: Dictionary) -> void:
 
 
 ## Код шейдера, от которого зависят тайлы: без чтения заготовок (<bake-read>).
+## Пробы стенда (<probe> … </probe>, см. StressBench._cut_probe) — тоже мимо версии.
 static func bake_code(code: String) -> String:
 	var a := code.find("// <bake-read>")
 	var b := code.find("// </bake-read>")
-	return code.substr(0, a) + code.substr(b) if a >= 0 and b > a else code
+	if a >= 0 and b > a:
+		code = code.substr(0, a) + code.substr(b)
+	while true:
+		a = code.find("// <probe>")
+		b = code.find("// </probe>")
+		if a < 0 or b < a:
+			break
+		a = code.rfind("\n", a) + 1
+		b = code.find("\n", b)
+		code = code.substr(0, a) + (code.substr(b + 1) if b >= 0 else "")
+	return code
 
 
 ## Плотность заготовок (пикселей на логический пиксель экрана; классы — в

@@ -281,10 +281,23 @@ func _gpu_probe() -> void:
 		["кадр вживую", 2], ["кадр, режим «Местность»", 3], ["холст атласа 4096² без тайлов", 4],
 		["кадр с заготовками, разрешение ×0.5", 6],
 		["кадр с заготовками, качество низкое", 7], ["кадр с заготовками, качество высокое", 8]]
-	for prm in ["has_sdf", "has_band", "has_rivers", "has_roads", "has_road_tex", "has_ids2", "has_sprites",
-			"has_states", "has_elev", "has_detail", "has_cover", "has_art", "front_on"]:
+	for prm in ["has_rivers"]:
 		if mv.mat_b.get_shader_parameter(prm) == true:
 			tests.append(["кадр с заготовками без " + prm, 1, prm])
+	# шейдер с заготовками, обрезанный на этапе CUT (<probe> в map_core): цена
+	# всего, что нужно до этого места (вид 10; 99 — весь, сверка с «кадр с заготовками»)
+	var cuts := [[1, "до 1: луч камеры"], [2, "до 2: + реки и поле границ"],
+		[3, "до 3: + окно 4×4 провинций"], [4, "до 4: + выборка заготовок"],
+		[5, "до 5: + реки, кайма (без линий границ)"], [99, "весь (копия материала)"]]
+	var cut_mats := {}
+	for c in cuts:
+		var sh := Shader.new()
+		sh.code = "shader_type canvas_item;\n#define BAKED\n%s#include \"res://shaders/map_core.gdshaderinc\"\n" % (
+			"#define CUT %d\n" % c[0] if c[0] < 99 else "")
+		var cm := ShaderMaterial.new()
+		cm.shader = sh
+		cut_mats[c[0]] = cm
+		tests.append(["шейдер с заготовками " + c[1], 10, c[0]])
 	# мимо логики карты: буфер карты — этим шейдером, каждый кадр (вид 9, режим t[2])
 	for sm in [["буфер карты: пустой шейдер", 0], ["буфер карты: 8 выборок base_tex (высоты, реки)", 1],
 			["буфер карты: 8 выборок ids_tex (номера провинций)", 2], ["буфер карты: 8 выборок sdf_tex (границы)", 3],
@@ -299,11 +312,15 @@ func _gpu_probe() -> void:
 		pm.set_shader_parameter("atlas_tex", mv.bake.atlas)
 	for t in tests:
 		var kind: int = t[1]
-		var prm: String = t[2] if t.size() > 2 and kind != 9 else ""
+		var prm: String = t[2] if t.size() > 2 and kind < 9 else ""
 		var qmat0: Material = mv.quad.material
-		if kind == 9:
+		if kind == 10:
+			var cm: ShaderMaterial = cut_mats[t[2]]
+			for u in mv.mat_b.shader.get_shader_uniform_list():
+				cm.set_shader_parameter(u["name"], mv.mat_b.get_shader_parameter(u["name"]))
+		if kind >= 9:
 			pm.set_shader_parameter("mode", int(t[2]))
-			mv.quad.material = pm
+			mv.quad.material = pm if kind == 9 else cut_mats[t[2]]
 			mv.quad.position = Vector2.ZERO
 			mv.quad.size = Vector2(mv.map_vp.size)
 		mv._bake_off = kind == 2
@@ -322,7 +339,7 @@ func _gpu_probe() -> void:
 		var f_prev := Time.get_ticks_usec()
 		var nf := 70 if kind == 0 or kind == 4 else 16
 		for i in nf:
-			if kind == 9:
+			if kind >= 9:
 				mv.map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 				MapView.gnote("проба", mv.quad.size.x * mv.quad.size.y)
 			elif kind != 0 and kind != 4:
@@ -342,7 +359,7 @@ func _gpu_probe() -> void:
 			MapView.gpu = {}
 			f_prev = f_now
 		_probe.append([t[0], _pct(ft, 0.5), _pct(ft, 0.9), px / maxf(1.0, ft.size()), drawn, ft.size()])
-		if kind == 9:
+		if kind >= 9:
 			mv.quad.material = qmat0
 		mv._bake_off = false
 		mv.res_scale = rs0

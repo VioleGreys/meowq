@@ -981,6 +981,14 @@ void fragment() {
 	float haze = clamp((tr / dist - 1.0) * 0.35, 0.0, 0.22) * smoothstep(0.05, 0.5, cam_tilt);
 	vec2 px = muv * map_size;
 	ivec2 ip = ivec2(floor(px));
+	// <probe>
+#ifdef CUT
+#if CUT == 1
+	COLOR = vec4(muv, zoom * 0.01, haze + float(ip.x + ip.y) * 1e-6);
+	if (false) {   // остаток — мёртвый код (return во fragment в Godot нельзя)
+#endif
+#endif
+	// </probe>
 	// координаты волн и их производные (до ветвлений по пикселю)
 	vec2 wv_uv = px / (WATER_TILE * id_k);
 	vec2 wv_gx = dFdx(wv_uv);
@@ -1052,6 +1060,14 @@ void fragment() {
 	// по окну 4×4 текселя с кубическими B-сплайн весами — граница выходит гладкой
 	// кривой без изломов. Ближайший тексель получает небольшой перевес, чтобы
 	// мелкие острова и узкие перешейки не «таяли» от размытия.
+	// <probe>
+#ifdef CUT
+#if CUT == 2
+	COLOR = vec4(rv_d * 0.01, rv_fw + rv.y, sdf_tx * 0.001, rv4.a + rv_ds * 0.01 + wv_gx.x + wv_gy.y + q_gx.x + q_gy.y);
+	if (false) {   // остаток — мёртвый код (return во fragment в Godot нельзя)
+#endif
+#endif
+	// </probe>
 	vec2 q = px - 0.5;
 	ivec2 i0 = ivec2(floor(q));
 	vec2 tf = fract(q);
@@ -1214,6 +1230,14 @@ void fragment() {
 	int ctrl = nation(cc);
 	bool land = ctrl >= 0;
 	bool sea_px = !cov_land && land;   // суша по провинции, но по контуру — уже вода
+	// <probe>
+#ifdef CUT
+#if CUT == 3
+	COLOR = vec4(cc.rgb + oc.rgb * 0.1, top_w + cov + float(id) * 1e-5 + (sea_px ? 0.3 : 0.0) + rv_d * 0.01 + sdf_tx * 0.001);
+	if (false) {   // остаток — мёртвый код (return во fragment в Godot нельзя)
+#endif
+#endif
+	// </probe>
 
 #ifndef BAKED
 	float h = textureLod(base_tex, vec3(muv, 0.0), 0.0).r;
@@ -1333,6 +1357,14 @@ void fragment() {
 	bool lake = quality == 0 && land && textureLod(base_tex, vec3((vec2(ip) + 0.5) / map_size, 0.0), 0.0).r < 0.49;
 #ifdef BAKED
 	vec4 bk = bake_at(wp, zoom, land && !lake && !sea_px);
+	// <probe>
+#ifdef CUT
+#if CUT == 4
+	COLOR = vec4(bk.rgb + cc.rgb * 0.1, bk.a + top_w + cov + rv_d * 0.01 + sdf_tx * 0.001);
+	if (false) {   // остаток — мёртвый код (return во fragment в Godot нельзя)
+#endif
+#endif
+	// </probe>
 #endif
 	if (!land || lake || sea_px) {
 #ifdef BAKED
@@ -1982,6 +2014,14 @@ void fragment() {
 		}
 #endif
 	}
+	// <probe>
+#ifdef CUT
+#if CUT == 5
+	COLOR = vec4(col, top_w + cov + sdf_tx * 0.001 + rv_d * 0.01);
+	if (false) {   // остаток — мёртвый код (return во fragment в Godot нельзя)
+#endif
+#endif
+	// </probe>
 #ifdef BAKE_OUT
 	COLOR = bk_out;
 #else
@@ -2202,4 +2242,9 @@ void fragment() {
 	col = mix(col, vec3(0.80, 0.84, 0.86), haze);
 	COLOR = outside ? vec4(0.302, 0.302, 0.302, 1.0) : vec4(col, 1.0);
 #endif
+	// <probe>
+#ifdef CUT
+	}
+#endif
+	// </probe>
 }
