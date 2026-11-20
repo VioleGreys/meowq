@@ -208,7 +208,7 @@ func _on_done(result: int, code: int, _headers: PackedStringArray, _body: Packed
 	var tmp := MapBake.DL_DIR + TMP
 	var why := ""
 	if result != HTTPRequest.RESULT_SUCCESS:
-		why = "нет связи (%d)" % result
+		why = _result_text(result)
 	elif code != 200:
 		why = "сервер ответил %d" % code
 	elif _size(tmp) != int(part["size"]):
@@ -228,6 +228,23 @@ func _on_done(result: int, code: int, _headers: PackedStringArray, _body: Packed
 	DirAccess.rename_absolute(tmp, MapBake.DL_DIR + str(part["name"]))
 	_queue.pop_front()
 	_next()
+
+
+static func _result_text(r: int) -> String:
+	match r:
+		HTTPRequest.RESULT_CANT_CONNECT:
+			return "не удалось соединиться (нет доступа к сети?)"
+		HTTPRequest.RESULT_CANT_RESOLVE:
+			return "не найден сервер (DNS)"
+		HTTPRequest.RESULT_CONNECTION_ERROR:
+			return "связь оборвалась"
+		HTTPRequest.RESULT_TLS_HANDSHAKE_ERROR:
+			return "ошибка защищённого соединения"
+		HTTPRequest.RESULT_TIMEOUT:
+			return "истекло время ожидания"
+		HTTPRequest.RESULT_DOWNLOAD_FILE_CANT_OPEN, HTTPRequest.RESULT_DOWNLOAD_FILE_WRITE_ERROR:
+			return "не удалось записать файл (мало места?)"
+	return "нет связи (код %d)" % r
 
 
 func _fail(why: String) -> void:
