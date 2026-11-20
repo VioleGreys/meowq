@@ -1054,6 +1054,16 @@ func _screen_rk() -> float:
 	return float(maxi(1, int(phys.x * res_scale))) / maxf(1.0, logical.x)
 
 
+## Плотность кэша движения: как у экрана; на лёгкой карте — не гуще 50 % экрана
+## (виден только в движении, а при 100 % буфер — 7 млн пикселей, кадр его
+## дорисовки на Adreno 619 — до 375 мс; отчёт ноября 2026).
+func _cache_rk() -> float:
+	var rk := _screen_rk()
+	if phone_map and res_scale > 0.5:
+		rk *= 0.5 / res_scale
+	return rk
+
+
 ## Нужный кэш для текущей камеры → [масштаб, рамка видимого в мире].
 func _cache_need() -> Array:
 	var vp := get_viewport_rect().size
@@ -1078,7 +1088,7 @@ func _cache_build() -> void:
 	var need := _cache_need()
 	var z: float = need[0]
 	var r: Rect2 = need[1]
-	var rk := _screen_rk()
+	var rk := _cache_rk()
 	var vp := get_viewport_rect().size * rk
 	var m := maxf(vp.x, vp.y) * CACHE_MARGIN
 	var px := r.size * z * rk + Vector2(m, m) * 2.0
@@ -1120,7 +1130,7 @@ func _cache_usable() -> bool:
 	if _no_cache:
 		return false
 	var b := _cache_front()
-	if not b.valid or b.q != quality or absf(b.rk - _screen_rk()) > 1e-4:
+	if not b.valid or b.q != quality or absf(b.rk - _cache_rk()) > 1e-4:
 		return false
 	var need := _cache_need()
 	if not _zoom_ok(float(need[0]) / b.zneed, CACHE_ZOOM_SOFT):
@@ -1177,7 +1187,7 @@ func _cache_tick() -> void:
 		for r in f.rects:
 			f.queue.append(_cache_px(f, r))
 		f.rects.clear()
-		if f.q != quality or absf(f.rk - _screen_rk()) > 1e-4:
+		if f.q != quality or absf(f.rk - _cache_rk()) > 1e-4:
 			f.valid = false
 	var zr_f: float = float(_cache_need()[0]) / f.zneed
 	if _c_build_n > 0:
