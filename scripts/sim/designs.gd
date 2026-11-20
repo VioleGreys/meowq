@@ -49,6 +49,7 @@ const ROLES := ["fighter", "cas", "strat", "naval"]
 
 static var _hull := {}
 static var _mod := {}
+static var _auto_memo := {}   # [роль, изученные технологии корпусов и модулей] -> [корпус, модули]
 
 
 static func _ensure() -> void:
@@ -146,8 +147,25 @@ static func score(s: Dictionary, role: String) -> float:
 ## жадно лучшим модулем (повторы разрешены). Возвращает [корпус, модули].
 ## Считается на сырых суммах (массив чисел вместо словаря): сложения идут в том
 ## же порядке, что в stats(), поэтому оценки совпадают с ней до бита.
+## Итог зависит только от роли и изученных технологий корпусов и модулей —
+## запоминается (_auto_memo, как ShipDesigns.auto).
 static func auto(nat, role: String) -> Array:
 	_ensure()
+	var bits := PackedByteArray()
+	for h in HULLS:
+		bits.append(1 if has_tech(nat, h[2]) else 0)
+	for m in MODS:
+		bits.append(1 if has_tech(nat, m[2]) else 0)
+	var mk := [role, bits]
+	var hit: Array = _auto_memo.get(mk, [])
+	if not hit.is_empty():
+		return [hit[0], (hit[1] as Array).duplicate()]
+	var res := _auto(nat, role)
+	_auto_memo[mk] = [res[0], (res[1] as Array).duplicate()]
+	return res
+
+
+static func _auto(nat, role: String) -> Array:
 	var best_h := ""
 	var best_m: Array = []
 	var best_s := -1e18

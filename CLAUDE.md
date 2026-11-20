@@ -137,6 +137,7 @@
   времени: `godot --headless --path . -- --bench_rt=15 [--nation=SWE]`.
 - Стенд нагрузки (кадры, тик, фризы, действия игрока; `engine.md`): `godot --headless --path . -- --stress [--seg=4 --from=1939-09-10]`,
   как телефон — `taskset -c 0,1 godot --headless --path . -- --stress --phone`; на телефоне — «Настройки» → «Проверка нагрузки».
+- Запуск по частям (сборка скриптов, окна, мир, карта): `xvfb-run -a godot --rendering-driver opengl3 --path . -- --screenshot=x.png --days=0 --boot`
 - Сверка окон (все окна 1936–41 гг. против свежей сборки, цена окон): `godot --headless --path . -- --patchtest`
 - Ядра C++ против двойников (конвои, пункты, туман и рубеж ИИ, границы): `godot --headless --path . --script res://tests/kernel_check.gd`
 - Тест детерминизма и скорости: `godot --headless --path . --script res://tests/sim_bench.gd`

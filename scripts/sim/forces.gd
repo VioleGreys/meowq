@@ -54,6 +54,16 @@ static func setup(world: World, dir: String) -> void:
 	world.p_naval_base.resize(world.prov_count)
 	world.p_naval_base.fill(0)
 	var base_provs := {}   # тег -> провинции баз по порядку списка (−1 — не нашлась)
+	# прибрежные провинции суши по владельцам, по возрастанию номера (раньше
+	# каждая база перебирала все провинции — ~0,1 с при запуске на ПК)
+	var coast: Array = []
+	coast.resize(world.nations.size())
+	for i in coast.size():
+		coast[i] = []
+	for p in world.prov_count:
+		var o: int = world.p_owner[p]
+		if world.p_land[p] == 1 and world.p_coastal[p] == 1 and o >= 0 and o < coast.size():
+			coast[o].append(p)
 	for nat in world.nations:
 		var fd0: Dictionary = data.get(nat.tag, {})
 		var bl: Array = []
@@ -61,12 +71,12 @@ static func setup(world: World, dir: String) -> void:
 		for ll in fd0.get("bases", []):
 			var best := -1
 			var best_d := INF
-			for p in world.prov_count:
-				if world.p_land[p] == 1 and world.p_coastal[p] == 1 and world.p_owner[p] == nat.id:
-					var dd := world.p_lonlat[p].distance_squared_to(Vector2(float(ll[0]), float(ll[1])))
-					if dd < best_d:
-						best_d = dd
-						best = p
+			var at := Vector2(float(ll[0]), float(ll[1]))
+			for p: int in coast[nat.id]:
+				var dd := world.p_lonlat[p].distance_squared_to(at)
+				if dd < best_d:
+					best_d = dd
+					best = p
 			bl.append(best)
 			if best >= 0:
 				world.p_naval_base[best] = 1

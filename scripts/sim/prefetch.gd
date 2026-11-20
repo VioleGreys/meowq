@@ -23,9 +23,9 @@ static func run(key: String, fn: Callable) -> void:
 
 
 static func _job(key: String, fn: Callable) -> void:
-	var img: Image = fn.call()
+	var v: Variant = fn.call()
 	_mx.lock()
-	_out[key] = img
+	_out[key] = v
 	_mx.unlock()
 
 
@@ -36,15 +36,39 @@ static func file(path: String, fmt: int = -1, mips: bool = false) -> void:
 
 ## Готовая картинка задачи (ждёт её); null — задачи не было или не вышло.
 static func take(key: String) -> Image:
+	return take_value(key) as Image
+
+
+## Итог задачи любого типа (ждёт её); null — задачи не было.
+static func take_value(key: String) -> Variant:
 	if not _tasks.has(key):
 		return null
 	WorkerThreadPool.wait_for_task_completion(_tasks[key])
 	_tasks.erase(key)
 	_mx.lock()
-	var img: Image = _out.get(key)
+	var v: Variant = _out.get(key)
 	_out.erase(key)
 	_mx.unlock()
-	return img
+	return v
+
+
+## Разобранный JSON-файл заранее (см. json).
+static func json_file(path: String) -> void:
+	run("json:" + path, parse_json.bind(path))
+
+
+## Разобранный JSON: из задачи, если ставилась, иначе сразу. null — нет файла
+## или не разбирается.
+static func json(path: String) -> Variant:
+	if _tasks.has("json:" + path):
+		return take_value("json:" + path)
+	return parse_json(path)
+
+
+static func parse_json(path: String) -> Variant:
+	if not FileAccess.file_exists(path):
+		return null
+	return JSON.parse_string(FileAccess.get_file_as_string(path))
 
 
 ## Картинка файла: из задачи, если ставилась (с теми же fmt и mips), иначе сразу.

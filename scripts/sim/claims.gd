@@ -47,8 +47,19 @@ static func nation_provs(world: World, t: int) -> Array:
 ## Начало партии: свои земли всех стран и претензии из claims.json.
 static func init(world: World, dir: String) -> void:
 	world.cores = {}
+	# своя земля всех стран за один обход (как nation_provs для каждой — тот
+	# перебирал все провинции на каждую страну)
+	var own: Array = []
+	own.resize(world.nations.size())
+	for i in own.size():
+		own[i] = []
+	var col := world.p_colony.size() == world.prov_count
+	for p in world.prov_count:
+		var o: int = world.p_owner[p]
+		if o >= 0 and o < own.size() and world.p_land[p] == 1 and not (col and world.p_colony[p] == 1):
+			own[o].append(p)
 	for nat in world.nations:
-		add(world, nat.id, nation_provs(world, nat.id))
+		add(world, nat.id, own[nat.id])
 	var path := dir + "/claims.json"
 	if not FileAccess.file_exists(path):
 		return
@@ -65,7 +76,7 @@ static func init(world: World, dir: String) -> void:
 		for t in c.get("nations", []):
 			var tn := History.tag_id(world, t)
 			if tn >= 0:
-				add(world, n, nation_provs(world, tn))
+				add(world, n, own[tn] if tn < own.size() else nation_provs(world, tn))
 
 
 ## Эффект фокуса или события: {"t": "claim", "area": имя} или {"t": "claim", "target": TAG}.

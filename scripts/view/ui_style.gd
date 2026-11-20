@@ -128,7 +128,11 @@ static var _ui := {}
 static func ui_tex(name: String) -> Texture2D:
 	if not _ui.has(name):
 		var p := "res://assets/ui/" + name
-		_ui[name] = load(p) if ResourceLoader.exists(p) else null
+		# заранее в фоне со стартовой сцены (BootFiles.UI_START) — забрать готовое
+		if ResourceLoader.load_threaded_get_status(p) != ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
+			_ui[name] = ResourceLoader.load_threaded_get(p)
+		else:
+			_ui[name] = load(p) if ResourceLoader.exists(p) else null
 	return _ui[name]
 
 

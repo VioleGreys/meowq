@@ -9,20 +9,16 @@ extends RefCounted
 const DEFAULT_DIR := "res://data/world1936"
 
 
-## Картинки мира — распаковать заранее в рабочих потоках (ImgPrefetch): пока
+## Картинки мира — распаковать заранее в рабочих потоках (BootFiles): пока
 ## главный поток разбирает map.json, они готовятся.
 static func prefetch(dir: String = DEFAULT_DIR) -> void:
-	ImgPrefetch.file(dir + "/provinces.png.bin")
-	ImgPrefetch.file(dir + "/relief.png.bin")
-	ImgPrefetch.file(dir + "/terrain.jpg.bin")
-	ImgPrefetch.file(dir + "/detail.png.bin", -1, true)
+	BootFiles.prefetch_world(dir)
 
 
 static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	var timings := {}
 	var t := Time.get_ticks_usec()
-	var text := FileAccess.get_file_as_string(dir + "/map.json")
-	var meta = JSON.parse_string(text)
+	var meta = ImgPrefetch.json(dir + "/map.json")
 	if typeof(meta) != TYPE_DICTIONARY:
 		push_error("Не удалось прочитать %s/map.json" % dir)
 		return timings
@@ -101,7 +97,7 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		world.nation_tags.append(nm["tag"])
 		tag_index[nm["tag"]] = i
 
-	var ndata = JSON.parse_string(FileAccess.get_file_as_string(dir + "/nations.json"))
+	var ndata = ImgPrefetch.json(dir + "/nations.json")
 	if typeof(ndata) != TYPE_DICTIONARY:
 		push_error("Не удалось прочитать %s/nations.json" % dir)
 		ndata = {"ideologies": {}, "nations": {}}
@@ -193,11 +189,20 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	_distribute_economy(world, provs, ndata["nations"])
 	timings["provinces"] = Time.get_ticks_usec() - t
 
+	t = Time.get_ticks_usec()
 	world.build_caches()
+	timings["caches"] = Time.get_ticks_usec() - t
+	t = Time.get_ticks_usec()
 	_spawn_armies(world, rng, ndata["nations"])
+	timings["armies"] = Time.get_ticks_usec() - t
+	t = Time.get_ticks_usec()
 	world.ai_wars = true
 	Diplomacy.load_setup(world, dir + "/diplomacy.json")
+	timings["diplomacy"] = Time.get_ticks_usec() - t
+	t = Time.get_ticks_usec()
 	History.load(world, dir)
+	timings["history"] = Time.get_ticks_usec() - t
+	t = Time.get_ticks_usec()
 	Claims.init(world, dir)   # национальные территории 1936 г.
 	_load_forts(world, dir + "/forts.json")
 	Economy.load_resources(world, dir + "/resources.json")
@@ -206,6 +211,8 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 		world.spirit_defs = JSON.parse_string(FileAccess.get_file_as_string(dir + "/spirits.json")).get("spirits", {})
 	for nat in world.nations:
 		world.recalc_spirits(nat)
+	timings["claims..spirits"] = Time.get_ticks_usec() - t
+	t = Time.get_ticks_usec()
 	Politics.init(world)   # стабильность и поддержка войны по строю и чертам
 	Relations.init(world)
 	# марионетки известны только теперь: их отчисления сюзерену (Puppets) меняют
@@ -218,10 +225,17 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 			nat.mil = inc[nat.id][1]
 			Military.trim_lines(nat)
 			Military.assign_free_factories(nat, Military.default_split(nat))
+	timings["politics..income"] = Time.get_ticks_usec() - t
+	t = Time.get_ticks_usec()
 	world.build_caches()
+	timings["caches2"] = Time.get_ticks_usec() - t
+	t = Time.get_ticks_usec()
 	Forces.setup(world, dir)
+	timings["forces"] = Time.get_ticks_usec() - t
+	t = Time.get_ticks_usec()
 	Leaders.init(world, dir)   # генералы и маршалы (commanders.json + безымянные под число дивизий)
 	world.rebuild_prov_divs()
+	timings["leaders"] = Time.get_ticks_usec() - t
 	world.palette_dirty = true
 	return timings
 
@@ -230,13 +244,12 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 ## население — пополам по площади и по городскому населению; фабрики — по
 ## городскому населению (колонии почти без промышленности).
 static func _distribute_economy(world: World, provs: Array, data: Dictionary) -> void:
+	var by_owner := _by_owner(world)
 	for nat in world.nations:
 		var d: Dictionary = data.get(nat.tag, {})
 		var home: Array = []
 		var colonies := {}   # adm0 -> [провинции]
-		for i in world.prov_count:
-			if world.p_owner[i] != nat.id:
-				continue
+		for i: int in by_owner[nat.id]:
 			if world.p_colony[i] == 1:
 				var a: String = provs[i].get("adm0", "")
 				if not colonies.has(a):
@@ -317,17 +330,31 @@ static func _allocate(target: PackedInt32Array, list: Array, weights: PackedFloa
 		idx += 1
 
 
+## Провинции по владельцам (номер страны -> Array), по возрастанию номера —
+## как прежний обход всех провинций для каждой страны (при запуске таких
+## обходов было несколько, по ~0,1–0,2 с на ПК каждый).
+static func _by_owner(world: World) -> Array:
+	var res: Array = []
+	res.resize(world.nations.size())
+	for i in res.size():
+		res[i] = []
+	for p in world.prov_count:
+		var o: int = world.p_owner[p]
+		if o >= 0 and o < res.size():
+			res[o].append(p)
+	return res
+
+
 ## Армии 1936 г.: столица и крупные города + граница с соседями; часть — в колониях.
 static func _spawn_armies(world: World, rng: RandomNumberGenerator, data: Dictionary) -> void:
 	world.clear_divisions()
+	var by_owner := _by_owner(world)
 	for nat in world.nations:
 		var d: Dictionary = data.get(nat.tag, {})
 		var home: Array = []
 		var border: Array = []
 		var colony: Array = []
-		for p in world.prov_count:
-			if world.p_owner[p] != nat.id:
-				continue
+		for p: int in by_owner[nat.id]:
 			if world.p_colony[p] == 1:
 				colony.append(p)
 				continue

@@ -54,6 +54,8 @@ var _frame_new := false
 var _cmds: Array = []             # действия игрока, ждущие границы дня (act)
 var _cmd_mutex := Mutex.new()
 var large_map := false
+var boot_info := ""             # замер первого запуска (отчёт «Проверка нагрузки», -- --boot)
+var _hud_ms := 0
 var procedural := false          # старая процедурная карта (для тестов): -- --procedural
 
 
@@ -66,9 +68,11 @@ func _ready() -> void:
 	add_child(units_canvas)
 	unit_layer = UnitLayer.new()
 	units_canvas.add_child(unit_layer)
+	var th := Time.get_ticks_msec()
 	hud = Hud.new()
 	hud.game = self
 	add_child(hud)
+	_hud_ms = Time.get_ticks_msec() - th
 	map_view.province_tapped.connect(_on_province_tapped)
 	map_view.province_painted.connect(_on_province_painted)
 	autosave_on = Settings.autosave()
@@ -851,18 +855,22 @@ func new_world(seed_value: int, then := "select") -> void:
 		world.dispose()
 	world = World.new()
 	var t := Time.get_ticks_msec()
+	var parts := {}
 	if procedural:
 		MapGen.generate(world, seed_value, 800, 500, 14 if large_map else 22, 22 if large_map else 12)
 	else:
 		# картинки мира и карты распаковываются в рабочих потоках, пока главный
-		# разбирает данные (ImgPrefetch)
+		# разбирает данные (ImgPrefetch; при запуске задачи уже поставлены
+		# стартовой сценой scripts/boot.gd — здесь повтор не ставится)
 		MapLoader.prefetch()
 		MapView.prefetch()
-		MapLoader.load_world(world)
+		parts = MapLoader.load_world(world)
 		ImgPrefetch.run("relief", MapView._relief_layer.bind(world.height_image))
 	var load_ms := Time.get_ticks_msec() - t
 	sim = Simulation.new(world)
+	var tm := Time.get_ticks_msec()
 	map_view.setup(world)
+	var map_ms := Time.get_ticks_msec() - tm
 	unit_layer.map = map_view
 	unit_layer.world = world
 	unit_layer.player = -1
@@ -875,6 +883,14 @@ func new_world(seed_value: int, then := "select") -> void:
 	world_fresh = true
 	_play_usec = 0
 	unit_layer.rebuild()
+	if boot_info == "":
+		# первый запуск: сборка скриптов (scripts/boot.gd), окна, мир, карта
+		boot_info = "Запуск: сборка скриптов %d мс, окна %d, мир %d, карта %d; готово через %d мс от запуска процесса" % [
+			int(Engine.get_meta("boot_compile_ms", -1)), _hud_ms, load_ms, map_ms, Time.get_ticks_msec()]
+		if "--boot" in OS.get_cmdline_user_args():
+			print(boot_info)
+			for k in parts:
+				print("  мир: %-16s %6.1f мс" % [k, parts[k] / 1000.0])
 	world_unlock()
 	if procedural:
 		hud.gen_info = "Карта #%d: %d провинций, сгенерирована за %d мс на %d ядрах" % [seed_value, world.prov_count, load_ms, Parallel.thread_count()]

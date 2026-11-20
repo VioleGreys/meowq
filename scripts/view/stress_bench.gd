@@ -103,6 +103,8 @@ func run(g, in_game := false) -> void:
 	_p("Видео: %s · окно %s · карта: качество %s, разрешение %d%%, полосы %d" % [
 		RenderingServer.get_video_adapter_name(), str(DisplayServer.window_get_size()),
 		Settings.QUALITY_NAMES[Settings.map_quality()], int(g.map_view.res_scale * 100), g.map_view.strips])
+	if g.boot_info != "":
+		_p(g.boot_info)
 	if ingame:
 		_p("Партия: %s, %s, дивизий в мире %d" % [g.world.nations[me].name, g.world.date_string(), g.world.divisions.size()])
 	else:

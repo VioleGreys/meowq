@@ -31,9 +31,9 @@ var pal_img: Image
 var pal_tex: ImageTexture
 var _pal_rows := 1
 const PAL_SECS := 4 + 3 + 2 * ROAD_HALVES
-const ROAD_HALVES := 8
-const ART_DIR := "res://assets/map/"
-const ART_FILES := {"color_w": "colormap_w.webp", "color_e": "colormap_e.webp", "normal_w": "normal_w.png", "normal_e": "normal_e.png"}
+const ROAD_HALVES := BootFiles.ROAD_HALVES
+const ART_DIR := BootFiles.ART_DIR
+const ART_FILES := BootFiles.ART_FILES
 const ART_PAD := 32.0   # перекрытие половин (tools/build_map_art.py PAD)
 var front_img: Image          # фронты армий игрока: rgb — цвет армии, a — роль (раздел 3 палитры pal_tex)
 var _front_hash := 0
@@ -114,6 +114,9 @@ func setup(w: World) -> void:
 	if _band_task >= 0:
 		WorkerThreadPool.wait_for_task_completion(_band_task)
 		_band_task = -1
+	if _idb_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_idb_task)
+		_idb_task = -1
 	_band_pending = PackedInt32Array()
 	_band_again = false
 	world = w
@@ -320,6 +323,9 @@ func setup(w: World) -> void:
 		_param("ids_half", world.width)
 		_param("ids_off", 0)
 	# плитки: нормали волн (tools/build_water.py) и фактура местности вблизи — массивом
+	if _idb_task < 0 and Native.core != null and Native.core.has_method("border_band") \
+			and world.id_image != null and _id_bytes.size() != world.width * world.height * 3:
+		_idb_task = WorkerThreadPool.add_task(_ids1_job, true, "Map ids1")
 	var wpath := "res://data/world1936/water.png.bin"
 	var wimg := ImgPrefetch.image(wpath)
 	var has_w := wimg != null
@@ -581,8 +587,26 @@ static var _id_bytes := PackedByteArray()
 ## Карта провинций 1× из очищенной 2× (tools/build_ids2x.py: у рек провинция
 ## своего берега, без осколков) — иначе кайма страны строится по исходной 1×,
 ## где у рек остались полоски чужих провинций, и у берега темнеет пятно.
+## Номера провинций 1× (RGB8) для каймы: из карты 2× (как рисуется), иначе
+## из карты мира. При запуске — рабочим потоком (_idb_task, ~0,15 с на ПК),
+## пока главный собирает остальные текстуры; картинки только читаются.
+var _idb_task := -1
+
+func _ids1_bytes() -> PackedByteArray:
+	var img := _ids1_from_2x()
+	if img == null:
+		img = world.id_image.duplicate() as Image
+	img.convert(Image.FORMAT_RGB8)
+	return img.get_data()
+
+
+func _ids1_job() -> void:
+	_id_bytes = _ids1_bytes()
+
+
 func _ids1_from_2x() -> Image:
-	if _ids2().is_empty() or _ids2_imgs.size() != 2 or world.width != 5632:
+	# карта 2× уже собрана (setup) — не _ids2(): можно из рабочего потока
+	if world.width != 5632 or _ids2_cache.is_empty() or _ids2_imgs.size() != 2:
 		return null
 	var half := world.width   # половина сетки 2× — столько же столбцов, сколько у 1×
 	var pad: int = (_ids2_imgs[0] as Image).get_width() - half
@@ -655,12 +679,11 @@ func _update_band() -> void:
 	if Native.core == null or not Native.core.has_method("border_band") or world.id_image == null:
 		_param("has_band", false)
 		return
+	if _idb_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_idb_task)
+		_idb_task = -1
 	if _id_bytes.size() != world.width * world.height * 3:
-		var img := _ids1_from_2x()
-		if img == null:
-			img = world.id_image.duplicate() as Image
-		img.convert(Image.FORMAT_RGB8)
-		_id_bytes = img.get_data()
+		_id_bytes = _ids1_bytes()
 	var bw := world.width / BAND_STEP
 	var bh := world.height / BAND_STEP
 	var band: PackedByteArray = Native.core.border_band(_id_bytes, world.width, world.height, BAND_STEP, world.p_controller, BAND_PX)
@@ -681,48 +704,16 @@ func _update_band() -> void:
 ## 22 — пара сквозных выходов (r — жд, g — дорога: i0 + i1·8), остальные — отвороты к
 ## середине сквозной кривой.
 func _roads_pal(rows: int) -> bool:
-	var path := "res://data/world1936/roads.json"
-	if not FileAccess.file_exists(path):
+	var img := ImgPrefetch.take("roads")
+	if img == null:
+		img = BootFiles.roads_build()
+	var ns := 3 + 2 * ROAD_HALVES
+	if img == null or img.get_height() % ns != 0:
 		return false
-	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
-	if not (data is Dictionary):
-		return false
-	var q: float = float((data as Dictionary).get("q", 8.0))
-	var prov: Dictionary = (data as Dictionary).get("prov", {})
-	var secs: Array[Image] = []
-	for k in 3 + 2 * ROAD_HALVES:
-		secs.append(Image.create(64, rows, false, Image.FORMAT_RGBA8))
-	for key in prov:
-		var p := int(key)
-		if p < 0 or p >= world.prov_count:
-			continue
-		var v: Dictionary = prov[key]
-		var c: Array = v["c"]
-		var hs: Array = v["h"]
-		var x := p % 64
-		var y := p / 64
-		secs[0].set_pixel(x, y, _road_pt(float(c[0]), float(c[1]), q))
-		var n := mini(hs.size(), ROAD_HALVES)
-		var tb := 0
-		var fb := 0
-		for i in n:
-			var h: Array = hs[i]
-			tb |= (int(h[0]) & 3) << (2 * i)
-			fb |= (int(h[1]) & 1) << i
-			secs[2 + 2 * i].set_pixel(x, y, _road_pt(float(h[2]), float(h[3]), q))
-			secs[3 + 2 * i].set_pixel(x, y, _road_pt(float(h[4]), float(h[5]), q))
-		secs[1].set_pixel(x, y, Color8(n | (int(v.get("t", 0)) & 48), tb & 255, (tb >> 8) & 255, fb))
-		var pr: Array = v.get("p", [0, 0])
-		secs[2 + 2 * ROAD_HALVES].set_pixel(x, y, Color8(int(pr[0]), int(pr[1]), 0, 0))
-	for k in secs.size():
-		pal_img.blit_rect(secs[k], Rect2i(0, 0, 64, rows), Vector2i(0, (4 + k) * rows))
+	var rr := img.get_height() / ns
+	for k in ns:
+		pal_img.blit_rect(img, Rect2i(0, k * rr, 64, mini(rr, rows)), Vector2i(0, (4 + k) * rows))
 	return true
-
-
-static func _road_pt(x: float, y: float, q: float) -> Color:
-	var ix := clampi(int(round(x * q)), 0, 65535)
-	var iy := clampi(int(round(y * q)), 0, 65535)
-	return Color8(ix & 255, ix >> 8, iy & 255, iy >> 8)
 
 
 static var _sdf_cache: Array = []
@@ -755,7 +746,7 @@ static func _sdf2() -> Array:
 static func art_image(src: String) -> Image:
 	var img := ImgPrefetch.take("art:" + src)
 	if img == null:
-		img = _ctex_read(_art_src(src))
+		img = BootFiles.ctex_read(BootFiles.art_src(src))
 	if img != null:
 		return img
 	var tex := load(src) as Texture2D if ResourceLoader.exists(src) else null
@@ -764,13 +755,13 @@ static func art_image(src: String) -> Image:
 
 ## Есть ли графика карты src (импорт или упакованная для APK).
 static func art_exists(src: String) -> bool:
-	return ResourceLoader.exists(src) or _art_src(src) != ""
+	return ResourceLoader.exists(src) or BootFiles.art_src(src) != ""
 
 
 ## Размер исходной картинки текстуры (как Texture2D.get_size): у сжатых данные
 ## дополнены до кратного 4 (5664×5250 → 5252 строки).
 static func art_size(src: String) -> Vector2i:
-	var path := _art_src(src)
+	var path := BootFiles.art_src(src)
 	var f := FileAccess.open(path, FileAccess.READ) if path != "" else null
 	if f != null:
 		var magic := f.get_buffer(4).get_string_from_ascii()
@@ -790,60 +781,8 @@ static func art_size(src: String) -> Vector2i:
 ## сжатый zstd. Godot кладёт .ctex в APK без сжатия (4 × 40 МБ), а сжатые они
 ## ~60 МБ на все четыре; assets/map в APK не входит (export_presets.cfg).
 ## Заголовок: ART_PACK_MAGIC, размер .ctex, ширина и высота исходной картинки (u32).
-const ART_PACK_DIR := "res://data/art/"
-const ART_PACK_MAGIC := "MQZ1"
-
-
-## Файл с данными текстуры src: .ctex импорта (ПК) или упакованный (APK); "" — нет.
-static func _art_src(src: String) -> String:
-	var p := _ctex_path(src)
-	if p != "":
-		return p
-	var z := ART_PACK_DIR + src.get_file() + ".etc2.zst"
-	return z if OS.has_feature("etc2") and FileAccess.file_exists(z) else ""
-
-
-## Файл .ctex, который выбрал бы движок: первый path.<формат> из .import,
-## поддержанный устройством (ResourceFormatImporter), — и который есть в сборке.
-static func _ctex_path(src: String) -> String:
-	var cf := ConfigFile.new()
-	if not FileAccess.file_exists(src + ".import") or cf.load(src + ".import") != OK or not cf.has_section("remap"):
-		return ""
-	for key in cf.get_section_keys("remap"):
-		var kp := str(cf.get_value("remap", key))
-		if key.begins_with("path.") and OS.has_feature(key.get_slice(".", 1)) and FileAccess.file_exists(kp):
-			return kp
-	var p := str(cf.get_value("remap", "path", ""))
-	return p if p != "" and FileAccess.file_exists(p) else ""
-
-
-## Байты .ctex (упакованный — распаковать).
-static func _ctex_bytes(path: String) -> PackedByteArray:
-	var buf := FileAccess.get_file_as_bytes(path)
-	if buf.size() < 16 or buf.slice(0, 4).get_string_from_ascii() != ART_PACK_MAGIC:
-		return buf
-	return buf.slice(16).decompress(buf.decode_u32(4), FileAccess.COMPRESSION_ZSTD)
-
-
-## Разбор .ctex (CompressedTexture2D::load_image_from_file, DATA_FORMAT_IMAGE);
-## можно в рабочем потоке. null — нет файла или не тот формат.
-static func _ctex_read(path: String) -> Image:
-	if path == "":
-		return null
-	var b := _ctex_bytes(path)
-	# GST2, версия, ширина, высота, флаги, предел mip, 3 запасных — 36 байт
-	if b.size() < 52 or b.slice(0, 4).get_string_from_ascii() != "GST2":
-		return null
-	if b.decode_u32(36) != 0:  # DATA_FORMAT_IMAGE: сырые данные (сжатие в видеопамяти)
-		return null
-	var w := b.decode_u16(40)
-	var h := b.decode_u16(42)
-	var mips := b.decode_u32(44)
-	var fmt := b.decode_u32(48)
-	if w == 0 or h == 0 or fmt >= Image.FORMAT_MAX:
-		return null
-	var img := Image.create_from_data(w, h, mips > 0, fmt as Image.Format, b.slice(52))
-	return img if img != null and not img.is_empty() else null
+const ART_PACK_DIR := BootFiles.ART_PACK_DIR
+const ART_PACK_MAGIC := BootFiles.ART_PACK_MAGIC
 
 
 ## Рельеф слоем массива base_tex (RGBA8 с mip-уровнями).
@@ -854,24 +793,9 @@ static func _relief_layer(h: Image) -> Image:
 	return rel
 
 
-## Картинки карты — распаковать заранее в рабочих потоках (ImgPrefetch; до
-## MapLoader.load_world). Поля и карта 2× — только если ещё не в кэше.
+## Картинки карты — распаковать заранее в рабочих потоках (BootFiles).
 static func prefetch() -> void:
-	var d := "res://data/world1936/"
-	if _ids2_cache.is_empty():
-		for k in ["w", "e"]:
-			ImgPrefetch.file(d + "ids2_%s.png.bin" % k, Image.FORMAT_RG8)
-	if _sdf_cache.is_empty():
-		for k in ["w", "e"]:
-			ImgPrefetch.file(d + "sdf_%s.png.bin" % k, Image.FORMAT_L8, true)
-	ImgPrefetch.file(d + "cover.png.bin", Image.FORMAT_RGBA8, true)
-	ImgPrefetch.file(d + "rivers.png.bin", Image.FORMAT_RGBA8, true)
-	for k in ["color_w", "color_e", "normal_w", "normal_e"]:
-		var src: String = ART_DIR + ART_FILES[k]
-		ImgPrefetch.run("art:" + src, _ctex_read.bind(_art_src(src)))
-	ImgPrefetch.file(d + "sprites.png.bin")
-	ImgPrefetch.file(d + "road_tex.png.bin")
-	ImgPrefetch.file(d + "water.png.bin")
+	BootFiles.prefetch_map(_ids2_cache.is_empty(), _sdf_cache.is_empty())
 
 
 ## Массив текстур из слоёв одного размера и формата (null — не вышло).

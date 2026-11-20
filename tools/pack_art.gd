@@ -1,6 +1,6 @@
 extends SceneTree
 ## Графика карты для APK: .ctex формата ETC2 (импорт Godot) → data/art/*.etc2.zst
-## (сжатие zstd; MapView._art_src / _ctex_bytes). Godot кладёт .ctex в APK без
+## (сжатие zstd; BootFiles.art_src / ctex_bytes). Godot кладёт .ctex в APK без
 ## сжатия (4 × 40 МБ), упакованные — ~60 МБ; assets/map в APK не входит
 ## (exclude_filter в export_presets.cfg). Зовёт tools/build_apk.sh после импорта:
 ##   godot --headless --path . --script res://tools/pack_art.gd

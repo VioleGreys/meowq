@@ -89,6 +89,7 @@ static var _mod := {}
 
 
 static var _reqs := PackedStringArray()
+static var _auto_memo := {}   # роль и изученные _reqs -> [корпус, модули] (auto)
 
 
 ## Ключ пересборки: сколько изучено технологий, открывающих корпуса и модули
@@ -235,8 +236,26 @@ static func hull_fits_role(h: Array, role: int) -> bool:
 
 ## Лучший проект роли по технологиям страны: перебор корпусов, слоты — жадно
 ## лучшим модулем. Возвращает [корпус, модули] (корпус "" — нечего строить).
+## Итог зависит только от роли и того, какие из технологий корпусов и модулей
+## (_reqs) изучены, — он запоминается (_auto_memo): при запуске ~80 стран
+## перебирали одно и то же (~110 мс на ПК). Только поток симуляции (и загрузка).
 static func auto(nat, role: int) -> Array:
 	_ensure()
+	tech_key(nat)   # заполняет _reqs
+	var mk := PackedByteArray()
+	mk.resize(_reqs.size() + 1)
+	mk[0] = role
+	for i in _reqs.size():
+		mk[i + 1] = 1 if nat.techs.has(_reqs[i]) else 0
+	var hit: Array = _auto_memo.get(mk, [])
+	if not hit.is_empty():
+		return [hit[0], (hit[1] as Array).duplicate()]
+	var res := _auto(nat, role)
+	_auto_memo[mk] = [res[0], (res[1] as Array).duplicate()]
+	return res
+
+
+static func _auto(nat, role: int) -> Array:
 	var best_h := ""
 	var best_m: Array = []
 	var best_s := -1e18
@@ -272,25 +291,51 @@ static func auto(nat, role: int) -> Array:
 
 ## Записать проект в мир; такой же у страны уже есть — его номер.
 static func add(world, nid: int, name: String, hull_id: String, mods: Array) -> int:
-	for i in world.ship_designs.size():
+	for i: int in _owned(world, nid):
 		var d: Dictionary = world.ship_designs[i]
-		if int(d["owner"]) == nid and d["hull"] == hull_id and d["mods"] == mods:
+		if d["hull"] == hull_id and d["mods"] == mods:
 			return i
 	var d := stats(hull_id, mods)
 	d["owner"] = nid
 	d["name"] = name
 	d["hull"] = hull_id
 	d["mods"] = mods.duplicate()
+	var own := _owned(world, nid)
 	d["id"] = world.ship_designs.size()
 	world.ship_designs.append(d)
+	own.append(d["id"])
+	_own_n += 1
 	return int(d["id"])
+
+
+## Номера проектов страны по порядку (проекты после add не меняются; новый
+## массив мира или чужое добавление — указатель строится заново). Раньше add и
+## _auto_name перебирали все проекты мира: при запуске ~400 проектов × 400.
+static var _own := {}            # страна -> Array номеров
+static var _own_of: Array = []   # чей массив проектов (world.ship_designs)
+static var _own_n := 0
+
+static func _owned(world, nid: int) -> Array:
+	var all: Array = world.ship_designs
+	if not is_same(all, _own_of) or all.size() != _own_n:
+		_own = {}
+		_own_of = all
+		_own_n = all.size()
+		for i in all.size():
+			var o: int = int(all[i]["owner"])
+			if not _own.has(o):
+				_own[o] = []
+			_own[o].append(i)
+	if not _own.has(nid):
+		_own[nid] = []
+	return _own[nid]
 
 
 static func _auto_name(world, nat, role: int) -> String:
 	var base := "%s обр. %d г." % [ROLE_NAMES[role], world.year_of()]
 	var n := 1
-	for d in world.ship_designs:
-		if int(d["owner"]) == nat.id and String(d["name"]).begins_with(base):
+	for i: int in _owned(world, nat.id):
+		if String(world.ship_designs[i]["name"]).begins_with(base):
 			n += 1
 	return base if n == 1 else "%s (%d)" % [base, n]
 

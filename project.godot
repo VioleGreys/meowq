@@ -7,7 +7,7 @@ config_version=5
 
 config/name="Meowq: Фронты"
 config/description="Мобильная глобальная стратегия с многопоточной симуляцией"
-run/main_scene="res://scenes/main.tscn"
+run/main_scene="res://scenes/boot.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 config/icon="res://icon.svg"
 config/quit_on_go_back=false
