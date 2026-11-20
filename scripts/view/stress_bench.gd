@@ -254,7 +254,8 @@ func _segment(s: int, sec: float, me: int) -> void:
 
 
 ## «Цена видеокарты»: на паузе карта перерисовывается каждый кадр одним способом —
-## медиана кадра и есть цена (GLES3 телефона время видеокарты не отдаёт).
+## медиана кадра и есть цена (GLES3 телефона время видеокарты не отдаёт). Части
+## шейдера выключаются по одной (кадр с заготовками): какая из них дорога на телефоне.
 func _gpu_probe() -> void:
 	var g = game
 	var mv: MapView = g.map_view
@@ -263,28 +264,53 @@ func _gpu_probe() -> void:
 	g.world_unlock()
 	var strips0 := mv.strips
 	var auto0 := mv.res_auto
+	var rs0 := mv.res_scale
+	var q0 := mv.quality
 	var mode0: int = mv.map_mode
+	var matb0: ShaderMaterial = mv.mat_b
 	mv.res_auto = false
 	mv.strips = 1
-	var tests := [["покой (карта не рисуется)", 0], ["кадр целиком с заготовками", 1],
-		["кадр целиком вживую", 2], ["кадр целиком, режим «Местность»", 3], ["холст атласа 4096² без тайлов", 4]]
+	var flat := ShaderMaterial.new()
+	flat.shader = Shader.new()
+	flat.shader.code = "shader_type canvas_item;\nvoid fragment() { COLOR = vec4(UV, 0.5, 1.0); }\n"
+	# [название, вид]: 1 — с заготовками, 2 — вживую, 3 — «Местность», 4 — холст атласа,
+	# 5 — пустой шейдер, 6 — половина разрешения, 7 — качество низкое, 8 — высокое;
+	# [название, 1, параметр] — с заготовками без этой части
+	var tests := [["покой (карта не рисуется)", 0], ["кадр с заготовками", 1],
+		["кадр вживую", 2], ["кадр, режим «Местность»", 3], ["холст атласа 4096² без тайлов", 4],
+		["кадр, пустой шейдер", 5], ["кадр с заготовками, разрешение ×0.5", 6],
+		["кадр с заготовками, качество низкое", 7], ["кадр с заготовками, качество высокое", 8]]
+	for prm in ["has_sdf", "has_band", "has_rivers", "has_roads", "has_road_tex", "has_ids2", "has_sprites",
+			"has_states", "has_elev", "has_detail", "has_cover", "has_art", "front_on"]:
+		if mv.mat_b.get_shader_parameter(prm) == true:
+			tests.append(["кадр с заготовками без " + prm, 1, prm])
 	for t in tests:
 		var kind: int = t[1]
+		var prm: String = t[2] if t.size() > 2 else ""
 		mv._bake_off = kind == 2
 		if kind == 3:
 			g.set_map_mode(MapView.MapMode.TERRAIN)
+		elif kind == 5:
+			mv.mat_b = flat
+		elif kind == 6:
+			mv.res_scale = rs0 * 0.5
+		elif kind == 7 or kind == 8:
+			mv.quality = 0 if kind == 7 else 2
+		if prm != "":
+			mv._param(prm, false)
 		var ft := PackedFloat32Array()
 		var px := 0.0
 		MapView.gpu = {}
 		var f_prev := Time.get_ticks_usec()
-		for i in 70:
-			if kind >= 1 and kind <= 3:
+		var nf := 70 if kind == 0 or kind == 4 else 16
+		for i in nf:
+			if kind != 0 and kind != 4:
 				mv._dirty = true
 			elif kind == 4 and mv.bake != null and mv.bake.atlas_vp != null:
 				mv.bake.atlas_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 			await get_tree().process_frame
 			var f_now := Time.get_ticks_usec()
-			if i >= 10:
+			if i >= 4:
 				ft.append((f_now - f_prev) / 1000.0)
 				for k in MapView.gpu:
 					px += float(MapView.gpu[k])
@@ -292,6 +318,11 @@ func _gpu_probe() -> void:
 			f_prev = f_now
 		_probe.append([t[0], _pct(ft, 0.5), _pct(ft, 0.9), px / maxf(1.0, ft.size())])
 		mv._bake_off = false
+		mv.mat_b = matb0
+		mv.res_scale = rs0
+		mv.quality = q0
+		if prm != "":
+			mv._param(prm, true)
 		if kind == 3:
 			g.set_map_mode(mode0)
 	mv.strips = strips0
@@ -414,9 +445,9 @@ func _report() -> void:
 		_p("  %-34s %s" % [SEGMENTS[s], _gpu_str(per)])
 	_p("")
 	if not _probe.is_empty():
-		_p("Цена видеокарты (пауза, 60 кадров; мс кадра: медиана / 90 %; тыс. пикселей за кадр):")
+		_p("Цена видеокарты (пауза, карта перерисовывается каждый кадр; мс кадра: медиана / 90 %; тыс. пикселей за кадр):")
 		for pr in _probe:
-			_p("  %-34s %6.1f / %6.1f · %.0f" % [pr[0], pr[1], pr[2], float(pr[3]) / 1000.0])
+			_p("  %-46s %6.1f / %6.1f · %.0f" % [pr[0], pr[1], pr[2], float(pr[3]) / 1000.0])
 		_p("")
 	_p("Действия игрока (главный поток, мс: среднее / худшее, раз; без отрисовки нового окна):")
 	var ak := _acts.keys()
