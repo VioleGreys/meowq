@@ -269,6 +269,11 @@ func _gpu_probe() -> void:
 	var mode0: int = mv.map_mode
 	mv.res_auto = false
 	mv.strips = 1
+	# политическая карта: после отрезка «режимы карты» мог остаться режим без
+	# заготовок («Местность») — тогда «с заготовками» рисовалось вживую (отчёт ноября 2026)
+	g.set_map_mode(MapView.MapMode.POLITICAL)
+	for i in 30:
+		await get_tree().process_frame
 	# [название, вид]: 1 — с заготовками, 2 — вживую, 3 — «Местность», 4 — холст атласа,
 	# 5 — пустой шейдер, 6 — половина разрешения, 7 — качество низкое, 8 — высокое;
 	# [название, 1, параметр] — с заготовками без этой части
@@ -345,9 +350,10 @@ func _gpu_probe() -> void:
 		if prm != "":
 			mv._param(prm, true)
 		if kind == 3:
-			g.set_map_mode(mode0)
+			g.set_map_mode(MapView.MapMode.POLITICAL)
 	mv.strips = strips0
 	mv.res_auto = auto0
+	g.set_map_mode(mode0)
 	mv.redraw()
 
 

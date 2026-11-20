@@ -1102,62 +1102,90 @@ void fragment() {
 	int o0 = far ? 1 : 0;
 	int o1 = far ? 3 : 4;
 	un = 0;
-	for (int oy = o0; oy < o1; oy++) {
-		for (int ox = o0; ox < o1; ox++) {
+	for (int oy = 0; oy < 4; oy++) {
+		for (int ox = 0; ox < 4; ox++) {
+			if (oy < o0 || oy >= o1 || ox < o0 || ox >= o1) {
+				continue;
+			}
 			int cidv = pid(i0 + ivec2(ox - 1, oy - 1));
 			float w = wx[ox] * wy[oy];
-			int k = -1;
-			for (int j = 0; j < un; j++) {
-				if (uid[j] == cidv) {
-					k = j;
+			// индексы массивов — только постоянные (цикл до NS разворачивается): с
+			// индексом «на ходу» Adreno держит массивы в медленной памяти, а не в
+			// регистрах (отчёт ноября 2026: кадр карты ~300 мс при пустом шейдере 33)
+			bool fnd = false;
+			for (int j = 0; j < NS; j++) {
+				if (j < un && uid[j] == cidv) {
+					uw[j] += w;
+					fnd = true;
 				}
 			}
-			if (k < 0 && un < NS) {
-				k = un;
-				uid[k] = cidv;
+			if (!fnd && un < NS) {
+				for (int j = 0; j < NS; j++) {
+					if (j == un) {
+						uid[j] = cidv;
+						uw[j] += w;
+					}
+				}
 				un++;
-			}
-			if (k >= 0) {
-				uw[k] += w;
 			}
 		}
 	}
 	}
 	int top = 0;
-	for (int j = 1; j < un; j++) {
-		if (uw[j] > uw[top]) {
+	float top_w = uw[0];
+	int top_id = uid[0];
+	for (int j = 1; j < NS; j++) {
+		if (j < un && uw[j] > top_w) {
 			top = j;
+			top_w = uw[j];
+			top_id = uid[j];
 		}
 	}
 	int sec = -1;
-	for (int j = 0; j < un; j++) {
-		if (j != top && uid[j] >= 0 && (sec < 0 || uw[j] > uw[sec])) {
+	float sec_w = 0.0;
+	int sec_id = -1;
+	for (int j = 0; j < NS; j++) {
+		if (j < un && j != top && uid[j] >= 0 && (sec < 0 || uw[j] > sec_w)) {
 			sec = j;
+			sec_w = uw[j];
+			sec_id = uid[j];
 		}
 	}
-	int id = uid[top];
-	float diff = sec >= 0 ? (uw[top] - uw[sec]) / (uw[top] + uw[sec]) : 1.0;
-	int id2 = sec >= 0 ? uid[sec] : id;
+	int id = top_id;
+	float diff = sec >= 0 ? (top_w - sec_w) / (top_w + sec_w) : 1.0;
+	int id2 = sec >= 0 ? sec_id : id;
 	// Берег — по доле суши из векторных контуров (канал b рельефа, tools/build_map.py):
 	// уровень 0.5 даёт настоящую плавную линию берега. Если победила провинция не той
 	// стихии — берём лучшего соперника нужной (суша) или рисуем воду.
 	float cov = quality > 0 ? textureLod(base_tex, vec3(muv, 0.0), 0.0).b : 0.5;
 	int nat_c[NS] = int[](-2, -2, -2, -2, -2, -2, -2, -2);
-	for (int j = 0; j < un; j++) {
-		nat_c[j] = uid[j] >= 0 ? nation(pal(0, uid[j])) : -2;
+	int nat_top = -2;
+	for (int j = 0; j < NS; j++) {
+		if (j < un) {
+			nat_c[j] = uid[j] >= 0 ? nation(pal(0, uid[j])) : -2;
+			if (j == top) {
+				nat_top = nat_c[j];
+			}
+		}
 	}
 	bool wide_land = false;   // суша найдена вне окна — границ стран/провинций тут не рисуем
-	bool cov_land = quality > 0 ? cov >= 0.5 : nation(pal(0, uid[top])) >= 0;
-	if (cov_land && nat_c[top] < 0) {
+	bool cov_land = quality > 0 ? cov >= 0.5 : nation(pal(0, top_id)) >= 0;
+	if (cov_land && nat_top < 0) {
 		int bl = -1;
-		for (int j = 0; j < un; j++) {
-			if (nat_c[j] >= 0 && (bl < 0 || uw[j] > uw[bl])) {
+		float bl_w = 0.0;
+		int bl_id = -1;
+		for (int j = 0; j < NS; j++) {
+			if (j < un && nat_c[j] >= 0 && (bl < 0 || uw[j] > bl_w)) {
 				bl = j;
+				bl_w = uw[j];
+				bl_id = uid[j];
 			}
 		}
 		if (bl >= 0) {
 			top = bl;
-			id = uid[top];
+			top_w = bl_w;
+			top_id = bl_id;
+			id = top_id;
 		} else {
 			// векторный контур уже суша, а в окне сглаживания одна вода (берег
 			// большого озера-зоны) — ищем ближайшую сушу чуть дальше, иначе тут
@@ -1972,7 +2000,10 @@ void fragment() {
 	float w_mine = 0.0;      // страна победителя
 	float w_other = 0.0;     // лучшая другая страна (суша)
 	float w_prov2 = 0.0;     // лучшая другая провинция той же страны
-	for (int j = 0; j < un; j++) {
+	for (int j = 0; j < NS; j++) {
+		if (j >= un) {
+			break;
+		}
 		if (uid[j] < 0) {
 			continue;
 		}
@@ -1988,10 +2019,16 @@ void fragment() {
 			}
 		}
 	}
-	for (int j = 0; j < un; j++) {
+	for (int j = 0; j < NS; j++) {
+		if (j >= un) {
+			break;
+		}
 		if (uid[j] >= 0 && nat_c[j] >= 0 && nat_c[j] != ctrl) {
 			float s2 = 0.0;
-			for (int k = 0; k < un; k++) {
+			for (int k = 0; k < NS; k++) {
+				if (k >= un) {
+					break;
+				}
 				if (uid[k] >= 0 && nat_c[k] == nat_c[j]) {
 					s2 += uw[k];
 				}
@@ -2003,9 +2040,12 @@ void fragment() {
 	float w_st_same = 0.0;
 	float w_st_oth = 0.0;
 	if (has_states) {
-		vec4 sc0 = pal(2, uid[top]);
+		vec4 sc0 = pal(2, top_id);
 		int st_top = int(sc0.r * 255.0 + 0.5) + int(sc0.g * 255.0 + 0.5) * 256;
-		for (int j = 0; j < un; j++) {
+		for (int j = 0; j < NS; j++) {
+			if (j >= un) {
+				break;
+			}
 			if (uid[j] >= 0 && nat_c[j] == ctrl) {
 				vec4 scj = pal(2, uid[j]);
 				int stj = int(scj.r * 255.0 + 0.5) + int(scj.g * 255.0 + 0.5) * 256;
@@ -2023,7 +2063,10 @@ void fragment() {
 	int fo_j = -1;
 	int role_top = 0;
 	if (front_on) {
-		for (int j = 0; j < un; j++) {
+		for (int j = 0; j < NS; j++) {
+			if (j >= un) {
+				break;
+			}
 			if (uid[j] < 0) {
 				continue;
 			}
@@ -2048,8 +2091,8 @@ void fragment() {
 	float s1 = w_mine + w_other;
 	float d1 = s1 > 0.0 ? abs(w_mine - w_other) / s1 : 1.0;
 	float fw1 = fwidth(d1);
-	float s2 = uw[top] + w_prov2;
-	float d2 = s2 > 0.0 ? (uw[top] - w_prov2) / s2 : 1.0;
+	float s2 = top_w + w_prov2;
+	float d2 = s2 > 0.0 ? (top_w - w_prov2) / s2 : 1.0;
 	float fw2 = fwidth(d2);
 	float s3 = w_fo + w_ft;
 	float d3 = s3 > 0.0 ? abs(w_fo - w_ft) / s3 : 1.0;
@@ -2100,7 +2143,10 @@ void fragment() {
 		int sel_st = int(ss.r * 255.0 + 0.5) + int(ss.g * 255.0 + 0.5) * 256;
 		float w_in = 0.0;
 		float w_out = 0.0;
-		for (int j = 0; j < un; j++) {
+		for (int j = 0; j < NS; j++) {
+			if (j >= un) {
+				break;
+			}
 			if (uid[j] >= 0 && nat_c[j] >= 0) {
 				vec4 scj = pal(2, uid[j]);
 				int stj = int(scj.r * 255.0 + 0.5) + int(scj.g * 255.0 + 0.5) * 256;
