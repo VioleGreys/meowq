@@ -106,16 +106,19 @@ uniform sampler2D page_tex : filter_nearest;
 uniform sampler2DArray atlas_tex : filter_linear;
 uniform int pg_row[13];
 uniform float bk_r = 1.0;
+// тайлы пакетов APK (плотность 1) при bk_r ≠ 1 — подмена, пока свои не нарисованы
+// (тот же вид, реже пиксели); строки — pg_row1[k], −1 — нет
+uniform int pg_row1[13];
 const float BK_T = 248.0;
 
 // выборка тайла: вдали от берега — Catmull-Rom (5 билинейных выборок: резче
 // билинейной при сдвиге на долю пикселя), у берега — только тексели своей
 // стихии (суша — S > 0, море — S = 0, альфа 1), иначе по берегу смешивались цвета
-vec4 bake_lv(int k, vec2 wp, bool land, bool coast, out bool ok) {
-	float z = exp2(float(k) * 0.5 - 3.0) * bk_r;
+vec4 bake_lv(int k, int row, float dens, vec2 wp, bool land, bool coast, out bool ok) {
+	float z = exp2(float(k) * 0.5 - 3.0) * dens;
 	vec2 p = wp * z;
 	ivec2 t = max(ivec2(floor(p / BK_T)), ivec2(0));
-	vec4 e = texelFetch(page_tex, ivec2(t.x, pg_row[k] + t.y), 0);
+	vec4 e = texelFetch(page_tex, ivec2(t.x, row + t.y), 0);
 	int layer = int(e.r * 255.0 + 0.5) + int(e.g * 255.0 + 0.5) * 256 - 1;
 	ok = layer >= 0;
 	float lf = float(max(layer, 0));
@@ -171,11 +174,11 @@ vec4 bake_at(vec2 wp, float zoom, bool land) {
 	bool coast = cv > 0.002 && cv < 0.998;
 	bool ok0;
 	bool ok1 = false;
-	vec4 a = w < 0.999 ? bake_lv(k0, wp, land, coast, ok0) : vec4(0.0);
+	vec4 a = w < 0.999 ? bake_lv(k0, pg_row[k0], bk_r, wp, land, coast, ok0) : vec4(0.0);
 	if (w >= 0.999) {
 		ok0 = false;
 	}
-	vec4 b = w > 0.001 ? bake_lv(k0 + 1, wp, land, coast, ok1) : vec4(0.0);
+	vec4 b = w > 0.001 ? bake_lv(k0 + 1, pg_row[k0 + 1], bk_r, wp, land, coast, ok1) : vec4(0.0);
 	if (ok0 && ok1) {
 		return mix(a, b, w);
 	}
@@ -185,20 +188,39 @@ vec4 bake_at(vec2 wp, float zoom, bool land) {
 	if (ok1) {
 		return b;
 	}
-	// тайла нет (кадр с подменой, пока дорисовываются) — ближний более дальний уровень
+	// тайла нет (кадр с подменой, пока дорисовываются) — тайл пакета того же уровня
+	// (плотность 1: тот же вид, реже пиксели), иначе ближний более дальний уровень
+	if (pg_row1[0] >= 0) {
+		bool ok2 = false;
+		bool ok3 = false;
+		vec4 c2 = w < 0.999 ? bake_lv(k0, pg_row1[k0], 1.0, wp, land, coast, ok2) : vec4(0.0);
+		if (w >= 0.999) {
+			ok2 = false;
+		}
+		vec4 c3 = w > 0.001 ? bake_lv(k0 + 1, pg_row1[k0 + 1], 1.0, wp, land, coast, ok3) : vec4(0.0);
+		if (ok2 && ok3) {
+			return mix(c2, c3, w);
+		}
+		if (ok2) {
+			return c2;
+		}
+		if (ok3) {
+			return c3;
+		}
+	}
 	for (int d = 1; d <= 4; d++) {
 		int kc = k0 - d;
 		if (kc < 1) {
 			break;
 		}
 		bool okc;
-		vec4 c = bake_lv(kc, wp, land, coast, okc);
+		vec4 c = bake_lv(kc, pg_row[kc], bk_r, wp, land, coast, okc);
 		if (okc) {
 			return c;
 		}
 	}
 	bool okf;
-	return bake_lv(0, wp, land, coast, okf);
+	return bake_lv(0, pg_row[0], bk_r, wp, land, coast, okf);
 }
 #endif
 uniform vec4 art_geom = vec4(11264.0, 5600.0, 5664.0, 5250.0);

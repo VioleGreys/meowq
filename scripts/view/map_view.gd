@@ -63,6 +63,7 @@ var _full_baked := false       # кадр экрана нарисован с з�
 var _full_soft := false        # …но не все тайлы были в атласе (шейдер взял дальний уровень):
                                # как только дорисуются — перерисовать (вид станет точным)
 var _soft_keys := PackedInt64Array()  # подмена: те же места на 1–4 ступени дальше
+var _live_wait := false        # кадр экрана живой, хотя заготовки можно: ждём тайлы
 var _screen_keys := PackedInt64Array()
 var _bk_logical := Vector2.ZERO  # логический размер буфера кадра (тайлы впрок)
 var _ahead_off := false          # тайлы впрок выключены (замеры: --noahead)
@@ -1614,6 +1615,11 @@ func _process_map(dt: float) -> void:
 			redraw()
 	elif _full_baked and not _screen_keys.is_empty():
 		bake.want(_screen_keys)   # тайлы показанного кадра — не вытеснять
+	elif _live_wait and not _dirty and _moving <= 0.0 and _strip_n == 0 and bake.frame % 4 == 0:
+		# живой кадр: тайлы легли (свои или подмена из пакета) — перерисовать с ними
+		if bake.want(_screen_keys) or not _soft_cover(_screen_keys).is_empty():
+			_live_wait = false
+			redraw()
 	# рисовать тайлы — когда карта стоит (при сдвиге видеокарта занята кадром)
 	# и не трогают экран: касание — скорее всего выбор провинции или сдвиг, кадр с
 	# дорисовкой тайла в этот момент дал бы задержку отклика
@@ -1656,6 +1662,7 @@ func _param(name: String, v) -> void:
 		bake.mat.set_shader_parameter(name, v)
 	elif name == "winter":
 		_param("pg_row", bake.pg_rows(1 if float(v) >= 0.5 else 0))
+		_param("pg_row1", bake.pg_rows1(1 if float(v) >= 0.5 else 0))
 
 
 # --- Заготовки (MapBake) -------------------------------------------------------
@@ -1666,6 +1673,7 @@ func _bake_push() -> void:
 	_param("atlas_tex", bake.atlas)
 	_param("bk_r", bake.r_cls)
 	_param("pg_row", bake.pg_rows(_season()))
+	_param("pg_row1", bake.pg_rows1(_season()))
 
 
 func _season() -> int:
@@ -1703,10 +1711,8 @@ func _screen_bake(logical: Vector2, rk: float, need_mode: int, partial := false)
 	_screen_keys = keys
 	var r := 1 if bake.want(_screen_keys) else 0
 	if r == 0 and need_mode != 0 and not _soft_off:
-		# подмена — только если те же места на 1–4 ступени дальше уже в атласе
-		# (обычно — после приближения): иначе вблизи каша самого дальнего уровня
-		var ck := bake.cover(keys)
-		if not ck.is_empty() and keys.size() + ck.size() <= MapBake.CAP * 3 / 4:
+		var ck := _soft_cover(keys)
+		if not ck.is_empty():
 			r = 2
 			_soft_keys = ck
 	if need_mode == 1 and r == 0:
@@ -1716,10 +1722,22 @@ func _screen_bake(logical: Vector2, rk: float, need_mode: int, partial := false)
 	return r
 
 
+## Подмена недостающих тайлов keys — тайлами пакета (плотность 1) или теми же
+## местами на 1–4 ступени дальше, если они уже в атласе (обычно — после
+## приближения): иначе вблизи каша самого дальнего уровня. Пусто — подмены нет.
+func _soft_cover(keys: PackedInt64Array) -> PackedInt64Array:
+	var ck := bake.cover(keys)
+	# свои и подмена вместе — в атлас (запас 16 слоёв под загрузку и отрисовку)
+	if ck.is_empty() or keys.size() + ck.size() > MapBake.CAP - 16:
+		return PackedInt64Array()
+	return ck
+
+
 ## Полный кадр (или первая полоса) нарисован так (_screen_bake).
 func _set_full(r: int) -> void:
 	_full_baked = r >= 1
 	_full_soft = r == 2
+	_live_wait = r == 0 and _bake_ok() and not _soft_off and not _screen_keys.is_empty()
 
 
 ## Полоса или частичный кадр — тем же шейдером, что прежний полный; false — его

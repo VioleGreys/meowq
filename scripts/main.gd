@@ -303,6 +303,8 @@ func _auto_screenshot(path: String) -> void:
 		await _bake_test(path)
 	if "--aheadtest" in OS.get_cmdline_user_args():
 		await _ahead_test()
+	if "--subtest" in OS.get_cmdline_user_args():
+		await _sub_test()
 	if _arg("bake_sample") != "":
 		await map_view.bake.sample_packs(_arg("bake_sample"), [6, 7, 8, 9, 10], 24)
 	if _arg("bake_pack") != "":
@@ -329,6 +331,45 @@ func _bake_warm() -> void:
 		for i in 3:
 			await get_tree().process_frame
 		n += 1
+
+
+## Подмена тайлами пакетов (-- --subtest, шаг 14): при плотности ≠ 1 (экран
+## 2560×1440 — r = 1.5) и пустом кэше первый кадр — с тайлами пакета (плотность 1),
+## потом — точный. Снимки *_sub.png (первый с подменой) и *_done.png.
+func _sub_test() -> void:
+	var bk := map_view.bake
+	print("subtest: плотность r %.2f, тайлов пакетов %d, подмена %s" % [bk.r_cls, bk._pack.size(), bk.sub])
+	map_view.redraw()
+	var t0 := Time.get_ticks_msec()
+	var kinds: Array = []
+	var first_sub := -1
+	for n in 3000:
+		await get_tree().process_frame
+		var kd := "точный" if map_view._full_baked and not map_view._full_soft else ("подмена" if map_view._full_soft else "живой")
+		if kinds.is_empty() or kinds[-1][0] != kd:
+			kinds.append([kd, n, Time.get_ticks_msec() - t0])
+		if kd == "подмена" and first_sub < 0:
+			first_sub = n
+			for i in 2:
+				await get_tree().process_frame
+			if _arg("screenshot") != "":
+				map_view.map_vp.get_texture().get_image().save_png(_arg("screenshot").replace(".png", "_sub.png"))
+			var ts: Array = []
+			for i in 8:
+				map_view.redraw()
+				var f0 := Time.get_ticks_usec()
+				await get_tree().process_frame
+				if i >= 2:
+					ts.append(Time.get_ticks_usec() - f0)
+			ts.sort()
+			print("subtest: кадр с подменой %.1f мс (медиана)" % (ts[ts.size() / 2] / 1000.0))
+		if kd == "точный":
+			break
+	print("subtest: кадры %s; нарисовано %d, загружено %d" % [str(kinds), bk.baked_tiles, bk.loaded_tiles])
+	for i in 4:
+		await get_tree().process_frame
+	if _arg("screenshot") != "":
+		map_view.map_vp.get_texture().get_image().save_png(_arg("screenshot").replace(".png", "_done.png"))
 
 
 ## Тайлы впрок (-- --aheadtest [--idle=N --zin=2 --noahead]): дождаться заготовок

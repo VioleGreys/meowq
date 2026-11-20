@@ -21,6 +21,7 @@ const CAP := 256                # слоёв атласа (минимум GLES3 
 const PACK_DIR := "res://data/bake/"
 const CACHE_ROOT := "user://bake/"
 const BAKE_VERSION := 1         # поднять, если заготовки меняются не из шейдера
+const SUB := 1 << 29            # ключ тайла пакета (плотность 1) при r_cls ≠ 1 — подмена
 const UPLOADS := 24             # тайлов в атлас за кадр (ПК; телефон — uploads)
 var uploads := UPLOADS
 
@@ -40,6 +41,13 @@ var gw := PackedInt32Array()
 var gh := PackedInt32Array()
 var rows := PackedInt32Array()  # первая строка уровня k (лето; зима — + rows_total)
 var rows_total := 0
+# сетка пакетов APK (плотность 1) при r_cls ≠ 1: их тайлы — подмена своих, пока те не
+# нарисованы (тот же вид, реже пиксели); строки — после своих (лето, зима)
+var gw1 := PackedInt32Array()
+var gh1 := PackedInt32Array()
+var rows1 := PackedInt32Array()
+var rows1_total := 0
+var sub := false                # тайлы пакетов — подменой (r_cls ≠ 1 и пакеты есть)
 var slot_key := PackedInt64Array()
 var slot_use := PackedInt64Array()
 var key_slot := {}
@@ -145,6 +153,10 @@ func set_r(r: float) -> void:
 	gh.resize(NLV)
 	rows.resize(NLV)
 	rows_total = 0
+	gw1.resize(NLV)
+	gh1.resize(NLV)
+	rows1.resize(NLV)
+	rows1_total = 0
 	var wmax := 1
 	for k in NLV:
 		var z := lv_zoom(k) * r_cls
@@ -153,8 +165,10 @@ func set_r(r: float) -> void:
 		rows[k] = rows_total
 		rows_total += gh[k]
 		wmax = maxi(wmax, gw[k])
-	page_img = Image.create(wmax, rows_total * 2, false, Image.FORMAT_RG8)
-	page_tex = ImageTexture.create_from_image(page_img)
+		gw1[k] = ceili(world_px.x * lv_zoom(k) / T)
+		gh1[k] = ceili(world_px.y * lv_zoom(k) / T)
+		rows1[k] = rows1_total
+		rows1_total += gh1[k]
 	slot_key.fill(-1)
 	key_slot.clear()
 	_wish.clear()
@@ -166,8 +180,13 @@ func set_r(r: float) -> void:
 		WorkerThreadPool.wait_for_task_completion(sv[1])
 	_saves.clear()
 	_pack.clear()
-	if r_cls == 1.0:
-		_scan_packs()
+	pack_stamp = ""
+	_scan_packs()
+	sub = r_cls != 1.0 and not _pack.is_empty()
+	if sub:
+		wmax = maxi(wmax, gw1[NLV - 1])
+	page_img = Image.create(wmax, rows_total * 2 + (rows1_total * 2 if sub else 0), false, Image.FORMAT_RG8)
+	page_tex = ImageTexture.create_from_image(page_img)
 	_cache_dir = CACHE_ROOT + ver + ("-" + pack_stamp if pack_stamp != "" else "") + "_r%d/" % int(round(r_cls * 100.0))
 	_scan_cache()
 	ok = true
@@ -208,23 +227,25 @@ func _scan_packs() -> void:
 			var w := f.get_32()
 			var h := f.get_32()
 			var pv_ok := pv.begins_with(ver + "-") and (pack_stamp == "" or pv == ver + "-" + pack_stamp)
-			if not pv_ok or pr != r_cls or w != gw[k] or h != gh[k]:
-				push_warning("MapBake: пакет %s от другой версии карты (%s, нужна %s, r %.2f/%.2f, сетка %d×%d/%d×%d) — не используется" % [
-					path, pv, ver, pr, r_cls, w, h, gw[k], gh[k]])
+			if not pv_ok or pr != 1.0 or w != gw1[k] or h != gh1[k]:
+				push_warning("MapBake: пакет %s от другой версии карты (%s, нужна %s, r %.2f, сетка %d×%d/%d×%d) — не используется" % [
+					path, pv, ver, pr, w, h, gw1[k], gh1[k]])
 				continue
 			var tab := f.get_buffer(w * h * 8)
 			if _avif == null and _pack_is_avif(f, tab):
 				push_warning("MapBake: пакет %s в AVIF, а ядра C++ нет — не используется" % path)
 				continue
 			pack_stamp = pv.substr(ver.length() + 1)
+			# при своей плотности ≠ 1 — ключи подмены (SUB)
+			var bit := 0 if r_cls == 1.0 else SUB
 			for i in w * h:
 				var off := tab.decode_u32(i * 8)
 				var sz := tab.decode_s32(i * 8 + 4)
-				var key := key_of(s, k, i % w, i / w)
+				var key := key_of(s, k, i % w, i / w) | bit
 				if sz > 0:
 					_pack[key] = [path, off, sz]
 				elif sz < 0:
-					var sk := key_of(0, k, i % w, i / w)
+					var sk := key_of(0, k, i % w, i / w) | bit
 					if _pack.has(sk):
 						_pack[key] = _pack[sk]
 
@@ -430,6 +451,7 @@ func coarse(keys: PackedInt64Array, dk: int) -> PackedInt64Array:
 ## из них)? Тогда — использованные тайлы подмены (отмечены), иначе пусто.
 func cover(keys: PackedInt64Array) -> PackedInt64Array:
 	var out := {}
+	var all := true
 	for key in keys:
 		if key_slot.has(key):
 			continue
@@ -438,6 +460,15 @@ func cover(keys: PackedInt64Array) -> PackedInt64Array:
 		var tx := key_tx(key)
 		var ty := key_ty(key)
 		var found := false
+		if sub:
+			# тайлы пакета того же уровня (плотность 1): в атласе — взять; на диске —
+			# загрузить (MapView перерисует, когда лягут), пока — дальний уровень
+			var sk := _sub_of(s, k, tx, ty)
+			if have_quiet(sk):
+				for ck in sk:
+					out[ck] = true
+				continue
+			_sub_load(sk)
 		for d in range(1, 5):
 			var kc := k - d
 			if kc < 1:
@@ -463,10 +494,42 @@ func cover(keys: PackedInt64Array) -> PackedInt64Array:
 				found = true
 				break
 		if not found:
-			return PackedInt64Array()
+			all = false
+			if not sub:
+				break   # подмену из пакета грузить не нужно — дальше смотреть незачем
+	if not all:
+		return PackedInt64Array()
 	var r := PackedInt64Array(out.keys())
 	have(r)
 	return r
+
+
+## Тайлы пакета (плотность 1) на месте тайла (s, k, tx, ty) своей плотности.
+func _sub_of(s: int, k: int, tx: int, ty: int) -> PackedInt64Array:
+	var out := PackedInt64Array()
+	var f := 1.0 / r_cls
+	var x0 := mini(floori(tx * f), gw1[k] - 1)
+	var x1 := mini(floori((tx + 1) * f - 1e-6), gw1[k] - 1)
+	var y0 := mini(floori(ty * f), gh1[k] - 1)
+	var y1 := mini(floori((ty + 1) * f - 1e-6), gh1[k] - 1)
+	for cy in range(y0, y1 + 1):
+		for cx in range(x0, x1 + 1):
+			out.append(key_of(s, k, cx, cy) | SUB)
+	return out
+
+
+func have_quiet(keys: PackedInt64Array) -> bool:
+	for key in keys:
+		if not key_slot.has(key):
+			return false
+	return true
+
+
+## Загрузить тайлы пакета (подмену) с диска; рисовать их не нужно — нет в пакете, нет и подмены.
+func _sub_load(keys: PackedInt64Array) -> void:
+	for key in keys:
+		if not key_slot.has(key) and not _jobs.has(key) and _pack.has(key):
+			_jobs[key] = WorkerThreadPool.add_task(_load_job.bind(key, _pack[key]))
 
 
 ## Все тайлы уже в атласе? Отмечает их использованными, недостающие не просит.
@@ -539,7 +602,8 @@ func tick(may_bake: bool = true) -> void:
 		if d[1] == null:
 			_pack.erase(key)   # битый файл — нарисовать заново
 			_cache.erase(key)
-			_wish[key] = frame
+			if key & SUB == 0:
+				_wish[key] = frame
 			continue
 		_put(key, d[1])
 		loaded_tiles += 1
@@ -605,6 +669,8 @@ func _put(key: int, img: Image, free_only := false) -> void:
 
 func _page_set(key: int, v: int) -> void:
 	var y := rows[key_k(key)] + key_ty(key) + key_s(key) * rows_total
+	if key & SUB:
+		y = rows_total * 2 + rows1[key_k(key)] + key_ty(key) + key_s(key) * rows1_total
 	page_img.set_pixel(key_tx(key), y, Color8(v & 255, v >> 8, 0, 255))
 	_page_dirty = true
 
@@ -615,6 +681,15 @@ func pg_rows(s: int) -> PackedInt32Array:
 	out.resize(NLV)
 	for k in NLV:
 		out[k] = rows[k] + s * rows_total
+	return out
+
+
+## То же для тайлов пакетов (подмена, шейдеру — pg_row1); −1 — подмены нет.
+func pg_rows1(s: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	out.resize(NLV)
+	for k in NLV:
+		out[k] = rows_total * 2 + rows1[k] + s * rows1_total if sub else -1
 	return out
 
 
