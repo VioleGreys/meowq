@@ -929,6 +929,41 @@ var _strip_i := 0
 var _strip_n := 0              # 0 — полос нет
 var _strip_hidden := false     # кадр скрыт до последней полосы (после сдвига)
 var strip_redraws := 0         # для замеров
+# лёгкая карта: полный кадр на месте (смена режима, сохранение, новый день) при
+# 100 % — 2.6 млн пикс., ~140 мс одним кадром. Рисуем его полосами не больше
+# STRIP_PX под снимком прежнего кадра (snap_sprite), снимок потом тает.
+const STRIP_PX := 700000.0
+var _strip_snap := false       # полосы идут под снимком прежнего кадра
+var _strip_more := false       # за время полос карту просили перерисовать — ещё проход
+var _snap_fade := false        # полосы готовы — снимок тает
+
+
+func _strip_count(size: Vector2i) -> int:
+	if phone_map:
+		return clampi(ceili(float(size.x * size.y) / STRIP_PX), 1, 8)
+	return strips
+
+
+## Снимок видимого полного кадра в snap_sprite (рисуется в этом кадре).
+func _snap_take() -> void:
+	snap_vp.size = map_vp.size
+	(snap_vp.get_child(0) as TextureRect).size = Vector2(map_vp.size)
+	snap_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	snap_sprite.modulate.a = 1.0
+	snap_sprite.visible = true
+	_snap_cam = _full_cam
+	_snap_zoom = _full_zoom
+	_snap_size = _full_size
+
+
+func _strip_snap_end() -> void:
+	if not _strip_snap:
+		return
+	_strip_snap = false
+	_strip_more = false
+	_snap_fade = false
+	snap_sprite.visible = false
+	snap_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 
 
 ## Следующая полоса кадра; если камера или размер с начала сменились — целиком.
@@ -961,6 +996,8 @@ func _draw_strip() -> void:
 	quad.size = Vector2(size.x, y1 - y0)
 	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	gnote("полоса " + ("загот." if _full_baked else "живая"), quad.size.x * quad.size.y)
+	if phone_map:
+		_lite_px = quad.size.x * quad.size.y   # кэш движения в этом кадре — меньше
 	redraws += 1
 	strip_redraws += 1
 	_strip_i += 1
@@ -969,6 +1006,14 @@ func _draw_strip() -> void:
 		if _strip_hidden:
 			_strip_hidden = false
 			_fading_in = true   # все полосы готовы — проявляем
+		if _strip_snap:
+			_snap_fade = true   # кадр готов — снимок тает (и если будет ещё проход)
+			if _strip_more:
+				# пока шли полосы, карту просили перерисовать — ещё проход: первые
+				# полосы нарисованы до просьбы
+				_strip_more = false
+				_strip_n = _strip_count(size)
+				_strip_i = 0
 
 
 # --- Кэш движения (решение пользователя, ноябрь 2026) -------------------------
@@ -1498,6 +1543,13 @@ func _process_map(dt: float) -> void:
 		return
 	_band_poll()
 	_season_tick(dt)
+	if _dirty and _strip_snap and _strip_n > 0 and _moving <= 0.0:
+		# перерисовка во время полос под снимком (новый день, палитра) — не
+		# начинать заново (на большой скорости кадр не показался бы никогда):
+		# дорисовать проход и пройти ещё раз; сдвиг камеры _draw_strip заметит сам
+		_dirty = false
+		_part_dirty = false
+		_strip_more = true
 	if _strip_n > 0 and not _dirty:
 		_draw_strip()   # частичная — после полос: полосы уже рисуют с новой палитрой
 	elif _part_dirty and not _dirty:
@@ -1528,6 +1580,8 @@ func _process_map(dt: float) -> void:
 		_param("buf_size", Vector2(size))
 		_cam_uniforms(logical)
 		quad.position = Vector2.ZERO
+		var sn := _strip_count(size)
+		var keep_snap := false
 		if use_cache:
 			# движение — из кэша: плоский кадр полного качества, открывшиеся края
 			# дорисованы (_cache_usable), проекция с текущей камерой (map_motion)
@@ -1575,6 +1629,28 @@ func _process_map(dt: float) -> void:
 			_lite_size = Vector2(size)
 			lite_sprite.visible = true
 			_fading_in = false
+		elif not was_lite and sn > 1 and phone_map and _season_step in [0, 3] and _moving <= 0.0 \
+				and _full_alpha >= 1.0 and not _fading_in and Vector2(size) == _full_size \
+				and map_vp.size == size and camera.position == _full_cam \
+				and is_equal_approx(camera.zoom.x, _full_zoom) and is_equal_approx(tilt(), _full_tilt):
+			# лёгкая карта, кадр на месте: старый — снимком сверху, новый — полосами
+			# под ним со следующего кадра (снимок рисуется в этом)
+			keep_snap = true
+			if _season_step == 3:
+				# снег уже нарисован, снимок прежнего сезона тает — берём его себе
+				_season_step = 0
+				_strip_snap = true
+				_snap_fade = false
+			if not _strip_snap:
+				_snap_take()
+				_strip_snap = true
+				_snap_fade = false
+			_strip_more = false
+			_full_q = quality
+			_strip_hidden = false
+			_strip_n = sn
+			_strip_i = 0
+			redraws -= 1   # полосы считаются сами
 		else:
 			if map_vp.size != size:
 				map_vp.size = size
@@ -1584,7 +1660,7 @@ func _process_map(dt: float) -> void:
 			_set_full(_screen_bake(logical, rk, -1))
 			_use_screen(_full_baked)
 			map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
-			if not (was_lite and strips > 1):
+			if not (was_lite and sn > 1):
 				gnote("кадр " + ("загот." if _full_baked else "живой"), float(size.x * size.y))
 			_full_cam = camera.position
 			_full_zoom = camera.zoom.x
@@ -1594,17 +1670,19 @@ func _process_map(dt: float) -> void:
 			if was_lite:
 				_full_alpha = 0.0   # после движения — проявляем новый кадр плавно
 				_fading_in = true
-				if strips > 1:
+				if sn > 1:
 					# кадр скрыт под упрощённым — рисуем его полосами, проявим в конце
 					_fading_in = false
 					_strip_hidden = true
-					_strip_n = strips
+					_strip_n = sn
 					_strip_i = 0
 					_draw_strip()
 					redraws -= 1   # уже учтено как полоса
 			if _strip_n == 0 and not _strip_hidden:
 				_auto_pending = true
 				_drawn_last = true
+		if not keep_snap:
+			_strip_snap_end()
 		redraws += 1
 	# прозрачность полного кадра: при движении растворяется, после — проявляется
 	# (при наклоне старый кадр сдвигом не совместить с перспективой — сразу)
@@ -1620,6 +1698,12 @@ func _process_map(dt: float) -> void:
 	if _full_alpha >= 1.0 and not _lite_drawn:
 		lite_sprite.visible = false
 		cache_rect.visible = false
+	if _snap_fade:
+		snap_sprite.modulate.a = maxf(0.0, snap_sprite.modulate.a - dt / FADE_IN)
+		if snap_sprite.modulate.a <= 0.0:
+			_strip_snap_end()
+	if _strip_snap:
+		_place(snap_sprite, _snap_cam, _snap_zoom, _snap_size)
 	_cache_tick()
 	_cache_flush()
 	_lite_px = 0.0
@@ -1890,17 +1974,11 @@ func set_day(day: int) -> void:
 		_param("winter", w)
 		redraw()
 		return
+	_strip_snap_end()
 	# снимок видимого кадра (в этом кадре), сезон — со следующего
 	_season_w = w
 	_season_step = 1
-	snap_vp.size = map_vp.size
-	(snap_vp.get_child(0) as TextureRect).size = Vector2(map_vp.size)
-	snap_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
-	snap_sprite.modulate.a = 1.0
-	snap_sprite.visible = true
-	_snap_cam = _full_cam
-	_snap_zoom = _full_zoom
-	_snap_size = _full_size
+	_snap_take()
 
 
 var _snap_cam := Vector2.ZERO
@@ -1932,9 +2010,10 @@ func _season_tick(dt: float) -> void:
 			_winter = _season_w
 			_param("winter", _season_w)
 			_season_step = 2
-			if strips > 1:
+			var sn := _strip_count(map_vp.size)
+			if sn > 1:
 				_strip_i = 0
-				_strip_n = strips
+				_strip_n = sn
 				_strip_hidden = false
 			else:
 				redraw()
