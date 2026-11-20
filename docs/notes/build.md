@@ -22,6 +22,11 @@
   открыт) в `/opt/ndk/ndk/28.1.13356709`, `ANDROID_HOME=/opt/ndk scons platform=android
   arch=arm64 target=template_release`; `build_apk.sh` кладёт ядро в APK, если библиотека
   собрана (иначе APK на GDScript). В нижней строке игры — «C++» или «GDScript».
+- APK на GitHub (решение пользователя, ноябрь 2026): `sh tools/publish_apk.sh` —
+  ветка `apk` (без истории кода, заменяется целиком), разделённый ZIP по 70 МБ
+  (`meowq_apk.zip` + `.z01`; GitHub не берёт файлы > 100 МБ, релиз отсюда не создать —
+  нет инструмента), README с шагами. На телефоне — ZArchiver. Git LFS отвергнут: квота
+  ~1 ГБ скачиваний в месяц, загруженное не удалить.
 - Декодер AVIF в ядре (`native/src/avif.cpp`, `MeowqCore.avif_rgba`): пакеты заготовок
   карты в APK — AVIF (ноябрь 2026). dav1d 1.4.3 + libavif 1.0.4, статические, только
   декодер: `sh tools/build_avif.sh` (pip install meson; cmake, ninja, nasm; NDK) →
