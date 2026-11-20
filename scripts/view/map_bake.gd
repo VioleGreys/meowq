@@ -19,6 +19,7 @@ const NLV := 13
 const APK_MAX_K := 11           # уровни в APK: до ×5.6 — вся карта (решение пользователя ноябрь 2026; пакеты — AVIF)
 const CAP := 256                # слоёв атласа (минимум GLES3 — 256)
 const PACK_DIR := "res://data/bake/"
+const DL_DIR := "user://bake_dl/"   # докачанные пакеты (BakeDownload; ветка bake-data на GitHub)
 const CACHE_ROOT := "user://bake/"
 const BAKE_VERSION := 1         # поднять, если заготовки меняются не из шейдера
 const SUB := 1 << 29            # ключ тайла пакета (плотность 1) при r_cls ≠ 1 — подмена
@@ -207,8 +208,19 @@ func _wait_jobs() -> void:
 
 # --- пакеты APK ---------------------------------------------------------------
 
+## Пакет уровня: из APK, иначе докачанный (BakeDownload); версию и сетку проверяет _scan_packs.
 static func pack_path(s: int, k: int) -> String:
-	return PACK_DIR + "b%d_%d.bin" % [s, k]
+	var p := PACK_DIR + "b%d_%d.bin" % [s, k]
+	if FileAccess.file_exists(p):
+		return p
+	return DL_DIR + "b%d_%d.bin" % [s, k]
+
+
+## Перечитать пакеты (после докачки или удаления): та же плотность, новая таблица.
+func reload_packs() -> void:
+	var r := r_cls
+	gw.clear()
+	set_r(r)
 
 
 func _scan_packs() -> void:

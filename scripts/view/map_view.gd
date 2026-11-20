@@ -1600,6 +1600,15 @@ func _bake_push() -> void:
 	_param("pg_row1", bake.pg_rows1(_season()))
 
 
+## Пакеты заготовок изменились (докачаны или удалены, BakeDownload): перечитать.
+func bake_reload() -> void:
+	if bake == null:
+		return
+	bake.reload_packs()
+	_bake_push()
+	redraw()
+
+
 func _season() -> int:
 	return 1 if _winter >= 0.5 else 0
 

@@ -143,7 +143,9 @@
 - Тест детерминизма и скорости: `godot --headless --path . --script res://tests/sim_bench.gd`
   (`-- --large` — большая карта). Однопоточный и многопоточный результаты
   обязаны совпадать.
-- Сборка APK и C++ — `docs/notes/build.md`.
+- Докачка карты (части с сервера, остановка, склейка, ошибка): `python3 -m http.server 8765 -b 127.0.0.1 -d export/bake-data/<версия> &`, затем
+  `godot --headless --path . --script res://tests/bake_dl_check.gd -- --base=http://127.0.0.1:8765/` (нужен data/bake_remote.json — `tools/bake_split.py`)
+- Сборка APK и C++ — `docs/notes/build.md` (ближние пакеты карты — ветка `bake-data`, `tools/publish_bake.sh`).
 - Скриншот без человека: `godot --path . -- --screenshot=out.png --nation=GER --days=120`
   (доп. флаги: `--zoom=1.6 --select --tab=army --pick=1 --mapmode=4 --card=AUS --peace=AUS`;
   наука: `--tech=inf:mot2`, доктрины: `--tech=doc:l_mob1`; армия и война: `--group --war=POL --warday=30`; переучивание: `--retrain=1`; фокусы и события: `--focus`, `--event=munich`; переговоры: `--peace=POL`; политика и советники: `--tab=diplomacy --dippage=politics|advisors [--hire=army_chief,...]`; чужие земли: `--occupy=POL --prodpage=lands [--occ=POL]`; флот: `--tab=navy --sel=fleet|wing --center=NOR`; конструктор самолёта: `--plane=fig|bmb|new|N`; танка: `--tank=new|cur|N`; корабля: `--ship=new|N|ss|cr|cv|bb|dd`; прокрутка окна: `--scroll=N`).

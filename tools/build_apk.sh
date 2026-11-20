@@ -101,6 +101,12 @@ if [ "${BAKE:-1}" = 1 ]; then
 		rm -rf "$WORK/bake_raw"
 	fi
 	du -sh data/bake
+	# ближние уровни (k ≥ 7, ×1.4 и ближе) — не в APK, а на докачку: части в
+	# export/bake-data (отправка — sh tools/publish_bake.sh), список —
+	# data/bake_remote.json в APK (решение пользователя, ноябрь 2026); REMOTE=0 — всё в APK
+	if [ "${REMOTE:-1}" = 1 ]; then
+		python3 tools/bake_split.py data/bake "$WORK/bake_remote" export/bake-data --min-k=7
+	fi
 else
 	mv data/bake "$WORK/bake_off" 2>/dev/null || true
 fi
@@ -117,4 +123,6 @@ cp "$WORK/project.godot.bak" project.godot
 cp "$WORK/export_presets.cfg.bak" export_presets.cfg
 if [ "$MANIFEST_MOVED" = 1 ]; then mv "$WORK/meowq.gdextension" meowq.gdextension; fi
 if [ -d "$WORK/bake_off" ]; then mv "$WORK/bake_off" data/bake; fi
+if [ -d "$WORK/bake_remote" ]; then mv "$WORK/bake_remote"/* data/bake/ && rmdir "$WORK/bake_remote"; fi
+rm -f data/bake_remote.json
 ls -la "$OUT"

@@ -12,3 +12,4 @@ __pycache__/
 meowq.gdextension.uid
 data/bake/
 data/art/
+data/bake_remote.json
