@@ -211,6 +211,7 @@ uniform bool has_roads = false;
 const int RD_SEC = 4;
 const float RD_OFF = 0.42;     // дорога рядом с жд — сбоку, пикс. карты
 const float TIE_P = 0.30;      // шаг шпал, пикс. карты
+const float RD_FAR = 1.25;     // дальше — дорога не видна (пороги d < 1,0 / 1,2)
 uniform float winter = 1.0;   // зима в северном полушарии 0…1 (MapView.set_day)
 const float DETAIL_TILE = 48.0;   // пикселей карты на тайл
 // проекция Миллера для сетки широт и долгот (как tools/build_map.py)
@@ -717,6 +718,15 @@ float rd_seg(vec2 q, vec2 a, vec2 b, out float h) {
 // на off0 → off1 (дорога рядом с жд; слева по ходу p0 → p3)
 const int RD_N = 6;
 void rd_bez(vec2 q, vec2 p0, vec2 p1, vec2 p2, vec2 p3, float off0, float off1, inout float dm, inout float sm) {
+	// ранний выход (вид тот же): кривая — внутри рамки p0…p3, ломаная со сдвигом —
+	// в рамке, расширенной на сдвиг; дальше запаса RD_FAR расстояние ни на что не
+	// влияет (все пороги дорог и мостов < 1,2)
+	float mg = RD_FAR + max(abs(off0), abs(off1));
+	vec2 lo = min(min(p0, p1), min(p2, p3)) - mg;
+	vec2 hi = max(max(p0, p1), max(p2, p3)) + mg;
+	if (any(lessThan(q, lo)) || any(greaterThan(q, hi))) {
+		return;
+	}
 	vec2 pr = p0;
 	float len = 0.0;
 	for (int k = 1; k <= RD_N; k++) {
