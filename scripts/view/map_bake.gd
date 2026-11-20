@@ -745,6 +745,7 @@ func _put(key: int, img: Image, free_only := false) -> void:
 	spr.position = Vector2((sl % AN) * TS, (sl / AN) * TS)
 	_up_root.add_child(spr)
 	_staged.append([key, sl, spr])
+	MapView.gnote("в атлас", float(TS * TS))
 	_staged_keys[key] = true
 	atlas_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	if not RenderingServer.frame_post_draw.is_connected(_on_up_drawn):
@@ -877,6 +878,7 @@ func bake_block(s: int, k: int, tx0: int, ty0: int) -> void:
 	rect.position = Vector2.ZERO
 	rect.size = size
 	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	MapView.gnote("тайлы рисуются", size.x * size.y)
 	_pending = {"s": s, "k": k, "tx": tx0, "ty": ty0, "nx": nx, "ny": ny, "f": frame, "drawn": false}
 	# читать — только после настоящей отрисовки кадра (в режиме «не рисовать без
 	# изменений» кадр может и не рисоваться: в буфере — прежний блок)

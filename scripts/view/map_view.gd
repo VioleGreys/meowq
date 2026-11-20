@@ -68,6 +68,15 @@ var _screen_keys := PackedInt64Array()
 var _bk_logical := Vector2.ZERO  # логический размер буфера кадра (тайлы впрок)
 var _ahead_off := false          # тайлы впрок выключены (замеры: --noahead)
 var _bake_still := 0           # кадров подряд, когда карта стоит
+## Для стенда нагрузки: что отдано видеокарте в этом кадре — вид → пикселей
+## (StressBench читает и очищает каждый кадр; видеокарту телефона GLES3 не меряет).
+static var gpu := {}
+
+
+static func gnote(kind: String, px: float) -> void:
+	gpu[kind] = float(gpu.get(kind, 0.0)) + px
+
+
 var baked_draws := 0           # для замеров: кадров и полос с заготовками
 var live_draws := 0
 var dmat: ShaderMaterial       # вывод кэша на экран (map_motion.gdshader)
@@ -949,6 +958,7 @@ func _draw_strip() -> void:
 	quad.position = Vector2(0, y0)
 	quad.size = Vector2(size.x, y1 - y0)
 	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	gnote("полоса " + ("загот." if _full_baked else "живая"), quad.size.x * quad.size.y)
 	redraws += 1
 	strip_redraws += 1
 	_strip_i += 1
@@ -996,6 +1006,7 @@ class CacheBuf:
 	var valid := false
 	var queue: Array = []        # прямоугольники кадра якоря к отрисовке в этом кадре
 	var rects: Array = []        # мировые рамки к дорисовке (смена владельцев)
+	var soft: Array = []         # мировые рамки, нарисованные с подменой тайлов — точно, когда лягут
 
 
 var _cb: Array = []              # два буфера
@@ -1022,6 +1033,7 @@ func _cache_reset() -> void:
 	for b in _cb:
 		b.valid = false
 		b.rects.clear()
+		b.soft.clear()
 	_c_build_n = 0
 
 
@@ -1080,6 +1092,7 @@ func _cache_build() -> void:
 	b.q = quality
 	b.valid = false
 	b.rects.clear()
+	b.soft.clear()
 	b.queue.clear()
 	if b.vp.size != b.size:
 		b.vp.size = b.size
@@ -1149,6 +1162,15 @@ func _cache_tick() -> void:
 	_c_still = _c_still + 1 if z == _c_zoom_seen else 0
 	_c_zoom_seen = z
 	var f := _cache_front()
+	if f.valid and not f.soft.is_empty() and _c_still % 8 == 1:
+		# нарисованное с подменой — заново, когда все тайлы в атласе
+		var left: Array = []
+		for r in f.soft:
+			if bake.have_quiet(bake.need_flat(r, f.zoom, _season())):
+				f.rects.append(r)
+			else:
+				left.append(r)
+		f.soft = left
 	if f.valid:
 		for r in f.rects:
 			f.queue.append(_cache_px(f, r))
@@ -1225,7 +1247,15 @@ func _cache_draw(b: CacheBuf) -> void:
 		var kz := b.zoom * b.rk
 		var wr := Rect2(b.cam + (u.position - Vector2(b.size) * 0.5) / kz, u.size / kz)
 		_bake_sync_r(b.rk)
-		use_b = bake.want(bake.need_flat(wr, b.zoom, _season()))
+		var keys := bake.need_flat(wr, b.zoom, _season())
+		use_b = bake.want(keys)
+		if not use_b:
+			# тайлы ещё грузятся — с подменой (те же места на 1–4 ступени дальше,
+			# иначе самый дальний уровень): кэш виден только в движении, а живой кусок
+			# кэша на Adreno 619 — сотни мс (отчёт ноября 2026); точно — когда лягут
+			use_b = not _soft_cover(keys).is_empty() or bake.want(keys, true, _season())
+			if use_b:
+				b.soft.append(wr)
 	b.queue.clear()
 	if rects.is_empty():
 		return
@@ -1258,6 +1288,10 @@ func _cache_draw(b: CacheBuf) -> void:
 	cm.set_shader_parameter("cam_f", cam_focal())
 	cm.set_shader_parameter("torus_n", Vector2(b.n))
 	b.vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	var apx := 0.0
+	for r in rects:
+		apx += (r as Rect2).get_area()
+	gnote("кэш " + ("загот." if use_b else "живой"), apx)
 	cache_draws += 1
 
 
@@ -1367,6 +1401,7 @@ func _draw_part() -> void:
 	quad.position = r.position
 	quad.size = r.size
 	map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	gnote("часть " + ("загот." if _full_baked else "живая"), r.get_area())
 	redraws += 1
 	part_redraws += 1
 
@@ -1459,6 +1494,7 @@ func _process_map(dt: float) -> void:
 					lite_vp.size = size
 				lite_quad.size = Vector2(size)
 				lite_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+				gnote("упрощ. " + ("загот." if lb else "живой"), float(size.x * size.y))
 				_lite_cam = camera.position
 				_lite_zoom = camera.zoom.x
 				_lite_size = Vector2(size)
@@ -1481,6 +1517,7 @@ func _process_map(dt: float) -> void:
 				lite_vp.size = size
 			lite_quad.size = Vector2(size)
 			lite_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+			gnote("упрощ. " + ("загот." if lb2 else "живой"), float(size.x * size.y))
 			_lite_cam = camera.position
 			_lite_zoom = camera.zoom.x
 			_lite_size = Vector2(size)
@@ -1495,6 +1532,8 @@ func _process_map(dt: float) -> void:
 			_set_full(_screen_bake(logical, rk, -1))
 			_use_screen(_full_baked)
 			map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+			if not (was_lite and strips > 1):
+				gnote("кадр " + ("загот." if _full_baked else "живой"), float(size.x * size.y))
 			_full_cam = camera.position
 			_full_zoom = camera.zoom.x
 			_full_size = Vector2(size)

@@ -44,7 +44,9 @@ var game
 var _out: Array = []
 var _action := ""
 var _frames: Array = []   # по отрезкам: PackedFloat32Array времени кадра, мс
-var _long: Array = []     # долгие кадры: [отрезок, мс, действие, дней, ЦП, ГП, {участок: мкс}]
+var _long: Array = []     # долгие кадры: [отрезок, мс, действие, дней, ЦП, ГП, {участок: мкс}, видеокарте: этот кадр, прошлый]
+var _seg_gpu: Array = []  # по отрезкам: вид работы видеокарты → пикселей за отрезок
+var _probe: Array = []    # «Цена видеокарты»: [название, медиана, 90 %, пикселей за кадр]
 var _seg_info: Array = [] # по отрезкам: {draws, cpu, gpu, script, drawn, days, sec, mem...}
 
 
@@ -117,6 +119,7 @@ func run(g, in_game := false) -> void:
 	for s in SEGMENTS.size():
 		await _segment(s, seg_sec, me)
 	active = false
+	await _gpu_probe()
 	g.speed = 0
 	_report()
 	var text := "\n".join(_out) + "\n"
@@ -153,6 +156,9 @@ func _segment(s: int, sec: float, me: int) -> void:
 	var step := 0
 	var saved := false
 	FrameProf.frame = {}
+	MapView.gpu = {}
+	var gsum := {}
+	var g_prev := {}
 	var f_prev := Time.get_ticks_usec()
 	while Time.get_ticks_msec() - t0 < sec * 1000.0:
 		var now := Time.get_ticks_msec() - t0
@@ -225,7 +231,11 @@ func _segment(s: int, sec: float, me: int) -> void:
 		if n > 0:   # первый кадр отрезка несёт смену скорости — не в счёт
 			ft.append(ms)
 			if ms > LONG_MS:
-				_long.append([s, ms, _action, scr, rc, rg, FrameProf.frame.duplicate()])
+				_long.append([s, ms, _action, scr, rc, rg, FrameProf.frame.duplicate(), MapView.gpu.duplicate(), g_prev])
+		for k in MapView.gpu:
+			gsum[k] = float(gsum.get(k, 0.0)) + float(MapView.gpu[k])
+		g_prev = MapView.gpu.duplicate()
+		MapView.gpu = {}
 		FrameProf.frame = {}
 		n += 1
 	if g.hud.popup.visible or g.hud.tech_view.visible or g.hud.focus_view.visible:
@@ -240,6 +250,53 @@ func _segment(s: int, sec: float, me: int) -> void:
 	info["objs"] = int(Performance.get_monitor(Performance.OBJECT_COUNT))
 	_frames.append(ft)
 	_seg_info.append(info)
+	_seg_gpu.append(gsum)
+
+
+## «Цена видеокарты»: на паузе карта перерисовывается каждый кадр одним способом —
+## медиана кадра и есть цена (GLES3 телефона время видеокарты не отдаёт).
+func _gpu_probe() -> void:
+	var g = game
+	var mv: MapView = g.map_view
+	g.world_lock()
+	g.speed = 0
+	g.world_unlock()
+	var strips0 := mv.strips
+	var auto0 := mv.res_auto
+	var mode0: int = mv.map_mode
+	mv.res_auto = false
+	mv.strips = 1
+	var tests := [["покой (карта не рисуется)", 0], ["кадр целиком с заготовками", 1],
+		["кадр целиком вживую", 2], ["кадр целиком, режим «Местность»", 3], ["холст атласа 4096² без тайлов", 4]]
+	for t in tests:
+		var kind: int = t[1]
+		mv._bake_off = kind == 2
+		if kind == 3:
+			g.set_map_mode(MapView.MapMode.TERRAIN)
+		var ft := PackedFloat32Array()
+		var px := 0.0
+		MapView.gpu = {}
+		var f_prev := Time.get_ticks_usec()
+		for i in 70:
+			if kind >= 1 and kind <= 3:
+				mv._dirty = true
+			elif kind == 4 and mv.bake != null and mv.bake.atlas_vp != null:
+				mv.bake.atlas_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+			await get_tree().process_frame
+			var f_now := Time.get_ticks_usec()
+			if i >= 10:
+				ft.append((f_now - f_prev) / 1000.0)
+				for k in MapView.gpu:
+					px += float(MapView.gpu[k])
+			MapView.gpu = {}
+			f_prev = f_now
+		_probe.append([t[0], _pct(ft, 0.5), _pct(ft, 0.9), px / maxf(1.0, ft.size())])
+		mv._bake_off = false
+		if kind == 3:
+			g.set_map_mode(mode0)
+	mv.strips = strips0
+	mv.res_auto = auto0
+	mv.redraw()
 
 
 var _acts := {}   # действие → [сумма мкс, худшее, раз]
@@ -344,8 +401,23 @@ func _report() -> void:
 		var e: Array = _long[i]
 		_p("  %6.1f мс · %s%s · движок ЦП %.1f / ГП %.1f · скрипты %.1f · %s" % [float(e[1]), SEGMENTS[int(e[0])],
 			(" · " + str(e[2])) if str(e[2]) != "" else "", float(e[4]), float(e[5]), float(e[3]) / 1000.0, _top(e[6], 500, 5)])
+		_p("           видеокарте: %s · кадром раньше: %s" % [_gpu_str(e[7]), _gpu_str(e[8])])
 	_p("  (кадр − скрипты − движок ЦП = ожидание: ГП, синхронизация, вытеснение потоками)")
 	_p("")
+	_p("Работа видеокарты по отрезкам (тыс. пикселей в секунду по видам; «в атлас» — тайлов в секунду):")
+	for s in _seg_gpu.size():
+		var gs: Dictionary = _seg_gpu[s]
+		var sec := maxf(0.1, float(_seg_info[s].get("sec", 1.0)))
+		var per := {}
+		for k in gs:
+			per[k] = float(gs[k]) / sec
+		_p("  %-34s %s" % [SEGMENTS[s], _gpu_str(per)])
+	_p("")
+	if not _probe.is_empty():
+		_p("Цена видеокарты (пауза, 60 кадров; мс кадра: медиана / 90 %; тыс. пикселей за кадр):")
+		for pr in _probe:
+			_p("  %-34s %6.1f / %6.1f · %.0f" % [pr[0], pr[1], pr[2], float(pr[3]) / 1000.0])
+		_p("")
 	_p("Действия игрока (главный поток, мс: среднее / худшее, раз; без отрисовки нового окна):")
 	var ak := _acts.keys()
 	ak.sort_custom(func(a, b): return int(_acts[a][1]) > int(_acts[b][1]))
@@ -355,6 +427,18 @@ func _report() -> void:
 	_p("")
 	for l in Report.prof_lines():
 		_p(l)
+
+
+static func _gpu_str(d: Dictionary) -> String:
+	if d.is_empty():
+		return "—"
+	var keys := d.keys()
+	keys.sort_custom(func(a, b): return float(d[a]) > float(d[b]))
+	var parts: Array = []
+	for k in keys:
+		var v := float(d[k])
+		parts.append("%s %s" % [k, ("%.0f" % (v / (MapBake.TS * MapBake.TS))) if k == "в атлас" else ("%.0f" % (v / 1000.0))])
+	return ", ".join(parts)
 
 
 static func _top(d: Dictionary, min_us: int, n: int) -> String:
