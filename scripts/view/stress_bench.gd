@@ -267,31 +267,43 @@ func _gpu_probe() -> void:
 	var rs0 := mv.res_scale
 	var q0 := mv.quality
 	var mode0: int = mv.map_mode
-	var matb0: ShaderMaterial = mv.mat_b
 	mv.res_auto = false
 	mv.strips = 1
-	var flat := ShaderMaterial.new()
-	flat.shader = Shader.new()
-	flat.shader.code = "shader_type canvas_item;\nvoid fragment() { COLOR = vec4(UV, 0.5, 1.0); }\n"
 	# [название, вид]: 1 — с заготовками, 2 — вживую, 3 — «Местность», 4 — холст атласа,
 	# 5 — пустой шейдер, 6 — половина разрешения, 7 — качество низкое, 8 — высокое;
 	# [название, 1, параметр] — с заготовками без этой части
 	var tests := [["покой (карта не рисуется)", 0], ["кадр с заготовками", 1],
 		["кадр вживую", 2], ["кадр, режим «Местность»", 3], ["холст атласа 4096² без тайлов", 4],
-		["кадр, пустой шейдер", 5], ["кадр с заготовками, разрешение ×0.5", 6],
+		["кадр с заготовками, разрешение ×0.5", 6],
 		["кадр с заготовками, качество низкое", 7], ["кадр с заготовками, качество высокое", 8]]
 	for prm in ["has_sdf", "has_band", "has_rivers", "has_roads", "has_road_tex", "has_ids2", "has_sprites",
 			"has_states", "has_elev", "has_detail", "has_cover", "has_art", "front_on"]:
 		if mv.mat_b.get_shader_parameter(prm) == true:
 			tests.append(["кадр с заготовками без " + prm, 1, prm])
+	# мимо логики карты: буфер карты — этим шейдером, каждый кадр (вид 9, режим t[2])
+	for sm in [["буфер карты: пустой шейдер", 0], ["буфер карты: 8 выборок base_tex (высоты, реки)", 1],
+			["буфер карты: 8 выборок ids_tex (номера провинций)", 2], ["буфер карты: 8 выборок sdf_tex (границы)", 3],
+			["буфер карты: 8 выборок color_tex (природа)", 4], ["буфер карты: 8 выборок атласа", 5],
+			["буфер карты: арифметика (64 шага)", 6]]:
+		tests.append([sm[0], 9, sm[1]])
+	var pm := ShaderMaterial.new()
+	pm.shader = load("res://shaders/gpu_probe.gdshader")
+	for n in ["base_tex", "ids_tex", "sdf_tex", "color_tex"]:
+		pm.set_shader_parameter(n, mv.mat.get_shader_parameter(n))
+	if mv.bake != null:
+		pm.set_shader_parameter("atlas_tex", mv.bake.atlas)
 	for t in tests:
 		var kind: int = t[1]
-		var prm: String = t[2] if t.size() > 2 else ""
+		var prm: String = t[2] if t.size() > 2 and kind != 9 else ""
+		var qmat0: Material = mv.quad.material
+		if kind == 9:
+			pm.set_shader_parameter("mode", int(t[2]))
+			mv.quad.material = pm
+			mv.quad.position = Vector2.ZERO
+			mv.quad.size = Vector2(mv.map_vp.size)
 		mv._bake_off = kind == 2
 		if kind == 3:
 			g.set_map_mode(MapView.MapMode.TERRAIN)
-		elif kind == 5:
-			mv.mat_b = flat
 		elif kind == 6:
 			mv.res_scale = rs0 * 0.5
 		elif kind == 7 or kind == 8:
@@ -300,11 +312,15 @@ func _gpu_probe() -> void:
 			mv._param(prm, false)
 		var ft := PackedFloat32Array()
 		var px := 0.0
+		var drawn := 0
 		MapView.gpu = {}
 		var f_prev := Time.get_ticks_usec()
 		var nf := 70 if kind == 0 or kind == 4 else 16
 		for i in nf:
-			if kind != 0 and kind != 4:
+			if kind == 9:
+				mv.map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+				MapView.gnote("проба", mv.quad.size.x * mv.quad.size.y)
+			elif kind != 0 and kind != 4:
 				mv._dirty = true
 			elif kind == 4 and mv.bake != null and mv.bake.atlas_vp != null:
 				mv.bake.atlas_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
@@ -312,13 +328,18 @@ func _gpu_probe() -> void:
 			var f_now := Time.get_ticks_usec()
 			if i >= 4:
 				ft.append((f_now - f_prev) / 1000.0)
+				var fp := 0.0
 				for k in MapView.gpu:
-					px += float(MapView.gpu[k])
+					fp += float(MapView.gpu[k])
+				px += fp
+				if fp > 0.0:
+					drawn += 1
 			MapView.gpu = {}
 			f_prev = f_now
-		_probe.append([t[0], _pct(ft, 0.5), _pct(ft, 0.9), px / maxf(1.0, ft.size())])
+		_probe.append([t[0], _pct(ft, 0.5), _pct(ft, 0.9), px / maxf(1.0, ft.size()), drawn, ft.size()])
+		if kind == 9:
+			mv.quad.material = qmat0
 		mv._bake_off = false
-		mv.mat_b = matb0
 		mv.res_scale = rs0
 		mv.quality = q0
 		if prm != "":
@@ -447,7 +468,7 @@ func _report() -> void:
 	if not _probe.is_empty():
 		_p("Цена видеокарты (пауза, карта перерисовывается каждый кадр; мс кадра: медиана / 90 %; тыс. пикселей за кадр):")
 		for pr in _probe:
-			_p("  %-46s %6.1f / %6.1f · %.0f" % [pr[0], pr[1], pr[2], float(pr[3]) / 1000.0])
+			_p("  %-50s %6.1f / %6.1f · %.0f · перерисовок %d из %d" % [pr[0], pr[1], pr[2], float(pr[3]) / 1000.0, pr[4], pr[5]])
 		_p("")
 	_p("Действия игрока (главный поток, мс: среднее / худшее, раз; без отрисовки нового окна):")
 	var ak := _acts.keys()
