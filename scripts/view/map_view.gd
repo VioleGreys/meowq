@@ -994,6 +994,10 @@ const CACHE_ZOOM_SOFT := 2.0     # до стольких раз показыва
 # дорисовки (смена режима, палитры) идут по частям; при 100 % буфер — ~7 млн пикс.,
 # целиком за кадр — до 375 мс (отчёт ноября 2026)
 const CACHE_BUDGET_PX := 600000.0
+# лёгкая карта: упрощённый кадр (масштаб, бросок) — не больше стольких пикселей:
+# при 100 % он ~2.6 млн пикс. каждый кадр масштаба (~140 мс, отчёт ноября 2026)
+const LITE_MAX_PX := 700000.0
+var _lite_px := 0.0   # пикселей упрощённого кадра в этом кадре (вычитаются из бюджета кэша)
 const RELIEF_H := 6.0            # как в map.gdshader: высота гор при наклоне, единиц мира
 
 
@@ -1242,7 +1246,7 @@ func _cache_draw(b: CacheBuf) -> void:
 	var rects: Array = []
 	# лёгкая карта: не больше CACHE_BUDGET_PX за кадр (открывшиеся края — в начале
 	# очереди, рисуются первыми); остаток — в следующих кадрах
-	var budget := CACHE_BUDGET_PX if phone_map and b == _cache_front() else INF   # полосы постройки — уже по бюджету
+	var budget := maxf(200000.0, CACHE_BUDGET_PX - _lite_px) if phone_map and b == _cache_front() else INF   # полосы постройки — уже по бюджету
 	var rest: Array = []
 	var drawn := 0.0
 	var fit: Array = []
@@ -1516,6 +1520,8 @@ func _process_map(dt: float) -> void:
 		var rs := 0.5 if lite and not phone_map else res_scale
 		var logical := get_viewport_rect().size
 		var phys := Vector2(get_window().size)
+		if lite and phone_map:
+			rs = minf(rs, sqrt(LITE_MAX_PX / maxf(1.0, phys.x * phys.y)))
 		var size := Vector2i(maxi(1, int(phys.x * rs)), maxi(1, int(phys.y * rs)))
 		var rk := float(size.x) / maxf(1.0, logical.x)  # пикселей буфера на логический
 		_param("res_k", rk)
@@ -1539,6 +1545,7 @@ func _process_map(dt: float) -> void:
 				lite_quad.size = Vector2(size)
 				lite_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 				gnote("упрощ. " + ("загот." if lb else "живой"), float(size.x * size.y))
+				_lite_px = float(size.x * size.y)
 				_lite_cam = camera.position
 				_lite_zoom = camera.zoom.x
 				_lite_size = Vector2(size)
@@ -1562,6 +1569,7 @@ func _process_map(dt: float) -> void:
 			lite_quad.size = Vector2(size)
 			lite_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 			gnote("упрощ. " + ("загот." if lb2 else "живой"), float(size.x * size.y))
+			_lite_px = float(size.x * size.y)
 			_lite_cam = camera.position
 			_lite_zoom = camera.zoom.x
 			_lite_size = Vector2(size)
@@ -1614,6 +1622,7 @@ func _process_map(dt: float) -> void:
 		cache_rect.visible = false
 	_cache_tick()
 	_cache_flush()
+	_lite_px = 0.0
 	if _full_soft and not _screen_keys.is_empty():
 		# кадр с подменой дальним уровнем: недостающие тайлы рисуются фоном —
 		# все на месте → перерисовать точным (дальний уровень держим до того)
