@@ -976,7 +976,6 @@ void fragment() {
 	float rv_d = max(length((rv4.rg * 255.0 - 128.0) / 127.0) * RIVER_MAX, rv4.a * RIVER_MAX - rv_slack);
 	float rv_fw = max(fwidth(rv_d), 1e-4);
 	float river_m = 0.0;   // доля ленты реки в пикселе (под ней линию провинций не рисуем)
-	float river_out = 0.0;   // край ленты с берегами от осевой линии, пикс. карты (0 — реки нет)
 	float river_nk = 0.0;    // вблизи — лента (0…1)
 	// поле расстояний до границ провинций (текселей сетки; без поля — далеко)
 	float sdf_tx = 1e4;
@@ -1766,14 +1765,22 @@ void fragment() {
 			// (рассчитано на полуширину крупного плана, поэтому — только у него)
 			rv_d = min(rv_d, mix(rv_d, rv_ds, smoothstep(0.35, 0.7, hw)));
 			float has = step(0.01, rv.g) * (rv.g > 0.5 ? 1.0 : smoothstep(0.4, 0.9, zoom));   // малые — тоньше, с масштаба ~0,5
+			river_nk = nk;
+			// ранний выход: дальше края берега (bw при шуме bn = 1 — наибольшая
+			// ширина) лента и берег точно 0 — ничего не рисуется (вид тот же, шаг 12
+			// optimization.md). На ГП телефона ветвь пропускается целиком; llvmpipe
+			// исполняет обе ветви if по маске — на ПК выигрыша не видно (цикл из 0/1
+			// проходов llvmpipe пропускает: −13 мс из ~30 рек на ×3, но меняет его
+			// сборку шейдера — кадр с заготовками сдвигался на 1–2 уровня)
+			float bw_max = (0.16 + 0.50 * 1.0) * nk + 0.35 * rv_fw * nk + 0.9 * rv_fw * (1.0 - nk);
+			int rv_near = has > 0.0 && rv_d < hw + bw_max + aa ? 1 : 0;
+			if (rv_near > 0) {
 			river = (1.0 - smoothstep(hw - aa, hw + aa, rv_d)) * has;
 			// берег вблизи — неровной ширины (пляжи и отмели по шуму), вдали — узкая кромка
 			mediump float bn = has_detail && nk > 0.0 ? textureGrad(tile_tex, vec3(px / (DETAIL_TILE * 2.3 * id_k) + vec2(0.21, 0.77), 1.0), q_gx / (DETAIL_TILE * 2.3), q_gy / (DETAIL_TILE * 2.3)).g : 0.5;
 			float bw = (0.16 + 0.50 * smoothstep(0.40, 0.65, bn)) * nk + 0.35 * rv_fw * nk + 0.9 * rv_fw * (1.0 - nk);
 			float bank = (1.0 - smoothstep(hw + bw - aa, hw + bw + aa, rv_d)) * has - river;
 			river_m = river + max(bank, 0.0);   // лента вместе с берегами
-			river_out = (hw + bw) * step(0.5, has);
-			river_nk = nk;
 			// вода вблизи: глубина — синяя, к берегу мель зеленовато-бурая; струи течения
 			// вдоль русла, блики, тень берега с северо-запада, светлая кромка у уреза
 			float mid = clamp(1.0 - rv_d / max(hw, 1e-3), 0.0, 1.0);   // 1 — ось, 0 — урез
@@ -1860,6 +1867,7 @@ void fragment() {
 					col = mix(col, vec3(0.22, 0.22, 0.24), max(tr_r, tr_d) * near * river);
 				}
 			}
+			}   // rv_near
 			river = 0.0;
 		} else {
 			river = smoothstep(0.25, 0.8, textureLod(base_tex, vec3(muv, 0.0), 0.0).g);
