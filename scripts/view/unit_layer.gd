@@ -913,7 +913,11 @@ func _draw_label(ci: CanvasItem, l: Array, z: float) -> void:
 	# строка — серединой заглавных по точке страны (базовая линия ниже на половину
 	# высоты заглавных ~0.7 кегля); раньше вся подпись стояла над точкой
 	ci.draw_set_transform(pos - Vector2(w * 0.5, -size * 0.35), 0.0, Vector2(k, k))
-	ci.draw_string_outline(label_font, Vector2.ZERO, text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX, int(4.0 / k), Color(0.95, 0.92, 0.84, alpha * 0.45))
+	# обводка — одна из трёх толщин (4 / 8 / 16 при LBL_PX): каждая толщина — свой
+	# растр букв в кэше шрифта; при плавной 4/k (3…17) масштаб каждый раз растрировал
+	# новые — фризы при приближении и отдалении на телефоне (ноябрь 2026)
+	var ol := 4 if k > 0.7 else (8 if k > 0.35 else 16)
+	ci.draw_string_outline(label_font, Vector2.ZERO, text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX, ol, Color(0.95, 0.92, 0.84, alpha * 0.45))
 	ci.draw_string(label_font, Vector2.ZERO, text, HORIZONTAL_ALIGNMENT_LEFT, -1, LBL_PX, Color(0.10, 0.08, 0.06, alpha))
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
