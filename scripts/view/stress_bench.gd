@@ -46,6 +46,7 @@ var _action := ""
 var _frames: Array = []   # по отрезкам: PackedFloat32Array времени кадра, мс
 var _long: Array = []     # долгие кадры: [отрезок, мс, действие, дней, ЦП, ГП, {участок: мкс}, видеокарте: этот кадр, прошлый]
 var _seg_gpu: Array = []  # по отрезкам: вид работы видеокарты → пикселей за отрезок
+var _probe_lines := ""     # видны ли линии границ (весь шейдер против этапа 5)
 var _probe: Array = []    # «Цена видеокарты»: [название, медиана, 90 %, пикселей за кадр]
 var _seg_info: Array = [] # по отрезкам: {draws, cpu, gpu, script, drawn, days, sec, mem...}
 
@@ -290,7 +291,7 @@ func _gpu_probe() -> void:
 	# шейдер с заготовками, обрезанный на этапе CUT (<probe> в map_core): цена
 	# всего, что нужно до этого места (вид 10; 99 — весь, сверка с «кадр с заготовками»)
 	var cuts := [[1, "до 1: луч камеры"], [2, "до 2: + реки и поле границ"],
-		[3, "до 3: + окно 4×4 провинций"], [6, "до 3б: + веса соперников для границ"], [4, "до 4: + выборка заготовок"],
+		[3, "до 3: + окно 4×4 провинций"], [4, "до 4: + выборка заготовок"],
 		[5, "до 5: + реки, кайма (без линий границ)"], [99, "весь (копия материала)"]]
 	var cut_mats := {}
 	for c in cuts:
@@ -313,6 +314,7 @@ func _gpu_probe() -> void:
 		pm.set_shader_parameter(n, mv.mat.get_shader_parameter(n))
 	if mv.bake != null:
 		pm.set_shader_parameter("atlas_tex", mv.bake.atlas)
+	var shots := {}   # буфер карты: этап 5 и весь шейдер — видны ли линии границ
 	for t in tests:
 		var kind: int = t[1]
 		var prm: String = t[2] if t.size() > 2 and kind < 9 else ""
@@ -362,6 +364,8 @@ func _gpu_probe() -> void:
 			MapView.gpu = {}
 			f_prev = f_now
 		_probe.append([t[0], _pct(ft, 0.5), _pct(ft, 0.9), px / maxf(1.0, ft.size()), drawn, ft.size()])
+		if kind == 10 and (t[2] == 5 or t[2] == 99):
+			shots[t[2]] = mv.map_vp.get_texture().get_image()
 		if kind >= 9:
 			mv.quad.material = qmat0
 		mv._bake_off = false
@@ -371,11 +375,35 @@ func _gpu_probe() -> void:
 			mv._param(prm, true)
 		if kind == 3:
 			g.set_map_mode(MapView.MapMode.POLITICAL)
+	if shots.size() == 2:
+		_probe_lines = _shot_diff(shots[5], shots[99])
 	mv.strips = strips0
 	mv.res_auto = auto0
 	mv.quality = q0
 	g.set_map_mode(mode0)
 	mv.redraw()
+
+
+## Доля пикселей буфера, которые меняют линии границ: весь шейдер против
+## обрезанного до линий (этап 5). На ПК ~N %; около нуля — линии не рисуются.
+static func _shot_diff(a: Image, b: Image) -> String:
+	if a == null or b == null or a.get_size() != b.get_size():
+		return "линии границ: снимки буфера не сравнить"
+	a.convert(Image.FORMAT_RGBA8)
+	b.convert(Image.FORMAT_RGBA8)
+	var da := a.get_data()
+	var db := b.get_data()
+	var n := 0
+	var dark := 0
+	var tot := da.size() / 4
+	for i in range(0, da.size(), 4):
+		var d := absi(da[i] - db[i]) + absi(da[i + 1] - db[i + 1]) + absi(da[i + 2] - db[i + 2])
+		if d > 24:
+			n += 1
+			if db[i] + db[i + 1] + db[i + 2] < da[i] + da[i + 1] + da[i + 2]:
+				dark += 1
+	return "линии границ меняют %.1f %% пикселей буфера (темнее — %.1f %%); около нуля — линий нет" % [
+		100.0 * n / maxi(1, tot), 100.0 * dark / maxi(1, tot)]
 
 
 var _acts := {}   # действие → [сумма мкс, худшее, раз]
@@ -496,6 +524,8 @@ func _report() -> void:
 		_p("Цена видеокарты (пауза, карта перерисовывается каждый кадр; мс кадра: медиана / 90 %; тыс. пикселей за кадр):")
 		for pr in _probe:
 			_p("  %-50s %6.1f / %6.1f · %.0f · перерисовок %d из %d" % [pr[0], pr[1], pr[2], float(pr[3]) / 1000.0, pr[4], pr[5]])
+		if _probe_lines != "":
+			_p("  " + _probe_lines)
 		_p("")
 	_p("Действия игрока (главный поток, мс: среднее / худшее, раз; без отрисовки нового окна):")
 	var ak := _acts.keys()

@@ -1118,90 +1118,62 @@ void fragment() {
 	int o0 = far ? 1 : 0;
 	int o1 = far ? 3 : 4;
 	un = 0;
-	for (int oy = 0; oy < 4; oy++) {
-		for (int ox = 0; ox < 4; ox++) {
-			if (oy < o0 || oy >= o1 || ox < o0 || ox >= o1) {
-				continue;
-			}
+	for (int oy = o0; oy < o1; oy++) {
+		for (int ox = o0; ox < o1; ox++) {
 			int cidv = pid(i0 + ivec2(ox - 1, oy - 1));
 			float w = wx[ox] * wy[oy];
-			// индексы массивов — только постоянные (цикл до NS разворачивается): с
-			// индексом «на ходу» Adreno держит массивы в медленной памяти, а не в
-			// регистрах (отчёт ноября 2026: кадр карты ~300 мс при пустом шейдере 33)
-			bool fnd = false;
-			for (int j = 0; j < NS; j++) {
-				if (j < un && uid[j] == cidv) {
-					uw[j] += w;
-					fnd = true;
+			int k = -1;
+			for (int j = 0; j < un; j++) {
+				if (uid[j] == cidv) {
+					k = j;
 				}
 			}
-			if (!fnd && un < NS) {
-				for (int j = 0; j < NS; j++) {
-					if (j == un) {
-						uid[j] = cidv;
-						uw[j] += w;
-					}
-				}
+			if (k < 0 && un < NS) {
+				k = un;
+				uid[k] = cidv;
 				un++;
+			}
+			if (k >= 0) {
+				uw[k] += w;
 			}
 		}
 	}
 	}
 	int top = 0;
-	float top_w = uw[0];
-	int top_id = uid[0];
-	for (int j = 1; j < NS; j++) {
-		if (j < un && uw[j] > top_w) {
+	for (int j = 1; j < un; j++) {
+		if (uw[j] > uw[top]) {
 			top = j;
-			top_w = uw[j];
-			top_id = uid[j];
 		}
 	}
 	int sec = -1;
-	float sec_w = 0.0;
-	int sec_id = -1;
-	for (int j = 0; j < NS; j++) {
-		if (j < un && j != top && uid[j] >= 0 && (sec < 0 || uw[j] > sec_w)) {
+	for (int j = 0; j < un; j++) {
+		if (j != top && uid[j] >= 0 && (sec < 0 || uw[j] > uw[sec])) {
 			sec = j;
-			sec_w = uw[j];
-			sec_id = uid[j];
 		}
 	}
-	int id = top_id;
-	float diff = sec >= 0 ? (top_w - sec_w) / (top_w + sec_w) : 1.0;
-	int id2 = sec >= 0 ? sec_id : id;
+	int id = uid[top];
+	float diff = sec >= 0 ? (uw[top] - uw[sec]) / (uw[top] + uw[sec]) : 1.0;
+	int id2 = sec >= 0 ? uid[sec] : id;
 	// Берег — по доле суши из векторных контуров (канал b рельефа, tools/build_map.py):
 	// уровень 0.5 даёт настоящую плавную линию берега. Если победила провинция не той
 	// стихии — берём лучшего соперника нужной (суша) или рисуем воду.
 	float cov = quality > 0 ? textureLod(base_tex, vec3(muv, 0.0), 0.0).b : 0.5;
 	int nat_c[NS] = int[](-2, -2, -2, -2, -2, -2, -2, -2);
-	int nat_top = -2;
-	for (int j = 0; j < NS; j++) {
-		if (j < un) {
-			nat_c[j] = uid[j] >= 0 ? nation(pal(0, uid[j])) : -2;
-			if (j == top) {
-				nat_top = nat_c[j];
-			}
-		}
+	for (int j = 0; j < un; j++) {
+		nat_c[j] = uid[j] >= 0 ? nation(pal(0, uid[j])) : -2;
 	}
 	bool wide_land = false;   // суша найдена вне окна — границ стран/провинций тут не рисуем
-	bool cov_land = quality > 0 ? cov >= 0.5 : nation(pal(0, top_id)) >= 0;
-	if (cov_land && nat_top < 0) {
+	bool cov_land = quality > 0 ? cov >= 0.5 : nation(pal(0, uid[top])) >= 0;
+	if (cov_land && nat_c[top] < 0) {
 		int bl = -1;
-		float bl_w = 0.0;
-		int bl_id = -1;
-		for (int j = 0; j < NS; j++) {
-			if (j < un && nat_c[j] >= 0 && (bl < 0 || uw[j] > bl_w)) {
+		for (int j = 0; j < un; j++) {
+			if (nat_c[j] >= 0 && (bl < 0 || uw[j] > uw[bl])) {
 				bl = j;
-				bl_w = uw[j];
-				bl_id = uid[j];
 			}
 		}
 		if (bl >= 0) {
 			top = bl;
-			top_w = bl_w;
-			top_id = bl_id;
-			id = top_id;
+			id = uid[top];
 		} else {
 			// векторный контур уже суша, а в окне сглаживания одна вода (берег
 			// большого озера-зоны) — ищем ближайшую сушу чуть дальше, иначе тут
@@ -1233,101 +1205,7 @@ void fragment() {
 	// <probe>
 #ifdef CUT
 #if CUT == 3
-	COLOR = vec4(cc.rgb + oc.rgb * 0.1, top_w + cov + float(id) * 1e-5 + (sea_px ? 0.3 : 0.0) + rv_d * 0.01 + sdf_tx * 0.001);
-	if (false) {   // остаток — мёртвый код (return во fragment в Godot нельзя)
-#endif
-#endif
-	// </probe>
-	// веса соперников для линий границ (ниже) — здесь, пока окно под рукой: дальше
-	// в шейдере только скаляры, массивы окна не живут до конца (на Adreno они
-	// уходили в память: линии границ стоили ~165 из ~210 мс кадра, ноябрь 2026)
-	float w_mine = 0.0;      // страна победителя
-	float w_other = 0.0;     // лучшая другая страна (суша)
-	float w_prov2 = 0.0;     // лучшая другая провинция той же страны
-	for (int j = 0; j < NS; j++) {
-		if (j >= un) {
-			break;
-		}
-		if (uid[j] < 0) {
-			continue;
-		}
-		if (nat_c[j] == ctrl) {
-			w_mine += uw[j];
-			if (j != top) {
-				w_prov2 = max(w_prov2, uw[j]);
-			}
-		}
-	}
-	for (int j = 0; j < NS; j++) {
-		if (j >= un) {
-			break;
-		}
-		if (uid[j] >= 0 && nat_c[j] >= 0 && nat_c[j] != ctrl) {
-			float s2 = 0.0;
-			for (int k = 0; k < NS; k++) {
-				if (k >= un) {
-					break;
-				}
-				if (uid[k] >= 0 && nat_c[k] == nat_c[j]) {
-					s2 += uw[k];
-				}
-			}
-			w_other = max(w_other, s2);
-		}
-	}
-	// фронт: наш участок против целей — линия по границе между ними (как в жанре)
-	float w_fo = 0.0;
-	float w_ft = 0.0;
-	int fo_id = -1;       // провинция нашего участка с наибольшим весом
-	float fo_w = 0.0;
-	int role_top = 0;
-	if (front_on) {
-		for (int j = 0; j < NS; j++) {
-			if (j >= un) {
-				break;
-			}
-			if (uid[j] < 0) {
-				continue;
-			}
-			int r = int(pal(3, uid[j]).a * 255.0 + 0.5);
-			if ((r & 1) != 0) {
-				w_fo += uw[j];
-				if (fo_id < 0 || uw[j] > fo_w) {
-					fo_id = uid[j];
-					fo_w = uw[j];
-				}
-			}
-			if ((r & 2) != 0) {
-				w_ft += uw[j];
-			}
-		}
-		role_top = int(pal(3, id).a * 255.0 + 0.5);
-	}
-	// область выбранной провинции: веса её области и остальной суши в окне
-	float w_in = 0.0;
-	float w_out = 0.0;
-	if (has_states && selected_id >= 0) {
-		vec4 ss = pal(2, selected_id);
-		int sel_st = int(ss.r * 255.0 + 0.5) + int(ss.g * 255.0 + 0.5) * 256;
-		for (int j = 0; j < NS; j++) {
-			if (j >= un) {
-				break;
-			}
-			if (uid[j] >= 0 && nat_c[j] >= 0) {
-				vec4 scj = pal(2, uid[j]);
-				int stj = int(scj.r * 255.0 + 0.5) + int(scj.g * 255.0 + 0.5) * 256;
-				if (stj == sel_st) {
-					w_in += uw[j];
-				} else {
-					w_out += uw[j];
-				}
-			}
-		}
-	}
-	// <probe>
-#ifdef CUT
-#if CUT == 6
-	COLOR = vec4(w_mine + w_other, w_prov2 + w_in + w_out, w_fo + w_ft + fo_w + float(fo_id + role_top) * 1e-5, top_w + cov + rv_d * 0.01 + sdf_tx * 0.001 + cc.r);
+	COLOR = vec4(cc.rgb + oc.rgb * 0.1, uw[top] + diff + cov + float(id) * 1e-5 + (sea_px ? 0.3 : 0.0) + rv_d * 0.01 + sdf_tx * 0.001);
 	if (false) {   // остаток — мёртвый код (return во fragment в Godot нельзя)
 #endif
 #endif
@@ -1454,7 +1332,7 @@ void fragment() {
 	// <probe>
 #ifdef CUT
 #if CUT == 4
-	COLOR = vec4(bk.rgb + cc.rgb * 0.1, bk.a + top_w + cov + rv_d * 0.01 + sdf_tx * 0.001);
+	COLOR = vec4(bk.rgb + cc.rgb * 0.1, bk.a + uw[top] + cov + rv_d * 0.01 + sdf_tx * 0.001);
 	if (false) {   // остаток — мёртвый код (return во fragment в Godot нельзя)
 #endif
 #endif
@@ -2111,7 +1989,7 @@ void fragment() {
 	// <probe>
 #ifdef CUT
 #if CUT == 5
-	COLOR = vec4(col, top_w + cov + sdf_tx * 0.001 + rv_d * 0.01);
+	COLOR = vec4(col, uw[top] + cov + sdf_tx * 0.001 + rv_d * 0.01);
 	if (false) {   // остаток — мёртвый код (return во fragment в Godot нельзя)
 #endif
 #endif
@@ -2129,6 +2007,79 @@ void fragment() {
 	float map_px = texel_px * id_k;                                  // пиксель карты на экране: толщины линий — в нём
 	// расстояние до границы провинций, пиксели экрана (с полем расстояний)
 	float sdf_px = sdf_tx * texel_px;
+	float w_land = 0.0;
+	float w_water = 0.0;
+	float w_mine = 0.0;      // страна победителя
+	float w_other = 0.0;     // лучшая другая страна (суша)
+	float w_prov2 = 0.0;     // лучшая другая провинция той же страны
+	for (int j = 0; j < un; j++) {
+		if (uid[j] < 0) {
+			continue;
+		}
+		if (nat_c[j] >= 0) {
+			w_land += uw[j];
+		} else {
+			w_water += uw[j];
+		}
+		if (nat_c[j] == ctrl) {
+			w_mine += uw[j];
+			if (j != top) {
+				w_prov2 = max(w_prov2, uw[j]);
+			}
+		}
+	}
+	for (int j = 0; j < un; j++) {
+		if (uid[j] >= 0 && nat_c[j] >= 0 && nat_c[j] != ctrl) {
+			float s2 = 0.0;
+			for (int k = 0; k < un; k++) {
+				if (uid[k] >= 0 && nat_c[k] == nat_c[j]) {
+					s2 += uw[k];
+				}
+			}
+			w_other = max(w_other, s2);
+		}
+	}
+	// области: веса своей области победителя и других областей той же страны
+	float w_st_same = 0.0;
+	float w_st_oth = 0.0;
+	if (has_states) {
+		vec4 sc0 = pal(2, uid[top]);
+		int st_top = int(sc0.r * 255.0 + 0.5) + int(sc0.g * 255.0 + 0.5) * 256;
+		for (int j = 0; j < un; j++) {
+			if (uid[j] >= 0 && nat_c[j] == ctrl) {
+				vec4 scj = pal(2, uid[j]);
+				int stj = int(scj.r * 255.0 + 0.5) + int(scj.g * 255.0 + 0.5) * 256;
+				if (stj == st_top) {
+					w_st_same += uw[j];
+				} else {
+					w_st_oth += uw[j];
+				}
+			}
+		}
+	}
+	// фронт: наш участок против целей — линия по границе между ними (как в жанре)
+	float w_fo = 0.0;
+	float w_ft = 0.0;
+	int fo_j = -1;
+	int role_top = 0;
+	if (front_on) {
+		for (int j = 0; j < un; j++) {
+			if (uid[j] < 0) {
+				continue;
+			}
+			int r = int(pal(3, uid[j]).a * 255.0 + 0.5);
+			if ((r & 1) != 0) {
+				w_fo += uw[j];
+				if (fo_j < 0 || uw[j] > uw[fo_j]) {
+					fo_j = j;
+				}
+			}
+			if ((r & 2) != 0) {
+				w_ft += uw[j];
+			}
+		}
+		role_top = int(pal(3, id).a * 255.0 + 0.5);
+	}
 	// Производные (fwidth) — только здесь, вне ветвлений: внутри условий они на
 	// части мобильных ГП (OpenGL ES) не определены и давали ложные штрихи
 	// по пиксельной сетке у берегов.
@@ -2137,8 +2088,8 @@ void fragment() {
 	float s1 = w_mine + w_other;
 	float d1 = s1 > 0.0 ? abs(w_mine - w_other) / s1 : 1.0;
 	float fw1 = fwidth(d1);
-	float s2 = top_w + w_prov2;
-	float d2 = s2 > 0.0 ? (top_w - w_prov2) / s2 : 1.0;
+	float s2 = uw[top] + w_prov2;
+	float d2 = s2 > 0.0 ? (uw[top] - w_prov2) / s2 : 1.0;
 	float fw2 = fwidth(d2);
 	float s3 = w_fo + w_ft;
 	float d3 = s3 > 0.0 ? abs(w_fo - w_ft) / s3 : 1.0;
@@ -2185,6 +2136,21 @@ void fragment() {
 	// область — только выбранной провинции (решение пользователя): контур по
 	// границе весов «область выбранной» против остальной суши в окне
 	if (has_states && selected_id >= 0 && land && !wide_land) {
+		vec4 ss = pal(2, selected_id);
+		int sel_st = int(ss.r * 255.0 + 0.5) + int(ss.g * 255.0 + 0.5) * 256;
+		float w_in = 0.0;
+		float w_out = 0.0;
+		for (int j = 0; j < un; j++) {
+			if (uid[j] >= 0 && nat_c[j] >= 0) {
+				vec4 scj = pal(2, uid[j]);
+				int stj = int(scj.r * 255.0 + 0.5) + int(scj.g * 255.0 + 0.5) * 256;
+				if (stj == sel_st) {
+					w_in += uw[j];
+				} else {
+					w_out += uw[j];
+				}
+			}
+		}
 		if (w_in > 0.0 && w_out > 0.0) {
 			float ds = abs(w_in - w_out) / (w_in + w_out);
 			float dp = border_tx(ds, win_bl) * texel_px;
@@ -2214,9 +2180,9 @@ void fragment() {
 			col = mix(col, fc * 0.9, st * 0.42);
 		}
 	}
-	if (front_on && land && w_fo > 0.0 && w_ft > 0.0 && fo_id >= 0) {
+	if (front_on && land && w_fo > 0.0 && w_ft > 0.0 && fo_j >= 0) {
 		// линия фронта: тёмная кайма и цвет армии — толще границы стран
-		mediump vec3 fc = pal(3, fo_id).rgb;
+		mediump vec3 fc = pal(3, uid[fo_j]).rgb;
 		float dp = d3 / max(fw3, 0.5 / texel_px) * 0.5;
 		float w = min(max(lw_min(2.3 * res_k), 0.55 * map_px), 7.0 * res_k);
 		col = mix(col, vec3(0.05, 0.04, 0.03), (1.0 - smoothstep(w + 0.4, w + 1.6, dp)) * 0.85);
