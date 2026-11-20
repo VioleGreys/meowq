@@ -990,6 +990,10 @@ const CACHE_MAX_SCREENS := 3.2   # пикселей кэша не больше �
 const CACHE_MARGIN := 0.1        # запас окна на сдвиг (доля большей стороны экрана)
 const CACHE_ZOOM_TOL := 1.15     # дальше — строить новый
 const CACHE_ZOOM_SOFT := 2.0     # до стольких раз показывать готовый, пока строится новый
+# лёгкая карта: пикселей кэша за кадр (~20 мс на Adreno 619) — постройка и большие
+# дорисовки (смена режима, палитры) идут по частям; при 100 % буфер — ~7 млн пикс.,
+# целиком за кадр — до 375 мс (отчёт ноября 2026)
+const CACHE_BUDGET_PX := 600000.0
 const RELIEF_H := 6.0            # как в map.gdshader: высота гор при наклоне, единиц мира
 
 
@@ -1054,14 +1058,10 @@ func _screen_rk() -> float:
 	return float(maxi(1, int(phys.x * res_scale))) / maxf(1.0, logical.x)
 
 
-## Плотность кэша движения: как у экрана; на лёгкой карте — не гуще 50 % экрана
-## (виден только в движении, а при 100 % буфер — 7 млн пикселей, кадр его
-## дорисовки на Adreno 619 — до 375 мс; отчёт ноября 2026).
+## Плотность кэша движения — как у экрана (в движении та же чёткость; на лёгкой
+## карте его дорисовка — не больше CACHE_BUDGET_PX за кадр, см. _cache_draw).
 func _cache_rk() -> float:
-	var rk := _screen_rk()
-	if phone_map and res_scale > 0.5:
-		rk *= 0.5 / res_scale
-	return rk
+	return _screen_rk()
 
 
 ## Нужный кэш для текущей камеры → [масштаб, рамка видимого в мире].
@@ -1114,6 +1114,8 @@ func _cache_build() -> void:
 	var screens := float(b.size.x * b.size.y) / maxf(1.0, vp.x * vp.y)
 	_c_build_i = 0
 	_c_build_n = maxi(1, ceili(strips * screens)) if strips > 1 else 1
+	if phone_map:
+		_c_build_n = maxi(_c_build_n, ceili(float(b.size.x * b.size.y) / CACHE_BUDGET_PX))
 
 
 ## Рамка мира → прямоугольник кадра якоря буфера (пиксели, целые).
@@ -1152,17 +1154,22 @@ func _cache_usable() -> bool:
 	var d := n2 - b.n
 	b.n = n2
 	if absi(d.x) >= b.size.x or absi(d.y) >= b.size.y:
+		if phone_map:
+			# скачок дальше окна: весь буфер за кадр — фриз; строить новый по частям
+			b.valid = false
+			return false
 		b.queue.append(Rect2(Vector2(n2), Vector2(b.size)))
 		return true
+	# открывшиеся края — в начало очереди: видны сразу, рисуются в этом кадре
 	var w := Vector2(b.size)
 	if d.x > 0:
-		b.queue.append(Rect2(Vector2(n2.x + w.x - d.x, n2.y), Vector2(d.x, w.y)))
+		b.queue.push_front(Rect2(Vector2(n2.x + w.x - d.x, n2.y), Vector2(d.x, w.y)))
 	elif d.x < 0:
-		b.queue.append(Rect2(Vector2(n2), Vector2(-d.x, w.y)))
+		b.queue.push_front(Rect2(Vector2(n2), Vector2(-d.x, w.y)))
 	if d.y > 0:
-		b.queue.append(Rect2(Vector2(n2.x, n2.y + w.y - d.y), Vector2(w.x, d.y)))
+		b.queue.push_front(Rect2(Vector2(n2.x, n2.y + w.y - d.y), Vector2(w.x, d.y)))
 	elif d.y < 0:
-		b.queue.append(Rect2(Vector2(n2), Vector2(w.x, -d.y)))
+		b.queue.push_front(Rect2(Vector2(n2), Vector2(w.x, -d.y)))
 	return true
 
 
@@ -1195,6 +1202,8 @@ func _cache_tick() -> void:
 		var zr: float = float(_cache_need()[0]) / b.zneed
 		if not _zoom_ok(zr, CACHE_ZOOM_TOL) or b.q != quality:
 			_c_build_n = 0   # масштаб ушёл — строить заново
+		elif phone_map and f.valid and not f.queue.is_empty():
+			return   # в этом кадре дорисовывается показанный — полоса постройки следующим
 		else:
 			var y0 := floori(float(b.size.y) * _c_build_i / _c_build_n)
 			var y1 := floori(float(b.size.y) * (_c_build_i + 1) / _c_build_n)
@@ -1231,10 +1240,31 @@ func _cache_draw(b: CacheBuf) -> void:
 		return
 	var win := Rect2(Vector2(b.n), Vector2(b.size))
 	var rects: Array = []
+	# лёгкая карта: не больше CACHE_BUDGET_PX за кадр (открывшиеся края — в начале
+	# очереди, рисуются первыми); остаток — в следующих кадрах
+	var budget := CACHE_BUDGET_PX if phone_map and b == _cache_front() else INF   # полосы постройки — уже по бюджету
+	var rest: Array = []
+	var drawn := 0.0
+	var fit: Array = []
 	for r in b.queue:
 		var q: Rect2 = (r as Rect2).intersection(win)
 		if q.size.x < 1.0 or q.size.y < 1.0:
 			continue
+		var a := q.get_area()
+		if drawn + a > budget:
+			var h := floorf((budget - drawn) / q.size.x)
+			if h >= 8.0:
+				fit.append(Rect2(q.position, Vector2(q.size.x, h)))
+				rest.append(Rect2(q.position + Vector2(0, h), Vector2(q.size.x, q.size.y - h)))
+				drawn = budget
+			else:
+				rest.append(q)
+			continue
+		fit.append(q)
+		drawn += a
+	b.queue = fit
+	for r in b.queue:
+		var q: Rect2 = r
 		# в буфер: по модулю размера, с разрезом по краю
 		var bx := posmod(int(q.position.x), b.size.x)
 		var by := posmod(int(q.position.y), b.size.y)
@@ -1268,7 +1298,7 @@ func _cache_draw(b: CacheBuf) -> void:
 			use_b = not _soft_cover(keys).is_empty() or bake.want(keys, true, _season()) or phone_map
 			if use_b:
 				b.soft.append(wr)
-	b.queue.clear()
+	b.queue = rest
 	if rects.is_empty():
 		return
 	while b.quads.size() < rects.size():
@@ -1481,7 +1511,9 @@ func _process_map(dt: float) -> void:
 		var was_lite := _lite_drawn
 		_lite_drawn = lite
 		_param("quality", 0 if lite else quality)
-		var rs := 0.5 if lite else res_scale
+		# лёгкая карта: упрощённый кадр (кэша ещё нет) — в полном разрешении: дёшево,
+		# и без скачка чёткости при остановке
+		var rs := 0.5 if lite and not phone_map else res_scale
 		var logical := get_viewport_rect().size
 		var phys := Vector2(get_window().size)
 		var size := Vector2i(maxi(1, int(phys.x * rs)), maxi(1, int(phys.y * rs)))
