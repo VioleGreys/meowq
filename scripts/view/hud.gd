@@ -4713,21 +4713,16 @@ func _bake_dl_section() -> void:
 	popup_body.add_child(_label("Ближние масштабы (×1.4–×5.6) нарисованы заранее и скачиваются отдельно — %d МБ с GitHub, лучше по Wi-Fi. Без них телефон рисует их сам там, куда вы смотрите (дольше и греется). После обрыва скачивание продолжится с того же места." % total_mb, 15, Color(0.75, 0.75, 0.7)))
 	var st := _label("", 15)
 	popup_body.add_child(st)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
 	var go := _button("", func():
 		if dl.state == "run":
 			dl.stop()
 		else:
 			dl.start(), Vector2(0, 52))
-	go.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(go)
+	popup_body.add_child(go)
 	var rm := _button("Удалить скачанное", func():
 		dl.remove_all(game.map_view)
 		toast("Скачанная карта удалена"), Vector2(0, 52))
-	rm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(rm)
-	popup_body.add_child(row)
+	popup_body.add_child(rm)
 	var upd := func():
 		var have := roundi(dl.have_bytes() / 1048576.0)
 		match dl.state:
