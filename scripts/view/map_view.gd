@@ -55,6 +55,7 @@ var cmats: Array = []          # шейдер карты для двух буф�
 # заготовки неподвижной части (MapBake): те же кадры шейдером map_baked — когда
 # все нужные тайлы в атласе; иначе — живым (mat, cmats), тайлы готовятся фоном
 var mat_b: ShaderMaterial
+var phone_map := false   # лёгкая карта (map_phone.gdshader) вместо полной с заготовками
 var cmats_b: Array = []
 var bake: MapBake
 var _bake_off := false
@@ -143,7 +144,8 @@ func setup(w: World) -> void:
 		cm.shader = mat.shader
 		cmats.append(cm)
 	mat_b = ShaderMaterial.new()
-	mat_b.shader = load("res://shaders/map_baked.gdshader")
+	phone_map = Settings.phone_map()
+	mat_b.shader = load(_baked_shader())
 	cmats_b = []
 	for i in 2:
 		var cm := ShaderMaterial.new()
@@ -1650,6 +1652,22 @@ func bake_reload() -> void:
 
 func _season() -> int:
 	return 1 if _winter >= 0.5 else 0
+
+
+func _baked_shader() -> String:
+	return "res://shaders/map_phone.gdshader" if phone_map else "res://shaders/map_baked.gdshader"
+
+
+## Лёгкая карта вкл/выкл (настройки): шейдер кадра и кэша движения с заготовками.
+func set_phone_map(v: bool) -> void:
+	if v == phone_map:
+		return
+	phone_map = v
+	var sh: Shader = load(_baked_shader())
+	mat_b.shader = sh
+	for cm in cmats_b:
+		cm.shader = sh
+	redraw()
 
 
 func _bake_ok() -> bool:

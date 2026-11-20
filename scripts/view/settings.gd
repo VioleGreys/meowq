@@ -60,6 +60,21 @@ static func set_motion_lite(v: bool) -> void:
 	_cfg.save(PATH)
 
 
+## Лёгкая карта (map_phone.gdshader): из заготовок, политика по соседям 2×2 —
+## на слабом телефоне кадр карты в разы дешевле полного шейдера. По умолчанию:
+## телефон — да, ПК — нет; для замеров: -- --phonemap=0|1.
+static func phone_map() -> bool:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--phonemap="):
+			return a.split("=")[1] == "1"
+	return bool(_load().get_value("graphics", "phone_map", Device.mobile()))
+
+
+static func set_phone_map(v: bool) -> void:
+	_load().set_value("graphics", "phone_map", v)
+	_cfg.save(PATH)
+
+
 ## Наклон камеры при приближении (перспектива, как в стратегиях жанра). По умолчанию — да.
 static func map_tilt() -> bool:
 	return bool(_load().get_value("graphics", "map_tilt", true))

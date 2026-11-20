@@ -951,6 +951,11 @@ vec4 road_paint(vec3 under, float d_rail, float s_rail, float d_road, float mp, 
 	return vec4(col, a);
 }
 
+// <phone>
+#ifdef PHONE
+#include "res://shaders/map_phone.gdshaderinc"
+#else
+// </phone>
 void fragment() {
 	// луч из пикселя экрана до плоскости карты (см. cam_*)
 	// центр пикселя буфера: прямоугольник (частичная перерисовка, полосы) лежит на
@@ -2202,3 +2207,6 @@ void fragment() {
 #endif
 	// </probe>
 }
+// <phone>
+#endif
+// </phone>

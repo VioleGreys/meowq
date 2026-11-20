@@ -103,9 +103,10 @@ func run(g, in_game := false) -> void:
 		OS.get_model_name(), OS.get_processor_name(), OS.get_processor_count(), Parallel.thread_count(),
 		"ТЕЛЕФОН" if Device.mobile() else "ПК", "C++" if Native.available() else "GDScript",
 		Engine.get_version_info().string])
-	_p("Видео: %s · окно %s · карта: качество %s, разрешение %d%%, полосы %d" % [
+	_p("Видео: %s · окно %s · карта: качество %s, разрешение %d%%, полосы %d, лёгкая %s" % [
 		RenderingServer.get_video_adapter_name(), str(DisplayServer.window_get_size()),
-		Settings.QUALITY_NAMES[Settings.map_quality()], int(g.map_view.res_scale * 100), g.map_view.strips])
+		Settings.QUALITY_NAMES[Settings.map_quality()], int(g.map_view.res_scale * 100), g.map_view.strips,
+		"да" if g.map_view.phone_map else "нет"])
 	if g.boot_info != "":
 		_p(g.boot_info)
 	if ingame:
@@ -292,12 +293,12 @@ func _gpu_probe() -> void:
 	# всего, что нужно до этого места (вид 10; 99 — весь, сверка с «кадр с заготовками»)
 	var cuts := [[1, "до 1: луч камеры"], [2, "до 2: + реки и поле границ"],
 		[3, "до 3: + окно 4×4 провинций"], [4, "до 4: + выборка заготовок"],
-		[5, "до 5: + реки, кайма (без линий границ)"], [99, "весь (копия материала)"]]
+		[5, "до 5: + реки, кайма (без линий границ)"], [99, "весь (полная карта)"], [100, "— лёгкая карта (телефон)"]]
 	var cut_mats := {}
 	for c in cuts:
 		var sh := Shader.new()
 		sh.code = "shader_type canvas_item;\n#define BAKED\n%s#include \"res://shaders/map_core.gdshaderinc\"\n" % (
-			"#define CUT %d\n" % c[0] if c[0] < 99 else "")
+			"#define CUT %d\n" % c[0] if c[0] < 99 else ("#define PHONE\n" if c[0] == 100 else ""))
 		var cm := ShaderMaterial.new()
 		cm.shader = sh
 		cut_mats[c[0]] = cm
