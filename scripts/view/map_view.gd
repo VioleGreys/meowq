@@ -1246,6 +1246,11 @@ func _cache_tick() -> void:
 		if f.q != quality or absf(f.rk - _cache_rk()) > 1e-4:
 			f.valid = false
 	var zr_f: float = float(_cache_need()[0]) / f.zneed
+	if f.valid and not _zoom_ok(zr_f, CACHE_ZOOM_SOFT):
+		# показать его уже нельзя — не дорисовывать (на лёгкой карте его очередь
+		# держала бы постройку нового: в наклоне тот ~3 экрана, 14 полос)
+		f.valid = false
+		f.queue.clear()
 	if _c_build_n > 0:
 		var b := _cache_back()
 		var zr: float = float(_cache_need()[0]) / b.zneed
@@ -1712,7 +1717,10 @@ func _process_map(dt: float) -> void:
 		# все на месте → перерисовать точным (дальний уровень держим до того)
 		bake.have(_soft_keys)
 		if bake.want(_screen_keys):
-			redraw()
+			# только экран: кэш движения свою подмену дорисует сам (soft); прежний
+			# redraw() сбрасывал и его — в наклоне тайлы идут всё время, и кэш
+			# (~3 экрана, 14 полос) не достраивался никогда: сдвиг шёл упрощённым
+			_dirty = true
 	elif _full_baked and not _screen_keys.is_empty():
 		bake.want(_screen_keys)   # тайлы показанного кадра — не вытеснять
 	elif _live_wait and not _dirty and _moving <= 0.0 and _strip_n == 0 and bake.frame % 4 == 0:

@@ -16,6 +16,7 @@ const LONG_MS := 50.0
 const INSIDE_MAIN := ["буфер", "действия", "интерфейс", "панели дня", "палитра", "список фишек", "верхняя строка",
 	"окно: сборка", "окна: заготовка"]
 const SEGMENTS := ["пауза, карта стоит", "скорость 5 (8 дн/с)", "скорость 5 + сдвиг и масштаб",
+	"скорость 5 + сдвиг в наклоне", "скорость 5 + масштаб в наклоне",
 	"скорость 5 + окна", "скорость 5 + выделение и приказы", "скорость 5 + режимы карты",
 	"скорость 5 + сохранение", "без ограничения скорости"]
 const TABS := ["army", "navy", "production", "diplomacy", "research", "build", "nations", "focus", ""]
@@ -42,6 +43,7 @@ static func note_tick(sim: Simulation, world: World) -> void:
 
 var game
 var _out: Array = []
+var saved_zoom := 1.4    # масштаб до отрезков с наклоном
 var _action := ""
 var _frames: Array = []   # по отрезкам: PackedFloat32Array времени кадра, мс
 var _long: Array = []     # долгие кадры: [отрезок, мс, действие, дней, ЦП, ГП, {участок: мкс}, видеокарте: этот кадр, прошлый]
@@ -173,13 +175,37 @@ func _segment(s: int, sec: float, me: int) -> void:
 				g.map_view._moving = MapView.MOTION_SETTLE
 				g.map_view._on_view_changed()
 			3:
+				# наклон почти полный (масштаб 3.3), только сдвиг: кэш движения в
+				# перспективе; первые 1.5 с стоим — как в игре: приблизил, отпустил, повёл
+				if n == 0:
+					saved_zoom = g.map_view.camera.zoom.x
+					g.map_view.camera.zoom = Vector2.ONE * 3.3
+					g.map_view._on_view_changed()
+				if now < 1500:
+					pass
+				else:
+					var t3 := n * 0.05
+					g.map_view.camera.position += Vector2(cos(t3), sin(t3)) * 6.0 / 3.3
+					g.map_view._moving = MapView.MOTION_SETTLE
+					g.map_view._on_view_changed()
+			4:
+				# масштаб туда-обратно в наклоне (2–4): наклон меняется каждый кадр
+				var t4 := n * 0.04
+				g.map_view.camera.position += Vector2(cos(t4), sin(t4)) * 2.0 / g.map_view.camera.zoom.x
+				g.map_view.camera.zoom = Vector2.ONE * (3.0 + sin(t4) * 1.0)
+				g.map_view._moving = MapView.MOTION_SETTLE
+				g.map_view._on_view_changed()
+				if now + 20 >= sec * 1000.0:
+					g.map_view.camera.zoom = Vector2.ONE * saved_zoom
+					g.map_view._on_view_changed()
+			5:
 				if now - last_act >= 600:
 					last_act = now
 					var tab: String = TABS[step % TABS.size()]
 					step += 1
 					_action = "окно " + (tab if tab != "" else "закрыть")
 					_timed(_action, func(): _open(tab, me))
-			4:
+			6:
 				if now - last_act >= 500:
 					last_act = now
 					step += 1
@@ -192,14 +218,14 @@ func _segment(s: int, sec: float, me: int) -> void:
 						_action = "приказ всем"
 						_timed(_action, func(): g._on_province_tapped_locked(dst))
 						g.act(func(): g.clear_selection())
-			5:
+			7:
 				if now - last_act >= 700:
 					last_act = now
 					step += 1
 					var m: int = step % MapView.MapMode.size()
 					_action = "режим карты %d" % m
 					_timed(_action, func(): g.set_map_mode(m))
-			6:
+			8:
 				if not saved and now >= sec * 400.0:
 					saved = true
 					_action = "сохранение"
