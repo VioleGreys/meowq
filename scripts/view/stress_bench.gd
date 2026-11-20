@@ -267,10 +267,16 @@ func _gpu_probe() -> void:
 	var strips0 := mv.strips
 	var auto0 := mv.res_auto
 	var rs0 := mv.res_scale
+	var rs_user := mv.res_scale
 	var q0 := mv.quality
 	# на низком качестве заготовок нет (MapView._bake_ok) — пробы на среднем и выше
-	var qb := maxi(q0, 1)
+	var qb := 1   # среднее: высокое живым на телефоне — секунды на кадр
 	mv.quality = qb
+	# на телефоне — не больше 50 %: живой кадр полным шейдером при 100 % — секунды,
+	# Android закрывал игру как зависшую (ноябрь 2026)
+	if Device.mobile():
+		rs0 = minf(rs0, 0.5)
+		mv.res_scale = rs0
 	var mode0: int = mv.map_mode
 	mv.res_auto = false
 	mv.strips = 1
@@ -285,7 +291,9 @@ func _gpu_probe() -> void:
 	var tests := [["покой (карта не рисуется)", 0], ["кадр с заготовками", 1],
 		["кадр вживую", 2], ["кадр, режим «Местность»", 3], ["холст атласа 4096² без тайлов", 4],
 		["кадр с заготовками, разрешение ×0.5", 6],
-		["кадр с заготовками, качество низкое", 7], ["кадр с заготовками, качество высокое", 8]]
+		["кадр с заготовками, качество низкое", 7]]
+	if not Device.mobile():
+		tests.append(["кадр с заготовками, качество высокое", 8])
 	for prm in ["has_rivers"]:
 		if mv.mat_b.get_shader_parameter(prm) == true:
 			tests.append(["кадр с заготовками без " + prm, 1, prm])
@@ -378,6 +386,7 @@ func _gpu_probe() -> void:
 			g.set_map_mode(MapView.MapMode.POLITICAL)
 	if shots.size() == 2:
 		_probe_lines = _shot_diff(shots[5], shots[99])
+	mv.res_scale = rs_user
 	mv.strips = strips0
 	mv.res_auto = auto0
 	mv.quality = q0

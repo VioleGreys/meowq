@@ -1255,7 +1255,7 @@ func _cache_draw(b: CacheBuf) -> void:
 			# тайлы ещё грузятся — с подменой (те же места на 1–4 ступени дальше,
 			# иначе самый дальний уровень): кэш виден только в движении, а живой кусок
 			# кэша на Adreno 619 — сотни мс (отчёт ноября 2026); точно — когда лягут
-			use_b = not _soft_cover(keys).is_empty() or bake.want(keys, true, _season())
+			use_b = not _soft_cover(keys).is_empty() or bake.want(keys, true, _season()) or phone_map
 			if use_b:
 				b.soft.append(wr)
 	b.queue.clear()
@@ -1623,7 +1623,9 @@ func _param(name: String, v) -> void:
 		cm.set_shader_parameter(name, v)
 	for cm in cmats_b:
 		cm.set_shader_parameter(name, v)
-	if not _BAKE_OWN.has(name):
+	if not _BAKE_OWN.has(name) and name != "terrain_mode":
+		# «Местность» — не в заготовки: тайлы всегда политического вида (лёгкая
+		# карта рисует «Местность» из них с нейтральной основой)
 		bake.mat.set_shader_parameter(name, v)
 	elif name == "winter":
 		_param("pg_row", bake.pg_rows(1 if float(v) >= 0.5 else 0))
@@ -1671,8 +1673,11 @@ func set_phone_map(v: bool) -> void:
 
 
 func _bake_ok() -> bool:
-	return not _bake_off and bake.ok and quality >= 1 and map_mode != MapMode.TERRAIN \
-		and world.width == 5632
+	# лёгкая карта — всегда из заготовок (и на низком качестве, и в «Местности»):
+	# полный живой кадр на Adreno 619 при высоком качестве и 100 % — секунды,
+	# Android закрывал игру как зависшую (ноябрь 2026)
+	return not _bake_off and bake.ok and world.width == 5632 \
+		and (phone_map or (quality >= 1 and map_mode != MapMode.TERRAIN))
 
 
 ## Плотность заготовок под пиксели буфера на логический (классы 1 / 1.5 / 2, с запасом).
@@ -1681,6 +1686,11 @@ func _bake_sync_r(rk: float) -> void:
 	if rk <= r * 1.25 and (r <= 1.0 or rk >= r / 1.25):
 		return
 	var nr := 1.0 if rk < 1.25 else (1.5 if rk < 1.75 else 2.0)
+	if phone_map:
+		# лёгкая карта: только тайлы пакетов APK (плотность 1) — гуще рисовал бы
+		# телефон сам (полный шейдер заготовки на Adreno — десятки мс на тайл), а
+		# до того кадр без рельефа; на 100 % рельеф мягче, зато всё уже скачано
+		nr = 1.0
 	if nr != r:
 		bake.set_r(nr)
 		_bake_push()
@@ -1697,7 +1707,7 @@ func _screen_bake(logical: Vector2, rk: float, need_mode: int, partial := false)
 	var keys := bake.need(camera.position, camera.zoom.x, tilt(), cam_focal(), logical, _season())
 	_bk_logical = logical
 	if partial:
-		return 1 if bake.want(keys, true, _season()) else 0
+		return 1 if bake.want(keys, true, _season()) or phone_map else 0
 	_screen_keys = keys
 	var r := 1 if bake.want(_screen_keys) else 0
 	if r == 0 and need_mode != 0 and not _soft_off:
@@ -1705,6 +1715,11 @@ func _screen_bake(logical: Vector2, rk: float, need_mode: int, partial := false)
 		if not ck.is_empty():
 			r = 2
 			_soft_keys = ck
+	if r == 0 and phone_map:
+		# лёгкая карта не рисуется живой: шейдер возьмёт дальний уровень, точный
+		# кадр — когда тайлы лягут (_full_soft)
+		r = 2
+		_soft_keys = PackedInt64Array()
 	if need_mode == 1 and r == 0:
 		return -1   # кадр с заготовками, а тайлов уже нет — перерисовать целиком
 	if need_mode == 0:
