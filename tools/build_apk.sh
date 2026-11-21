@@ -86,7 +86,20 @@ if [ "${BAKE:-1}" = 1 ]; then
 	[ -f native/bin/libmeowq.android.template_release.arm64.so ] || { echo "Нет ядра C++ под Android (декодер AVIF для заготовок): docs/notes/build.md"; exit 1; }
 	STALE=0
 	[ -f data/bake/b0_11.bin ] || STALE=1
-	for f in shaders/map_core.gdshaderinc scripts/view/map_bake.gd tools/bake_compress.py data/world1936/*.bin assets/map/*; do
+	# шейдер и модуль — по версии заготовок (MapBake.ver с VER_SAME), а не по
+	# времени файлов: правка живой части шейдера (вне BAKE_OUT) пакеты не меняет,
+	# а полная перерисовка — ~50 мин (ноябрь 2026)
+	BAKE_VER=$(xvfb-run -a "$GODOT" --rendering-driver opengl3 --path . -- --screenshot="$WORK/ver.png" --nation=GER --days=0 --bakever 2>/dev/null | grep "^BAKEVER" | awk '{print $3}')
+	echo "Версия заготовок: ${BAKE_VER:-?} (в пакетах: $(cat data/bake/ver.txt 2>/dev/null || echo нет))"
+	if [ -f data/bake/b0_11.bin ] && [ ! -f data/bake/ver.txt ]; then
+		# пакеты прежних сборок без отметки: старое правило по времени файлов
+		for f in shaders/map_core.gdshaderinc scripts/view/map_bake.gd; do
+			[ "$STALE" = 1 ] || [ ! "$f" -nt data/bake/b0_11.bin ] || STALE=1
+		done
+	elif [ -z "$BAKE_VER" ] || [ "$(cat data/bake/ver.txt 2>/dev/null)" != "$BAKE_VER" ]; then
+		STALE=1
+	fi
+	for f in tools/bake_compress.py data/world1936/*.bin assets/map/*; do
 		[ "$STALE" = 1 ] || [ ! "$f" -nt data/bake/b0_11.bin ] || STALE=1
 	done
 	if [ "$STALE" = 1 ]; then
@@ -100,6 +113,7 @@ if [ "${BAKE:-1}" = 1 ]; then
 		done
 		rm -rf "$WORK/bake_raw"
 	fi
+	[ -n "$BAKE_VER" ] && echo "$BAKE_VER" > data/bake/ver.txt
 	du -sh data/bake
 	# ближние уровни (k ≥ 7, ×1.4 и ближе) — не в APK, а на докачку: части в
 	# export/bake-data (отправка — sh tools/publish_bake.sh), список —
