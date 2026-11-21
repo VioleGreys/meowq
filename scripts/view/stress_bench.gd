@@ -219,6 +219,7 @@ func _segment(s: int, sec: float, me: int) -> void:
 	FrameProf.frame = {}
 	MapView.gpu = {}
 	MapView.lite_why = {}
+	MapView.branch = {}
 	var gsum := {}
 	var g_prev := {}
 	var f_prev := Time.get_ticks_usec()
@@ -348,6 +349,7 @@ func _segment(s: int, sec: float, me: int) -> void:
 	_seg_info.append(info)
 	_seg_gpu.append(gsum)
 	info["why"] = MapView.lite_why.duplicate()
+	info["path"] = MapView.branch.duplicate()
 
 
 ## «Цена видеокарты»: на паузе карта перерисовывается каждый кадр одним способом —
@@ -647,6 +649,7 @@ func _replay_probe() -> void:
 		var worst := 0.0
 		var n := 0
 		MapView.gpu = {}
+		MapView.branch = {}
 		var t0 := Time.get_ticks_msec()
 		var f_prev := Time.get_ticks_usec()
 		while Time.get_ticks_msec() - t0 < 4000:
@@ -673,7 +676,13 @@ func _replay_probe() -> void:
 				if fp > 0.0:
 					drawn += 1
 			MapView.gpu = {}
-		_probe.append(["%s · > 100 мс: %d, худший %.0f, в атлас %.0f" % [t[0], slow, worst, tiles],
+		var bk := MapView.branch.keys()
+		bk.sort_custom(func(a, b): return int(MapView.branch[a]) > int(MapView.branch[b]))
+		var bs := PackedStringArray()
+		for k in bk.slice(0, 4):
+			bs.append("%s %d" % [k, int(MapView.branch[k])])
+		_probe.append(["%s · > 100 мс: %d, худший %.0f, в атлас %.0f · пути: %s" % [t[0], slow, worst, tiles,
+				", ".join(bs)],
 			_pct(ft, 0.5), _pct(ft, 0.9), px / maxf(1.0, ft.size()), drawn, ft.size()])
 	g.world_lock()
 	g.speed = 0
@@ -835,6 +844,18 @@ func _report() -> void:
 	_cr_mx.unlock()
 	_p("Запись меток стенда (фоновый поток, раньше — главный): %d раз, медиана %.1f / 95%% %.1f / худшая %.1f мс" % [
 		crs.size(), _pct(crs, 0.5), _pct(crs, 0.95), _pct(crs, 1.0)])
+	_p("")
+	_p("Перерисовки карты по путям (кэш движения; без него — упрощённый или полный кадр и почему):")
+	for s in _seg_info.size():
+		var w: Dictionary = _seg_info[s].get("path", {})
+		if w.is_empty():
+			continue
+		var ks := w.keys()
+		ks.sort_custom(func(a, b): return int(w[a]) > int(w[b]))
+		var parts: Array = []
+		for k in ks:
+			parts.append("%s %d" % [k, int(w[k])])
+		_p("  %-34s %s" % [SEGMENTS[s], ", ".join(parts)])
 	_p("")
 	_p("Упрощённый кадр в движении вместо кэша — почему (кадров):")
 	for s in _seg_info.size():

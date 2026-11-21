@@ -79,6 +79,22 @@ static func gnote(kind: String, px: float) -> void:
 	gpu[kind] = float(gpu.get(kind, 0.0)) + px
 
 
+## Упрощать кадр в движении, пока кэша движения нет. Лёгкая карта (телефон) —
+## всегда, даже без «упрощать при сдвиге»: иначе в наклоне, пока кэш (~3 экрана)
+## не построен, каждый кадр масштаба — полный кадр в полном разрешении (Adreno 619:
+## 2,6 млн пикс., ~120 мс; отчёт ноября 2026: «масштаб в наклоне» до 460 мс).
+func _motion_lite() -> bool:
+	return motion_lite or phone_map
+
+
+## Для стенда: какой путь перерисовки выбран (и почему без кэша) — путь → раз.
+static var branch := {}
+
+
+static func bnote(kind: String) -> void:
+	branch[kind] = int(branch.get(kind, 0)) + 1
+
+
 var baked_draws := 0           # для замеров: кадров и полос с заготовками
 var live_draws := 0
 var dmat: ShaderMaterial       # вывод кэша на экран (map_motion.gdshader)
@@ -1599,7 +1615,13 @@ func _process_map(dt: float) -> void:
 		# движение: из кэша (всегда, когда он годится), иначе — упрощённо (если
 		# включено «упрощать при сдвиге» и есть что упрощать), иначе — как есть
 		var use_cache := _moving > 0.0 and _cache_usable()
-		var lite := use_cache or (motion_lite and _moving > 0.0 and (quality > 0 or res_scale > 0.5))
+		var lite := use_cache or (_motion_lite() and _moving > 0.0 and (quality > 0 or res_scale > 0.5))
+		if use_cache:
+			bnote("кэш" + (" + края" if _cache_part else ""))
+		elif _moving > 0.0:
+			bnote(("упрощ." if lite else "полный") + " (кэш: " + cache_why + ")")
+		else:
+			bnote("стоит")
 		if lite and not use_cache:
 			lite_why[cache_why] = int(lite_why.get(cache_why, 0)) + 1
 		var was_lite := _lite_drawn or was_hidden
@@ -1744,7 +1766,7 @@ func _process_map(dt: float) -> void:
 		_full_alpha = minf(1.0, _full_alpha + dt / FADE_IN)
 		if _full_alpha >= 1.0:
 			_fading_in = false
-	if not motion_lite and not cache_rect.visible:
+	if not _motion_lite() and not cache_rect.visible:
 		_full_alpha = 1.0
 	if _full_alpha >= 1.0 and not _lite_drawn:
 		lite_sprite.visible = false
