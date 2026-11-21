@@ -25,7 +25,7 @@ var _labels_pv := -1
 var _ports: Array = []          # отметки портов (кэш, см. _rebuild_navy_air)
 var _ports_key := ""
 var _cities: Array = []         # города (очки ≥ 4): [мировая позиция, имя, очки, провинция], крупные первыми
-var _city_rects: Array = []     # занятые подписями городов прямоугольники (в кадре)
+var _city_occ := {}             # занятые знаками и подписями городов места: клетка экрана -> [Rect2]
 var fog_on := not "--nofog" in OS.get_cmdline_user_args()   # туман войны (для снимков — `-- --nofog`)
 
 
@@ -44,6 +44,7 @@ var _r_badge: Rect2
 var _r_bars: Rect2
 var _r_white: Rect2
 var _r_icons: Array = []        # Rect2 по шаблону дивизии (пустой — нет иконки)
+var _r_city: Array = []         # Rect2 знаков городов в атласе: город, крупный, столица
 var _texts: Array = []          # отложенные числа фишек: [позиция, текст, ширина, размер]
 var draw_count := 0             # для замеров: сколько раз рисовался слой
 var draw_total_usec := 0
@@ -84,7 +85,6 @@ var _labels_ver := 0
 func _ready() -> void:
 	_static = StaticMarks.new()
 	_static.layer = self
-	_static.use_parent_material = true
 	_static.show_behind_parent = true
 	add_child(_static)
 	_battles = BattleMarks.new()
@@ -94,6 +94,9 @@ func _ready() -> void:
 	_warp = ShaderMaterial.new()
 	_warp.shader = load("res://shaders/unit_warp.gdshader")
 	material = _warp
+	_swarp = ShaderMaterial.new()
+	_swarp.shader = _warp.shader
+	_static.material = _swarp
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	font = UiStyle.text_font()
 	bold = UiStyle.bold_font()
@@ -118,6 +121,8 @@ func _build_atlas() -> void:
 	for name in TPL_ICONS:
 		var ic := UiStyle.icon_image(name, 64)
 		parts.append(ic if ic != null else Image.create(1, 1, false, Image.FORMAT_RGBA8))
+	for kind in [1, 2, 3]:
+		parts.append(_city_img(kind))
 	# раскладка по строкам с полями 4 пикс. (чтобы мипмапы не смешивали соседей)
 	var pad := 4
 	var w := 512
@@ -149,6 +154,70 @@ func _build_atlas() -> void:
 	for i in TPL_ICONS.size():
 		var rr: Rect2 = rects[6 + i]
 		_r_icons.append(rr if rr.size.x > 1 else Rect2())
+	_r_city.clear()
+	for i in 3:
+		_r_city.append(rects[6 + TPL_ICONS.size() + i])
+
+
+## Знак города (вид 1–3) — в атлас один раз: тень, кольцо, тёмный круг, звезда
+## столицы или дома. Раньше — три сглаженных круга и многоугольник на каждый знак в
+## каждой перерисовке (на телефоне — заметная доля «фишки:города»).
+static func _city_img(kind: int) -> Image:
+	var k := float(TEX_K)
+	var r: float = CITY_R[kind] * k
+	var half := ceilf(r + 3.5 * k)
+	var n := int(half * 2.0)
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	var c := Vector2(half, half)
+	var ring := Color(0.86, 0.68, 0.27) if kind == 3 else Color(0.80, 0.77, 0.70)
+	var sym := Color(0.98, 0.80, 0.30) if kind == 3 else Color(0.93, 0.90, 0.82)
+	var star := PackedVector2Array()
+	var houses: Array = []
+	if kind == 3:
+		for i in 10:
+			var ang := -PI * 0.5 + i * PI / 5.0
+			star.append(c + Vector2(cos(ang), sin(ang)) * r * (0.78 if i % 2 == 0 else 0.33))
+	else:
+		var u := r / 8.0
+		var bl := c.y + 4.5 * u
+		var hs: Array = [[-4.5, 2.6, 6.0], [-1.5, 3.0, 9.0], [1.9, 2.6, 4.5]] if kind == 2 else [[-3.6, 3.2, 7.5], [0.4, 3.2, 5.0]]
+		for b: Array in hs:
+			houses.append(Rect2(c.x + b[0] * u, bl - b[2] * u, b[1] * u, b[2] * u))
+	var sh := c + Vector2(1.0, 1.5) * k
+	for y in n:
+		for x in n:
+			var p := Vector2(x + 0.5, y + 0.5)
+			var col := Color(0, 0, 0, 0)
+			col = _over(col, Color(0, 0, 0, 0.35), clampf(r + 1.5 * k - p.distance_to(sh) + 0.5, 0.0, 1.0))
+			var dc := p.distance_to(c)
+			col = _over(col, ring, clampf(r + 1.5 * k - dc + 0.5, 0.0, 1.0))
+			col = _over(col, Color(0.13, 0.12, 0.11, 0.95), clampf(r - dc + 0.5, 0.0, 1.0))
+			if dc > r:
+				img.set_pixel(x, y, col)
+				continue
+			var cov := 0.0
+			if kind == 3:
+				for sy in 3:
+					for sx in 3:
+						if Geometry2D.is_point_in_polygon(Vector2(x + (sx + 0.5) / 3.0, y + (sy + 0.5) / 3.0), star):
+							cov += 1.0 / 9.0
+			else:
+				var px := Rect2(x, y, 1, 1)
+				for h: Rect2 in houses:
+					cov += px.intersection(h).get_area()
+			col = _over(col, sym, minf(cov, 1.0))
+			img.set_pixel(x, y, col)
+	return img
+
+
+## Наложение цвета src (с долей покрытия cov) поверх dst — без предумножения.
+static func _over(dst: Color, src: Color, cov: float) -> Color:
+	var sa := src.a * cov
+	var oa := sa + dst.a * (1.0 - sa)
+	if oa <= 0.0:
+		return Color(0, 0, 0, 0)
+	var rgb := (Color(src.r, src.g, src.b) * sa + Color(dst.r, dst.g, dst.b) * (dst.a * (1.0 - sa))) / oa
+	return Color(rgb.r, rgb.g, rgb.b, oa)
 
 
 ## Скруглённый прямоугольник в текстуру: заливка, кайма шириной bw, мягкость
@@ -177,8 +246,18 @@ static func _rr_img(w: int, h: int, rad: float, bw: float, fill: Color, border: 
 # краем рисуются с запасом DRAW_MARGIN), при наклоне — не чаще WARP_TILT_MSEC
 # (перспектива переносом точна не везде) и сразу после остановки камеры.
 # Бои пульсируют — их слой не чаще 12 раз в секунду.
+# Подписи стран и знаки городов (_static) — со своей опорной камерой: пока камера
+# движется, перерисовываются не чаще STATIC_MSEC (масштаб — до STATIC_ZOOM, наклон —
+# до STATIC_TILT от опорной), между ними — переносом; после остановки — точно.
+# На телефоне одна их перерисовка — 10–29 мс скриптов (отчёт 15, ноябрь 2026).
+# Данные городов меняются почти каждый день (войска вошли в город — знак
+# сдвигается от фишки): по ним — не чаще STATIC_DATA_MSEC.
 const WARP_ZOOM := 1.03
 const WARP_TILT_MSEC := 100
+const STATIC_MSEC := 100
+const STATIC_DATA_MSEC := 400     # новые данные (войска вошли в город — знак сдвигается) — не чаще
+const STATIC_ZOOM := 1.3
+const STATIC_TILT := 0.12
 const DRAW_MARGIN := 0.15          # запас отрисовки за краем экрана (доля большей стороны)
 var _dirty := true
 var _has_battles := false
@@ -219,7 +298,6 @@ func _process(_dt: float) -> void:
 				or shift.x > m or shift.y > m \
 				or (th > 0.0 and (now - _draw_msec >= WARP_TILT_MSEC or not moved_now)):
 			_dirty = true   # при наклоне после остановки — точный кадр
-			_static_dirty = true
 		else:
 			redraw_skipped += 1
 	if _dirty:
@@ -229,24 +307,64 @@ func _process(_dt: float) -> void:
 		_r_tilt = th
 		_draw_msec = now
 		queue_redraw()
-		if _static_dirty or not _static_cam(pos, z, th):
-			_static_dirty = false
-			_s_pos = pos
-			_s_zoom = z
-			_s_tilt = th
-			_static.queue_redraw()
+		if not _static_cam(pos, z, th):
+			_static_lag = true
 		_battles.queue_redraw()
 		_anim_msec = now
 	elif _has_battles and now - _anim_msec >= 80:
 		# пульс боёв — только маленький слой отметок, не весь слой фишек
 		_anim_msec = now
 		_battles.queue_redraw()
+	if (_static_dirty and now - _s_msec >= STATIC_DATA_MSEC) or (_static_lag and not _static_cam(pos, z, th) \
+			and (not moved_now or now - _s_msec >= STATIC_MSEC or not _static_warp_ok(pos, z, th))):
+		_static_dirty = false
+		_static_lag = false
+		_s_pos = pos
+		_s_zoom = z
+		_s_tilt = th
+		_s_msec = now
+		_static.queue_redraw()
 	_set_warp(pos, z, th)
+	_set_swarp(pos, z, th)
 
 
 var _s_pos := Vector2.ZERO          # камера, с которой нарисованы подписи и города
 var _s_zoom := 0.0
 var _s_tilt := -1.0
+var _s_msec := 0
+var _static_lag := false            # камера ушла от опорной городов: перерисовать при случае
+var _swarp: ShaderMaterial          # перенос подписей и городов (своя опорная камера _s_*)
+var _swarp_key := []
+
+
+## Перенос подписей и городов ещё терпим (размеры знаков — от опорной камеры).
+func _static_warp_ok(pos: Vector2, z: float, th: float) -> bool:
+	var zr := z / maxf(1e-6, _s_zoom)
+	if zr > STATIC_ZOOM or zr < 1.0 / STATIC_ZOOM or absf(th - _s_tilt) > STATIC_TILT:
+		return false
+	var half := get_viewport_rect().size * 0.5
+	var shift := (map.world_to_screen(_s_pos) - half).abs()
+	var m := maxf(half.x, half.y) * 2.0 * DRAW_MARGIN
+	return shift.x <= m and shift.y <= m
+
+
+func _set_swarp(pos: Vector2, z: float, th: float) -> void:
+	var on := not _static_cam(pos, z, th)
+	var key := [on, pos, z, th, _s_pos, _s_zoom, _s_tilt]
+	if key == _swarp_key:
+		return
+	_swarp_key = key
+	_swarp.set_shader_parameter("on", on)
+	if not on:
+		return
+	_swarp.set_shader_parameter("r_pos", _s_pos)
+	_swarp.set_shader_parameter("r_zoom", _s_zoom)
+	_swarp.set_shader_parameter("r_tilt", _s_tilt)
+	_swarp.set_shader_parameter("c_pos", pos)
+	_swarp.set_shader_parameter("c_zoom", z)
+	_swarp.set_shader_parameter("c_tilt", th)
+	_swarp.set_shader_parameter("cam_f", map.cam_focal())
+	_swarp.set_shader_parameter("half_size", get_viewport_rect().size * 0.5)
 
 
 func _static_cam(pos: Vector2, z: float, th: float) -> bool:
@@ -718,7 +836,7 @@ func _draw_static(ci: CanvasItem) -> void:
 	if map == null:
 		return
 	var t0 := Time.get_ticks_usec()
-	_city_rects.clear()
+	_city_occ.clear()
 	var z := map.zoom_level()
 	var vp := get_viewport_rect().size
 	var screen := Rect2(Vector2.ZERO, vp).grow(40.0 + maxf(vp.x, vp.y) * DRAW_MARGIN)
@@ -948,7 +1066,8 @@ func _add_cities(out: Array, troops: Dictionary) -> void:
 
 
 var _city_w := {}   # ширина подписи города: «имя|вид» -> пикс.
-const CITY_Z := [2.0, 1.25, 0.8, 0.45]   # с какого масштаба виден знак: малый, город, крупный, столица
+const CITY_Z := [2.0, 1.25, 0.8, 0.45]
+const CITY_R := [4.0, 8.0, 9.5, 10.5]      # радиус знака, пикс.: малый, город, крупный, столица   # с какого масштаба виден знак: малый, город, крупный, столица
 
 
 const CGRID := 256.0          # клетка сетки городов, единиц мира
@@ -966,6 +1085,34 @@ func _build_cgrid(from: int, to: int) -> void:
 
 ## С какого масштаба виден знак города (растёт с убыванием очков — на этом
 ## держится ранний выход в _draw_static).
+## Занятые места подписей городов — по клеткам экрана (раньше — перебор всех
+## прямоугольников на каждый знак и подпись).
+const OCC_CELL := 64.0
+
+
+func _occ_hit(r: Rect2) -> bool:
+	var a := Vector2i((r.position / OCC_CELL).floor())
+	var b := Vector2i((r.end / OCC_CELL).floor())
+	for gy in range(a.y, b.y + 1):
+		for gx in range(a.x, b.x + 1):
+			var cell: Array = _city_occ.get(Vector2i(gx, gy), [])
+			for q: Rect2 in cell:
+				if q.intersects(r):
+					return true
+	return false
+
+
+func _occ_add(r: Rect2) -> void:
+	var a := Vector2i((r.position / OCC_CELL).floor())
+	var b := Vector2i((r.end / OCC_CELL).floor())
+	for gy in range(a.y, b.y + 1):
+		for gx in range(a.x, b.x + 1):
+			var key := Vector2i(gx, gy)
+			if not _city_occ.has(key):
+				_city_occ[key] = []
+			_city_occ[key].append(r)
+
+
 static func _city_z0(kind: int, vp: int) -> float:
 	return 3.0 if kind == 0 and vp < 8 else CITY_Z[kind]
 
@@ -979,43 +1126,22 @@ func _draw_city(ci: CanvasItem, it: Array, z: float, counter: Vector2, screen: R
 	if not screen.has_point(base):
 		return
 	var a := clampf((z - z0) * 6.0, 0.0, 1.0)
-	var r: float = [4.0, 8.0, 9.5, 10.5][kind]
+	var r: float = CITY_R[kind]
 	# знак — в центре провинции; стоят войска (фишка в центре) — слева от фишки
 	var c := base
 	if it[5] and z >= CLUSTER_Z:
 		c = base - Vector2(counter.x * 0.5 + r + 7.0, 0)
 	var nr := Rect2(c - Vector2(r, r), Vector2(r, r) * 2.0)
-	for q: Rect2 in _city_rects:
-		if q.intersects(nr):
-			if kind < 2:
-				return
-			break
-	var dark := Color(0.08, 0.07, 0.06, 0.9 * a)
+	if kind < 2 and _occ_hit(nr):
+		return
 	if kind == 0:
-		ci.draw_rect(nr.grow(1.5), dark)
+		ci.draw_rect(nr.grow(1.5), Color(0.08, 0.07, 0.06, 0.9 * a))
 		ci.draw_rect(nr, Color(0.93, 0.90, 0.82, a))
-	else:
-		var ring := Color(0.86, 0.68, 0.27, a) if kind == 3 else Color(0.80, 0.77, 0.70, a)
-		ci.draw_circle(c + Vector2(1, 1.5), r + 1.5, Color(0, 0, 0, 0.35 * a), true, -1.0, true)
-		ci.draw_circle(c, r + 1.5, ring, true, -1.0, true)
-		ci.draw_circle(c, r, Color(0.13, 0.12, 0.11, 0.95 * a), true, -1.0, true)
-		if kind == 3:
-			# пятиконечная звезда (своя: у набора иконок звёзды с узором)
-			var pts := PackedVector2Array()
-			for k in 10:
-				var ang := -PI * 0.5 + k * PI / 5.0
-				pts.append(c + Vector2(cos(ang), sin(ang)) * r * (0.78 if k % 2 == 0 else 0.33))
-			ci.draw_colored_polygon(pts, Color(0.98, 0.80, 0.30, a))
-		else:
-			# силуэт домов (свой: иконки набора на 14 пикс. не читаются): крупный — три
-			# дома разной высоты, город — два
-			var wc := Color(0.93, 0.90, 0.82, a)
-			var u := r / 8.0
-			var bl := c.y + 4.5 * u
-			var hs: Array = [[-4.5, 2.6, 6.0], [-1.5, 3.0, 9.0], [1.9, 2.6, 4.5]] if kind == 2 else [[-3.6, 3.2, 7.5], [0.4, 3.2, 5.0]]
-			for b: Array in hs:
-				ci.draw_rect(Rect2(c.x + b[0] * u, bl - b[2] * u, b[1] * u, b[2] * u), wc)
-	_city_rects.append(nr)
+	else:   # знак — из атласа (_city_img)
+		var rr: Rect2 = _r_city[kind - 1]
+		var hs := rr.size / TEX_K
+		ci.draw_texture_rect_region(_atlas, Rect2(c - hs * 0.5, hs), rr, Color(1, 1, 1, a))
+	_occ_add(nr)
 	# подпись — чуть позже знака, если не налезает на другие
 	if z < z0 + 0.25:
 		return
@@ -1029,10 +1155,9 @@ func _draw_city(ci: CanvasItem, it: Array, z: float, counter: Vector2, screen: R
 		_city_w[wk] = tw
 	var tp := Vector2(c.x - tw * 0.5, c.y + r + 3 + fs * 0.8)
 	var tr := Rect2(tp.x - 2, tp.y - fs * 0.8, tw + 4, fs * 1.05)
-	for q: Rect2 in _city_rects:
-		if q.intersects(tr):
-			return
-	_city_rects.append(tr)
+	if _occ_hit(tr):
+		return
+	_occ_add(tr)
 	var ta := clampf((z - z0 - 0.25) * 6.0, 0.0, 1.0) * a
 	ci.draw_string_outline(f, tp, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0.08, 0.07, 0.06, 0.8 * ta))
 	ci.draw_string(f, tp, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.96, 0.93, 0.85, ta) if kind > 0 else Color(0.90, 0.87, 0.80, ta))
