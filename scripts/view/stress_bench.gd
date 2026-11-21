@@ -390,7 +390,7 @@ func _gpu_probe() -> void:
 			var cm: ShaderMaterial = cut_mats[t[2]]
 			for u in mv.mat_b.shader.get_shader_uniform_list():
 				cm.set_shader_parameter(u["name"], mv.mat_b.get_shader_parameter(u["name"]))
-		if kind >= 9:
+		if kind == 9 or kind == 10:
 			pm.set_shader_parameter("mode", int(t[2]))
 			mv.quad.material = pm if kind == 9 else cut_mats[t[2]]
 			mv.quad.position = Vector2.ZERO
@@ -411,7 +411,7 @@ func _gpu_probe() -> void:
 		var f_prev := Time.get_ticks_usec()
 		var nf := 70 if kind == 0 or kind == 4 else 16
 		for i in nf:
-			if kind >= 9:
+			if kind == 9 or kind == 10:
 				mv.map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 				MapView.gnote("проба", mv.quad.size.x * mv.quad.size.y)
 			elif kind != 0 and kind != 4:
@@ -436,7 +436,7 @@ func _gpu_probe() -> void:
 		_probe.append([t[0], _pct(ft, 0.5), _pct(ft, 0.9), px / maxf(1.0, ft.size()), drawn, ft.size()])
 		if kind == 10 and (t[2] == 5 or t[2] == 99):
 			shots[t[2]] = mv.map_vp.get_texture().get_image()
-		if kind >= 9:
+		if kind == 9 or kind == 10:
 			mv.quad.material = qmat0
 		mv._bake_off = false
 		if mv.bake != null:
