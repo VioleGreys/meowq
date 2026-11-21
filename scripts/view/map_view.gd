@@ -971,7 +971,7 @@ func _draw_strip() -> void:
 	var logical := get_viewport_rect().size
 	var phys := Vector2(get_window().size)
 	var size := Vector2i(maxi(1, int(phys.x * res_scale)), maxi(1, int(phys.y * res_scale)))
-	var same := _moving <= 0.0 and (_strip_hidden or (not _lite_drawn and _full_alpha >= 1.0 and not _fading_in)) \
+	var same := _moving <= 0.0 and (_strip_hidden or not _lite_drawn) \
 		and Vector2(size) == _full_size and map_vp.size == size and _full_q == quality \
 		and camera.position == _full_cam and is_equal_approx(camera.zoom.x, _full_zoom) \
 		and is_equal_approx(tilt(), _full_tilt)
@@ -1008,12 +1008,12 @@ func _draw_strip() -> void:
 			_fading_in = true   # все полосы готовы — проявляем
 		if _strip_snap:
 			_snap_fade = true   # кадр готов — снимок тает (и если будет ещё проход)
-			if _strip_more:
-				# пока шли полосы, карту просили перерисовать — ещё проход: первые
-				# полосы нарисованы до просьбы
-				_strip_more = false
-				_strip_n = _strip_count(size)
-				_strip_i = 0
+		if _strip_more:
+			# пока шли полосы, карту просили перерисовать — ещё проход (видимый): первые
+			# полосы нарисованы до просьбы
+			_strip_more = false
+			_strip_n = _strip_count(size)
+			_strip_i = 0
 
 
 # --- Кэш движения (решение пользователя, ноябрь 2026) -------------------------
@@ -1582,7 +1582,7 @@ func _process_map(dt: float) -> void:
 		return
 	_band_poll()
 	_season_tick(dt)
-	if _dirty and _strip_snap and _strip_n > 0 and _moving <= 0.0:
+	if _dirty and (_strip_snap or _strip_hidden) and _strip_n > 0 and _moving <= 0.0:
 		# перерисовка во время полос под снимком (новый день, палитра) — не
 		# начинать заново (на большой скорости кадр не показался бы никогда):
 		# дорисовать проход и пройти ещё раз; сдвиг камеры _draw_strip заметит сам
@@ -1598,14 +1598,19 @@ func _process_map(dt: float) -> void:
 		_dirty = false
 		_part_dirty = false
 		_strip_n = 0
+		# скрытые полосы после сдвига прервались (сдвиг, размер) — новый кадр тоже
+		# скрытый: иначе он рисовался целиком, а прозрачность так и оставалась 0 —
+		# и дальше каждая перерисовка шла целым кадром (отчёт ноября 2026, 60 к/с)
+		var was_hidden := _strip_hidden
 		_strip_hidden = false
+		_strip_more = false
 		# движение: из кэша (всегда, когда он годится), иначе — упрощённо (если
 		# включено «упрощать при сдвиге» и есть что упрощать), иначе — как есть
 		var use_cache := _moving > 0.0 and _cache_usable()
 		var lite := use_cache or (motion_lite and _moving > 0.0 and (quality > 0 or res_scale > 0.5))
 		if lite and not use_cache:
 			lite_why[cache_why] = int(lite_why.get(cache_why, 0)) + 1
-		var was_lite := _lite_drawn
+		var was_lite := _lite_drawn or was_hidden
 		_lite_drawn = lite
 		_param("quality", 0 if lite else quality)
 		# лёгкая карта: упрощённый кадр (кэша ещё нет) — в полном разрешении: дёшево,
@@ -1671,18 +1676,20 @@ func _process_map(dt: float) -> void:
 			lite_sprite.visible = true
 			_fading_in = false
 		elif not was_lite and sn > 1 and phone_map and _season_step in [0, 3] and _moving <= 0.0 \
-				and _full_alpha >= 1.0 and not _fading_in and Vector2(size) == _full_size \
+				and (_full_alpha >= 1.0 or _fading_in) and Vector2(size) == _full_size \
 				and map_vp.size == size and camera.position == _full_cam \
 				and is_equal_approx(camera.zoom.x, _full_zoom) and is_equal_approx(tilt(), _full_tilt):
 			# лёгкая карта, кадр на месте: старый — снимком сверху, новый — полосами
 			# под ним со следующего кадра (снимок рисуется в этом)
-			keep_snap = true
+			# кадр ещё проявляется (после сдвига) — без снимка: полосы прямо в нём
+			keep_snap = _full_alpha >= 1.0 and not _fading_in
 			if _season_step == 3:
 				# снег уже нарисован, снимок прежнего сезона тает — берём его себе
 				_season_step = 0
 				_strip_snap = true
 				_snap_fade = false
-			if not _strip_snap:
+				keep_snap = true
+			if keep_snap and not _strip_snap:
 				_snap_take()
 				_strip_snap = true
 				_snap_fade = false
@@ -1719,6 +1726,8 @@ func _process_map(dt: float) -> void:
 					_strip_i = 0
 					_draw_strip()
 					redraws -= 1   # уже учтено как полоса
+			if not was_lite and _full_alpha < 1.0 and not _fading_in:
+				_fading_in = true   # страховка: кадр не должен остаться прозрачным
 			if _strip_n == 0 and not _strip_hidden:
 				_auto_pending = true
 				_drawn_last = true
