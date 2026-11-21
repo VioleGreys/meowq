@@ -66,10 +66,46 @@ const CRUMB := "user://stress_crumb.txt"
 var _prev_crumb := ""
 
 
+## Метка для разбора вылета — в фоновом потоке: на телефоне запись файла из
+## главного потока не попадала в замеры, а отрезки с наклоном писали её после
+## каждого кадра > 300 мс (подозрение отчёта ноября 2026: кадры 300–450 мс
+## цепочкой только в отрезках, в пробах без меток — 17 мс). Пока пишется
+## прежняя — новая ждёт, пишется последняя.
+var _cr_task := -1
+var _cr_next := ""
+var _cr_have := false
+var _cr_ms := PackedFloat32Array()
+var _cr_mx := Mutex.new()
+
+
 func _crumb(text: String) -> void:
-	var f := FileAccess.open(CRUMB, FileAccess.WRITE)
-	if f != null:
-		f.store_string(text)
+	_cr_next = text
+	_cr_have = true
+	_crumb_poll()
+
+
+func _crumb_poll(wait := false) -> void:
+	if _cr_task >= 0:
+		if not wait and not WorkerThreadPool.is_task_completed(_cr_task):
+			return
+		WorkerThreadPool.wait_for_task_completion(_cr_task)
+		_cr_task = -1
+	if not _cr_have:
+		return
+	_cr_have = false
+	var text := _cr_next
+	_cr_task = WorkerThreadPool.add_task(func():
+		var t := Time.get_ticks_usec()
+		var f := FileAccess.open(CRUMB, FileAccess.WRITE)
+		if f != null:
+			f.store_string(text)
+			f.close()
+		_cr_mx.lock()
+		_cr_ms.append((Time.get_ticks_usec() - t) / 1000.0)
+		_cr_mx.unlock())
+	if wait:
+		WorkerThreadPool.wait_for_task_completion(_cr_task)
+		_cr_task = -1
 
 
 func run(g, in_game := false) -> void:
@@ -142,6 +178,7 @@ func run(g, in_game := false) -> void:
 	_crumb("замер наклона (после цены видеокарты)")
 	await _tilt_probe()
 	g.speed = 0
+	_crumb_poll(true)
 	_report()
 	DirAccess.remove_absolute(CRUMB)
 	var text := "\n".join(_out) + "\n"
@@ -290,6 +327,7 @@ func _segment(s: int, sec: float, me: int) -> void:
 				SEGMENTS[s], (Time.get_ticks_msec() - t0) / 1000.0, ms, mv.camera.zoom.x, rad_to_deg(mv.tilt()),
 				int(Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0),
 				str(mv._cb.map(func(b): return b.size)), _gpu_str(MapView.gpu), _gpu_str(g_prev)])
+		_crumb_poll()
 		g_prev = MapView.gpu.duplicate()
 		MapView.gpu = {}
 		FrameProf.frame = {}
@@ -436,6 +474,11 @@ func _gpu_probe() -> void:
 					mv.bake.probe_put(8, put_img, kind == 16)
 			elif kind == 4 and mv.bake != null and mv.bake.atlas_vp != null:
 				mv.bake.atlas_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+			if t.size() > 5:
+				var cf := FileAccess.open(CRUMB, FileAccess.WRITE)
+				if cf != null:
+					cf.store_string("проба наклона, кадр %d" % i)
+					cf.close()
 			await get_tree().process_frame
 			var f_now := Time.get_ticks_usec()
 			if i >= 4:
@@ -501,7 +544,9 @@ func _tilt_probe() -> void:
 		["наклон: масштаб, скорость 5", true, true, 0, 0],
 		["наклон: масштаб, скорость 5 + 8 тайлов из пакетов", true, true, 8, 64],
 		["наклон: масштаб, скорость 5 + тайлы, распаковка по одной", true, true, 8, 1],
-		["наклон: камера стоит, скорость 5 + 8 тайлов из пакетов", false, true, 8, 64]]
+		["наклон: камера стоит, скорость 5 + 8 тайлов из пакетов", false, true, 8, 64],
+		["наклон: масштаб, скорость 5 + тайлы + метка на диск каждый кадр (главный поток)", true, true, 8, 64, true],
+		["наклон: камера стоит + метка на диск каждый кадр (главный поток)", false, false, 0, 0, true]]
 	var n := 0
 	for t in tests:
 		var zoom_on: bool = t[1]
@@ -526,6 +571,11 @@ func _tilt_probe() -> void:
 			if dec_n > 0 and mv.bake != null:
 				var imgs: Array = mv.bake.probe_decode(dec_n, dec_cap)
 				mv.bake.probe_put(0, null, true, imgs)
+			if t.size() > 5:
+				var cf := FileAccess.open(CRUMB, FileAccess.WRITE)
+				if cf != null:
+					cf.store_string("проба наклона, кадр %d" % i)
+					cf.close()
 			await get_tree().process_frame
 			var f_now := Time.get_ticks_usec()
 			if i >= 4:
@@ -696,6 +746,12 @@ func _report() -> void:
 		for k in gs:
 			per[k] = float(gs[k]) / sec
 		_p("  %-34s %s" % [SEGMENTS[s], _gpu_str(per)])
+	_p("")
+	_cr_mx.lock()
+	var crs := _cr_ms.duplicate()
+	_cr_mx.unlock()
+	_p("Запись меток стенда (фоновый поток, раньше — главный): %d раз, медиана %.1f / 95%% %.1f / худшая %.1f мс" % [
+		crs.size(), _pct(crs, 0.5), _pct(crs, 0.95), _pct(crs, 1.0)])
 	_p("")
 	_p("Упрощённый кадр в движении вместо кэша — почему (кадров):")
 	for s in _seg_info.size():
