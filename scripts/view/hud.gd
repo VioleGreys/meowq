@@ -4701,16 +4701,15 @@ func _apply_graphics() -> void:
 	mv.set_res_scale(Settings.RES_SCALES[Settings.map_res()])
 	Settings.apply_fps_cap()
 	mv.motion_lite = Settings.motion_lite()
-	mv.set_phone_map(Settings.phone_map())
 	mv.set_tilt_enabled(Settings.map_tilt())
 
 
 func _settings_graphics() -> void:
 	popup_body.add_child(_label("Уровень графики", 20))
 	var lvl := Settings.graphics_level()
-	var lvl_txt := ["Низкая — лёгкая карта без сглаживания, 75 % разрешения, 30 кадров, без наклона камеры: для слабых телефонов и экономии батареи.",
-		"Средняя (стандартная) — лёгкая карта с плавным берегом, разрешение подбирается само, 60 кадров, наклон камеры.",
-		"Высокая — полная карта с плавными границами, 100 % разрешения, кадры без ограничения, без упрощения при сдвиге: для мощных устройств.",]
+	var lvl_txt := ["Низкая — карта без сглаживания, 75 % разрешения, 30 кадров, без наклона камеры: для слабых телефонов и экономии батареи.",
+		"Средняя (стандартная) — плавный берег и простые границы, разрешение подбирается само, 60 кадров, наклон камеры.",
+		"Высокая — самые плавные границы, 100 % разрешения, кадры без ограничения, без упрощения при сдвиге: для мощных устройств.",]
 	_choice_row(Settings.GRAPHICS_NAMES, lvl, func(i: int):
 		Settings.set_graphics_level(i)
 		_apply_graphics())
@@ -4729,11 +4728,6 @@ func _settings_graphics() -> void:
 	popup_body.add_child(_label("Ограничение кадров", 17))
 	popup_body.add_child(_label("На экранах 90–120 Гц лишние кадры только греют телефон и вызывают замедление от перегрева.", 15, _SET_HINT))
 	_choice_row(Settings.FPS_NAMES, Settings.fps_cap(), func(f: int): Settings.set_fps_cap(f))
-	_check("Лёгкая карта", Settings.phone_map(), func(v: bool):
-		Settings.set_phone_map(v)
-		game.map_view.set_phone_map(v)
-		_rebuild_popup.call_deferred())
-	popup_body.add_child(_label("Карта рисуется из заготовок, границы проще — кадр карты в разы быстрее. Выключена — полная карта (тяжелее для телефона).", 15, _SET_HINT))
 	_check("Упрощать карту при сдвиге и масштабе", Settings.motion_lite(), func(v: bool):
 		Settings.set_motion_lite(v)
 		game.map_view.motion_lite = v

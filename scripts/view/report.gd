@@ -76,11 +76,11 @@ static func build(game) -> String:
 		str(DisplayServer.window_get_size())])
 	L.append("Ядро: %s · версия Godot %s · потоков симуляции %d" % ["C++" if Native.available() else "GDScript",
 		Engine.get_version_info().string, Parallel.thread_count()])
-	L.append("Настройки: графика %s · качество %s · разрешение %s (сейчас %d%%) · кадры %s · упрощать при сдвиге %s · лёгкая карта %s" % [
+	L.append("Настройки: графика %s · качество %s · разрешение %s (сейчас %d%%) · кадры %s · упрощать при сдвиге %s" % [
 		Settings.GRAPHICS_NAMES[Settings.graphics_level()] if Settings.graphics_level() >= 0 else "своя",
 		Settings.QUALITY_NAMES[Settings.map_quality()], Settings.RES_NAMES[Settings.map_res()],
 		int(game.map_view.res_scale * 100), Settings.FPS_NAMES[Settings.fps_cap()],
-		"да" if Settings.motion_lite() else "нет", "да" if Settings.phone_map() else "нет"])
+		"да" if Settings.motion_lite() else "нет"])
 	var mv = game.map_view
 	if mv != null and mv.bake != null:
 		var bk = mv.bake

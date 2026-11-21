@@ -21,14 +21,14 @@ static func _load() -> ConfigFile:
 
 ## Уровень графики (решение пользователя, ноябрь 2026): три готовых набора,
 ## «Своя» (-1) — после ручной правки отдельной настройки. По умолчанию —
-## «Средняя» на всех устройствах (лёгкая карта стандартная).
+## «Средняя» на всех устройствах. Карта всегда лёгкая (phone_map).
 const GRAPHICS_NAMES := ["Низкая", "Средняя", "Высокая"]
 ## Что включает каждый уровень: качество, разрешение (индекс RES_SCALES),
-## ограничение кадров (индекс FPS_CAPS), упрощение при движении, лёгкая карта, наклон.
+## ограничение кадров (индекс FPS_CAPS), упрощение при движении, наклон.
 const PRESETS := [
-	{"map_quality": 0, "map_res": 1, "fps_cap": 0, "motion_lite": true, "phone_map": true, "map_tilt": false},
-	{"map_quality": 1, "map_res": 3, "fps_cap": 1, "motion_lite": true, "phone_map": true, "map_tilt": true},
-	{"map_quality": 2, "map_res": 2, "fps_cap": 2, "motion_lite": false, "phone_map": false, "map_tilt": true},
+	{"map_quality": 0, "map_res": 1, "fps_cap": 0, "motion_lite": true, "map_tilt": false},
+	{"map_quality": 1, "map_res": 3, "fps_cap": 1, "motion_lite": true, "map_tilt": true},
+	{"map_quality": 2, "map_res": 2, "fps_cap": 2, "motion_lite": false, "map_tilt": true},
 ]
 const DEFAULT_LEVEL := 1
 
@@ -102,16 +102,11 @@ static func set_motion_lite(v: bool) -> void:
 	_set_gfx("motion_lite", v)
 
 
-## Лёгкая карта (map_phone.gdshader): из заготовок, политика по соседям 2×2 —
-## кадр карты в разы дешевле полного шейдера; для замеров: -- --phonemap=0|1.
+## Лёгкая карта (map_phone.gdshader) — всегда (решение пользователя, ноябрь 2026:
+## полная карта слишком нагружает, из настроек убрана). Полный шейдер с
+## заготовками — только для замеров: -- --phonemap=0.
 static func phone_map() -> bool:
-	if _arg("phonemap") != "":
-		return _arg("phonemap") == "1"
-	return bool(_gfx("phone_map"))
-
-
-static func set_phone_map(v: bool) -> void:
-	_set_gfx("phone_map", v)
+	return _arg("phonemap") != "0"
 
 
 ## Наклон камеры при приближении (перспектива, как в стратегиях жанра).
