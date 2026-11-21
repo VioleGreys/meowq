@@ -490,22 +490,26 @@ func _tilt_probe() -> void:
 	mv._on_view_changed()
 	for i in 90:   # кэш движения под этот масштаб
 		await get_tree().process_frame
-	# [название, масштаб меняется, фишки (0 — как есть, 1 — без городов, 2 — без слоя,
-	# 3 — перерисовать каждый кадр при стоящей камере), без загрузок в атлас]
-	var tests := [["наклон: камера стоит", false, 0, false],
-		["наклон: масштаб каждый кадр", true, 0, false],
-		["наклон: масштаб каждый кадр, без подписей и городов", true, 1, false],
-		["наклон: масштаб каждый кадр, без слоя фишек", true, 2, false],
-		["наклон: масштаб каждый кадр, без загрузок в атлас", true, 0, true],
-		["наклон: камера стоит, фишки и города заново каждый кадр", false, 3, false]]
+	# [название, масштаб меняется, скорость 5, тайлов из пакетов в холст за кадр,
+	# распаковок сразу]: прошлый отчёт — на паузе с тёплым атласом наклон дешёв
+	# (~17 мс), в отрезке — до 430 мс; отличия — идущая симуляция и распаковка
+	# новых тайлов в потоках
+	var tests := [["наклон: камера стоит", false, false, 0, 0],
+		["наклон: масштаб каждый кадр", true, false, 0, 0],
+		["наклон: масштаб + 8 тайлов из пакетов (распаковка в потоках)", true, false, 8, 64],
+		["наклон: камера стоит, скорость 5", false, true, 0, 0],
+		["наклон: масштаб, скорость 5", true, true, 0, 0],
+		["наклон: масштаб, скорость 5 + 8 тайлов из пакетов", true, true, 8, 64],
+		["наклон: масштаб, скорость 5 + тайлы, распаковка по одной", true, true, 8, 1],
+		["наклон: камера стоит, скорость 5 + 8 тайлов из пакетов", false, true, 8, 64]]
 	var n := 0
 	for t in tests:
 		var zoom_on: bool = t[1]
-		var um: int = t[2]
-		ul._static.visible = um != 1
-		ul.visible = um != 2
-		if mv.bake != null:
-			mv.bake.uploads = 0 if t[3] else up0
+		var dec_n: int = t[3]
+		var dec_cap: int = t[4]
+		g.world_lock()
+		g.speed = 5 if t[2] else 0
+		g.world_unlock()
 		var ft := PackedFloat32Array()
 		var px := 0.0
 		var drawn := 0
@@ -519,9 +523,9 @@ func _tilt_probe() -> void:
 				mv.camera.zoom = Vector2.ONE * (3.0 + sin(t4) * 1.0)
 				mv._moving = MapView.MOTION_SETTLE
 				mv._on_view_changed()
-			elif um == 3:
-				ul._dirty = true
-				ul._static.queue_redraw()
+			if dec_n > 0 and mv.bake != null:
+				var imgs: Array = mv.bake.probe_decode(dec_n, dec_cap)
+				mv.bake.probe_put(0, null, true, imgs)
 			await get_tree().process_frame
 			var f_now := Time.get_ticks_usec()
 			if i >= 4:
@@ -534,7 +538,13 @@ func _tilt_probe() -> void:
 					drawn += 1
 			MapView.gpu = {}
 			f_prev = f_now
+		if mv.bake != null:
+			mv.bake.probe_decode(0, 0)
+			mv.bake.probe_put(0, null, true)
 		_probe.append([t[0], _pct(ft, 0.5), _pct(ft, 0.9), px / maxf(1.0, ft.size()), drawn, ft.size()])
+	g.world_lock()
+	g.speed = 0
+	g.world_unlock()
 	ul._static.visible = true
 	ul.visible = true
 	if mv.bake != null:

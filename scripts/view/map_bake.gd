@@ -818,10 +818,12 @@ func _up_tex(img: Image) -> ImageTexture:
 
 ## Проба стенда: n тайлов в холст атласа (как загрузка), не меняя его (сложение
 ## нуля); прежние пробные — убрать. n = 0 — только убрать.
-func probe_put(n: int, img: Image, pool: bool) -> void:
+func probe_put(n: int, img: Image, pool: bool, imgs: Array = []) -> void:
 	for nd in _probe_nodes:
 		(nd as Node).queue_free()
 	_probe_nodes.clear()
+	if not imgs.is_empty():
+		n = imgs.size()
 	if n <= 0:
 		return
 	var pm := ShaderMaterial.new()
@@ -831,7 +833,7 @@ func probe_put(n: int, img: Image, pool: bool) -> void:
 	for i in n:
 		var spr := Sprite2D.new()
 		spr.centered = false
-		spr.texture = _up_tex(img)
+		spr.texture = _up_tex(imgs[i] if not imgs.is_empty() else img)
 		spr.material = pm
 		spr.position = Vector2((i % AN) * TS, (i / AN) * TS)
 		_up_root.add_child(spr)
@@ -839,6 +841,57 @@ func probe_put(n: int, img: Image, pool: bool) -> void:
 	up_pool = up0
 	MapView.gnote("в атлас", float(n * TS * TS))
 	atlas_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+
+
+## Проба стенда: распаковать тайлы пакетов в потоках, как настоящая загрузка
+## (не больше cap задач сразу, до n новых за вызов); готовые — забрать
+## (probe_put их кладёт в холст, атлас и таблица не меняются). n = 0 — дождаться и забыть.
+var _probe_jobs: Array = []
+var _probe_done: Array = []
+var _probe_k := 0
+var _probe_keys: Array = []
+
+
+func probe_decode(n: int, cap: int) -> Array:
+	var left: Array = []
+	for j in _probe_jobs:
+		if n <= 0 or WorkerThreadPool.is_task_completed(j):
+			WorkerThreadPool.wait_for_task_completion(j)
+		else:
+			left.append(j)
+	_probe_jobs = left
+	_mx.lock()
+	var out := _probe_done
+	_probe_done = []
+	_mx.unlock()
+	if n <= 0 or _pack.is_empty():
+		return []
+	if _probe_keys.is_empty():
+		_probe_keys = _pack.keys()
+	var keys := _probe_keys
+	var add := mini(n, cap - _probe_jobs.size())
+	for i in add:
+		var src: Array = _pack[keys[_probe_k % keys.size()]]
+		_probe_k += 7919
+		_probe_jobs.append(WorkerThreadPool.add_task(func():
+			var img := Image.new()
+			var f := FileAccess.open(src[0], FileAccess.READ)
+			var bytes: PackedByteArray
+			if f != null:
+				f.seek(src[1])
+				bytes = f.get_buffer(src[2])
+			if _is_avif(bytes):
+				var px: PackedByteArray = _avif.avif_rgba(bytes) if _avif != null else PackedByteArray()
+				img = Image.create_from_data(TS, TS, false, Image.FORMAT_RGBA8, px) if px.size() == TS * TS * 4 else null
+			elif bytes.is_empty() or img.load_webp_from_buffer(bytes) != OK:
+				img = null
+			elif img.get_format() != Image.FORMAT_RGBA8:
+				img.convert(Image.FORMAT_RGBA8)
+			if img != null:
+				_mx.lock()
+				_probe_done.append(img)
+				_mx.unlock()))
+	return out
 
 
 func _on_up_drawn() -> void:
