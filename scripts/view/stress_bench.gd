@@ -139,6 +139,8 @@ func run(g, in_game := false) -> void:
 	active = false
 	_crumb("замер цены видеокарты (после отрезков)")
 	await _gpu_probe()
+	_crumb("замер наклона (после цены видеокарты)")
+	await _tilt_probe()
 	g.speed = 0
 	_report()
 	DirAccess.remove_absolute(CRUMB)
@@ -469,6 +471,77 @@ func _gpu_probe() -> void:
 	mv.quality = q0
 	g.set_map_mode(mode0)
 	mv.redraw()
+
+
+## Наклон (пауза, масштаб 2–4 как в отрезке «масштаб в наклоне»): что из
+## меняющегося каждый кадр держит кадр на телефоне — 300–450 мс при «видеокарте:
+## только в атлас 8» (отчёт ноября 2026), а пробы загрузки в холст дешёвы.
+func _tilt_probe() -> void:
+	var g = game
+	var mv: MapView = g.map_view
+	var ul: UnitLayer = g.unit_layer
+	g.world_lock()
+	g.speed = 0
+	g.world_unlock()
+	var pos0 := mv.camera.position
+	var z0 := mv.camera.zoom.x
+	var up0 := mv.bake.uploads if mv.bake != null else 0
+	mv.camera.zoom = Vector2.ONE * 3.0
+	mv._on_view_changed()
+	for i in 90:   # кэш движения под этот масштаб
+		await get_tree().process_frame
+	# [название, масштаб меняется, фишки (0 — как есть, 1 — без городов, 2 — без слоя,
+	# 3 — перерисовать каждый кадр при стоящей камере), без загрузок в атлас]
+	var tests := [["наклон: камера стоит", false, 0, false],
+		["наклон: масштаб каждый кадр", true, 0, false],
+		["наклон: масштаб каждый кадр, без подписей и городов", true, 1, false],
+		["наклон: масштаб каждый кадр, без слоя фишек", true, 2, false],
+		["наклон: масштаб каждый кадр, без загрузок в атлас", true, 0, true],
+		["наклон: камера стоит, фишки и города заново каждый кадр", false, 3, false]]
+	var n := 0
+	for t in tests:
+		var zoom_on: bool = t[1]
+		var um: int = t[2]
+		ul._static.visible = um != 1
+		ul.visible = um != 2
+		if mv.bake != null:
+			mv.bake.uploads = 0 if t[3] else up0
+		var ft := PackedFloat32Array()
+		var px := 0.0
+		var drawn := 0
+		MapView.gpu = {}
+		var f_prev := Time.get_ticks_usec()
+		for i in 40:
+			if zoom_on:
+				var t4 := n * 0.04
+				n += 1
+				mv.camera.position += Vector2(cos(t4), sin(t4)) * 2.0 / mv.camera.zoom.x
+				mv.camera.zoom = Vector2.ONE * (3.0 + sin(t4) * 1.0)
+				mv._moving = MapView.MOTION_SETTLE
+				mv._on_view_changed()
+			elif um == 3:
+				ul._dirty = true
+				ul._static.queue_redraw()
+			await get_tree().process_frame
+			var f_now := Time.get_ticks_usec()
+			if i >= 4:
+				ft.append((f_now - f_prev) / 1000.0)
+				var fp := 0.0
+				for k in MapView.gpu:
+					fp += float(MapView.gpu[k])
+				px += fp
+				if fp > 0.0:
+					drawn += 1
+			MapView.gpu = {}
+			f_prev = f_now
+		_probe.append([t[0], _pct(ft, 0.5), _pct(ft, 0.9), px / maxf(1.0, ft.size()), drawn, ft.size()])
+	ul._static.visible = true
+	ul.visible = true
+	if mv.bake != null:
+		mv.bake.uploads = up0
+	mv.camera.position = pos0
+	mv.camera.zoom = Vector2.ONE * z0
+	mv._on_view_changed()
 
 
 ## Доля пикселей буфера, которые меняют линии границ: весь шейдер против
