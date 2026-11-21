@@ -42,6 +42,7 @@ const BRUSH_PX := 16.0        # радиус кисти на экране
 signal province_painted(provs: PackedInt32Array, first: bool)
 var _paint_last := Vector2.ZERO
 var map_mode := MapMode.POLITICAL
+var input_locked := false   # главное меню: карта неподвижна, касания не принимает
 # Карта рисуется во внутренний буфер (SubViewport) и только при изменениях:
 # сдвиг, масштаб, новый день (палитра), выбор. В остальные кадры экран
 # просто показывает готовую картинку — шейдер не пересчитывает каждый пиксель.
@@ -2261,7 +2262,7 @@ static func _rgb24(c: Color) -> int:
 # --- Ввод ----------------------------------------------------------------------
 
 func _unhandled_input(event: InputEvent) -> void:
-	if camera == null:
+	if camera == null or input_locked:
 		return
 	if event is InputEventScreenTouch:
 		if event.pressed:

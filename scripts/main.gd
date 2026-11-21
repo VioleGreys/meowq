@@ -668,6 +668,7 @@ func _auto_screenshot_locked() -> void:
 	if _arg("menu") != "":
 		# --menu=main — главное меню; --menu=load|settings — окно из него
 		state = "menu"
+		_state_view()
 		hud.show_menu()
 		if _arg("menu") != "main":
 			hud.open_tab(_arg("menu"))
@@ -882,7 +883,7 @@ func new_world(seed_value: int, then := "select") -> void:
 	state = then
 	world_fresh = true
 	_play_usec = 0
-	unit_layer.rebuild()
+	_state_view()
 	if boot_info == "":
 		# первый запуск: сборка скриптов (scripts/boot.gd), окна, мир, карта
 		boot_info = "Запуск: сборка скриптов %d мс, окна %d, мир %d, карта %d; готово через %d мс от запуска процесса" % [
@@ -910,6 +911,7 @@ func new_game() -> void:
 		state = "select"
 		pick_nation = -1
 		map_view.set_highlight_nation(-1)
+		_state_view()
 		hud.show_select(-1)
 	else:
 		await new_world(randi() % 100000, "select")
@@ -923,7 +925,18 @@ func to_menu() -> void:
 	hud.close_popup()
 	state = "menu"
 	speed = 0
+	_state_view()
 	hud.show_menu()
+
+
+## Вид карты по состоянию: в главном меню карта неподвижна; войска (фишки,
+## флоты, авиация) — только в партии (в меню и при выборе страны их нет).
+func _state_view() -> void:
+	map_view.input_locked = state == "menu"
+	world_lock()
+	unit_layer.units_on = state == "play" or state == "over"
+	unit_layer.rebuild(selected_fleet, selected_wing)
+	world_unlock()
 
 
 ## Записать партию (мир под замком: из game.act или после world_lock).
@@ -1080,7 +1093,7 @@ func load_game(name: String) -> void:
 	state = "play"
 	speed = 0
 	hud.show_play()
-	unit_layer.rebuild()
+	_state_view()
 	world_unlock()
 	hud.toast("Загружено: %s" % world.date_string())
 
@@ -1107,6 +1120,7 @@ func start_as(nid: int) -> void:
 	map_view.center_on(world.nations[nid].capital)
 	state = "play"
 	speed = 0   # как в жанре: игра начинается на паузе
+	_state_view()
 	world_fresh = false
 	_play_usec = 0
 	world.log_event("Вы правите страной %s. Удачи!" % world.nations[nid].name)

@@ -27,6 +27,9 @@ var _ports_key := ""
 var _cities: Array = []         # города (очки ≥ 4): [мировая позиция, имя, очки, провинция], крупные первыми
 var _city_occ := {}             # занятые знаками и подписями городов места: клетка экрана -> [Rect2]
 var fog_on := not "--nofog" in OS.get_cmdline_user_args()   # туман войны (для снимков — `-- --nofog`)
+var units_on := true            # войска на карте (в главном меню и при выборе страны — нет)
+var _vis := PackedByteArray()   # видимые игроком провинции (кэш _visible на день)
+var _vis_key := ""
 
 
 
@@ -447,6 +450,10 @@ func build(sel_fleet: int = -1, sel_wing: int = -1) -> Array:
 	for l in _labels:
 		out.append([LABEL, l[0], l[1], l[2], l[3]])
 	var city_at := out.size()   # значки городов — под фишками, вставляются после них
+	if not units_on:
+		# главное меню и выбор страны: только подписи и города, без войск
+		var st_n0 := _merge_cities(out, city_at, {})
+		return [out, false, {}, _st_ver, st_n0]
 	# Читаем плоские массивы дивизий напрямую (свойства Division — обёртки с
 	# вызовом на каждое чтение; список пересобирается каждый игровой день).
 	var sel := {}
@@ -474,21 +481,13 @@ func build(sel_fleet: int = -1, sel_wing: int = -1) -> Array:
 		nat_cols.append(nn.color)
 		arrow_cols.append(Color(nn.color.darkened(0.5), 0.7))
 	var sc := MapView.SCALE
-	# туман войны (World.fog_table): чужие дивизии — только рядом с нашими и
-	# союзными (FOG_R провинций) или на нашей и союзной земле
-	var fog := PackedByteArray()
-	var fog_base := 0
-	if player >= 0 and fog_on:
-		fog = world.fog_table(PackedInt32Array([player]))
-		fog_base = player * world.prov_count
-	var ctrl := world.p_controller
+	# туман войны (_visible): чужие дивизии, флоты и авиация — только в видимых
+	# провинциях; невидимое не попадает в список и не рисуется
+	var vis := _visible()
 	var ally := world.ally
 	var nc := world.nation_count
 	var seen := func(p: int, o: int) -> bool:
-		if fog.is_empty() or o == player or ally[player * nc + o] == 1 or fog[fog_base + p] == 1:
-			return true
-		var c := ctrl[p]
-		return c == player or (c >= 0 and ally[player * nc + c] == 1)
+		return vis.is_empty() or o == player or ally[player * nc + o] == 1 or vis[p] == 1
 	# стрелки движения и бои
 	var battle_provs := {}
 	for i in n_div:
@@ -565,10 +564,17 @@ func build(sel_fleet: int = -1, sel_wing: int = -1) -> Array:
 		var m: Array = marks.get(p * 1024 + o, [false, Color(0, 0, 0, 0)])
 		out.append([COUNTER, centers[p] * sc, k, nat_cols[o], n, c_tpl[ci],
 			c_str[ci] / (100.0 * n), c_org[ci] / n, m[0], m[1], c_sup[ci] < 0.3, o == player])
+	var static_n := _merge_cities(out, city_at, troops)
+	_rebuild_navy_air(out, sel_fleet, sel_wing, vis)
+	return [out, has_battles, fmarks, _st_ver, static_n]
+
+
+## Вставить значки городов в список на место city_at (под фишки) → число
+## неизменных элементов (подписи и города). Версия подписей и городов новая,
+## только если они изменились (сверка здесь, в потоке симуляции, а не в кадре).
+func _merge_cities(out: Array, city_at: int, troops: Dictionary) -> int:
 	var cities: Array = []
 	_add_cities(cities, troops)
-	# версия подписей и городов: новая — только если они изменились (сверка здесь,
-	# в потоке симуляции, а не в кадре)
 	var skey := PackedByteArray()
 	skey.resize(cities.size())
 	for i in cities.size():
@@ -577,10 +583,48 @@ func build(sel_fleet: int = -1, sel_wing: int = -1) -> Array:
 		_st_key = skey
 		_st_lver = _labels_ver
 		_st_ver += 1
-	var static_n := city_at + cities.size()
-	out = out.slice(0, city_at) + cities + out.slice(city_at)
-	_rebuild_navy_air(out, sel_fleet, sel_wing)
-	return [out, has_battles, fmarks, _st_ver, static_n]
+	var tail := out.slice(city_at)
+	out.resize(city_at)
+	out.append_array(cities)
+	out.append_array(tail)
+	return city_at + cities.size()
+
+
+## Туман войны игрока: 1 — провинция (суша или морская зона) видна. Видно: своя
+## и союзная земля и всё в 1 шаге от неё; FOG_R шагов от своих и союзных
+## дивизий (World.fog_table, как у ИИ); морская зона своего или союзного флота. Пусто — тумана нет (нет игрока или `-- --nofog`). Считается
+## раз в игровой день (дивизии и флоты двигаются только в тике).
+func _visible() -> PackedByteArray:
+	if player < 0 or not fog_on:
+		return PackedByteArray()
+	var key := "%d/%d/%d" % [world.get_instance_id(), player, world.day]
+	if key == _vis_key:
+		return _vis
+	var pc := world.prov_count
+	var nc := world.nation_count
+	var fog := world.fog_table(PackedInt32Array([player]))
+	var vis := fog.slice(player * pc, player * pc + pc)
+	var ctrl := world.p_controller
+	var ally := world.ally
+	var a0 := player * nc
+	var as_ := world.adj_start
+	var al := world.adj_list
+	# (не лямбдой: упакованный массив попал бы в неё копией)
+	var eyes := PackedInt32Array()
+	for p in pc:
+		var c := ctrl[p]
+		if c >= 0 and (c == player or ally[a0 + c] == 1):
+			eyes.append(p)
+	for p in eyes:
+		vis[p] = 1
+		for j in range(as_[p], as_[p + 1]):
+			vis[al[j]] = 1
+	for f in world.fleets:
+		if f.alive and f.zone >= 0 and (f.owner == player or ally[a0 + f.owner] == 1):
+			vis[f.zone] = 1
+	_vis = vis
+	_vis_key = key
+	return vis
 
 
 ## Отметки фронтов армий игрока для шейдера карты: провинция -> [роль, цвет]
@@ -627,7 +671,22 @@ func front_marks() -> Dictionary:
 	return marks
 
 
-func _rebuild_navy_air(out: Array, sel_fleet: int, sel_wing: int) -> void:
+func _rebuild_navy_air(out: Array, sel_fleet: int, sel_wing: int, vis: PackedByteArray) -> void:
+	var ally := world.ally
+	var a0 := player * world.nation_count
+	var friend := func(o: int) -> bool:
+		return vis.is_empty() or o == player or ally[a0 + o] == 1
+	# видимые районы авиации: есть видимая провинция или своё и союзное крыло
+	var reg_vis := PackedByteArray()
+	if not vis.is_empty():
+		reg_vis.resize(world.region_count)
+		var pr := world.p_region
+		for p in world.prov_count:
+			if vis[p] == 1 and pr[p] >= 0:
+				reg_vis[pr[p]] = 1
+		for wg in world.wings:
+			if wg.alive and wg.region >= 0 and friend.call(wg.owner):
+				reg_vis[wg.region] = 1
 	# порты и военно-морские базы (свои и союзные)
 	# список меняется со сменой владельцев (палитра) и плацдармами — пересчёт
 	# по всем прибрежным провинциям раз в 10 дней или при смене владельцев
@@ -657,11 +716,15 @@ func _rebuild_navy_air(out: Array, sel_fleet: int, sel_wing: int) -> void:
 	for i in divs.size():
 		if a_alive[i] != 0 and a_transit[i] > 0:
 			var d: World.Division = divs[i]
+			if not friend.call(a_owner[i]) and vis[d.transit_from] == 0 and vis[d.transit_target] == 0:
+				continue
 			var t := 1.0 - float(a_transit[i]) / maxf(1.0, d.transit_total)
 			out.append([TRANSIT, _wp(d.transit_from), _wp(d.transit_target), t, world.nations[a_owner[i]].color, a_owner[i] == player])
 	# флоты
 	for f in world.fleets:
 		if not f.alive or f.zone < 0:
+			continue
+		if not friend.call(f.owner) and vis[f.zone] == 0:
 			continue
 		var pts := PackedVector2Array()
 		if f.id == sel_fleet:
@@ -684,6 +747,8 @@ func _rebuild_navy_air(out: Array, sel_fleet: int, sel_wing: int) -> void:
 		if not wg.alive or wg.region < 0:
 			continue
 		if wg.owner != player and not world.is_at_war(player, wg.owner):
+			continue
+		if not friend.call(wg.owner) and reg_vis[wg.region] == 0:
 			continue
 		var key := "%d:%d:%d" % [wg.region, 0 if wg.owner == player else 1, wg.kind]
 		if not groups.has(key):
