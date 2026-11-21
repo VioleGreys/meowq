@@ -1814,7 +1814,7 @@ func _rebuild_popup() -> void:
 ## окна закрыты, карта стоит — главные окна по одному собираются вне дерева и
 ## переезжают в свои скрытые тела понемногу (PREWARM_USEC за кадр). Первое
 ## открытие окна — уже сверка с заготовкой, а не сборка с нуля.
-const PREWARM := ["army", "navy", "diplomacy", "production"]
+const PREWARM := ["army", "navy", "diplomacy", "production", "research", "focus"]   # два последних — свои окна (TechView, FocusView)
 const PREWARM_USEC := 3000
 var _pw_i := 0
 var _pw_stage: Node = null
@@ -1832,6 +1832,15 @@ func prewarm_step(still: bool) -> void:
 		return
 	if _pw_stage == null:
 		if not still or _pw_i >= PREWARM.size():
+			return
+		if PREWARM[_pw_i] == "research" or PREWARM[_pw_i] == "focus":
+			var v: Control = tech_view if PREWARM[_pw_i] == "research" else focus_view
+			_pw_i += 1
+			if v.visible or tech_view.visible or focus_view.visible:
+				return
+			var t2 := Time.get_ticks_usec()
+			v.prewarm(game, game.world, game.player())
+			FrameProf.add("окна: заготовка", Time.get_ticks_usec() - t2)
 			return
 		var saved := popup_tab
 		var active := popup_body

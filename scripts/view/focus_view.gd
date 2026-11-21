@@ -72,6 +72,15 @@ func open(g, w: World, n: int) -> void:
 	show()
 
 
+## Заготовка в простое (окно скрыто): кнопки дерева и темы до первого открытия.
+func prewarm(g, w: World, n: int) -> void:
+	game = g
+	world = w
+	nid = n
+	selected = ""
+	_rebuild()
+
+
 func _rebuild() -> void:
 	_buttons.clear()
 	var defs := History.tree_of(world, nid)

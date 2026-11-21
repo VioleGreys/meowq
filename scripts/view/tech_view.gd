@@ -153,6 +153,21 @@ func open(g, w: World, n: int, c := "") -> void:
 	show()
 
 
+## Заготовка в простое (окно скрыто): запас кнопок на самую большую вкладку, слоты и
+## темы — первое открытие на телефоне иначе ~100 мс (вход кнопок в дерево, темы).
+func prewarm(g, w: World, n: int) -> void:
+	var need := 0
+	for c in Tech.CATS:
+		need = maxi(need, Tech.of_cat(c["id"]).size())
+	while _pool.size() < need:
+		_new_node()
+	game = g
+	world = w
+	nid = n
+	selected = ""
+	_rebuild()
+
+
 func set_cat(c: String) -> void:
 	cat = c
 	selected = ""
@@ -204,20 +219,26 @@ func _rebuild() -> void:
 	refresh()
 
 
+func _new_node() -> Button:
+	var b := Button.new()
+	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	b.add_theme_font_size_override("font_size", 11)
+	b.add_theme_constant_override("line_spacing", -2)
+	b.clip_text = true
+	b.hide()
+	b.pressed.connect(func(): _select(String(b.get_meta("id"))))
+	tree.add_child(b)
+	_pool.append(b)
+	return b
+
+
 ## Узел i-й по счёту на вкладке: кнопка из запаса (новая — только если запаса мало).
 func _add_node(t: Dictionary, i: int) -> void:
 	var b: Button
 	if i < _pool.size():
 		b = _pool[i]
 	else:
-		b = Button.new()
-		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		b.add_theme_font_size_override("font_size", 11)
-		b.add_theme_constant_override("line_spacing", -2)
-		b.clip_text = true
-		b.pressed.connect(func(): _select(String(b.get_meta("id"))))
-		tree.add_child(b)
-		_pool.append(b)
+		b = _new_node()
 	var id: String = t["id"]
 	b.set_meta("id", id)
 	b.position = _pos(t)
