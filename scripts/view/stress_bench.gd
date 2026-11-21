@@ -61,6 +61,15 @@ func _p(s: String) -> void:
 var ingame := false   # из «Настроек» на идущей партии: потом партия загружается обратно
 const BEFORE := "_stress_before"
 const TMP := "_stress_tmp"
+# след прогона: пишется по ходу; остался при запуске — прошлый оборвался (вылет)
+const CRUMB := "user://stress_crumb.txt"
+var _prev_crumb := ""
+
+
+func _crumb(text: String) -> void:
+	var f := FileAccess.open(CRUMB, FileAccess.WRITE)
+	if f != null:
+		f.store_string(text)
 
 
 func run(g, in_game := false) -> void:
@@ -68,6 +77,9 @@ func run(g, in_game := false) -> void:
 	ingame = in_game
 	var t_start := Time.get_ticks_msec()   # от запуска движка: загрузка + выбор страны
 	var seg_sec := float(g._arg("seg")) if g._arg("seg") != "" else 5.0
+	if FileAccess.file_exists(CRUMB):
+		_prev_crumb = FileAccess.get_file_as_string(CRUMB)
+	_crumb("запуск стенда")
 	g.hud.patch_check = "--patchcheck" in OS.get_cmdline_user_args()
 	var me: int
 	var from := ""
@@ -109,6 +121,8 @@ func run(g, in_game := false) -> void:
 		RenderingServer.get_video_adapter_name(), str(DisplayServer.window_get_size()),
 		Settings.QUALITY_NAMES[Settings.map_quality()], int(g.map_view.res_scale * 100), g.map_view.strips,
 		"да" if g.map_view.phone_map else "нет"])
+	if _prev_crumb != "":
+		_p("ПРОШЛЫЙ ПРОГОН ОБОРВАЛСЯ (вылет?): " + _prev_crumb)
 	if g.boot_info != "":
 		_p(g.boot_info)
 	if ingame:
@@ -123,9 +137,11 @@ func run(g, in_game := false) -> void:
 	for s in SEGMENTS.size():
 		await _segment(s, seg_sec, me)
 	active = false
+	_crumb("замер цены видеокарты (после отрезков)")
 	await _gpu_probe()
 	g.speed = 0
 	_report()
+	DirAccess.remove_absolute(CRUMB)
 	var text := "\n".join(_out) + "\n"
 	var out: String = g._arg("out") if g._arg("out") != "" else ("user://stress.txt" if ingame else "")
 	if out != "":
@@ -262,6 +278,12 @@ func _segment(s: int, sec: float, me: int) -> void:
 				_long.append([s, ms, _action, scr, rc, rg, FrameProf.frame.duplicate(), MapView.gpu.duplicate(), g_prev])
 		for k in MapView.gpu:
 			gsum[k] = float(gsum.get(k, 0.0)) + float(MapView.gpu[k])
+		if n % 15 == 0 or ms > 300.0:
+			var mv = g.map_view
+			_crumb("%s, %.1f с от начала отрезка, кадр %.0f мс, масштаб %.2f, наклон %.0f°, видео %d МБ, буферы кэша %s · видеокарте: %s · кадром раньше: %s" % [
+				SEGMENTS[s], (Time.get_ticks_msec() - t0) / 1000.0, ms, mv.camera.zoom.x, rad_to_deg(mv.tilt()),
+				int(Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0),
+				str(mv._cb.map(func(b): return b.size)), _gpu_str(MapView.gpu), _gpu_str(g_prev)])
 		g_prev = MapView.gpu.duplicate()
 		MapView.gpu = {}
 		FrameProf.frame = {}

@@ -1258,18 +1258,31 @@ func _cache_tick() -> void:
 			_c_build_n = 0   # масштаб ушёл — строить заново
 		elif phone_map and f.valid and not f.queue.is_empty():
 			return   # в этом кадре дорисовывается показанный — полоса постройки следующим
+		elif phone_map and not b.queue.is_empty():
+			return   # прошлая полоса и накопленные части ещё рисуются по бюджету
+		elif phone_map and _c_build_i >= _c_build_n:
+			# всё нарисовано — показывать его
+			_c_build_n = 0
+			b.valid = true
+			_cf = 1 - _cf
+			return
 		else:
 			var y0 := floori(float(b.size.y) * _c_build_i / _c_build_n)
 			var y1 := floori(float(b.size.y) * (_c_build_i + 1) / _c_build_n)
 			b.queue.append(Rect2(Vector2(b.n.x, b.n.y + y0), Vector2(b.size.x, y1 - y0)))
 			_c_build_i += 1
 			if _c_build_i >= _c_build_n:
-				_c_build_n = 0
-				b.valid = true
+				# части, изменившиеся за постройку (смена владельцев каждый день):
+				# раньше — все в том же кадре без бюджета; в наклоне буфер ~3 экрана,
+				# и это бывало 40 млн пикс. за кадр (~2 с, отчёт ноября 2026: зависание
+				# видеокарты — вылет). На лёгкой карте — по бюджету, показ — после
 				for r in b.rects:
 					b.queue.append(_cache_px(b, r))
 				b.rects.clear()
-				_cf = 1 - _cf   # готов — показывать его
+				if not phone_map:
+					_c_build_n = 0
+					b.valid = true
+					_cf = 1 - _cf   # готов — показывать его
 			return
 	# нужен новый: готового нет или масштаб ушёл; строить, когда масштаб устоялся
 	# и в этом кадре не рисуется полный кадр карты, или сразу при движении
@@ -1296,7 +1309,16 @@ func _cache_draw(b: CacheBuf) -> void:
 	var rects: Array = []
 	# лёгкая карта: не больше CACHE_BUDGET_PX за кадр (открывшиеся края — в начале
 	# очереди, рисуются первыми); остаток — в следующих кадрах
-	var budget := maxf(200000.0, CACHE_BUDGET_PX - _lite_px) if phone_map and b == _cache_front() else INF   # полосы постройки — уже по бюджету
+	# (строящийся — полный бюджет: полоса постройки и есть столько, не медленнее)
+	var budget := INF
+	if phone_map:
+		budget = maxf(200000.0, CACHE_BUDGET_PX - _lite_px) if b == _cache_front() else CACHE_BUDGET_PX * 1.1
+	# частей больше, чем само окно (накопились за дни) — одно окно целиком
+	var total := 0.0
+	for r in b.queue:
+		total += (r as Rect2).intersection(win).get_area()
+	if total > win.get_area():
+		b.queue = [win]
 	var rest: Array = []
 	var drawn := 0.0
 	var fit: Array = []
