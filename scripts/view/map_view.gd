@@ -1177,14 +1177,22 @@ func _cache_px(b: CacheBuf, r: Rect2) -> Rect2:
 
 ## Можно ли показать движение из готового буфера; если видимое вышло за окно —
 ## сдвинуть окно и дорисовать открывшиеся полосы (в этом же кадре).
+## Почему кэш не годится (последний отказ; для стенда — static lite_why: причина → кадров).
+var cache_why := ""
+static var lite_why := {}
+
+
 func _cache_usable() -> bool:
 	if _no_cache:
+		cache_why = "выключен"
 		return false
 	var b := _cache_front()
 	if not b.valid or b.q != quality or absf(b.rk - _cache_rk()) > 1e-4:
+		cache_why = "строится" if _c_build_n > 0 else ("ждёт масштаба" if _c_still < 3 else "нет")
 		return false
 	var need := _cache_need()
 	if not _zoom_ok(float(need[0]) / b.zneed, CACHE_ZOOM_SOFT):
+		cache_why = "масштаб"
 		return false
 	var fp := _cache_px(b, need[1])
 	var win := Rect2(Vector2(b.n), Vector2(b.size))
@@ -1194,6 +1202,7 @@ func _cache_usable() -> bool:
 	# видимое шире окна (отдалили): показывать, пока недостаёт не больше половины
 	# окна (края тянутся, пока второй буфер строится), иначе — нет
 	if fp.size.x > b.size.x * 1.5 or fp.size.y > b.size.y * 1.5:
+		cache_why = "шире буфера"
 		return false
 	# новое окно: видимое посередине; видимое шире окна — края кадра вне буфера
 	# закрывает упрощённый живой кадр под ним (раньше тянулись крайние пиксели
@@ -1206,6 +1215,7 @@ func _cache_usable() -> bool:
 		if phone_map:
 			# скачок дальше окна: весь буфер за кадр — фриз; строить новый по частям
 			b.valid = false
+			cache_why = "скачок"
 			return false
 		b.queue.append(Rect2(Vector2(n2), Vector2(b.size)))
 		return true
@@ -1260,6 +1270,8 @@ func _cache_tick() -> void:
 			return   # в этом кадре дорисовывается показанный — полоса постройки следующим
 		elif phone_map and not b.queue.is_empty():
 			return   # прошлая полоса и накопленные части ещё рисуются по бюджету
+		elif phone_map and _moving > 0.0 and _c_still < 3:
+			return   # масштаб меняется — постройка ждёт (иначе ~600 тыс. пикс. в кадр масштаба впустую)
 		elif phone_map and _c_build_i >= _c_build_n:
 			# всё нарисовано — показывать его
 			_c_build_n = 0
@@ -1288,7 +1300,7 @@ func _cache_tick() -> void:
 	# и в этом кадре не рисуется полный кадр карты, или сразу при движении
 	var want := not f.valid or not _zoom_ok(zr_f, CACHE_ZOOM_TOL)
 	if want and _strip_n == 0 and ((_c_still >= 3 and not _dirty and redraws == _c_redraws0) \
-			or _moving > 0.0):
+			or (_moving > 0.0 and (_c_still >= 3 or not phone_map))):
 		_cache_build()
 
 
@@ -1591,6 +1603,8 @@ func _process_map(dt: float) -> void:
 		# включено «упрощать при сдвиге» и есть что упрощать), иначе — как есть
 		var use_cache := _moving > 0.0 and _cache_usable()
 		var lite := use_cache or (motion_lite and _moving > 0.0 and (quality > 0 or res_scale > 0.5))
+		if lite and not use_cache:
+			lite_why[cache_why] = int(lite_why.get(cache_why, 0)) + 1
 		var was_lite := _lite_drawn
 		_lite_drawn = lite
 		_param("quality", 0 if lite else quality)

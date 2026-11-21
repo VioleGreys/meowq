@@ -177,6 +177,7 @@ func _segment(s: int, sec: float, me: int) -> void:
 	var saved := false
 	FrameProf.frame = {}
 	MapView.gpu = {}
+	MapView.lite_why = {}
 	var gsum := {}
 	var g_prev := {}
 	var f_prev := Time.get_ticks_usec()
@@ -301,6 +302,7 @@ func _segment(s: int, sec: float, me: int) -> void:
 	_frames.append(ft)
 	_seg_info.append(info)
 	_seg_gpu.append(gsum)
+	info["why"] = MapView.lite_why.duplicate()
 
 
 ## «Цена видеокарты»: на паузе карта перерисовывается каждый кадр одним способом —
@@ -577,6 +579,16 @@ func _report() -> void:
 		for k in gs:
 			per[k] = float(gs[k]) / sec
 		_p("  %-34s %s" % [SEGMENTS[s], _gpu_str(per)])
+	_p("")
+	_p("Упрощённый кадр в движении вместо кэша — почему (кадров):")
+	for s in _seg_info.size():
+		var w: Dictionary = _seg_info[s].get("why", {})
+		if w.is_empty():
+			continue
+		var parts: Array = []
+		for k in w:
+			parts.append("%s %d" % [k if str(k) != "" else "?", int(w[k])])
+		_p("  %-34s %s" % [SEGMENTS[s], ", ".join(parts)])
 	_p("")
 	if not _probe.is_empty():
 		_p("Цена видеокарты (пауза, карта перерисовывается каждый кадр; мс кадра: медиана / 90 %; тыс. пикселей за кадр):")
