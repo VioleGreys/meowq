@@ -1050,6 +1050,7 @@ const CACHE_BUDGET_PX := 600000.0
 # лёгкая карта: упрощённый кадр (масштаб, бросок) — не больше стольких пикселей:
 # при 100 % он ~2.6 млн пикс. каждый кадр масштаба (~140 мс, отчёт ноября 2026)
 const LITE_MAX_PX := 700000.0
+const LITE_ZOOM_PX := 300000.0   # то же, пока меняется масштаб (кэш движения ждёт)
 var _lite_px := 0.0   # пикселей упрощённого кадра в этом кадре (вычитаются из бюджета кэша)
 const RELIEF_H := 6.0            # как в map.gdshader: высота гор при наклоне, единиц мира
 
@@ -1633,7 +1634,10 @@ func _process_map(dt: float) -> void:
 		var logical := get_viewport_rect().size
 		var phys := Vector2(get_window().size)
 		if lite and phone_map:
-			rs = minf(rs, sqrt(LITE_MAX_PX / maxf(1.0, phys.x * phys.y)))
+			# масштаб меняется (кэш ждёт его): кадр и так «плывёт» — меньше пикселей
+			# (отчёт ноября 2026: «масштаб в наклоне» 700 тыс. пикс. каждый кадр, 35 мс)
+			var cap := LITE_ZOOM_PX if not use_cache and _c_still < 3 else LITE_MAX_PX
+			rs = minf(rs, sqrt(cap / maxf(1.0, phys.x * phys.y)))
 		var size := Vector2i(maxi(1, int(phys.x * rs)), maxi(1, int(phys.y * rs)))
 		var rk := float(size.x) / maxf(1.0, logical.x)  # пикселей буфера на логический
 		_param("res_k", rk)

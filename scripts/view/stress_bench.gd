@@ -223,6 +223,8 @@ func _segment(s: int, sec: float, me: int) -> void:
 	var gsum := {}
 	var g_prev := {}
 	var f_prev := Time.get_ticks_usec()
+	var a_last := ""   # последнее действие игрока и когда (для долгих кадров после него)
+	var a_t := 0
 	while Time.get_ticks_msec() - t0 < sec * 1000.0:
 		var now := Time.get_ticks_msec() - t0
 		_action = ""
@@ -321,7 +323,11 @@ func _segment(s: int, sec: float, me: int) -> void:
 		if n > 0:   # первый кадр отрезка несёт смену скорости — не в счёт
 			ft.append(ms)
 			if ms > LONG_MS:
-				_long.append([s, ms, _action, scr, rc, rg, FrameProf.frame.duplicate(), MapView.gpu.duplicate(), g_prev])
+				_long.append([s, ms, _action, scr, rc, rg, FrameProf.frame.duplicate(), MapView.gpu.duplicate(), g_prev,
+					"" if _action != "" or a_last == "" else "%s %d мс назад" % [a_last, Time.get_ticks_msec() - a_t]])
+		if _action != "":
+			a_last = _action
+			a_t = Time.get_ticks_msec()
 		for k in MapView.gpu:
 			gsum[k] = float(gsum.get(k, 0.0)) + float(MapView.gpu[k])
 		if n % 15 == 0 or ms > 300.0:
@@ -826,7 +832,7 @@ func _report() -> void:
 	for i in mini(15, _long.size()):
 		var e: Array = _long[i]
 		_p("  %6.1f мс · %s%s · движок ЦП %.1f / ГП %.1f · скрипты %.1f · %s" % [float(e[1]), SEGMENTS[int(e[0])],
-			(" · " + str(e[2])) if str(e[2]) != "" else "", float(e[4]), float(e[5]), float(e[3]) / 1000.0, _top(e[6], 500, 5)])
+			(" · " + str(e[2])) if str(e[2]) != "" else ((" · после: " + str(e[9])) if e.size() > 9 and str(e[9]) != "" else ""), float(e[4]), float(e[5]), float(e[3]) / 1000.0, _top(e[6], 500, 5)])
 		_p("           видеокарте: %s · кадром раньше: %s" % [_gpu_str(e[7]), _gpu_str(e[8])])
 	_p("  (кадр − скрипты − движок ЦП = ожидание: ГП, синхронизация, вытеснение потоками)")
 	_p("")
