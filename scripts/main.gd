@@ -665,6 +665,15 @@ func _auto_screenshot_locked() -> void:
 	var me := 0
 	if _arg("nation") != "" and nation_by_tag(_arg("nation")) >= 0:
 		me = nation_by_tag(_arg("nation"))
+	if _arg("menu") == "select":
+		# --menu=select --nation=TAG — выбор страны (сначала — без страны, потом
+		# Германия и указанная: смена плашки как при касаниях)
+		state = "select"
+		_state_view()
+		hud.show_select(-1)
+		pick(nation_by_tag("GER"))
+		pick(me)
+		return
 	if _arg("menu") != "":
 		# --menu=main — главное меню; --menu=load|settings — окно из него
 		state = "menu"

@@ -167,7 +167,7 @@ func _segment(s: int, sec: float, me: int) -> void:
 	g.speed = 0 if s == 0 else (6 if s == SEGMENTS.size() - 1 else 5)
 	g.world_unlock()
 	var ft := PackedFloat32Array()
-	var info := {"draws": 0, "cpu": 0.0, "gpu": 0.0, "script": 0, "days0": g.ticks_done,
+	var info := {"parts": {}, "draws": 0, "cpu": 0.0, "gpu": 0.0, "script": 0, "days0": g.ticks_done,
 		"drawn0": Engine.get_frames_drawn()}
 	var vrid: RID = get_viewport().get_viewport_rid()
 	var t0 := Time.get_ticks_msec()
@@ -273,6 +273,9 @@ func _segment(s: int, sec: float, me: int) -> void:
 		info["cpu"] += rc
 		info["gpu"] += rg
 		info["script"] += scr
+		var parts: Dictionary = info["parts"]
+		for k in FrameProf.frame:
+			parts[k] = int(parts.get(k, 0)) + int(FrameProf.frame[k])
 		if n > 0:   # первый кадр отрезка несёт смену скорости — не в счёт
 			ft.append(ms)
 			if ms > LONG_MS:
@@ -540,6 +543,13 @@ func _report() -> void:
 		_p("  %-34s скрипты кадра %.2f мс · движок ЦП %.2f / ГП %.2f мс · вызовов отрисовки %d · ОЗУ %.0f МБ, видео %.0f МБ, узлов %d, объектов %d" % [
 			"", int(info["script"]) / 1000.0 / n, float(info["cpu"]) / n, float(info["gpu"]) / n,
 			int(info["draws"]) / n, info["mem"], info["vram"], info["nodes"], info["objs"]])
+		# участки главного потока за кадр (мс, сред.): что именно ест «скрипты кадра»
+		var pk: Array = info["parts"].keys()
+		pk.sort_custom(func(x, y): return int(info["parts"][x]) > int(info["parts"][y]))
+		var ps := PackedStringArray()
+		for k in pk.slice(0, 7):
+			ps.append("%s %.2f" % [k, int(info["parts"][k]) / 1000.0 / n])
+		_p("  %-34s участки за кадр: %s" % ["", ", ".join(ps)])
 	_p("")
 	_p("Тик симуляции (мс: средний / 95% / худший; дней):")
 	for s in SEGMENTS.size():

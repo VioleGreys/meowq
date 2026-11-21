@@ -976,6 +976,20 @@ func show_menu() -> void:
 	overlay.show()
 
 
+## Плашка выбора страны — у нижнего края по центру. Размер — заново по
+## содержимому: прежний (другая страна, другие переносы строк) оставался, и
+## плашка уезжала вниз за край экрана (отчёт ноября 2026).
+func _dock_overlay() -> void:
+	if not overlay.visible:
+		return
+	var vs := root.size
+	overlay.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	overlay.size = Vector2.ZERO   # сжать до содержимого (размер — не меньше минимума)
+	var sz := overlay.size
+	# положение — после размера: при росте «вверх» (grow BEGIN) смена размера двигает верх
+	overlay.position = Vector2(roundf((vs.x - sz.x) * 0.5), maxf(0.0, vs.y - sz.y - 10.0))
+
+
 func show_select(nid: int) -> void:
 	top_bar.hide()
 	side.hide()
@@ -984,10 +998,6 @@ func show_select(nid: int) -> void:
 	popup_cover.hide()
 	_clear(overlay_box)
 	var w: World = game.world
-	overlay.reset_size()
-	overlay.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
-	overlay.offset_top -= 10
-	overlay.offset_bottom -= 10
 	overlay.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	overlay.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	if nid < 0:
@@ -1063,6 +1073,8 @@ func show_select(nid: int) -> void:
 	overlay_box.add_child(back)
 	overlay_box.add_child(_label(gen_info, 14, Color(0.7, 0.7, 0.7)))
 	overlay.show()
+	_dock_overlay()
+	_dock_overlay.call_deferred()   # после раскладки (переносы строк меняют высоту)
 
 
 func show_play() -> void:

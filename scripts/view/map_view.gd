@@ -1634,9 +1634,18 @@ func _process_map(dt: float) -> void:
 			# дорисованы (_cache_usable), проекция с текущей камерой (map_motion)
 			cache_rect.visible = true
 			_fading_in = false
-			if _cache_part:
+			if _cache_part and lite_sprite.visible and _lite_covers(logical):
+				redraws -= 1   # прежний кадр под кэшем ещё закрывает края — только сдвиг
+			elif _cache_part:
 				# видимое шире буфера (отдаление): края — кадр под кэшем; с заготовками —
-				# в полном качестве (дёшево и не отличается от кэша), иначе упрощённый
+				# в полном качестве (дёшево и не отличается от кэша), иначе упрощённый.
+				# На лёгкой карте — в половину стороны: видны только края за кэшем, а
+				# полный кадр каждый кадр отдаления — ~35 мс видеокарты Adreno 619
+				# (отчёт ноября 2026: «сдвиг и масштаб» 50 мс, упрощ. загот. 700 тыс. пикс.)
+				if phone_map:
+					size = Vector2i(maxi(1, size.x / 2), maxi(1, size.y / 2))
+					_param("res_k", float(size.x) / maxf(1.0, logical.x))
+					_param("buf_size", Vector2(size))
 				var lb := _screen_bake(logical, rk, -1, true) == 1
 				lite_quad.material = mat_b if lb else mat
 				if lb:

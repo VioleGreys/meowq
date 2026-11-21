@@ -30,7 +30,7 @@ const SUB := 1 << 29            # ключ тайла пакета (плотно
 const UPLOADS := 24             # тайлов в атлас за кадр (ПК; телефон — uploads)
 # версии заготовок, совпадающие по содержанию тайлов (новая метка → прежняя): правка
 # только чтения заготовок (<bake-read> в шейдере) пакеты не обесценивает
-const VER_SAME := {"3483ed1d": "0d3331cc", "fe593ee6": "0d3331cc", "0be1ef20": "0d3331cc"}   # ноябрь 2026: атлас — холст; массивы шейдера — постоянные индексы; веса границ — раньше в шейдере (живой кадр — тот же до бита)
+const VER_SAME := {"54879c7a": "0d3331cc", "3483ed1d": "0d3331cc", "fe593ee6": "0d3331cc", "0be1ef20": "0d3331cc"}   # ноябрь 2026: реки вблизи — линией (вне BAKE_OUT); атлас — холст; массивы шейдера — постоянные индексы; веса границ — раньше в шейдере (живой кадр — тот же до бита)
 var uploads := UPLOADS
 
 var view: MapView
@@ -144,6 +144,8 @@ func setup(v: MapView, shader_params: Dictionary) -> void:
 	# отвергались (ноябрь 2026). Пакет помечает сборка своей меткой (данные карты
 	# на ПК при сборке, data_stamp) — она же ключ кэша на устройстве
 	ver = "%08x" % (hash(bake_code(inc.code) + "|%d|%d|%s" % [BAKE_VERSION, T, str(world_px)]) & 0xffffffff)
+	if OS.get_cmdline_user_args().has("--bakever"):
+		print("BAKEVER ", ver)
 	ver = VER_SAME.get(ver, ver)
 	pack_stamp = ""
 	atlas_vp = SubViewport.new()
