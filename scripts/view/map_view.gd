@@ -277,8 +277,7 @@ func setup(w: World) -> void:
 		st_img.set_pixel(p % 64, p / 64, Color8(sv & 255, (sv >> 8) & 255, cls, int(hs * 255.0)))
 	pal_img.blit_rect(st_img, Rect2i(0, 0, 64, rows), Vector2i(0, 2 * rows))
 	_param("has_roads", world.width == 5632 and _roads_pal(rows))
-	pal_tex = ImageTexture.create_from_image(pal_img)
-	_param("pal_tex", pal_tex)
+	pal_tex = _ring_push("pal_tex", pal_img)
 	_param("pal_rows", rows)
 	_param("front_on", false)
 	_param("has_states", has_st)
@@ -666,11 +665,7 @@ func _band_poll() -> void:
 	var bh := world.height / BAND_STEP
 	if _band_out.size() == bw * bh:
 		var bimg := Image.create_from_data(bw, bh, false, Image.FORMAT_L8, _band_out)
-		if band_tex == null or band_tex.get_width() != bw:
-			band_tex = ImageTexture.create_from_image(bimg)
-			_param("band_tex", band_tex)
-		else:
-			band_tex.update(bimg)
+		band_tex = _ring_push("band_tex", bimg)
 		_param("has_band", true)
 	redraw_provs(_band_pending)
 	_band_pending = PackedInt32Array()
@@ -700,11 +695,7 @@ func _update_band() -> void:
 	var bh := world.height / BAND_STEP
 	var band: PackedByteArray = Native.core.border_band(_id_bytes, world.width, world.height, BAND_STEP, world.p_controller, BAND_PX)
 	var bimg := Image.create_from_data(bw, bh, false, Image.FORMAT_L8, band)
-	if band_tex == null or band_tex.get_width() != bw:
-		band_tex = ImageTexture.create_from_image(bimg)
-		_param("band_tex", band_tex)
-	else:
-		band_tex.update(bimg)
+	band_tex = _ring_push("band_tex", bimg)
 	_param("has_band", true)
 
 
@@ -2094,7 +2085,34 @@ func _season_tick(dt: float) -> void:
 ## Раздел палитры в общую текстуру (0 контролёр, 1 владелец, 2 область, 3 фронт).
 func _pal_push(sec: int, img: Image) -> void:
 	pal_img.blit_rect(img, Rect2i(0, 0, 64, _pal_rows), Vector2i(0, sec * _pal_rows))
-	pal_tex.update(pal_img)
+	pal_tex = _ring_push("pal_tex", pal_img)
+
+
+## Текстура, которую шейдер карты читает каждый кадр, — кольцом из RING_N: новое
+## содержимое — в ту, что не нужна кадрам в очереди видеокарты, и она — шейдеру.
+## Обновление занятой текстуры на Adreno 619 — ожидание драйвера (атлас массивом —
+## 35–55 мс на тайл; таблица страниц — кадры 300–400 мс в наклоне, отчёт ноября 2026).
+const RING_N := 3
+var _rings := {}   # параметр шейдера -> [текстуры, индекс показанной]
+
+
+func _ring_push(name: String, img: Image) -> ImageTexture:
+	var r: Array = _rings.get(name, [])
+	var texs: Array = r[0] if not r.is_empty() else []
+	if texs.is_empty() or (texs[0] as ImageTexture).get_size() != Vector2(img.get_size()) \
+			or (texs[0] as ImageTexture).get_format() != img.get_format():
+		texs = []
+		for i in RING_N:
+			texs.append(ImageTexture.create_from_image(img))
+		_rings[name] = [texs, 0]
+		_param(name, texs[0])
+		return texs[0]
+	var i: int = (int(r[1]) + 1) % RING_N
+	r[1] = i
+	var t: ImageTexture = texs[i]
+	t.update(img)
+	_param(name, t)
+	return t
 
 
 func set_quality(q: int) -> void:

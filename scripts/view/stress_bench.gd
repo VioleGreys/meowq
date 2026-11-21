@@ -345,6 +345,11 @@ func _gpu_probe() -> void:
 		["кадр вживую", 2], ["кадр, режим «Местность»", 3], ["холст атласа 4096² без тайлов", 4],
 		["кадр с заготовками, разрешение ×0.5", 6],
 		["кадр с заготовками, качество низкое", 7]]
+	if mv.bake != null:
+		# таблица страниц обновляется каждый кадр (как при загрузке тайлов в движении):
+		# одной текстурой (как было) и кольцом (MapBake.PAGE_RING)
+		tests.append(["кадр с заготовками + таблица страниц каждый кадр, одна текстура", 11])
+		tests.append(["кадр с заготовками + таблица страниц каждый кадр, кольцом", 12])
 	if not Device.mobile():
 		tests.append(["кадр с заготовками, качество высокое", 8])
 	for prm in ["has_rivers"]:
@@ -411,6 +416,9 @@ func _gpu_probe() -> void:
 				MapView.gnote("проба", mv.quad.size.x * mv.quad.size.y)
 			elif kind != 0 and kind != 4:
 				mv._dirty = true
+				if kind == 11 or kind == 12:
+					mv.bake.page_ring = kind == 12
+					mv.bake._page_dirty = true
 			elif kind == 4 and mv.bake != null and mv.bake.atlas_vp != null:
 				mv.bake.atlas_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 			await get_tree().process_frame
@@ -431,6 +439,8 @@ func _gpu_probe() -> void:
 		if kind >= 9:
 			mv.quad.material = qmat0
 		mv._bake_off = false
+		if mv.bake != null:
+			mv.bake.page_ring = true
 		mv.res_scale = rs0
 		mv.quality = qb
 		if prm != "":

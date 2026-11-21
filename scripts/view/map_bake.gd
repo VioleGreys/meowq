@@ -52,6 +52,13 @@ var _up_drawn := false
 var page_img: Image
 var page_tex: ImageTexture
 var _page_dirty := false
+# таблица страниц — кольцом текстур: обновляется та, что не нужна кадрам в
+# очереди видеокарты (обновление занятой текстуры на Adreno 619 — ожидание
+# драйвера, как прежний массив атласа: кадры 300–400 мс в наклоне, отчёт ноября 2026)
+const PAGE_RING := 3
+var page_ring := true
+var _page_texs: Array = []
+var _page_i := 0
 var gw := PackedInt32Array()
 var gh := PackedInt32Array()
 var rows := PackedInt32Array()  # первая строка уровня k (лето; зима — + rows_total)
@@ -234,7 +241,11 @@ func set_r(r: float) -> void:
 	if sub:
 		wmax = maxi(wmax, gw1[NLV - 1])
 	page_img = Image.create(wmax, rows_total * 2 + (rows1_total * 2 if sub else 0), false, Image.FORMAT_RG8)
-	page_tex = ImageTexture.create_from_image(page_img)
+	_page_texs.clear()
+	for i in PAGE_RING:
+		_page_texs.append(ImageTexture.create_from_image(page_img))
+	_page_i = 0
+	page_tex = _page_texs[0]
 	_cache_dir = CACHE_ROOT + ver + ("-" + pack_stamp if pack_stamp != "" else "") + "_r%d/" % int(round(r_cls * 100.0))
 	_scan_cache()
 	ok = true
@@ -723,7 +734,14 @@ func _page_flush() -> void:
 	if _page_dirty:
 		_page_dirty = false
 		var t_pg := Time.get_ticks_usec()
-		page_tex.update(page_img)
+		if page_ring:
+			# следующая в кольце: последний раз её читал кадр PAGE_RING назад
+			_page_i = (_page_i + 1) % PAGE_RING
+			page_tex = _page_texs[_page_i]
+			page_tex.update(page_img)
+			view._param("page_tex", page_tex)
+		else:
+			page_tex.update(page_img)
 		FrameProf.add("заготовки: таблица", Time.get_ticks_usec() - t_pg)
 
 
