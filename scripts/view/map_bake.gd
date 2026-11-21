@@ -58,6 +58,15 @@ var _page_dirty := false
 const PAGE_RING := 3
 var page_ring := true
 var _page_texs: Array = []
+# текстуры тайлов для холста — пулом: новая текстура на каждый тайл (создать,
+# кадром позже удалить) на Adreno 619 подозревается в кадрах 300–450 мс в наклоне
+# (отчёт ноября 2026: в них видеокарте — только «в атлас 8»). Пул: та же текстура
+# снова — через UP_POOL_K кадров с загрузками (кадры в очереди её уже не читают)
+const UP_POOL_K := 4
+var up_pool := true
+var _up_texs: Array = []
+var _up_i := 0
+var _probe_nodes: Array = []
 var _page_i := 0
 var gw := PackedInt32Array()
 var gh := PackedInt32Array()
@@ -775,7 +784,7 @@ func _put(key: int, img: Image, free_only := false) -> void:
 	_slot_busy[sl] = 1
 	var spr := Sprite2D.new()
 	spr.centered = false
-	spr.texture = ImageTexture.create_from_image(img)
+	spr.texture = _up_tex(img)
 	spr.material = _up_mat
 	spr.position = Vector2((sl % AN) * TS, (sl / AN) * TS)
 	_up_root.add_child(spr)
@@ -785,6 +794,51 @@ func _put(key: int, img: Image, free_only := false) -> void:
 	atlas_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	if not RenderingServer.frame_post_draw.is_connected(_on_up_drawn):
 		RenderingServer.frame_post_draw.connect(_on_up_drawn, CONNECT_ONE_SHOT)
+
+
+## Текстура тайла для холста: из пула (up_pool) или новая.
+func _up_tex(img: Image) -> ImageTexture:
+	if not up_pool:
+		return ImageTexture.create_from_image(img)
+	var n := maxi(1, uploads) * UP_POOL_K
+	var t: ImageTexture
+	if _up_texs.size() < n:
+		t = ImageTexture.create_from_image(img)
+		_up_texs.append(t)
+	else:
+		t = _up_texs[_up_i]
+		if t.get_size() == Vector2(img.get_size()) and t.get_format() == img.get_format():
+			t.update(img)
+		else:
+			t = ImageTexture.create_from_image(img)
+			_up_texs[_up_i] = t
+	_up_i = (_up_i + 1) % n
+	return t
+
+
+## Проба стенда: n тайлов в холст атласа (как загрузка), не меняя его (сложение
+## нуля); прежние пробные — убрать. n = 0 — только убрать.
+func probe_put(n: int, img: Image, pool: bool) -> void:
+	for nd in _probe_nodes:
+		(nd as Node).queue_free()
+	_probe_nodes.clear()
+	if n <= 0:
+		return
+	var pm := ShaderMaterial.new()
+	pm.shader = load("res://shaders/bake_probe_put.gdshader")
+	var up0 := up_pool
+	up_pool = pool
+	for i in n:
+		var spr := Sprite2D.new()
+		spr.centered = false
+		spr.texture = _up_tex(img)
+		spr.material = pm
+		spr.position = Vector2((i % AN) * TS, (i / AN) * TS)
+		_up_root.add_child(spr)
+		_probe_nodes.append(spr)
+	up_pool = up0
+	MapView.gnote("в атлас", float(n * TS * TS))
+	atlas_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 
 func _on_up_drawn() -> void:

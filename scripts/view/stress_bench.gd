@@ -350,6 +350,13 @@ func _gpu_probe() -> void:
 		# одной текстурой (как было) и кольцом (MapBake.PAGE_RING)
 		tests.append(["кадр с заготовками + таблица страниц каждый кадр, одна текстура", 11])
 		tests.append(["кадр с заготовками + таблица страниц каждый кадр, кольцом", 12])
+		# 8 тайлов в холст атласа каждый кадр (как загрузка на телефоне), холст не
+		# меняется: новые текстуры (как было) и пулом (MapBake.up_pool); без кадра
+		# карты и с ним (кадр читает холст, в который пишут)
+		tests.append(["холст атласа + 8 тайлов каждый кадр, новые текстуры", 13])
+		tests.append(["холст атласа + 8 тайлов каждый кадр, пулом", 14])
+		tests.append(["кадр с заготовками + 8 тайлов в холст, новые текстуры", 15])
+		tests.append(["кадр с заготовками + 8 тайлов в холст, пулом", 16])
 	if not Device.mobile():
 		tests.append(["кадр с заготовками, качество высокое", 8])
 	for prm in ["has_rivers"]:
@@ -382,6 +389,8 @@ func _gpu_probe() -> void:
 	if mv.bake != null:
 		pm.set_shader_parameter("atlas_tex", mv.bake.atlas)
 	var shots := {}   # буфер карты: этап 5 и весь шейдер — видны ли линии границ
+	var put_img := Image.create(MapBake.TS, MapBake.TS, false, Image.FORMAT_RGBA8)
+	put_img.fill(Color(0.4, 0.5, 0.3, 1.0))
 	for t in tests:
 		var kind: int = t[1]
 		var prm: String = t[2] if t.size() > 2 and kind < 9 else ""
@@ -414,11 +423,15 @@ func _gpu_probe() -> void:
 			if kind == 9 or kind == 10:
 				mv.map_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 				MapView.gnote("проба", mv.quad.size.x * mv.quad.size.y)
+			elif kind == 13 or kind == 14:
+				mv.bake.probe_put(8, put_img, kind == 14)
 			elif kind != 0 and kind != 4:
 				mv._dirty = true
 				if kind == 11 or kind == 12:
 					mv.bake.page_ring = kind == 12
 					mv.bake._page_dirty = true
+				elif kind == 15 or kind == 16:
+					mv.bake.probe_put(8, put_img, kind == 16)
 			elif kind == 4 and mv.bake != null and mv.bake.atlas_vp != null:
 				mv.bake.atlas_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 			await get_tree().process_frame
@@ -441,6 +454,7 @@ func _gpu_probe() -> void:
 		mv._bake_off = false
 		if mv.bake != null:
 			mv.bake.page_ring = true
+			mv.bake.probe_put(0, null, true)
 		mv.res_scale = rs0
 		mv.quality = qb
 		if prm != "":
