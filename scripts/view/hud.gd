@@ -4591,129 +4591,166 @@ func _build_load() -> void:
 		popup_body.add_child(row)
 
 
+# окно «Настройки»: страница (решение пользователя, ноябрь 2026 — по категориям)
+var _set_page := "graphics"
+const _SET_HINT := Color(0.75, 0.75, 0.7)
+
+
 func _build_settings() -> void:
 	popup_title.text = "Настройки"
 	_menu_back()
-	var au := CheckButton.new()
-	au.text = "Автосохранение"
-	au.button_pressed = Settings.autosave()
-	au.toggled.connect(func(v: bool):
-		Settings.set_autosave(v)
-		game.autosave_on = v)
-	popup_body.add_child(au)
-	popup_body.add_child(_label("Каждые 5 минут игры, при выходе в меню и когда игру сворачивают — в одну запись «Автосохранение».", 15, Color(0.75, 0.75, 0.7)))
-	popup_body.add_child(_label("Качество карты", 20))
-	popup_body.add_child(_label("Высокое — самые плавные границы. Среднее — плавный берег и простые границы, легче для телефона. Низкое — без сглаживания, для слабых устройств. Число кадров — внизу экрана (FPS).", 15, Color(0.75, 0.75, 0.7)))
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", 4)
+	for pg in [["game", "Игра"], ["graphics", "Графика"], ["sound", "Звук"], ["other", "Прочее"]]:
+		var id: String = pg[0]
+		var b := _button(pg[1], func():
+			_set_page = id
+			_rebuild_popup(), Vector2(0, 46))
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.disabled = _set_page == id
+		b.add_theme_font_size_override("font_size", 14)
+		tabs.add_child(b)
+	popup_body.add_child(tabs)
+	_tight(tabs)
+	match _set_page:
+		"game":
+			_settings_game()
+		"sound":
+			_settings_sound()
+		"other":
+			_settings_other()
+		_:
+			_settings_graphics()
+
+
+## Ряд «нажимных» кнопок выбора: names — подписи, cur — выбранная, pick(i) — по нажатию.
+func _choice_row(names: Array, cur: int, pick: Callable) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
-	var cur := Settings.map_quality()
-	for q in 3:
-		var qq := q
-		var b := _button(Settings.QUALITY_NAMES[q], func():
-			Settings.set_map_quality(qq)
-			game.map_view.set_quality(qq)
+	for i in names.size():
+		var ii := i
+		var b := _button(names[i], func():
+			pick.call(ii)
 			_rebuild_popup(), Vector2(0, 52))
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.toggle_mode = true
-		b.set_pressed_no_signal(q == cur)   # выбранное — «нажатая» латунная кнопка
+		b.set_pressed_no_signal(i == cur)   # выбранное — «нажатая» латунная кнопка
+		b.add_theme_font_size_override("font_size", 15)
 		row.add_child(b)
 	popup_body.add_child(row)
-	popup_body.add_child(_label("Разрешение карты", 20))
-	popup_body.add_child(_label("Ниже разрешение — быстрее сдвиг и масштаб на слабом телефоне; границы чуть мягче, надписи и фишки остаются чёткими. «Авто» подбирает разрешение по скорости видеокарты.", 15, Color(0.75, 0.75, 0.7)))
-	var row2 := HBoxContainer.new()
-	row2.add_theme_constant_override("separation", 8)
-	var cur_r := Settings.map_res()
-	for r in 4:
-		var rr := r
-		var b2 := _button(Settings.RES_NAMES[r], func():
-			Settings.set_map_res(rr)
-			game.map_view.set_res_scale(Settings.RES_SCALES[rr])
-			_rebuild_popup(), Vector2(0, 52))
-		b2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b2.toggle_mode = true
-		b2.set_pressed_no_signal(r == cur_r)
-		row2.add_child(b2)
-	popup_body.add_child(row2)
-	popup_body.add_child(_label("Ограничение кадров", 20))
-	popup_body.add_child(_label("На экранах 90–120 Гц лишние кадры только греют телефон и вызывают замедление от перегрева.", 15, Color(0.75, 0.75, 0.7)))
-	var row3 := HBoxContainer.new()
-	row3.add_theme_constant_override("separation", 8)
-	var cur_f := Settings.fps_cap()
-	for f in 3:
-		var ff := f
-		var b3 := _button(Settings.FPS_NAMES[f], func():
-			Settings.set_fps_cap(ff)
-			_rebuild_popup(), Vector2(0, 52))
-		b3.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b3.toggle_mode = true
-		b3.set_pressed_no_signal(f == cur_f)
-		row3.add_child(b3)
-	popup_body.add_child(row3)
-	var lite := CheckButton.new()
-	lite.text = "Упрощать карту при сдвиге и масштабе"
-	lite.button_pressed = Settings.motion_lite()
-	lite.toggled.connect(func(v: bool):
-		Settings.set_motion_lite(v)
-		game.map_view.motion_lite = v)
-	popup_body.add_child(lite)
-	popup_body.add_child(_label("Пока карту двигают, она рисуется упрощённо и плавно переходит в выбранное качество после остановки.", 15, Color(0.75, 0.75, 0.7)))
-	var pm := CheckButton.new()
-	pm.text = "Лёгкая карта"
-	pm.button_pressed = Settings.phone_map()
-	pm.toggled.connect(func(v: bool):
-		Settings.set_phone_map(v)
-		game.map_view.set_phone_map(v))
-	popup_body.add_child(pm)
-	popup_body.add_child(_label("Для слабых телефонов: карта рисуется из заготовок, границы проще — кадр карты в разы быстрее. Нужно качество «Среднее» или «Высокое».", 15, Color(0.75, 0.75, 0.7)))
-	var tl := CheckButton.new()
-	tl.text = "Наклон камеры вблизи"
-	tl.button_pressed = Settings.map_tilt()
-	tl.toggled.connect(func(v: bool):
-		Settings.set_map_tilt(v)
-		game.map_view.set_tilt_enabled(v))
-	popup_body.add_child(tl)
-	popup_body.add_child(_label("Заготовки карты", 20))
-	var bk_mb: float = game.map_view.bake.cache_mb() if game.map_view.bake != null else 0.0
-	popup_body.add_child(_label("Неподвижная часть карты (рельеф, горы, вода) рисуется заранее: дальние масштабы — в игре, ближние — на телефоне там, куда вы смотрите, и хранятся до предела (старые удаляются). Больше предел — реже рисуется заново. Сейчас занято %d МБ." % roundi(bk_mb), 15, Color(0.75, 0.75, 0.7)))
-	var row4 := HBoxContainer.new()
-	row4.add_theme_constant_override("separation", 8)
-	var cur_b := Settings.bake_cache()
-	for i in Settings.BAKE_CACHE_MB.size():
-		var ii := i
-		var b4 := _button(Settings.BAKE_CACHE_NAMES[i], func():
-			Settings.set_bake_cache(ii)
-			if game.map_view.bake != null:
-				game.map_view.bake.cache_evict()   # меньше предел — лишнее сразу удалить
-			_rebuild_popup(), Vector2(0, 52))
-		b4.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b4.toggle_mode = true
-		b4.set_pressed_no_signal(i == cur_b)
-		row4.add_child(b4)
-	popup_body.add_child(row4)
-	_bake_dl_section()
-	var snd := CheckButton.new()
-	snd.text = "Звук нажатия кнопок"
-	snd.button_pressed = Settings.ui_sound()
-	snd.toggled.connect(func(v: bool): Settings.set_ui_sound(v))
-	popup_body.add_child(snd)
-	var pf := CheckButton.new()
-	pf.text = "Строка замеров (FPS, тик) внизу экрана"
-	pf.button_pressed = Settings.show_perf()
-	pf.toggled.connect(func(v: bool):
+	_tight(row)
+
+
+## Узкие поля кнопки (ряды по 3–4 в окне шириной с телефон): подпись целиком.
+var _tight_sb := {}
+
+
+func _tight(row: Control) -> void:
+	if _tight_sb.is_empty():
+		var th := UiStyle.make_theme()
+		for st in ["normal", "hover", "pressed", "hover_pressed", "disabled"]:
+			var sb: StyleBox = th.get_stylebox(st, "Button").duplicate()
+			sb.content_margin_left = 4
+			sb.content_margin_right = 4
+			_tight_sb[st] = sb
+	for b in row.get_children():
+		for st in _tight_sb:
+			(b as Control).add_theme_stylebox_override(st, _tight_sb[st])
+
+
+func _check(text: String, on: bool, cb: Callable) -> void:
+	var c := CheckButton.new()
+	c.text = text
+	c.button_pressed = on
+	c.toggled.connect(cb)
+	popup_body.add_child(c)
+
+
+func _settings_game() -> void:
+	_check("Автосохранение", Settings.autosave(), func(v: bool):
+		Settings.set_autosave(v)
+		game.autosave_on = v)
+	popup_body.add_child(_label("Каждые 5 минут игры, при выходе в меню и когда игру сворачивают — в одну запись «Автосохранение».", 15, _SET_HINT))
+
+
+func _settings_sound() -> void:
+	_check("Звук нажатия кнопок", Settings.ui_sound(), func(v: bool): Settings.set_ui_sound(v))
+
+
+func _settings_other() -> void:
+	_check("Строка замеров (FPS, тик) внизу экрана", Settings.show_perf(), func(v: bool):
 		Settings.set_show_perf(v)
 		perf_label.visible = v)
-	popup_body.add_child(pf)
 	popup_body.add_child(_label("Отчёт для разработки", 20))
-	popup_body.add_child(_label("Телефон, видеокарта, настройки, замеры за последние 30 секунд и ошибки из журнала (после вылета — и причина). Вставьте его в чат одним сообщением.", 15, Color(0.75, 0.75, 0.7)))
+	popup_body.add_child(_label("Телефон, видеокарта, настройки, замеры за последние 30 секунд и ошибки из журнала (после вылета — и причина). Вставьте его в чат одним сообщением.", 15, _SET_HINT))
 	popup_body.add_child(_button("Скопировать отчёт", func():
 		DisplayServer.clipboard_set(Report.build(game))
 		toast("Отчёт скопирован в буфер обмена"), Vector2(0, 52)))
 	if game.state == "play" and game.player() >= 0:
-		popup_body.add_child(_label("Проверка нагрузки: ~45 с игра сама идёт, двигает карту, открывает окна, отдаёт приказы и сохраняется. Потом партия вернётся как была, отчёт — в буфер обмена.", 15, Color(0.75, 0.75, 0.7)))
+		popup_body.add_child(_label("Проверка нагрузки: ~45 с игра сама идёт, двигает карту, открывает окна, отдаёт приказы и сохраняется. Потом партия вернётся как была, отчёт — в буфер обмена.", 15, _SET_HINT))
 		popup_body.add_child(_button("Проверка нагрузки", func():
 			var sb := StressBench.new()
 			game.add_child(sb)
 			sb.run.call_deferred(game, true), Vector2(0, 52)))
+
+
+## Применить все графические настройки к карте (после смены уровня).
+func _apply_graphics() -> void:
+	var mv = game.map_view
+	mv.set_quality(Settings.map_quality())
+	mv.set_res_scale(Settings.RES_SCALES[Settings.map_res()])
+	Settings.apply_fps_cap()
+	mv.motion_lite = Settings.motion_lite()
+	mv.set_phone_map(Settings.phone_map())
+	mv.set_tilt_enabled(Settings.map_tilt())
+
+
+func _settings_graphics() -> void:
+	popup_body.add_child(_label("Уровень графики", 20))
+	var lvl := Settings.graphics_level()
+	var lvl_txt := ["Низкая — лёгкая карта без сглаживания, 75 % разрешения, 30 кадров, без наклона камеры: для слабых телефонов и экономии батареи.",
+		"Средняя (стандартная) — лёгкая карта с плавным берегом, разрешение подбирается само, 60 кадров, наклон камеры.",
+		"Высокая — полная карта с плавными границами, 100 % разрешения, кадры без ограничения, без упрощения при сдвиге: для мощных устройств.",]
+	_choice_row(Settings.GRAPHICS_NAMES, lvl, func(i: int):
+		Settings.set_graphics_level(i)
+		_apply_graphics())
+	popup_body.add_child(_label(lvl_txt[lvl] if lvl >= 0 else "Своя — изменены отдельные настройки ниже. Выберите уровень, чтобы вернуть готовый набор.", 15, _SET_HINT))
+	popup_body.add_child(_label("Отдельные настройки", 20))
+	popup_body.add_child(_label("Качество карты", 17))
+	popup_body.add_child(_label("Высокое — самые плавные границы. Среднее — плавный берег и простые границы. Низкое — без сглаживания.", 15, _SET_HINT))
+	_choice_row(Settings.QUALITY_NAMES, Settings.map_quality(), func(q: int):
+		Settings.set_map_quality(q)
+		game.map_view.set_quality(q))
+	popup_body.add_child(_label("Разрешение карты", 17))
+	popup_body.add_child(_label("Ниже разрешение — быстрее сдвиг и масштаб; границы чуть мягче, надписи и фишки остаются чёткими. «Авто» подбирает разрешение по скорости видеокарты.", 15, _SET_HINT))
+	_choice_row(Settings.RES_NAMES, Settings.map_res(), func(r: int):
+		Settings.set_map_res(r)
+		game.map_view.set_res_scale(Settings.RES_SCALES[r]))
+	popup_body.add_child(_label("Ограничение кадров", 17))
+	popup_body.add_child(_label("На экранах 90–120 Гц лишние кадры только греют телефон и вызывают замедление от перегрева.", 15, _SET_HINT))
+	_choice_row(Settings.FPS_NAMES, Settings.fps_cap(), func(f: int): Settings.set_fps_cap(f))
+	_check("Лёгкая карта", Settings.phone_map(), func(v: bool):
+		Settings.set_phone_map(v)
+		game.map_view.set_phone_map(v)
+		_rebuild_popup.call_deferred())
+	popup_body.add_child(_label("Карта рисуется из заготовок, границы проще — кадр карты в разы быстрее. Выключена — полная карта (тяжелее для телефона).", 15, _SET_HINT))
+	_check("Упрощать карту при сдвиге и масштабе", Settings.motion_lite(), func(v: bool):
+		Settings.set_motion_lite(v)
+		game.map_view.motion_lite = v
+		_rebuild_popup.call_deferred())
+	popup_body.add_child(_label("Пока карту двигают, она рисуется упрощённо и плавно переходит в выбранное качество после остановки.", 15, _SET_HINT))
+	_check("Наклон камеры вблизи", Settings.map_tilt(), func(v: bool):
+		Settings.set_map_tilt(v)
+		game.map_view.set_tilt_enabled(v)
+		_rebuild_popup.call_deferred())
+	popup_body.add_child(_label("Заготовки карты", 20))
+	var bk_mb: float = game.map_view.bake.cache_mb() if game.map_view.bake != null else 0.0
+	popup_body.add_child(_label("Неподвижная часть карты (рельеф, горы, вода) рисуется заранее: дальние масштабы — в игре, ближние — на телефоне там, куда вы смотрите, и хранятся до предела (старые удаляются). Больше предел — реже рисуется заново. Сейчас занято %d МБ." % roundi(bk_mb), 15, _SET_HINT))
+	_choice_row(Settings.BAKE_CACHE_NAMES, Settings.bake_cache(), func(i: int):
+		Settings.set_bake_cache(i)
+		if game.map_view.bake != null:
+			game.map_view.bake.cache_evict())   # меньше предел — лишнее сразу удалить
+	_bake_dl_section()
 
 
 ## «Карта высокого качества»: докачка пакетов ближних масштабов (BakeDownload;
