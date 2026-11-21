@@ -26,7 +26,9 @@ var _cat_btns := {}
 var _slot_btns: Array = []
 var _slot_row: HBoxContainer
 var _buttons := {}
+var _pool: Array = []   # кнопки узлов: переживают открытия и смену вкладки (вход в дерево дорог)
 var _styles := {}
+var _themes := {}       # состояние узла (+ «_sel») -> тема кнопки: фон, рамка, цвет надписи
 var _key := ""
 
 
@@ -123,6 +125,16 @@ func _ready() -> void:
 		_styles[k] = UiStyle._box(defs[k][0], defs[k][1], 1, 4, 4)
 		var sel: StyleBoxFlat = UiStyle._box(defs[k][0], UiStyle.RED_INK, 3, 4, 4)
 		_styles[k + "_sel"] = sel
+	# тема на состояние: одна замена темы вместо 8 переопределений на кнопку (каждое —
+	# пересчёт темы кнопки; 20 узлов — ~6 мс ПК на каждое обновление, ноябрь 2026)
+	for k in _styles:
+		var th := Theme.new()
+		for state in ["normal", "hover", "pressed", "focus"]:
+			th.set_stylebox(state, "Button", _styles[k])
+		var fc := Color(UiStyle.INK_SOFT, 0.75) if k.begins_with("lock") else UiStyle.INK
+		for cn in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+			th.set_color(cn, "Button", fc)
+		_themes[k] = th
 
 
 func open(g, w: World, n: int, c := "") -> void:
@@ -174,13 +186,13 @@ func _items() -> Array:
 
 
 func _rebuild() -> void:
-	for c in tree.get_children():
-		tree.remove_child(c)
-		c.queue_free()
 	_buttons.clear()
+	var items := _items()
+	for i in items.size():
+		_add_node(items[i], i)
+	for i in range(items.size(), _pool.size()):
+		_pool[i].hide()
 	if cat == "doc":
-		for t in _items():
-			_add_node(t)
 		tree.custom_minimum_size = Vector2(LABEL_W + 5 * (NODE.x + GAP.x), HEAD_H + Doctrine.SCHOOLS.size() * (NODE.y + GAP.y))
 		refresh()
 		return
@@ -188,23 +200,29 @@ func _rebuild() -> void:
 	for c in Tech.CATS:
 		if c["id"] == cat:
 			rows = c["rows"].size()
-	for t in Tech.of_cat(cat):
-		_add_node(t)
 	tree.custom_minimum_size = Vector2(LABEL_W + (YEAR1 - YEAR0 + 1) * (NODE.x + GAP.x), HEAD_H + rows * (NODE.y + GAP.y))
 	refresh()
 
 
-func _add_node(t: Dictionary) -> void:
-	var b := Button.new()
-	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	b.add_theme_font_size_override("font_size", 11)
-	b.add_theme_constant_override("line_spacing", -2)
+## Узел i-й по счёту на вкладке: кнопка из запаса (новая — только если запаса мало).
+func _add_node(t: Dictionary, i: int) -> void:
+	var b: Button
+	if i < _pool.size():
+		b = _pool[i]
+	else:
+		b = Button.new()
+		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		b.add_theme_font_size_override("font_size", 11)
+		b.add_theme_constant_override("line_spacing", -2)
+		b.clip_text = true
+		b.pressed.connect(func(): _select(String(b.get_meta("id"))))
+		tree.add_child(b)
+		_pool.append(b)
+	var id: String = t["id"]
+	b.set_meta("id", id)
 	b.position = _pos(t)
 	b.size = NODE
-	b.clip_text = true
-	var id: String = t["id"]
-	b.pressed.connect(func(): _select(id))
-	tree.add_child(b)
+	b.show()
 	_buttons[id] = b
 
 
@@ -277,13 +295,12 @@ func refresh() -> void:
 			sub = "%d%% · %d дн." % [100.0 * float(nat.research_progress.get(t["id"], 0.0)) / float(t["days"]), Tech.days_left(world, nat, t["id"])]
 		else:
 			sub = "%d г. · %d дн." % [t["year"], Tech.days_left(world, nat, t["id"])]
-		b.text = "%s\n%s" % [t["name"], sub]
-		var sb: StyleBox = _styles[st + ("_sel" if t["id"] == selected else "")]
-		for state in ["normal", "hover", "pressed", "focus"]:
-			b.add_theme_stylebox_override(state, sb)
-		var fc := UiStyle.INK if st != "lock" else Color(UiStyle.INK_SOFT, 0.75)
-		for cn in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
-			b.add_theme_color_override(cn, fc)
+		var txt := "%s\n%s" % [t["name"], sub]
+		if b.text != txt:
+			b.text = txt
+		var th: Theme = _themes[st + ("_sel" if t["id"] == selected else "")]
+		if b.theme != th:
+			b.theme = th
 	_update_detail()
 	tree.queue_redraw()
 

@@ -16,6 +16,9 @@ var detail: Label
 var start_btn: Button
 var selected := ""
 var _buttons := {}
+var _pool: Array = []   # кнопки узлов: переживают открытия (вход в дерево дорог)
+var _themes := {}       # «цвет|выделен» -> тема кнопки (раньше — новый стиль и 4 замены
+                        # на каждую кнопку каждый игровой день, пока окно открыто)
 
 
 func _ready() -> void:
@@ -70,25 +73,35 @@ func open(g, w: World, n: int) -> void:
 
 
 func _rebuild() -> void:
-	for c in tree.get_children():
-		c.queue_free()
 	_buttons.clear()
 	var defs := History.tree_of(world, nid)
 	var max_x := 0
 	var max_y := 0
-	for fd in defs:
+	for i in defs.size():
+		var fd: Dictionary = defs[i]
 		max_x = maxi(max_x, int(fd["x"]))
 		max_y = maxi(max_y, int(fd["y"]))
-		var b := Button.new()
-		b.text = fd["name"]
-		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		b.add_theme_font_size_override("font_size", 15)
+		var b: Button
+		if i < _pool.size():
+			b = _pool[i]
+		else:
+			b = Button.new()
+			b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			b.add_theme_font_size_override("font_size", 15)
+			b.pressed.connect(func():
+				var bid := String(b.get_meta("id"))
+				game.act(func(): _select(bid)), CONNECT_DEFERRED)
+			tree.add_child(b)
+			_pool.append(b)
+		if b.text != fd["name"]:
+			b.text = fd["name"]
 		b.position = _pos(fd)
 		b.size = NODE
-		var id: String = fd["id"]
-		b.pressed.connect(func(): game.act(func(): _select(id)), CONNECT_DEFERRED)
-		tree.add_child(b)
-		_buttons[id] = b
+		b.set_meta("id", fd["id"])
+		b.show()
+		_buttons[fd["id"]] = b
+	for i in range(defs.size(), _pool.size()):
+		_pool[i].hide()
 	tree.custom_minimum_size = Vector2((max_x + 1) * (NODE.x + GAP.x) + GAP.x, (max_y + 1) * (NODE.y + GAP.y) + GAP.y)
 	refresh()
 
@@ -121,17 +134,30 @@ func refresh() -> void:
 			col = Color(0.32, 0.31, 0.27)
 		else:
 			col = Color(0.16, 0.16, 0.16)
-		var sb := StyleBoxFlat.new()
-		sb.bg_color = col
-		sb.set_corner_radius_all(10)
-		sb.set_border_width_all(3 if fd["id"] == selected else 1)
-		sb.border_color = Color(1, 0.9, 0.6) if fd["id"] == selected else Color(0.6, 0.53, 0.36)
-		sb.set_content_margin_all(6)
-		for state in ["normal", "hover", "pressed"]:
-			b.add_theme_stylebox_override(state, sb)
-		b.add_theme_color_override("font_color", Color(0.95, 0.92, 0.85) if st != "" or true else Color.WHITE)
+		var th := _theme(col, fd["id"] == selected)
+		if b.theme != th:
+			b.theme = th
 	_update_detail()
 	tree.queue_redraw()
+
+
+## Тема узла: фон по состоянию, рамка (толще у выбранного), светлая надпись.
+func _theme(col: Color, sel: bool) -> Theme:
+	var key := "%s|%s" % [col.to_html(), sel]
+	if _themes.has(key):
+		return _themes[key]
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = col
+	sb.set_corner_radius_all(10)
+	sb.set_border_width_all(3 if sel else 1)
+	sb.border_color = Color(1, 0.9, 0.6) if sel else Color(0.6, 0.53, 0.36)
+	sb.set_content_margin_all(6)
+	var th := Theme.new()
+	for state in ["normal", "hover", "pressed"]:
+		th.set_stylebox(state, "Button", sb)
+	th.set_color("font_color", "Button", Color(0.95, 0.92, 0.85))
+	_themes[key] = th
+	return th
 
 
 func _draw_lines() -> void:

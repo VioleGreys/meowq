@@ -50,8 +50,33 @@ static func patch(dst: Node, src: Node) -> Dictionary:
 static func _patch(dst: Node, src: Node, map: Dictionary) -> void:
 	var kids := src.get_children()
 	var i := 0
-	for s in kids:
+	for k in kids.size():
+		var s: Node = kids[k]
 		var d: Node = dst.get_child(i) if i < dst.get_child_count() else null
+		if d != null and _key(d) != _key(s):
+			# строки вставлены или убраны в середине: без этого сверка по номеру
+			# заменяла всё ниже (разные классы на сдвинутых местах; «Армия» — новый
+			# шаблон дивизии: 12 вставок вместо 2, ~9 мс вместо ~2 на ПК)
+			var ks := _key(s)
+			var j := -1
+			for jj in range(i + 1, mini(i + 1 + LOOK, dst.get_child_count())):
+				if _key(dst.get_child(jj)) == ks:
+					j = jj
+					break
+			var kd := _key(d)
+			var ins := false
+			for kk in range(k + 1, mini(k + 1 + LOOK, kids.size())):
+				if _key(kids[kk]) == kd:
+					ins = j < 0 or kk - k <= j - i   # ближе — то и считаем правдой
+					break
+			if ins:
+				d = null   # s — новая строка: вставить перед d, d сверится дальше
+			elif j > 0:
+				for _r in j - i:   # строки i..j-1 убраны
+					var x := dst.get_child(i)
+					dst.remove_child(x)
+					x.queue_free()
+				d = dst.get_child(i)
 		if d != null and d.get_class() == s.get_class() and d.get_script() == s.get_script():
 			_copy(d, s, dst is Container)
 			_patch(d, s, map)
@@ -59,7 +84,8 @@ static func _patch(dst: Node, src: Node, map: Dictionary) -> void:
 			stats[0] += 1
 		else:
 			src.remove_child(s)
-			if d != null:
+			d = dst.get_child(i) if i < dst.get_child_count() else null
+			if d != null and not _matches_ahead(d, kids, k):
 				dst.remove_child(d)
 				d.queue_free()
 			dst.add_child(s)
@@ -70,6 +96,28 @@ static func _patch(dst: Node, src: Node, map: Dictionary) -> void:
 		var d := dst.get_child(i)
 		dst.remove_child(d)
 		d.queue_free()
+
+
+## Просмотр вперёд при сверке (строк окна).
+const LOOK := 6
+
+
+## Опознание узла при сверке: класс и надпись (у контейнера — его первого узла).
+static func _key(n: Node) -> String:
+	if n is Label or n is Button:
+		return n.get_class() + "|" + n.text
+	if n.get_child_count() > 0:
+		return n.get_class() + ">" + _key(n.get_child(0))
+	return n.get_class()
+
+
+## Узел d ещё встретится среди следующих узлов сборки — не удалять его.
+static func _matches_ahead(d: Node, kids: Array, k: int) -> bool:
+	var kd := _key(d)
+	for kk in range(k + 1, mini(k + 1 + LOOK, kids.size())):
+		if _key(kids[kk]) == kd:
+			return true
+	return false
 
 
 ## Свойства, которые задаёт код окон (сверка — только их: полный список ~100
