@@ -177,6 +177,8 @@ func run(g, in_game := false) -> void:
 	await _gpu_probe()
 	_crumb("замер наклона (после цены видеокарты)")
 	await _tilt_probe()
+	_crumb("повтор отрезка «масштаб в наклоне» (после проб наклона)")
+	await _replay_probe()
 	g.speed = 0
 	_crumb_poll(true)
 	_report()
@@ -597,6 +599,87 @@ func _tilt_probe() -> void:
 	g.world_unlock()
 	ul._static.visible = true
 	ul.visible = true
+	if mv.bake != null:
+		mv.bake.uploads = up0
+	mv.camera.position = pos0
+	mv.camera.zoom = Vector2.ONE * z0
+	mv._on_view_changed()
+
+
+## Повтор отрезка «масштаб в наклоне» (тот же код движения, 4 с, каждый раз на
+## новом месте карты — атлас холодный, тайлы грузятся как в отрезке) с одним
+## отключённым: пробы наклона (40 кадров, тёплый атлас) — 16–39 мс, а отрезок —
+## 300–460 мс у 14 из 53 кадров (отчёт ноября 2026), запись меток ни при чём.
+## [название, скорость 5, загрузки в атлас, слой фишек, наклон, доля места на карте]
+func _replay_probe() -> void:
+	var g = game
+	var mv: MapView = g.map_view
+	var ul: UnitLayer = g.unit_layer
+	var pos0 := mv.camera.position
+	var z0 := mv.camera.zoom.x
+	var up0 := mv.bake.uploads if mv.bake != null else 0
+	var ws := mv.world_size()
+	var tilt0 := mv.tilt_enabled
+	var tests := [["повтор: как в отрезке", true, true, true, true, Vector2(0.52, 0.30)],
+		["повтор: на паузе", false, true, true, true, Vector2(0.60, 0.33)],
+		["повтор: без загрузок в атлас (карта вживую)", true, false, true, true, Vector2(0.44, 0.36)],
+		["повтор: без слоя фишек", true, true, false, true, Vector2(0.68, 0.40)],
+		["повтор: без наклона", true, true, true, false, Vector2(0.36, 0.28)],
+		["повтор: как в отрезке, ещё раз", true, true, true, true, Vector2(0.58, 0.45)]]
+	for t in tests:
+		g.world_lock()
+		g.speed = 5 if t[1] else 0
+		g.world_unlock()
+		if mv.bake != null:
+			mv.bake.uploads = up0 if t[2] else 0
+		ul.visible = t[3]
+		mv.set_tilt_enabled(tilt0 and t[4])
+		mv.camera.position = ws * (t[5] as Vector2)
+		mv.camera.zoom = Vector2.ONE * 3.3
+		mv._on_view_changed()
+		for i in 20:
+			await get_tree().process_frame
+		var ft := PackedFloat32Array()
+		var px := 0.0
+		var drawn := 0
+		var tiles := 0.0
+		var slow := 0
+		var worst := 0.0
+		var n := 0
+		MapView.gpu = {}
+		var t0 := Time.get_ticks_msec()
+		var f_prev := Time.get_ticks_usec()
+		while Time.get_ticks_msec() - t0 < 4000:
+			var t4 := n * 0.04
+			n += 1
+			mv.camera.position += Vector2(cos(t4), sin(t4)) * 2.0 / mv.camera.zoom.x
+			mv.camera.zoom = Vector2.ONE * (3.0 + sin(t4) * 1.0)
+			mv._moving = MapView.MOTION_SETTLE
+			mv._on_view_changed()
+			await get_tree().process_frame
+			var f_now := Time.get_ticks_usec()
+			var ms := (f_now - f_prev) / 1000.0
+			f_prev = f_now
+			if n > 1:
+				ft.append(ms)
+				if ms > 100.0:
+					slow += 1
+				worst = maxf(worst, ms)
+				var fp := 0.0
+				for k in MapView.gpu:
+					fp += float(MapView.gpu[k])
+				tiles += float(MapView.gpu.get("в атлас", 0.0)) / (MapBake.TS * MapBake.TS)
+				px += fp
+				if fp > 0.0:
+					drawn += 1
+			MapView.gpu = {}
+		_probe.append(["%s · > 100 мс: %d, худший %.0f, в атлас %.0f" % [t[0], slow, worst, tiles],
+			_pct(ft, 0.5), _pct(ft, 0.9), px / maxf(1.0, ft.size()), drawn, ft.size()])
+	g.world_lock()
+	g.speed = 0
+	g.world_unlock()
+	ul.visible = true
+	mv.set_tilt_enabled(tilt0)
 	if mv.bake != null:
 		mv.bake.uploads = up0
 	mv.camera.position = pos0
