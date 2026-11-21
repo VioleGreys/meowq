@@ -144,9 +144,12 @@ func setup(v: MapView, shader_params: Dictionary) -> void:
 	# отвергались (ноябрь 2026). Пакет помечает сборка своей меткой (данные карты
 	# на ПК при сборке, data_stamp) — она же ключ кэша на устройстве
 	ver = "%08x" % (hash(bake_code(inc.code) + "|%d|%d|%s" % [BAKE_VERSION, T, str(world_px)]) & 0xffffffff)
-	if OS.get_cmdline_user_args().has("--bakever"):
-		print("BAKEVER ", ver)
+	var raw := ver
 	ver = VER_SAME.get(ver, ver)
+	if OS.get_cmdline_user_args().has("--bakever"):
+		# сырой хэш (дописать в VER_SAME при правке вне BAKE_OUT) и итоговая версия
+		# (её сверяет tools/build_apk.sh с data/bake/ver.txt — перерисовывать ли пакеты)
+		print("BAKEVER %s %s" % [raw, ver])
 	pack_stamp = ""
 	atlas_vp = SubViewport.new()
 	atlas_vp.disable_3d = true
