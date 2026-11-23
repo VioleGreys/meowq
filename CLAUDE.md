@@ -117,6 +117,7 @@
 - Политика и гарантии: `godot --headless --path . --script res://tests/politics_check.gd`
 - Кампания на Западе 1940 г. (города, план, колонии, «Свободная Франция»): `godot --headless --path . --script res://tests/france_diag.gd -- [--until=1940-09-01 --from=1940-05-01 --seed=N --brief]`
 - Вся война против исторических дат (одна партия 1936–45 гг., все фронты: города, капитуляции, по месяцам): `godot --headless --path . --script res://tests/campaign_diag.gd -- [--seed=N --brief --front=all|east|china|west|pacific --until=1945-09-01 --save=1941-12-01:имя --load=имя]`
+- Охрана границ ИИ по отношениям (уровень, дивизии по соседям): `godot --headless --path . --script res://tests/guard_diag.gd -- [--dates=1938-06-01 --tags=GER,USA]`
 - Ход войны по странам (дивизии, снабжение, заводы, перегруз): `godot --headless --path . --script res://tests/war_diag.gd -- --until=1942-01-01 --from=1941-06-01 --tags=SOV,GER [--stack --seed=N]`
 - Склады и пункты снабжения за морем (участки, запасы, подача, конвои): `godot --headless --path . --script res://tests/depot_diag.gd -- --until=1941-06-01 --from=1940-01-01 --tags=ITA,ENG [--seed=N]`
 - Участки суши страны (связность, пункты, снабжение; Испания): `godot --headless --path . --script res://tests/comp_diag.gd -- --from=1936-07-18 --until=1937-03-01 --tags=NSP,SPR [--step=7 --seed=N --brief]`

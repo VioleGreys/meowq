@@ -67,6 +67,9 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	const PackedByteArray nohit_a = tables.has("nohit") ? PackedByteArray(tables["nohit"]) : PackedByteArray();
 	const bool has_nohit = nohit_a.size() > 0;
 	const uint8_t *nohit = nohit_a.ptr();
+	// охрана границ по отношениям (AIPlanner.guard_table): nc×nc, 0/1/2
+	const PackedByteArray guard_a = tables.has("guard") ? PackedByteArray(tables["guard"]) : PackedByteArray();
+	const uint8_t *guard = guard_a.ptr();
 	// провинции, которые не атакуем (Nation.attack_limit): nc×pc, пусто — запретов нет
 	const PackedByteArray atklim_a = tables.has("atklim") ? PackedByteArray(tables["atklim"]) : PackedByteArray();
 	const int64_t atk_base = atklim_a.size() == int64_t(nc) * int64_t(land_a.size()) ? int64_t(nid) * int64_t(land_a.size()) : -1;
@@ -136,6 +139,9 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	PackedInt32Array fpairs;
 	// союзная провинция у нашего врага — тоже участок нашего фронта (как ai.gd)
 	std::vector<char> ally_front(pc, 0);
+	// охрана границ — только общий план страны ИИ (как ai.gd)
+	const bool use_guard = guard_a.size() == int64_t(nc) * nc && mode == AUTO && enemy < 0 && !has_allowed && !has_tgt;
+	std::vector<char> war_front(pc, 0), guard_lvl(pc, 0);
 	for (int p = 0; p < pc; p++) {
 		const bool own_p = ctrl[p] == nid;
 		// союзная у нашего врага — участок с нуждой «угроза − дивизии союзников» (как ai.gd)
@@ -154,14 +160,29 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 					if ((!has_nohit || nohit[int64_t(nid) * nc + c] == 0) && (atk_base < 0 || atklim[atk_base + q] == 0)) targets.add(q);
 					fpairs.push_back(p);
 					fpairs.push_back(q);
+					war_front[p] = 1;
+				} else if (use_guard && own_p && !hostile && guard[int64_t(nid) * nc + c] == 2) {
+					// в войну: граница с враждебным не-противником — минимум
+					fronts.add(p);
+					guard_lvl[p] = 1;
 				}
 			} else if (own_p && matches && (enemy >= 0 || mode == AUTO || has_tgt) && (!has_ally || ally[int64_t(nid) * nc + c] == 0)) {
+				int g = 2;
+				if (use_guard) {
+					g = guard[int64_t(nid) * nc + c];
+					if (g == 0) continue;   // хорошие отношения — границу не держим
+				}
 				fronts.add(p);
+				guard_lvl[p] = char(std::max(int(guard_lvl[p]), g));
 				fpairs.push_back(p);
 				fpairs.push_back(q);
 			}
 		}
 	}
+	// участки «ровно минимум» (как ai.gd)
+	std::vector<char> guard_min(pc, 0);
+	for (int p = 0; p < pc; p++)
+		if (guard_lvl[p] == 1 && !war_front[p]) guard_min[p] = 1;
 	if (has_allowed || has_tgt) {
 		fronts.keep_if(allowed);
 		std::vector<char> near(pc, 0);
@@ -540,8 +561,10 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			if (hidden(q)) continue;   // туман войны
 			for (int32_t m = pd_start[q]; m < pd_start[q + 1]; m++) {
 				const int32_t eo = dv_owner[pd_list[m]];
-				if (eo != nid && (!has_ally || ally[int64_t(nid) * nc + eo] == 0))
+				if (eo != nid && (!has_ally || ally[int64_t(nid) * nc + eo] == 0)) {
+					if (use_guard && !at_war && guard[int64_t(nid) * nc + eo] != 2) continue;   // в мир — только от тех, с кем держим фронт
 					threat += (war[int64_t(nid) * nc + eo] == 1 || !at_war) ? 1.0 : 0.3;
+				}
 			}
 		}
 		if (ally_front[f]) {
@@ -552,6 +575,10 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			}
 			ally_need[f] = threat - double(allyc);
 			weight[f] = 0.0;
+			continue;
+		}
+		if (guard_min[f]) {
+			weight[f] = 0.0;   // минимум — вне раздела армии
 			continue;
 		}
 		weight[f] = 1.0 + threat + vp[f] * 0.15;
@@ -580,6 +607,11 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		if (ally_front[f]) {
 			desired[f] = std::max(0, int(std::ceil(ally_need[f])));
 			if (has_cap) desired[f] = std::min(desired[f], capd(f));
+			continue;
+		}
+		if (guard_min[f]) {
+			desired[f] = 1;
+			if (hold_base >= 0 && holdt[hold_base + f] > 0) desired[f] = std::max(1, int(holdt[hold_base + f]));
 			continue;
 		}
 		desired[f] = wsum > 0.0 ? std::max(1, int(std::round(double(pool) * weight[f] / wsum))) : 1;
@@ -647,11 +679,24 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	// можно пройти: своя и союзная, вражеская — нет (переброска, не наступление; как AIPlanner._nearest)
 	const PackedByteArray pass_a = tables.has("pass") ? PackedByteArray(tables["pass"]) : war_a;
 	const uint8_t *war_row = pass_a.ptr() + int64_t(nid) * nc;
+	// мир: наши провинции у чужой земли — отвод лишних к столице, тыл перегруза без них (как ai.gd)
+	const bool withdraw = use_guard && !at_war && capital >= 0 && ctrl[capital] == nid;
+	std::vector<char> border(pc, 0);
+	if (withdraw)
+		for (int p = 0; p < pc; p++) {
+			if (ctrl[p] != nid || land[p] == 0) continue;
+			for (int32_t k = a_start[p]; k < a_start[p + 1]; k++) {
+				const int32_t q = a_list[k];
+				if (land[q] == 1 && ctrl[q] >= 0 && ctrl[q] != nid) { border[p] = 1; break; }
+			}
+		}
 	for (int32_t i : idle) {
 		if (used[i]) continue;
 		if (double(dv_org[i]) < REGROUP_ORG) continue;   // перегруппировка — на фронт не идёт (как ai.gd)
 		const int32_t pv = dv_prov[i];
-		if (fronts.has[pv] && per_front[pv] <= desired[pv] + 1) continue;
+		// мир: на участке-минимуме — ровно минимум, без запаса в одну дивизию (как ai.gd)
+		const int slack = (withdraw && guard_min[pv]) ? 0 : 1;
+		if (fronts.has[pv] && per_front[pv] <= desired[pv] + slack) continue;
 		std::vector<int32_t> goals;
 		// план наступления: пока участки удара не заполнены — только к ним (как ai.gd)
 		for (int32_t f : fronts.order)
@@ -659,26 +704,37 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		if (goals.empty())
 			for (int32_t f : fronts.order)
 				if (per_front[f] < desired[f] && f != pv) goals.push_back(f);
-		if (goals.empty()) continue;
-		for (int32_t g : goals) goal[g] = 1;
-		std::fill(parent.begin(), parent.end(), -1);
-		queue.clear();
-		parent[pv] = pv;
-		queue.push_back(pv);
-		int32_t found = -1;
-		for (size_t head = 0; head < queue.size(); head++) {
-			const int32_t p = queue[head];
-			if (goal[p]) { found = p; break; }
-			for (int32_t k = a_start[p]; k < a_start[p + 1]; k++) {
-				const int32_t q = a_list[k];
-				if (parent[q] >= 0 || land[q] == 0) continue;
-				const int32_t c = ctrl[q];
-				if (c != nid && (c < 0 || war_row[c] == 0 || war[int64_t(nid) * nc + c] == 1)) continue;   // вражескую — не насквозь: переброска не захват
-				parent[q] = p;
-				queue.push_back(q);
+		// мир: лишние с границы, где держим минимум или ничего, — к столице
+		// (и когда до нехватки по суше не дойти — участок на острове; как ai.gd)
+		const bool back = withdraw && pv != capital && (guard_min[pv] || (!fronts.has[pv] && border[pv]));
+		if (goals.empty() && !back) continue;
+		auto search = [&]() -> int32_t {
+			for (int32_t g : goals) goal[g] = 1;
+			std::fill(parent.begin(), parent.end(), -1);
+			queue.clear();
+			parent[pv] = pv;
+			queue.push_back(pv);
+			int32_t fnd = -1;
+			for (size_t head = 0; head < queue.size(); head++) {
+				const int32_t p = queue[head];
+				if (goal[p]) { fnd = p; break; }
+				for (int32_t k = a_start[p]; k < a_start[p + 1]; k++) {
+					const int32_t q = a_list[k];
+					if (parent[q] >= 0 || land[q] == 0) continue;
+					const int32_t c = ctrl[q];
+					if (c != nid && (c < 0 || war_row[c] == 0 || war[int64_t(nid) * nc + c] == 1)) continue;   // вражескую — не насквозь: переброска не захват
+					parent[q] = p;
+					queue.push_back(q);
+				}
 			}
+			for (int32_t g : goals) goal[g] = 0;
+			return fnd;
+		};
+		int32_t found = goals.empty() ? -1 : search();
+		if (found < 0 && back) {
+			goals.assign(1, capital);
+			found = search();
 		}
-		for (int32_t g : goals) goal[g] = 0;
 		if (found < 0) continue;
 		int len = 0;
 		for (int32_t cur = found; cur != pv; cur = parent[cur]) len++;
@@ -712,7 +768,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		std::vector<int32_t> goals;
 		int n_goals = 0;
 		for (int32_t q : reserve.order)
-			if (rcount[q] < capd(q)) { goals.push_back(q); n_goals++; }
+			if (rcount[q] < capd(q) && !border[q]) { goals.push_back(q); n_goals++; }
 		for (int32_t g : goals) goal[g] = 1;
 		for (int32_t i : idle) {
 			if (used[i]) continue;
@@ -751,7 +807,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			if (fronts.has[pv]) per_front[pv] -= 1;
 			else {
 				rcount[pv] -= 1;
-				if (rcount[pv] < cap_pv && !goal[pv]) { goal[pv] = 1; n_goals++; goals.push_back(pv); }
+				if (rcount[pv] < cap_pv && !goal[pv] && !border[pv]) { goal[pv] = 1; n_goals++; goals.push_back(pv); }
 			}
 			used[i] = 1;
 			Array o;
