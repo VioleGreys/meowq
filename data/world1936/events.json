@@ -2801,7 +2801,7 @@
         }
       ]
     },
-    "sov_stalingrad": {
+    "sov_no_retreat": {
       "title": "Ни шагу назад",
       "target": "SOV",
       "photo": "SOV",
