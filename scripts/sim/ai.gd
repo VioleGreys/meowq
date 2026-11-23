@@ -330,6 +330,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var supcap: PackedFloat32Array = tb.get("supcap", PackedFloat32Array())
 	var nohit: PackedByteArray = tb.get("nohit", PackedByteArray())
 	var guard: PackedByteArray = tb.get("guard", PackedByteArray())
+	var guard_w: PackedFloat32Array = tb.get("guard_w", PackedFloat32Array())
 	var prov_count := land.size()
 	var atklim: PackedByteArray = tb.get("atklim", PackedByteArray())
 	var atk_base := nid * prov_count if atklim.size() == nc * prov_count else -1
@@ -367,9 +368,11 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	# а не подпирает всей массой Румынию (иначе СССР падал в 1942 г.)
 	var ally_front := {}
 	# охрана границ по отношениям (guard_table) — только общий план страны ИИ
-	var use_guard := guard.size() == nc * nc and mode == "auto" and enemy < 0 and allowed.is_empty() and not has_tgt
+	var use_guard := guard.size() == nc * nc and guard_w.size() == nc * nc and mode == "auto" and enemy < 0 and allowed.is_empty() and not has_tgt
 	var war_front := {}   # участки у противника (в войну)
-	var guard_lvl := {}   # наша провинция -> высший уровень охраны соседей (1 — минимум, 2 — фронт)
+	var guard_lvl := {}   # война: наша провинция у враждебного не-противника -> 1 (минимум)
+	var sparse_cand := {} # война: наша провинция у нейтрала — охрана через провинцию
+	var gw := {}          # мир: наша провинция -> худшие отношения соседей (вес, guard_w)
 	for p in prov_count:
 		var own_p := ctrl[p] == nid
 		if not own_p and not (at_war and ctrl[p] >= 0 and ally.size() > 0 and ally[nid * nc + ctrl[p]] == 1):
@@ -397,6 +400,8 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 					# в войну: граница с враждебным не-противником — минимум
 					fronts[p] = true
 					guard_lvl[p] = 1
+				elif use_guard and own_p and not hostile and guard[nid * nc + c] == 1:
+					sparse_cand[p] = true
 			elif own_p and matches and (enemy >= 0 or mode == "auto" or has_tgt) and (ally.size() == 0 or ally[nid * nc + c] == 0):
 				var g := 2
 				if use_guard:
@@ -404,14 +409,27 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 					if g == 0:
 						continue   # хорошие отношения — границу не держим
 				fronts[p] = true
-				guard_lvl[p] = maxi(int(guard_lvl.get(p, 0)), g)
+				if use_guard:
+					gw[p] = maxf(float(gw.get(p, 0.0)), guard_w[nid * nc + c])
 				fpairs.append(p)
 				fpairs.append(q)
-	# участки «ровно минимум»: в войну — охрана без противника рядом, в мир — только
-	# нейтральные соседи
+	# участки «ровно минимум» (только в войну): у враждебного не-противника — каждая
+	# провинция; у нейтрала — реже: провинция, рядом с которой нет участка фронта
+	# (по возрастанию номера — одинаково в GDScript и C++)
 	var guard_min := {}
 	for p in guard_lvl:
-		if int(guard_lvl[p]) == 1 and not war_front.has(p):
+		if not war_front.has(p):
+			guard_min[p] = true
+	for p in sparse_cand:
+		if fronts.has(p):
+			continue
+		var covered := false
+		for k in range(a_start[p], a_start[p + 1]):
+			if fronts.has(a_list[k]):
+				covered = true
+				break
+		if not covered:
+			fronts[p] = true
 			guard_min[p] = true
 	if not allowed.is_empty() or has_tgt:
 		for f in fronts.keys():
@@ -756,8 +774,8 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			for m in range(pd_start[q], pd_start[q + 1]):
 				var eo := dv_owner[pd_list[m]]
 				if eo != nid and (ally.size() == 0 or ally[nid * nc + eo] == 0):
-					if use_guard and not at_war and guard[nid * nc + eo] != 2:
-						continue   # в мир угроза — только от тех, с кем держим фронт
+					if use_guard and not at_war and guard[nid * nc + eo] == 0:
+						continue   # в мир угроза — только от тех, чью границу держим
 					threat += 1.0 if war[nid * nc + eo] == 1 or not at_war else 0.3
 		if ally_front.has(f):
 			# союзный участок — вне общего раздела армии: нужда = угроза − дивизии союзников
@@ -773,6 +791,9 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			weight[f] = 0.0   # минимум — вне раздела армии
 			continue
 		weight[f] = 1.0 + threat + vp[f] * 0.15   # крупные города держим плотнее
+		# мир: вся армия на границах, больше — где отношения хуже
+		if use_guard and not at_war:
+			weight[f] = float(weight[f]) * (1.0 + GUARD_WMUL * float(gw.get(f, 0.0)))
 		# участки у направления главного удара — плотнее (в пределах снабжения)
 		if not main_axis.is_empty():
 			var aw := 0
@@ -879,9 +900,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		if dv_org[i] < REGROUP_ORG:
 			continue   # перегруппировка — на фронт не идёт
 		var pv := dv_prov[i]
-		# мир: на участке-минимуме — ровно минимум, без запаса в одну дивизию
-		var slack := 0 if withdraw and guard_min.has(pv) else 1
-		if fronts.has(pv) and int(per_front.get(pv, 0)) <= int(desired[pv]) + slack:
+		if fronts.has(pv) and int(per_front.get(pv, 0)) <= int(desired[pv]) + 1:
 			continue
 		var goal := {}
 		# план наступления: пока участки удара не заполнены — только к ним
@@ -892,9 +911,9 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			for f in fronts:
 				if int(per_front.get(f, 0)) < int(desired[f]) and f != pv:
 					goal[f] = true
-		# мир: лишние с границы, где держим минимум или не держим ничего, — к столице
-		# (и когда до нехватки по суше не дойти — участок на острове)
-		var back := withdraw and pv != capital and (guard_min.has(pv) or (not fronts.has(pv) and border.has(pv)))
+		# мир: с границы, которую не держим (хорошие отношения), — к столице, если
+		# участкам фронта никого не нужно или до них по суше не дойти (остров)
+		var back := withdraw and pv != capital and not fronts.has(pv) and border.has(pv)
 		var path := PackedInt32Array()
 		if not goal.is_empty():
 			path = _nearest(tb, nid, pv, goal)
@@ -976,6 +995,7 @@ const FORT_LIN := 2.5    # оценка силы на цель: множител
 const STORM_NEED := 0.1  # штурм осаждённого города в его срок: атака при силе > 1/10 нужной (решение пользователя: «время от времени пытаются взять»)
 const GUARD_EVERY := 3   # охрана границ: отношения и претензии пересматриваем раз в 3 дня (решение пользователя)
 const GUARD_GOOD := 65.0 # отношения от 65 — границу не держим (демократии между собой — 65)
+const GUARD_WMUL := 2.0 # мир: вес участка × (1 + 2 × вес границы) — нейтральный ×1..3, плохой ×3..6, претензии +2
 const GUARD_BAD := 40.0  # ниже 40 — держим фронт (демократия и фашизм — 35, фашизм и коммунизм — 25)
 const AXIS_COMMIT := 2.0 # к цели наступления (план, группа с целью): на лучшие цели — вдвое больше нужного
 
@@ -1042,12 +1062,13 @@ static func _power(world: World, nid: int) -> float:
 ## Таблицы мира для нативного планировщика (одни на всю пачку заданий ИИ).
 static func ai_tables(world: World) -> Dictionary:
 	var axt := axes_tables(world)
+	var gt := guard_table(world)   # до world.guard_w: пересчёт обновляет обе таблицы
 	return {"ax_start": axt[0], "ax_list": axt[1], "st_start": axt[2], "st_list": axt[3], "besieged": besieged_table(world), "ctrl": world.p_controller, "land": world.p_land, "adj_start": world.adj_start, "adj_list": world.adj_list,
 		"war": world.war, "ally": world.ally, "pass": world.pass_table(), "nc": world.nation_count, "def": world.p_def_mult, "vp": world.vp_ai(),
 		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
 		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list, "supcap": world.p_supcap,
-		"guard": guard_table(world), "nohit": no_attack_table(world), "atklim": attack_limit_table(world), "hold": hold_table(world), "dv_sup": world.d_sup, "p_hot": world.p_hot, "p_cold": world.p_cold,
+		"guard": gt, "guard_w": world.guard_w, "nohit": no_attack_table(world), "atklim": attack_limit_table(world), "hold": hold_table(world), "dv_sup": world.d_sup, "p_hot": world.p_hot, "p_cold": world.p_cold,
 		"n_hot": world.n_hot, "n_cold": world.n_cold, "fog": world.fog_table() if world.fog_ai else PackedByteArray()}
 
 
@@ -1266,10 +1287,12 @@ static func _enemy_near(world: World, nid: int, p: int, depth: int) -> bool:
 ## GUARD_EVERY дней (таблица хранится в мире и попадает в сохранение).
 static func guard_table(world: World) -> PackedByteArray:
 	var nc := world.nation_count
-	if world.guard_t.size() == nc * nc and world.day - world.guard_day < GUARD_EVERY:
+	if world.guard_t.size() == nc * nc and world.guard_w.size() == nc * nc and world.day - world.guard_day < GUARD_EVERY:
 		return world.guard_t
 	var t := PackedByteArray()
 	t.resize(nc * nc)
+	var tw := PackedFloat32Array()   # вес границы в мир: (65 − отношения) / 25, претензии +1
+	tw.resize(nc * nc)
 	var ally := world.ally
 	# претензии страны: к кому обоснованы или обосновываются
 	var claims: Array = []
@@ -1295,18 +1318,23 @@ static func guard_table(world: World) -> PackedByteArray:
 				g = 0
 			elif r < GUARD_BAD:
 				g = 2
-			if g < 2:
-				# претензии B к нам или к нашему союзнику, наши — к B
-				for x in claims[b]:
-					if x == a or ally[a * nc + x] == 1:
-						g = 2
-						break
-				for x in claims[a]:
-					if x == b:
-						g = 2
-						break
+			# претензии B к нам или к нашему союзнику, наши — к B
+			var claim := false
+			for x in claims[b]:
+				if x == a or ally[a * nc + x] == 1:
+					claim = true
+					break
+			for x in claims[a]:
+				if x == b:
+					claim = true
+					break
+			if claim:
+				g = 2
 			t[a * nc + b] = g
+			if g > 0:
+				tw[a * nc + b] = maxf(0.0, (GUARD_GOOD - r) / (GUARD_GOOD - GUARD_BAD)) + (1.0 if claim else 0.0)
 	world.guard_t = t
+	world.guard_w = tw
 	world.guard_day = world.day
 	return t
 

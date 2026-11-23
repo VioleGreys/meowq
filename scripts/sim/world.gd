@@ -786,6 +786,7 @@ var rep_n := 0
 # охрана границ ИИ (AIPlanner.guard_table): nc×nc, 0 — не держим, 1 — минимум, 2 — фронт;
 # пересчёт раз в GUARD_EVERY дней — в мире, чтобы загрузка не меняла ход партии
 var guard_t := PackedByteArray()
+var guard_w := PackedFloat32Array()   # вес границы в мир (хуже отношения — больше)
 var guard_day := -1000
 var aid := {}                   # from * 100000 + to -> день помощи
 var trade_bonus := {}           # from * 100000 + to -> добавка к торговому влиянию, %
