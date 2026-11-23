@@ -328,7 +328,6 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var pd_start: PackedInt32Array = tb["pd_start"]
 	var pd_list: PackedInt32Array = tb["pd_list"]
 	var supcap: PackedFloat32Array = tb.get("supcap", PackedFloat32Array())
-	var nohit: PackedByteArray = tb.get("nohit", PackedByteArray())
 	var guard: PackedByteArray = tb.get("guard", PackedByteArray())
 	var guard_w: PackedFloat32Array = tb.get("guard_w", PackedFloat32Array())
 	var prov_count := land.size()
@@ -394,7 +393,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 					fronts[p] = true
 					if not own_p:
 						ally_front[p] = true
-					if (nohit.is_empty() or nohit[nid * nc + c] == 0) and (atk_base < 0 or atklim[atk_base + q] == 0):
+					if atk_base < 0 or atklim[atk_base + q] == 0:
 						targets[q] = true
 					fpairs.append(p)
 					fpairs.append(q)
@@ -1115,7 +1114,7 @@ static func ai_tables(world: World) -> Dictionary:
 		"coastal": world.p_coastal, "owner": world.p_owner, "dv_id": world.dv_id, "dv_owner": world.dv_owner,
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
 		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list, "supcap": world.p_supcap,
-		"guard": gt, "guard_w": world.guard_w, "nohit": no_attack_table(world), "atklim": attack_limit_table(world), "hold": hold_table(world), "dv_sup": world.d_sup, "p_hot": world.p_hot, "p_cold": world.p_cold,
+		"guard": gt, "guard_w": world.guard_w, "atklim": attack_limit_table(world), "hold": hold_table(world), "dv_sup": world.d_sup, "p_hot": world.p_hot, "p_cold": world.p_cold,
 		"n_hot": world.n_hot, "n_cold": world.n_cold, "blitz": blitz_table(world), "fog": world.fog_table() if world.fog_ai else PackedByteArray()}
 
 
@@ -1433,21 +1432,6 @@ static func _bloc_at(b: int, a: int, own: PackedInt32Array, ally: PackedByteArra
 		if x != b and x != a and ally[b * nc + x] == 1 and ally[a * nc + x] == 0 and nb_t[x * nc + a] == 1:
 			sb += own[x]
 	return sb
-
-
-## Пары «воюем, но ИИ не наступает» (Nation.no_attack, только у ИИ): nc×nc;
-## пусто — запретов нет.
-static func no_attack_table(world: World) -> PackedByteArray:
-	var t := PackedByteArray()
-	var nc := world.nation_count
-	for nat in world.nations:
-		if nat.no_attack.is_empty() or nat.is_player:
-			continue
-		if t.is_empty():
-			t.resize(nc * nc)
-		for o in nat.no_attack:
-			t[nat.id * nc + int(o)] = 1
-	return t
 
 
 ## Путь к ближайшей провинции из goal по таблицам (как Pathfinder.nearest_goal).

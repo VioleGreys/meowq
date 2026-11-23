@@ -1231,12 +1231,6 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 			"aid":
 				if target >= 0:
 					Relations.give_aid(world, who, target)
-			"no_attack":
-				# ИИ страны держит фронт против target, но не наступает (до no_attack_end)
-				if target >= 0:
-					nat.no_attack[target] = true
-			"no_attack_end":
-				nat.no_attack.erase(target)
 			"offensive":
 				# план наступления: {"target", "route": [провинции-вехи по названиям], "name"}
 				var route := PackedInt32Array()
@@ -2146,10 +2140,6 @@ static func effects_text(world: World, effects: Array) -> String:
 					parts.append("%sсинтетическое %s +%s в день" % [who, res_n, num])
 				else:
 					parts.append("%s%s %s%s в день%s" % [who, res_n, "+" if sv > 0.0 else "−", num, " (запасы)" if sv > 0.0 else ""])
-			"no_attack":
-				parts.append("%sбез наступления на %s" % [who, tname])
-			"no_attack_end":
-				parts.append("%sнаступление на %s" % [who, tname])
 			"offensive":
 				var ofs := "%sплан наступления%s: %s" % [who, " «%s»" % e["name"] if e.has("name") else "", " → ".join(e.get("route", []))]
 				for ax in e.get("axes", []):

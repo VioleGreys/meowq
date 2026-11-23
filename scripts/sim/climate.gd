@@ -33,6 +33,20 @@ const NATIVE_BONUS := 0.15     # коренным в своём климате �
 
 
 ## Суровость провинций на месяц m (0 — январь).
+## Широта для зимы: восточнее 20° в. д. зима континентальная — как на широте
+## на CONT_SHIFT° севернее (полностью с 40° в. д.; до 145° в. д.). Было только по
+## широте: Ростов и Кубань зимой «тёплые», как Франция, — Ось наступала на юге
+## всю зиму 1941–42 гг.
+const CONT_SHIFT := 6.0
+
+
+static func winter_lat(ll: Vector2) -> float:
+	var lat := ll.y
+	if lat >= 0.0 and ll.x > 20.0 and ll.x < 145.0:
+		lat += CONT_SHIFT * clampf((ll.x - 20.0) / 20.0, 0.0, 1.0)
+	return lat
+
+
 static func refresh_provinces(world: World, m: int) -> void:
 	var pc := world.prov_count
 	world.p_hot.resize(pc)
@@ -47,7 +61,7 @@ static func refresh_provinces(world: World, m: int) -> void:
 		var hot := 0.0
 		var cold := 0.0
 		if world.p_land[p] == 1:
-			var lat := world.p_lonlat[p].y
+			var lat := winter_lat(world.p_lonlat[p])
 			var terr := world.p_terrain[p]
 			if terr == World.T_DESERT:
 				hot = HOT_DESERT
@@ -66,7 +80,7 @@ static func refresh_provinces(world: World, m: int) -> void:
 				cold = 0.5
 			elif n_summer and lat <= -45.0:
 				cold = 0.6
-			if absf(lat) >= 66.0:
+			if absf(world.p_lonlat[p].y) >= 66.0:   # полярный круг — по настоящей широте
 				cold = maxf(cold, COLD_ARCTIC)
 			if terr == World.T_MOUNTAIN:
 				var winter := (deep and lat >= 30.0) or (n_summer and lat <= -30.0)

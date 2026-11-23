@@ -189,7 +189,6 @@ class Nation:
 	var tank_heavy := false     # проект в производстве на тяжёлом шасси (ресурсы — Economy.HEAVY_TANK_NEED)
 	var tank_techs := -1        # ИИ: число технологий при прошлой сборке проекта танка
 	var design_techs := -1      # сколько технологий было при последней сборке проектов ИИ
-	var no_attack := {}         # страна -> true: воюем, но ИИ не наступает (эффект no_attack — «Странная война»)
 	# план наступления (эффект offensive, исторические нападения): ИИ ведёт удар через
 	# провинции-вехи по порядку — [страна-цель, PackedInt32Array вех, номер текущей вехи, название,
 	# второстепенные направления: [[PackedInt32Array вех, номер вехи, вес в %, название], ...]]
@@ -862,7 +861,7 @@ func refresh_def_mult() -> bool:
 func _def_of(p: int, deep: bool, mid: bool) -> float:
 	var v: float = TERRAIN_DEFENSE[p_terrain[p]] + (p_fort[p] if p < p_fort.size() else 0.0)
 	if p_land[p] == 1:
-		var lat := p_lonlat[p].y
+		var lat := Climate.winter_lat(p_lonlat[p])
 		if deep and lat >= 60.0:
 			v += 0.4   # полярная зима: Карелия, Финляндия, север России
 		elif deep and lat >= 55.0:

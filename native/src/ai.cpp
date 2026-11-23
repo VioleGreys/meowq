@@ -63,10 +63,6 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	// ёмкость снабжения провинций (Supply): не скапливать войска сверх неё
 	const PackedFloat32Array supcap_a = tables.has("supcap") ? PackedFloat32Array(tables["supcap"]) : PackedFloat32Array();
 	const bool has_cap = supcap_a.size() == pc;
-	// воюем, но не наступаем (Nation.no_attack): nc×nc, пусто — запретов нет
-	const PackedByteArray nohit_a = tables.has("nohit") ? PackedByteArray(tables["nohit"]) : PackedByteArray();
-	const bool has_nohit = nohit_a.size() > 0;
-	const uint8_t *nohit = nohit_a.ptr();
 	// охрана границ по отношениям (AIPlanner.guard_table): nc×nc, 0/1/2
 	const PackedByteArray guard_a = tables.has("guard") ? PackedByteArray(tables["guard"]) : PackedByteArray();
 	const uint8_t *guard = guard_a.ptr();
@@ -164,7 +160,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 				if (hostile && matches) {
 					fronts.add(p);
 					if (!own_p) ally_front[p] = 1;
-					if ((!has_nohit || nohit[int64_t(nid) * nc + c] == 0) && (atk_base < 0 || atklim[atk_base + q] == 0)) targets.add(q);
+					if (atk_base < 0 || atklim[atk_base + q] == 0) targets.add(q);
 					fpairs.push_back(p);
 					fpairs.push_back(q);
 					war_front[p] = 1;
