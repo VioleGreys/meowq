@@ -22,7 +22,9 @@ var land_totals: Array = []   # Military.land_totals — для пересмот
 var land_totals_day := -100
 var log_losses := false   # диагностика (tests/loss_diag.gd): причина гибели дивизии по id
 var loss_log := {}
-var esc_log := {}   # страна -> приказов отвода из-под угрозы котла (диагностика)
+var esc_log := {}
+var _esc_strikes := {}   # страна -> [[горловина, провинция клина], ...] — удары по клиньям (_escapes)
+var esc_ids := {}   # отладка (log_losses): id дивизии -> день последнего приказа отвода
 
 
 ## fresh = false — мир восстановлен из сохранения (SaveGame): стартовые
@@ -141,6 +143,7 @@ func tick() -> void:
 	_timed("дипломатия", _phase_diplomacy)
 	_timed("капитуляции", _check_capitulation)
 	_timed("мир", func(): Peace.check_end(world))
+	_timed("отвод домой", _send_stranded)
 	_timed("ИИ:ожидание", _finish_ai)
 	# доктрины ИИ — когда фоновых задач уже нет (меняют бонусы стран)
 	Doctrine.ai_daily(world)
@@ -692,6 +695,7 @@ func _phase_ai() -> void:
 	# таблицам (снимок дивизий + копии массивов мира), пока главный поток ведёт
 	# остальные фазы дня, а приказы применяются в конце дня (_finish_ai).
 	if world.day % AI_PERIOD != 0:
+		_daily_escapes()
 		return
 	var _pa := Time.get_ticks_usec()
 	_bc = PackedInt32Array()
@@ -733,10 +737,13 @@ func _phase_ai() -> void:
 				jobs.append({"relief_of": nat.id, "near": bk[1], "objective": bk[2]})
 			# угроза котла: дивизии за горловиной, которую враг вот-вот перережет, — отвод
 			_pz = Time.get_ticks_usec()
+			_esc_strikes.erase(nat.id)
 			var esc := _escapes(nat, by_nation[nat.id])
 			Prof.add("из:отвод", _pz)
 			if not esc.is_empty():
 				escaping[nat.id] = esc
+			for st in _esc_strikes.get(nat.id, []):
+				jobs.append({"relief_of": nat.id, "near": int(st[0]), "objective": int(st[1])})
 	var _pg0 := Time.get_ticks_usec()
 	jobs.append_array(_group_jobs())
 	Prof.add("из:группы", _pg0)
@@ -851,9 +858,9 @@ func _phase_ai() -> void:
 					if not es.has(slot):
 						rest3.append(slot)
 				mine = rest3
-			if pocketed.has(nid):
+			if pocketed.has(nid) or relief.has(nid):
 				var rest2 := PackedInt32Array()
-				var pk: Dictionary = pocketed[nid]
+				var pk: Dictionary = pocketed.get(nid, {})
 				var rl: Dictionary = relief.get(nid, {})
 				for slot in mine:
 					if (world.d_prov[slot] < 0 or not pk.has(world.p_comp[world.d_prov[slot]])) and not rl.has(slot):
@@ -1253,13 +1260,43 @@ func _escapes(nat: World.Nation, mine: PackedInt32Array) -> Dictionary:
 			if comp[y] == main and piece[y] < 0 and lost[y] == 0 and not cs_seen.has(y):
 				cs_seen[y] = true
 				core_src.append(y)
-	var to_core := _bfs_to(core_src, comp, main, a_start, a_list, pc, ESC_STEPS, piece, lost, false)
+	# цель отвода — на шаг глубже: провинции ядра рядом с core_src, сами не у участков
+	# «не удержать» (край ядра сам скоро «не удержать» — путь ломался каждые 2–3 дня)
+	var deep: Array = []
+	var dp_seen := {}
+	for y in core_src:
+		for k in range(a_start[y], a_start[y + 1]):
+			var z := a_list[k]
+			if dp_seen.has(z) or cs_seen.has(z) or comp[z] != main or piece[z] >= 0 or lost[z] == 1:
+				continue
+			dp_seen[z] = true
+			var edge := false
+			for m in range(a_start[z], a_start[z + 1]):
+				if lost[a_list[m]] == 1:
+					edge = true
+					break
+			if not edge:
+				deep.append(z)
+	var to_core := _bfs_to(deep if not deep.is_empty() else core_src, comp, main, a_start, a_list, pc, ESC_STEPS + 1, piece, lost, false)
 	for i in mine:
 		if dal[i] == 0 or dpv[i] < 0 or dtr[i] > 0:
 			continue
 		var p := dpv[i]
 		if piece[p] < 0 or not drop.has(piece[p]) or to_core[p] < 0:
 			continue
+		# уже отходит к безопасной провинции ядра, и путь не через участки «не
+		# удержать» — приказ не меняем (цель прыгала: Рогачёв → Нежин → Рогачёв,
+		# дивизии разворачивались и теряли переход — Киев, август 1941 г.)
+		var cur: PackedInt32Array = world.divisions[i].path
+		if not cur.is_empty():
+			var last := cur[cur.size() - 1]
+			var safe := comp[last] == main and piece[last] < 0 and lost[last] == 0
+			for x in cur:
+				if lost[x] == 1:
+					safe = false
+					break
+			if safe:
+				continue
 		var path := _walk(to_core, p)
 		if not path.is_empty():
 			res[i] = path
@@ -1277,6 +1314,22 @@ func _escapes(nat: World.Nation, mine: PackedInt32Array) -> Dictionary:
 			if not at_prov.has(dpv[i]):
 				at_prov[dpv[i]] = []
 			at_prov[dpv[i]].append(i)
+	# удар по клину (решение пользователя: «атаковать клещи в зародыше» — наступающий
+	# всё время на марше и теряет организацию): у каждой горловины — по соседней
+	# провинции врага, где его сила (люди × доля организации) меньше всего;
+	# задачи деблокирования (_relief_divs, без перевеса) ставит _phase_ai
+	var strikes: Array = []
+	for p in necks:
+		var best := -1
+		var bv := INF
+		for k in range(a_start[p], a_start[p + 1]):
+			var q := a_list[k]
+			if enemy_ctrl[q] == 1 and land[q] == 1 and theirs[q] > 0.0 and theirs[q] < bv:
+				bv = theirs[q]
+				best = q
+		if best >= 0:
+			strikes.append([p, best])
+	_esc_strikes[nid] = strikes
 	for p in necks:
 		if float(need[p]) <= 0.0 or int(sent.get(p, 0)) >= ESC_NECK_MAX:
 			continue
@@ -1636,10 +1689,40 @@ func _finish_ai() -> void:
 						by_id[x.id] = x
 				d = by_id.get(snap_id[slot])
 			if d != null and d.alive and d.transit_days <= 0:
-				d.path = order[1]
-				d.progress = 0.0
+				# тот же первый шаг — пройденное не сбрасываем (ИИ повторяет приказы:
+				# сброс держал дивизии на месте — выступ под Киевом в 1941 г. отходил
+				# по провинции в 2–3 недели и попадал в котёл)
+				var np: PackedInt32Array = order[1]
+				var keep := not d.path.is_empty() and not np.is_empty() and d.path[0] == np[0]
+				d.path = np
+				if not keep:
+					d.progress = 0.0
 	_ai_plans = []
 	_apply_escapes()
+
+
+## Угроза котла — каждый день (решение пользователя: общий план ИИ — раз в
+## AI_PERIOD дней, но котёл смыкается за 1–2 дня): в дни без плана только отвод
+## из-под угрозы (_escapes); приказы применяются в конце дня (_finish_ai).
+func _daily_escapes() -> void:
+	var _pz := Time.get_ticks_usec()
+	var by_nation := {}
+	for nat in world.nations:
+		if nat.alive and not nat.is_player and not nat.at_war.is_empty():
+			by_nation[nat.id] = []
+	if by_nation.is_empty():
+		return
+	var owner := world.d_owner
+	for i in owner.size():
+		if by_nation.has(owner[i]):
+			by_nation[owner[i]].append(i)
+	var escaping := {}
+	for nid in by_nation:
+		var esc := _escapes(world.nations[nid], PackedInt32Array(by_nation[nid]))
+		if not esc.is_empty():
+			escaping[nid] = esc
+	_ai_escapes = escaping
+	Prof.add("из:отвод", _pz)
 
 
 ## Приказы отвода (_escapes): слоты — того же дня, что и снимок ИИ.
@@ -1666,6 +1749,7 @@ func _apply_escapes() -> void:
 						d.progress = 0.0
 					if log_losses:
 						esc_log[int(nid)] = int(esc_log.get(int(nid), 0)) + 1
+						esc_ids[d.id] = world.day
 
 
 func _phase_navy() -> void:
@@ -1991,6 +2075,7 @@ func _collect_battles() -> Dictionary:
 	return battles
 
 
+
 func _phase_movement(_battles: Dictionary) -> void:
 	# применение — строго по порядку, чтобы не было гонок за провинцию
 	var divs := world.divisions
@@ -2063,6 +2148,7 @@ func _phase_combat(battles: Dictionary) -> void:
 				has_pre[h] = 1
 			h = dnx[h]
 	world.k_combat(pv, att_start, att_list, seeds, PLAN_MAX)
+	_fatigue(att_list, pre, has_pre)
 	_combat_score(provs, battles, pre, has_pre)
 	# боевой опыт армии: дивизии-участники сражений за день (Doctrine)
 	var nc := world.nation_count
@@ -2106,6 +2192,48 @@ func _phase_combat(battles: Dictionary) -> void:
 			h = world.d_nx[h]
 		for e in rt:
 			_retreat(e)
+
+
+# Истощение (решение пользователя, ноябрь 2026): копится в боях, спадает вне боя.
+# Наступающая — +FAT_ATK за день боя, до FAT_ATK_MAX; обороняющаяся — медленнее
+# (+FAT_DEF, окопы режут прибавку на FAT_ENT за единицу) и до FAT_DEF_MAX. Потери
+# людей и техники за день боя × (1 + истощение): долгий натиск дорог наступающему.
+const FAT_ATK := 0.05
+const FAT_DEF := 0.03
+const FAT_ENT := 0.15
+const FAT_ATK_MAX := 1.0
+const FAT_DEF_MAX := 0.7
+const FAT_DECAY := 0.05
+
+
+func _fatigue(att_list: PackedInt32Array, pre: PackedFloat64Array, has_pre: PackedByteArray) -> void:
+	var n := world.d_alive.size()
+	if world.d_fat.size() != n:
+		world.d_fat.resize(n)
+	var is_att := PackedByteArray()
+	is_att.resize(n)
+	for i in att_list:
+		is_att[i] = 1
+	for i in n:
+		if world.d_alive[i] == 0:
+			continue
+		var f := world.d_fat[i]
+		if world.d_battle[i] == 0:
+			if f > 0.0:
+				world.d_fat[i] = maxf(0.0, f - FAT_DECAY)
+			continue
+		# потери дня сверх обычных — по истощению до боя
+		if has_pre[i] == 1 and f > 0.0:
+			var lost := pre[i] - world.d_str[i]
+			if lost > 0.0:
+				var extra := lost * f
+				world.d_str[i] = maxf(0.0, world.d_str[i] - extra)
+				world.d_eq[i] = maxf(0.0, world.d_eq[i] - extra / 100.0 * World.EQ_PER_MEN)
+		if is_att[i] == 1:
+			world.d_fat[i] = minf(FAT_ATK_MAX, f + FAT_ATK)
+		else:
+			var g := FAT_DEF * maxf(0.0, 1.0 - FAT_ENT * world.d_ent[i])
+			world.d_fat[i] = minf(FAT_DEF_MAX, maxf(f, minf(FAT_DEF_MAX, f + g)))
 
 
 ## Вклад в победу: потери стороны делятся между дивизиями противника в бою.
@@ -2213,6 +2341,53 @@ func _destroy(d: World.Division, why: String, kind := "") -> void:
 
 
 ## Планирование: «противник» — с кем война или будущая война (фокусы, претензии).
+## Дивизии на земле страны, с которой войны больше нет (сепаратный или белый мир,
+## перемирие — любым путём): уходят в ближайшую свою или союзную провинцию суши.
+## Было: после мира с Финляндией в 1942 г. ≈40 советских дивизий стояли в
+## Финляндии без снабжения и полгода таяли до гибели.
+func _send_stranded() -> void:
+	var dal := world.d_alive
+	var dpv := world.d_prov
+	var dow := world.d_owner
+	var dtr := world.d_transit
+	var ctrl := world.p_controller
+	var home := {}   # (страна, провинция) -> куда уходить
+	for s in dal.size():
+		if dal[s] == 0 or dtr[s] > 0 or dpv[s] < 0:
+			continue
+		var o := dow[s]
+		var c := ctrl[dpv[s]]
+		if c < 0 or c == o or world.is_at_war(o, c) or Diplomacy.same_side(world, o, c):
+			continue
+		var key := o * world.prov_count + dpv[s]
+		if not home.has(key):
+			home[key] = _nearest_friendly(o, dpv[s])
+		var to: int = home[key]
+		if to >= 0:
+			History._move(world, world.divisions[s], to)
+
+
+## Ближайшая (по соседству суши) провинция под своим или союзным контролем; −1 — нет.
+func _nearest_friendly(o: int, from: int) -> int:
+	var seen := {from: true}
+	var q := [from]
+	var h := 0
+	while h < q.size():
+		var p: int = q[h]
+		h += 1
+		for k in range(world.adj_start[p], world.adj_start[p + 1]):
+			var r := world.adj_list[k]
+			if seen.has(r) or world.p_land[r] == 0:
+				continue
+			seen[r] = true
+			var c := world.p_controller[r]
+			if c >= 0 and (c == o or Diplomacy.same_side(world, o, c)):
+				return r
+			q.append(r)
+	var cap: int = world.nations[o].capital
+	return cap if cap >= 0 and world.p_controller[cap] == o else -1
+
+
 func _phase_planning() -> void:
 	var nc := world.nation_count
 	var hostile := world.war.duplicate()

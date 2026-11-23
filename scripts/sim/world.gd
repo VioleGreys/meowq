@@ -357,6 +357,9 @@ class Division:
 			return w.d_plan[slot]
 		set(v):
 			w.d_plan[slot] = v
+	var fatigue: float:  # истощение 0…1 (Simulation._fatigue): потери в бою × (1 + истощение)
+		get:
+			return w.d_fat[slot] if slot < w.d_fat.size() else 0.0
 	var reserved_until: int:  # ИИ держит дивизию под десант до этого дня
 		get:
 			return w.d_resv[slot]
@@ -722,6 +725,7 @@ var d_tpl := PackedInt32Array()
 var d_transit := PackedInt32Array()
 var d_resv := PackedInt32Array()
 var d_plan := PackedFloat64Array()        # планирование наступления 0…1 (k_plan)
+var d_fat := PackedFloat64Array()         # истощение в боях 0…1 (Simulation._fatigue)
 var d_xp := PackedFloat64Array()          # опыт дивизии 0…1 (Leaders: бои, разбавление пополнением)
 var d_inv := PackedInt32Array()
 var d_next := PackedInt32Array()      # path[0] или -1
@@ -1609,6 +1613,8 @@ func _d_append() -> int:
 	d_transit.append(0)
 	d_resv.append(0)
 	d_plan.append(0.0)
+	if d_fat.size() == d_id.size() - 1:
+		d_fat.append(0.0)
 	d_inv.append(-1)
 	d_next.append(-1)
 	if d_xp.size() == d_id.size():
@@ -1676,6 +1682,8 @@ func compact_divisions() -> void:
 	d_transit = Native.gather_i32(d_transit, keep)
 	d_resv = Native.gather_i32(d_resv, keep)
 	d_plan = Native.gather_f64(d_plan, keep)
+	if d_fat.size() == n:
+		d_fat = Native.gather_f64(d_fat, keep)
 	if d_xp.size() == n:
 		d_xp = Native.gather_f64(d_xp, keep)
 	else:
@@ -1725,6 +1733,7 @@ func clear_divisions() -> void:
 	d_transit = PackedInt32Array()
 	d_resv = PackedInt32Array()
 	d_plan = PackedFloat64Array()
+	d_fat = PackedFloat64Array()
 	d_xp = PackedFloat64Array()
 	d_inv = PackedInt32Array()
 	d_next = PackedInt32Array()
