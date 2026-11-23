@@ -1656,8 +1656,8 @@ static func relocate(world: World, nid: int, share: float, from_lon: Vector2, to
 
 ## Зоны с малым числом мест под заводы (решение пользователя: строить в Сибири —
 ## по фокусам, которые прибавляют места): [страна-владелец на старте, долгота от,
-## до, мест на провинцию]. Уже стоящие заводы остаются; эвакуация может занять
-## на 2 места больше (_reloc_pick).
+## до, мест на провинцию не больше]: места там — p_slot_cap (не от населения). Уже стоящие заводы остаются; эвакуация ставит по местам от
+## населения + 2 (_reloc_pick).
 const SLOT_ZONES := [["SOV", 60.0, 180.0, 2]]
 
 
@@ -1674,7 +1674,7 @@ static func init_slots(world: World) -> void:
 		for p in world.prov_count:
 			var lon := world.p_lonlat[p].x
 			if world.p_land[p] == 1 and world.p_owner[p] == t and lon >= float(z[1]) and lon <= float(z[2]):
-				world.p_slot_cap[p] = int(z[3])
+				world.p_slot_cap[p] = mini(Simulation.pop_slots(world, p), int(z[3]))
 
 
 ## Эффект «slots»: места под заводы +v в своих провинциях с пределом (зона
@@ -1695,7 +1695,7 @@ static func _reloc_pick(world: World, provs: PackedInt32Array) -> int:
 	var best_score := INF
 	for p in provs:
 		var total := world.p_civ[p] + world.p_mil[p]
-		var sl := Simulation.factory_slots(world, p)
+		var sl := maxi(Simulation.factory_slots(world, p), Simulation.pop_slots(world, p))
 		if total >= sl + 2:
 			continue
 		var score := float(total) / float(sl)

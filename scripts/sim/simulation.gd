@@ -370,13 +370,18 @@ func _place_factory(nid: int, mode: String) -> bool:
 	return true
 
 
+## Места по населению (без предела зоны): эвакуация везёт заводы и туда, где строить нельзя.
+static func pop_slots(world: World, p: int) -> int:
+	var pop := world.p_population[p] if world.p_population.size() > p else 0
+	return MAX_FACTORIES if pop <= 0 else clampi(1 + pop / 250, 1, MAX_FACTORIES)
+
+
 ## Сколько заводов помещается в провинции: зависит от населения (рабочие руки).
 static func factory_slots(world: World, p: int) -> int:
-	var pop := world.p_population[p] if world.p_population.size() > p else 0
-	var s := MAX_FACTORIES if pop <= 0 else clampi(1 + pop / 250, 1, MAX_FACTORIES)
-	# Сибирь и Урал за 60° (решение пользователя): мест мало, прибавляют фокусы (History.SLOT_ZONES)
+	var s := pop_slots(world, p)
+	# Сибирь и Урал за 60° (решение пользователя): места — свои (History.SLOT_ZONES), прибавляют фокусы
 	if world.p_slot_cap.size() > p and world.p_slot_cap[p] >= 0:
-		s = mini(s, world.p_slot_cap[p])
+		s = world.p_slot_cap[p]
 	return s
 
 

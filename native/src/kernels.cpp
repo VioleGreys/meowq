@@ -410,7 +410,7 @@ int MeowqCore::place_factory(const PackedInt32Array &owner, const PackedInt32Arr
 		const int total = cv[p] + ml[p];
 		const int ps = p < np ? pp[p] : 0;
 		int slots = ps <= 0 ? max_factories : std::min(std::max(1 + ps / 250, 1), max_factories);
-		if (p < nsc && sc[p] >= 0) slots = std::min(slots, int(sc[p]));
+		if (p < nsc && sc[p] >= 0) slots = int(sc[p]);
 		if (total >= slots) continue;
 		const double score = double(total) - (tr[p] == t_urban ? 2.0 : 0.0) + double(p % 7) * 0.01;
 		if (score < best_score) {
