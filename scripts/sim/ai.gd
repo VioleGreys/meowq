@@ -499,6 +499,8 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 				ax_prov.append(ax_list[2 * k])
 				ax_w.append(ax_list[2 * k + 1])
 	var n_ax := ax_prov.size()
+	var bl: PackedByteArray = tb.get("blitz", PackedByteArray())
+	var blitz := mode_i == 0 and bl.size() == nc and bl[nid] == 1
 	# штурм осаждённого города (st_start / st_list) — только общий план страны
 	var storm := {}
 	var st_start: PackedInt32Array = tb.get("st_start", PackedInt32Array())
@@ -535,6 +537,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 		# Атакуем слабые вражеские провинции превосходящими силами; при цели —
 		# в первую очередь те, что ближе к ней.
 		var target_list: Array = []
+		var empty_t := {}   # цели без видимого врага
 		for t in targets:
 			var enemy_str := 0.0
 			var pocketed := 0
@@ -620,18 +623,20 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			if def_mult > FORT_LIN:
 				need_mult = FORT_LIN * sqrt(def_mult / FORT_LIN)
 			target_list.append([score, t, enemy_str * need_mult * risk / climf, dirs])
+			if enemy_str <= 0.0:
+				empty_t[t] = true
 		# порядок однозначный (при равенстве — номер провинции): так же сортирует C++
 		target_list.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
 		if n_ax == 0:
 			for j in mini(3, target_list.size()):
 				main_axis[int(target_list[j][1])] = 0
 		else:
-			# на каждое направление — свои лучшие цели: главному 3, второстепенному
-			# по весу (40 % — 1, 60 % — 2)
+			# на каждое направление — свои лучшие цели: главному AXIS_TARGETS, второстепенному
+			# по весу (при 6: 40 % — 2, 60 % — 4)
 			var quota := PackedInt32Array()
 			quota.resize(n_ax)
 			for a in n_ax:
-				quota[a] = maxi(1, int(round(3.0 * float(ax_w[a]) / 100.0)))
+				quota[a] = maxi(1, int(round((BLITZ_TARGETS if blitz else AXIS_TARGETS) * float(ax_w[a]) / 100.0)))
 			for entry in target_list:
 				var a: int = t_axis[int(entry[1])]
 				if quota[a] > 0:
@@ -644,7 +649,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 			# направление главного удара к цели наступления — сил с запасом (AXIS_COMMIT)
 			var commit: float = need
 			if n_ax > 0 and main_axis.has(t):
-				commit = need * (1.0 + (AXIS_COMMIT - 1.0) * float(ax_w[int(main_axis[t])]) / 100.0)
+				commit = need * (1.0 + ((BLITZ_COMMIT if blitz else AXIS_COMMIT) - 1.0) * float(ax_w[int(main_axis[t])]) / 100.0)
 			# осторожная страна не лезет в пустую провинцию-выступ (котёл)
 			if float(entry[2]) <= 0.0 and ratio >= 4.0 and int(entry[3]) < 2:
 				continue
@@ -699,9 +704,12 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 					break
 			# штурм осаждённого города — тем, что собрано, с долей нужного перевеса
 			if power > (need * STORM_NEED if storm.has(t) else need) and not chosen.is_empty():
+				# блицкриг — развитие прорыва: за целью следующая пустая цель ближе к цели
+				# наступления (не ждать нового плана после захвата)
+				var nxt := -1 if n_ax == 0 or not blitz else _exploit(t, t_axis, obj_dist, prov_count, a_start, a_list, targets, empty_t)
 				for i in chosen:
 					used[i] = true
-					orders.append([i, PackedInt32Array([t])])
+					orders.append([i, PackedInt32Array([t]) if nxt < 0 else PackedInt32Array([t, nxt])])
 			else:
 				for i in chosen:
 					left[dv_prov[i]] = int(left[dv_prov[i]]) + 1
@@ -1003,6 +1011,12 @@ const GUARD_WMUL := 2.0 # мир: вес участка × (1 + 2 × вес гр
 const GUARD_WEAK := 0.15  # сосед с союзниками слабее 15 % нашей армии — лишь минимум и в мир (уровень 3)
 const GUARD_BAD := 40.0  # ниже 40 — держим фронт (демократия и фашизм — 35, фашизм и коммунизм — 25)
 const AXIS_COMMIT := 2.0 # к цели наступления (план, группа с целью): на лучшие цели — вдвое больше нужного
+const AXIS_TARGETS := 3.0 # лучших целей главного направления (второстепенному — по весу)
+# блицкриг (черта с ключом blitz, «Барбаросса»): на лучшие цели — вчетверо, их вдвое
+# больше, и развитие прорыва (за целью — следующая пустая); без него «Барбаросса»
+# ползла: Минск в августе, Смоленск в сентябре 1941 г.
+const BLITZ_COMMIT := 4.0
+const BLITZ_TARGETS := 6.0
 
 
 ## Участок у направления удара: доля ёмкости снабжения по весу направления
@@ -1015,6 +1029,21 @@ static func _axis_cap(cap: float, w: int) -> int:
 
 ## Провинция, которую не удержать: наши в ней уже в бою, а сила атакующих (враги
 ## в бою в соседних провинциях) больше обороны (с местностью) в ESCAPE_RATIO раз.
+## Развитие прорыва: за целью t — следующая пустая цель ближе к цели наступления
+## (направление t). Нет — -1. При равенстве — меньший номер провинции.
+static func _exploit(t: int, t_axis: Dictionary, obj_dist: PackedInt32Array, prov_count: int,
+		a_start: PackedInt32Array, a_list: PackedInt32Array, targets: Dictionary, empty_t: Dictionary) -> int:
+	var base: int = int(t_axis[t]) * prov_count
+	var best := -1
+	for k in range(a_start[t], a_start[t + 1]):
+		var q := a_list[k]
+		if not targets.has(q) or not empty_t.has(q) or obj_dist[base + q] >= obj_dist[base + t]:
+			continue
+		if best < 0 or obj_dist[base + q] < obj_dist[base + best] or (obj_dist[base + q] == obj_dist[base + best] and q < best):
+			best = q
+	return best
+
+
 static func _hopeless(tb: Dictionary, nid: int, pv: int) -> bool:
 	var pd_start: PackedInt32Array = tb["pd_start"]
 	var pd_list: PackedInt32Array = tb["pd_list"]
@@ -1074,7 +1103,17 @@ static func ai_tables(world: World) -> Dictionary:
 		"dv_prov": world.dv_prov, "dv_flags": world.dv_flags, "dv_org": world.dv_org, "dv_power": world.dv_power,
 		"dv_defw": world.dv_defw, "pd_start": world.pd_start, "pd_list": world.pd_list, "supcap": world.p_supcap,
 		"guard": gt, "guard_w": world.guard_w, "nohit": no_attack_table(world), "atklim": attack_limit_table(world), "hold": hold_table(world), "dv_sup": world.d_sup, "p_hot": world.p_hot, "p_cold": world.p_cold,
-		"n_hot": world.n_hot, "n_cold": world.n_cold, "fog": world.fog_table() if world.fog_ai else PackedByteArray()}
+		"n_hot": world.n_hot, "n_cold": world.n_cold, "blitz": blitz_table(world), "fog": world.fog_table() if world.fog_ai else PackedByteArray()}
+
+
+## Блицкриг по странам (черта с ключом blitz): nc, 1 — да.
+static func blitz_table(world: World) -> PackedByteArray:
+	var t := PackedByteArray()
+	t.resize(world.nation_count)
+	for nat in world.nations:
+		if nat.id < world.nation_count and nat.alive and nat.b("blitz") > 0.0:
+			t[nat.id] = 1
+	return t
 
 
 ## Провинции, которые ИИ страны не атакует (эффект attack_limit: земли adm0 вне

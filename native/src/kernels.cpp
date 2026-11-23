@@ -163,14 +163,17 @@ Array MeowqCore::march(const PackedByteArray &alive, const PackedInt32Array &tra
 			const int32_t e = ow[list[k]];
 			if (o >= 0 && e >= 0 && e != o && wr[int64_t(o) * nc + e] == 1) { hostile = true; break; }
 		}
+		const double speed = sd[i] * double(mm[t]);
+		const double org_factor = 0.5 + 0.5 * clampd(og[i] / maxd(1.0, mo[i]), 0.0, 1.0);
+		const double step = speed * org_factor * (0.5 + 0.5 * su[i]);
 		if (hostile) {
+			// в бою атакующий продвигается вглубь провинции (как world.gd ADVANCE_RATE / ADVANCE_CAP)
 			attackers.push_back(int32_t(i));
+			pg[i] = maxd(pg[i], std::min(0.9, pg[i] + step * 1.0));
 			continue;
 		}
 		movers.push_back(int32_t(i));
-		const double speed = sd[i] * double(mm[t]);
-		const double org_factor = 0.5 + 0.5 * clampd(og[i] / maxd(1.0, mo[i]), 0.0, 1.0);
-		pg[i] = pg[i] + speed * org_factor * (0.5 + 0.5 * su[i]);
+		pg[i] = pg[i] + step;
 	}
 	Array r;
 	r.push_back(prog);

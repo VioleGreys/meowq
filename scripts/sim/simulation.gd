@@ -1557,6 +1557,9 @@ func _share_score(side: Dictionary, loss: float) -> void:
 		Peace.add_score(world, k, loss * Peace.SCORE_KILL * float(side[k]) / float(n))
 
 
+const RETREAT_FRONT := 100.0   # отступление: за каждую соседнюю провинцию врага (прочь от фронта)
+
+
 func _retreat(d: World.Division) -> void:
 	# куда отходить: своя или союзная провинция без врага; нет — своя или союзная,
 	# где идёт бой; среди равных — где наших меньше (не копить стопки: раньше шли
@@ -1574,6 +1577,11 @@ func _retreat(d: World.Division) -> void:
 		var score := -float(world.divs_count(q)) + float(q % 5) * 0.01
 		if world.has_enemies(d.owner, q):
 			score -= 10000.0
+		# прочь от фронта: каждая соседняя провинция врага — минус
+		for r in world.p_adj[q]:
+			var rc := world.p_controller[r]
+			if world.p_land[r] == 1 and rc >= 0 and rc != d.owner and world.is_at_war(d.owner, rc):
+				score -= RETREAT_FRONT
 		if score > best_score:
 			best_score = score
 			best = q

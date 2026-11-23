@@ -1870,6 +1870,10 @@ func k_supply(side_of: PackedInt32Array, dist: PackedInt32Array) -> void:
 ## Сбор боёв и шаг движения. Сбрасывает «в бою», считает новый прогресс
 ## идущих дивизий. Возвращает [пути сброшены (нельзя войти), атакующие по
 ## порядку, идущие по порядку].
+const ADVANCE_RATE := 1.0   # доля скорости, с которой атакующий продвигается в бою
+const ADVANCE_CAP := 0.9    # и до какой доли пути
+
+
 func k_march() -> Array:
 	var spd_e := _river_speed(_eff(d_spd_eff, d_spd))
 	if Native.core != null:
@@ -1918,13 +1922,17 @@ func k_march() -> Array:
 			if o >= 0 and e >= 0 and e != o and war[o * nc + e] == 1:
 				hostile = true
 				break
-		if hostile:
-			attackers.append(i)
-			continue
-		movers.append(i)
 		var speed: float = spd_e[i] * p_move_mult[t]
 		var org_factor := 0.5 + 0.5 * clampf(d_org[i] / maxf(1.0, d_morg[i]), 0.0, 1.0)
-		d_prog[i] = d_prog[i] + speed * org_factor * (0.5 + 0.5 * d_sup[i])
+		var step := speed * org_factor * (0.5 + 0.5 * d_sup[i])
+		if hostile:
+			# в бою атакующий продвигается вглубь провинции (не дальше ADVANCE_CAP):
+			# защитник отошёл — входит почти сразу, а не с нуля
+			attackers.append(i)
+			d_prog[i] = maxf(d_prog[i], minf(ADVANCE_CAP, d_prog[i] + step * ADVANCE_RATE))
+			continue
+		movers.append(i)
+		d_prog[i] = d_prog[i] + step
 	return [cleared, attackers, movers]
 
 

@@ -105,6 +105,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	const float *p_hot = p_hot_a.ptr(), *p_cold = p_cold_a.ptr();
 	const double *n_hot = n_hot_a.ptr(), *n_cold = n_cold_a.ptr();
 	const double SUP_BAD = 0.5, SUP_EXH = 0.25, CLIM_ATK = 0.25, REGROUP_ORG = 0.1, ROTATE_ORG = 0.3, ESCAPE_RATIO = 3.0, SUPPORT_BONUS = 20.0;
+	const double AXIS_COMMIT = 2.0, AXIS_TARGETS = 3.0, BLITZ_COMMIT = 4.0, BLITZ_TARGETS = 6.0;   // как ai.gd: перевес на лучшие цели направления и их число
 	const double GUARD_WMUL = 2.0;   // мир: вес участка × (1 + 2 × вес границы) (как ai.gd)
 	const int FILL_DEPTH = 6;
 	auto sup_mult = [&](double sv) { return sv >= SUP_BAD ? 1.0 : (sv >= SUP_EXH ? 0.75 : 0.5); };
@@ -267,6 +268,9 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 		}
 	}
 	const int n_ax = int(ax_prov.size());
+	// блицкриг (черта blitz; как ai.gd blitz_table) — только общий план
+	const PackedByteArray bl_a = tables.has("blitz") ? PackedByteArray(tables["blitz"]) : PackedByteArray();
+	const bool blitz = mode == AUTO && bl_a.size() == nc && bl_a[nid] == 1;
 	// штурм осаждённого города (st_start / st_list) — только общий план (как ai.gd)
 	std::vector<uint8_t> storm(pc, 0);
 	{
@@ -303,7 +307,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	};
 
 	std::vector<char> used(ndv, 0);
-	// направление главного удара: лучшие цели атаки (3), к ним стягиваем силы
+	// направление главного удара: лучшие цели атаки (без плана — 3, по плану — AXIS_TARGETS), к ним стягиваем силы
 	// значение — номер направления + 1 (0 — не направление удара)
 	std::vector<int32_t> main_axis(pc, 0), t_axis(pc, 0);
 	bool has_axis = false;
@@ -315,6 +319,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			int dirs;
 		};
 		std::vector<Entry> target_list;
+		std::vector<char> empty_t(pc, 0);   // цели без видимого врага (развитие прорыва)
 		for (int32_t t : targets.order) {
 			double enemy_str = 0.0;
 			int pocketed = 0;
@@ -389,6 +394,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			// нужная сила: множитель обороны сверх 2,5 (крепости) — корнем (как ai.gd FORT_LIN)
 			const double need_mult = def_mult > 2.5 ? 2.5 * std::sqrt(def_mult / 2.5) : def_mult;
 			target_list.push_back({ score, t, enemy_str * need_mult * risk / climf, dirs });
+			if (enemy_str <= 0.0) empty_t[t] = 1;
 		}
 		std::sort(target_list.begin(), target_list.end(), [](const Entry &a, const Entry &b) {
 			return a.score < b.score || (a.score == b.score && a.t < b.t);
@@ -399,9 +405,9 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 				has_axis = true;
 			}
 		} else {
-			// на каждое направление — свои лучшие цели: главному 3, второстепенному по весу (как ai.gd)
+			// на каждое направление — свои лучшие цели: главному AXIS_TARGETS, второстепенному по весу (как ai.gd)
 			std::vector<int> quota(n_ax);
-			for (int a = 0; a < n_ax; a++) quota[a] = std::max(1, int(std::round(3.0 * double(ax_w[a]) / 100.0)));
+			for (int a = 0; a < n_ax; a++) quota[a] = std::max(1, int(std::round((blitz ? BLITZ_TARGETS : AXIS_TARGETS) * double(ax_w[a]) / 100.0)));
 			for (const Entry &entry : target_list) {
 				const int a = t_axis[entry.t];
 				if (quota[a] > 0) {
@@ -418,7 +424,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			double need = entry.es * ratio;
 			// направление главного удара к цели наступления — сил с запасом (как ai.gd)
 			double commit = need;
-			if (n_ax > 0 && main_axis[t]) commit = need * (1.0 + (2.0 - 1.0) * double(ax_w[main_axis[t] - 1]) / 100.0);
+			if (n_ax > 0 && main_axis[t]) commit = need * (1.0 + ((blitz ? BLITZ_COMMIT : AXIS_COMMIT) - 1.0) * double(ax_w[main_axis[t] - 1]) / 100.0);
 			// осторожная страна не лезет в пустую провинцию-выступ (котёл)
 			if (entry.es <= 0.0 && ratio >= 4.0 && entry.dirs < 2) continue;
 			const bool breach = n_ax > 0 && entry.es <= 0.0 && main_axis[t];
@@ -471,12 +477,23 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			}
 			// штурм осаждённого города — с долей нужного перевеса (STORM_NEED 0,1)
 			if (power > (storm[t] ? need * 0.1 : need) && !chosen.empty()) {
+				// блицкриг — развитие прорыва (как ai.gd _exploit): за целью следующая пустая цель ближе к цели наступления
+				int32_t nxt = -1;
+				if (n_ax > 0 && blitz) {
+					const int32_t *od = obj_dist.data() + size_t(t_axis[t]) * pc;
+					for (int32_t k = a_start[t]; k < a_start[t + 1]; k++) {
+						const int32_t q = a_list[k];
+						if (!targets.has[q] || !empty_t[q] || od[q] >= od[t]) continue;
+						if (nxt < 0 || od[q] < od[nxt] || (od[q] == od[nxt] && q < nxt)) nxt = q;
+					}
+				}
 				for (int32_t i : chosen) {
 					used[i] = 1;
 					Array o;
 					o.push_back(i);
 					PackedInt32Array path;
 					path.push_back(t);
+					if (nxt >= 0) path.push_back(nxt);
 					o.push_back(path);
 					orders.push_back(o);
 				}
