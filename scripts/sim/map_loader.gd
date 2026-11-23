@@ -236,6 +236,7 @@ static func load_world(world: World, dir: String = DEFAULT_DIR) -> Dictionary:
 	Leaders.init(world, dir)   # генералы и маршалы (commanders.json + безымянные под число дивизий)
 	world.rebuild_prov_divs()
 	timings["leaders"] = Time.get_ticks_usec() - t
+	History.init_slots(world)
 	world.palette_dirty = true
 	return timings
 

@@ -1010,6 +1010,10 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 					place_factory(world, who, "civ")
 				for k in int(e.get("mil", 0)):
 					place_factory(world, who, "mil")
+			"slots":
+				var lo: Array = e.get("lon", [-180.0, 180.0])
+				var lt: Array = e.get("lat", [-90.0, 90.0])
+				add_slots(world, who, Vector2(float(lo[0]), float(lo[1])), Vector2(float(lt[0]), float(lt[1])), int(e.get("v", 1)), int(e.get("vp", 0)))
 			"relocate":
 				var fr: Array = e.get("from_lon", [-180.0, 180.0])
 				var to: Array = e.get("to_lon", [-180.0, 180.0])
@@ -1650,6 +1654,40 @@ static func relocate(world: World, nid: int, share: float, from_lon: Vector2, to
 	world.log_event("%s эвакуирует заводы вглубь страны: %d гражд., %d воен." % [world.nations[nid].name, civ, mil])
 
 
+## Зоны с малым числом мест под заводы (решение пользователя: строить в Сибири —
+## по фокусам, которые прибавляют места): [страна-владелец на старте, долгота от,
+## до, мест на провинцию]. Уже стоящие заводы остаются; эвакуация может занять
+## на 2 места больше (_reloc_pick).
+const SLOT_ZONES := [["SOV", 60.0, 180.0, 2]]
+
+
+## Пределы мест (World.p_slot_cap) по SLOT_ZONES — при загрузке карты; старые
+## сохранения без поля получают их отсюда же.
+static func init_slots(world: World) -> void:
+	world.p_slot_cap = PackedInt32Array()
+	world.p_slot_cap.resize(world.prov_count)
+	world.p_slot_cap.fill(-1)
+	for z: Array in SLOT_ZONES:
+		var t := tag_id(world, String(z[0]))
+		if t < 0:
+			continue
+		for p in world.prov_count:
+			var lon := world.p_lonlat[p].x
+			if world.p_land[p] == 1 and world.p_owner[p] == t and lon >= float(z[1]) and lon <= float(z[2]):
+				world.p_slot_cap[p] = int(z[3])
+
+
+## Эффект «slots»: места под заводы +v в своих провинциях с пределом (зона
+## SLOT_ZONES) в прямоугольнике долгот и широт, с очками победы не меньше vp.
+static func add_slots(world: World, nid: int, lon: Vector2, lat: Vector2, v: int, vp: int) -> void:
+	for p in world.prov_count:
+		var ll := world.p_lonlat[p]
+		if world.p_slot_cap[p] < 0 or world.p_owner[p] != nid or ll.x < lon.x or ll.x > lon.y or ll.y < lat.x or ll.y > lat.y \
+				or world.p_vp[p] < vp:
+			continue
+		world.p_slot_cap[p] = mini(world.p_slot_cap[p] + v, Simulation.MAX_FACTORIES)
+
+
 ## Самая свободная (заполненность мест: заводы / места) провинция из списка; при
 ## равенстве — первая по номеру. −1 — мест нет нигде (заводы ≥ места + 2).
 static func _reloc_pick(world: World, provs: PackedInt32Array) -> int:
@@ -2064,6 +2102,8 @@ static func effects_text(world: World, effects: Array) -> String:
 					parts.append("+%d гражд. фабр." % e["civ"])
 				if int(e.get("mil", 0)) > 0:
 					parts.append("+%d воен. зав." % e["mil"])
+			"slots":
+				parts.append("места под заводы +%d в провинциях %s" % [int(e.get("v", 1)), String(e.get("where", "на востоке"))])
 			"relocate":
 				parts.append("эвакуация %d%% заводов вглубь страны" % roundi(float(e.get("share", 0.5)) * 100.0))
 			"bonus":

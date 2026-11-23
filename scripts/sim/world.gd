@@ -528,6 +528,7 @@ var p_civ := PackedInt32Array()
 var p_mil := PackedInt32Array()
 var p_manpower := PackedInt32Array()     # призывной резерв провинции, тыс.
 var p_population := PackedInt32Array()   # население, тыс.
+var p_slot_cap := PackedInt32Array()     # предел мест под заводы (−1 — по населению): Сибирь — History.SLOT_ZONES, фокусы — эффект «slots»
 var p_colony := PackedByteArray()
 var p_adm0 := PackedStringArray()       # код современной страны (Natural Earth) — для исторических областей
 var p_lonlat := PackedVector2Array()
@@ -2098,8 +2099,9 @@ func k_snapshot() -> void:
 		dv_org[i] = orgf
 		# как в бою (_side_power): атака с планированием (×0,5 там — только у десанта с моря); оборона с окопами и организацией
 		var eqf := (EQ_FLOOR + (1.0 - EQ_FLOOR) * d_eq[i]) * sup_mult(d_sup[i])
+		var eqd := (EQ_FLOOR_DEF + (1.0 - EQ_FLOOR_DEF) * d_eq[i]) * sup_mult(d_sup[i])
 		dv_power[i] = st / 100.0 * d_atk[i] * (1.0 + Simulation.PLAN_MAX * d_plan[i]) * eqf
-		dv_defw[i] = st / 100.0 * d_def[i] * (1.0 + ENT_DEF * d_ent[i]) * (1.0 + Simulation.PLAN_MAX * d_plan[i]) * orgf * eqf
+		dv_defw[i] = st / 100.0 * d_def[i] * (1.0 + ENT_DEF * d_ent[i]) * (1.0 + Simulation.PLAN_MAX * d_plan[i]) * orgf * eqd
 		if d_transit[i] <= 0:
 			counts[d_prov[i] + 1] += 1
 	pd_start.resize(prov_count + 1)
@@ -2271,6 +2273,8 @@ const ORG_DECAY := 0.03
 # оснащение). Потери людей в бою × MEN_LOSS (было 1), техники — EQ_PER_MEN оснащения
 # на 1 % людей (было 0,9: техника гибнет как раньше, люди — чаще). C++ — kernels.cpp.
 const EQ_FLOOR := 0.2
+# в обороне — EQ_FLOOR_DEF (решение пользователя: недоснаряжённая пехота держит лучше, чем атакует)
+const EQ_FLOOR_DEF := 0.35
 # Окопы (решение пользователя): стоящая на месте дивизия окапывается на ENT_GAIN в день
 # до потолка — шаблон (Military.ENT_BASE, сапёры +1) + уровень укреплений провинции;
 # каждая единица — оборона +ENT_DEF. C++ — kernels.cpp.
@@ -2365,7 +2369,8 @@ func _side_power(slots: PackedInt32Array, terr: int, defending: bool, atk: Packe
 		var i := slots[j]
 		var w: float = d_str[i] / 100.0 * part[j]
 		var base: float = def[i] * (1.0 + ENT_DEF * d_ent[i]) if defending else atk[i] * (0.5 if d_land[i] == 1 else 1.0)
-		var c: float = base * w * (EQ_FLOOR + (1.0 - EQ_FLOOR) * d_eq[i]) * sup_mult(d_sup[i]) * tpl_terrain[d_tpl[i] * 8 + terr]
+		var fl: float = EQ_FLOOR_DEF if defending else EQ_FLOOR
+		var c: float = base * w * (fl + (1.0 - fl) * d_eq[i]) * sup_mult(d_sup[i]) * tpl_terrain[d_tpl[i] * 8 + terr]
 		pw.append(c)
 		power += c
 		hard += d_hard[i] * w

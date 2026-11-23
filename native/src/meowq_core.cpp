@@ -50,7 +50,7 @@ void MeowqCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("side_slots", "alive", "owner", "ally", "n", "nc"), &MeowqCore::side_slots);
 	ClassDB::bind_method(D_METHOD("owner_slots", "alive", "owner", "n"), &MeowqCore::owner_slots);
 	ClassDB::bind_method(D_METHOD("land_components", "ctrl", "land", "ally", "adj_start", "adj_list", "waste", "nc"), &MeowqCore::land_components);
-	ClassDB::bind_method(D_METHOD("place_factory", "owner", "ctrl", "civ", "mil", "pop", "terrain", "nid", "max_factories", "t_urban"), &MeowqCore::place_factory);
+	ClassDB::bind_method(D_METHOD("place_factory", "owner", "ctrl", "civ", "mil", "pop", "terrain", "nid", "max_factories", "t_urban", "slot_cap"), &MeowqCore::place_factory);
 	ClassDB::bind_method(D_METHOD("combat", "provs", "att_start", "att_list", "seeds", "str", "org", "eq", "def", "atk", "ent", "landing", "sup", "tpl", "hard", "owner", "battle", "pl_head", "d_nx", "war", "nc", "def_mult", "terrain", "region", "cas", "tmul", "prov", "tpl_width", "fw", "armor", "pierce", "armor_cut", "tpl_sc", "coord"), &MeowqCore::combat);
 	ClassDB::bind_method(D_METHOD("income", "ctrl", "owner", "civ", "mil", "manpower", "nc"), &MeowqCore::income);
 	ClassDB::bind_method(D_METHOD("front_regions", "ctrl", "adj_start", "adj_list", "war", "nc", "region", "n"), &MeowqCore::front_regions);

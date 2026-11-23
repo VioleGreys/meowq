@@ -142,7 +142,7 @@ public:
 
 	int place_factory(const PackedInt32Array &owner, const PackedInt32Array &ctrl, const PackedInt32Array &civ,
 			const PackedInt32Array &mil, const PackedInt32Array &pop, const PackedByteArray &terrain, int nid,
-			int max_factories, int t_urban) const;
+			int max_factories, int t_urban, const PackedInt32Array &slot_cap) const;
 
 	Array combat(const PackedInt32Array &provs, const PackedInt32Array &att_start, const PackedInt32Array &att_list,
 			const PackedInt64Array &seeds, const PackedFloat64Array &str, const PackedFloat64Array &org,

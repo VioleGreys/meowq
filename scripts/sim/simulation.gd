@@ -343,7 +343,7 @@ func _place_factory(nid: int, mode: String) -> bool:
 	var best := -1
 	if Native.core != null:
 		best = Native.core.call("place_factory", world.p_owner, world.p_controller, world.p_civ, world.p_mil,
-				world.p_population, world.p_terrain, nid, MAX_FACTORIES, World.T_URBAN)
+				world.p_population, world.p_terrain, nid, MAX_FACTORIES, World.T_URBAN, world.p_slot_cap)
 	else:
 		var best_score := INF
 		var owner := world.p_owner
@@ -373,9 +373,11 @@ func _place_factory(nid: int, mode: String) -> bool:
 ## Сколько заводов помещается в провинции: зависит от населения (рабочие руки).
 static func factory_slots(world: World, p: int) -> int:
 	var pop := world.p_population[p] if world.p_population.size() > p else 0
-	if pop <= 0:
-		return MAX_FACTORIES
-	return clampi(1 + pop / 250, 1, MAX_FACTORIES)
+	var s := MAX_FACTORIES if pop <= 0 else clampi(1 + pop / 250, 1, MAX_FACTORIES)
+	# Сибирь и Урал за 60° (решение пользователя): мест мало, прибавляют фокусы (History.SLOT_ZONES)
+	if world.p_slot_cap.size() > p and world.p_slot_cap[p] >= 0:
+		s = mini(s, world.p_slot_cap[p])
+	return s
 
 
 func _any_province(nid: int) -> int:

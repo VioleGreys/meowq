@@ -12,7 +12,7 @@ using namespace godot;
 // Снабжение (World.sup_mult и константы — двойники)
 static constexpr double SUP_BAD = 0.5, SUP_EXH = 0.25, EXH_LOSS = 1.5, ORG_DECAY = 0.03;
 // снаряжение и потери — как World.EQ_FLOOR, ORG_EQ, MEN_LOSS, EQ_PER_MEN
-static constexpr double EQ_FLOOR = 0.2, ORG_EQ = 0.6, MEN_LOSS = 1.25, EQ_PER_MEN = 0.72;
+static constexpr double EQ_FLOOR = 0.2, EQ_FLOOR_DEF = 0.35, ORG_EQ = 0.6, MEN_LOSS = 1.25, EQ_PER_MEN = 0.72;
 // окопы — как World.ENT_GAIN, ENT_DEF
 static constexpr double ENT_GAIN = 0.1, ENT_DEF = 0.1;
 static inline double sup_mult(double s) { return s >= SUP_BAD ? 1.0 : (s >= SUP_EXH ? 0.75 : 0.5); }
@@ -226,8 +226,9 @@ Array MeowqCore::snapshot(const PackedInt32Array &next, const PackedByteArray &b
 		fo[i] = float(orgf);
 		// как в бою: атака с планированием (×0,5 там — только у десанта); оборона с окопами и организацией (как world.gd)
 		const double eqf = (EQ_FLOOR + (1.0 - EQ_FLOOR) * e[i]) * sup_mult(su[i]);
+		const double eqd = (EQ_FLOOR_DEF + (1.0 - EQ_FLOOR_DEF) * e[i]) * sup_mult(su[i]);
 		fp[i] = float(s / 100.0 * at[i] * (1.0 + plan_max * pl0[i]) * eqf);
-		fd[i] = float(s / 100.0 * df[i] * (1.0 + ENT_DEF * en[i]) * (1.0 + plan_max * pl0[i]) * orgf * eqf);
+		fd[i] = float(s / 100.0 * df[i] * (1.0 + ENT_DEF * en[i]) * (1.0 + plan_max * pl0[i]) * orgf * eqd);
 		if (tr[i] <= 0) ps[pv[i] + 1]++;
 	}
 	for (int p = 0; p < prov_count; p++) ps[p + 1] += ps[p];
@@ -395,18 +396,21 @@ Array MeowqCore::own_reach(const PackedInt32Array &adj_start, const PackedInt32A
 // контролем, есть свободный слот (по населению), меньше заводов, город — плюс.
 int MeowqCore::place_factory(const PackedInt32Array &owner, const PackedInt32Array &ctrl, const PackedInt32Array &civ,
 		const PackedInt32Array &mil, const PackedInt32Array &pop, const PackedByteArray &terrain, int nid,
-		int max_factories, int t_urban) const {
+		int max_factories, int t_urban, const PackedInt32Array &slot_cap) const {
 	const int64_t pc = owner.size();
 	const int32_t *ow = owner.ptr(), *ct = ctrl.ptr(), *cv = civ.ptr(), *ml = mil.ptr(), *pp = pop.ptr();
 	const uint8_t *tr = terrain.ptr();
 	const int64_t np = pop.size();
+	const int32_t *sc = slot_cap.ptr();
+	const int64_t nsc = slot_cap.size();
 	int best = -1;
 	double best_score = INFINITY;
 	for (int64_t p = 0; p < pc; p++) {
 		if (ow[p] != nid || ct[p] != nid) continue;
 		const int total = cv[p] + ml[p];
 		const int ps = p < np ? pp[p] : 0;
-		const int slots = ps <= 0 ? max_factories : std::min(std::max(1 + ps / 250, 1), max_factories);
+		int slots = ps <= 0 ? max_factories : std::min(std::max(1 + ps / 250, 1), max_factories);
+		if (p < nsc && sc[p] >= 0) slots = std::min(slots, int(sc[p]));
 		if (total >= slots) continue;
 		const double score = double(total) - (tr[p] == t_urban ? 2.0 : 0.0) + double(p % 7) * 0.01;
 		if (score < best_score) {
@@ -434,7 +438,8 @@ static SidePower side_power(const int32_t *slots, const double *part, int64_t co
 		const int32_t i = slots[k];
 		const double w = str[i] / 100.0 * part[k];
 		const double base = defending ? def[i] * (1.0 + ENT_DEF * ent[i]) : atk[i] * (landing[i] == 1 ? 0.5 : 1.0);
-		const double c = base * w * (EQ_FLOOR + (1.0 - EQ_FLOOR) * eq[i]) * sup_mult(sup[i]) * double(tmul[tpl[i] * 8 + terr]);
+		const double fl = defending ? EQ_FLOOR_DEF : EQ_FLOOR;
+		const double c = base * w * (fl + (1.0 - fl) * eq[i]) * sup_mult(sup[i]) * double(tmul[tpl[i] * 8 + terr]);
 		pw.push_back(c);
 		power += c;
 		hd += hard[i] * w;
