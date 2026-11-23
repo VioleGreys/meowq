@@ -181,6 +181,19 @@ struct Sweep {
 				}
 			}
 		}
+		// закупки сверх бюджета — отказ с конца, пока оплата не уложится в долю фабрик
+		double over = -budget(n);
+		if (over <= 0.1)
+			return;
+		for (int j = int(mine.size()) - 1; j >= 0; j--) {
+			const int k = mine[j];
+			if (c0[k] == n && c6[k] < 0.0 && c5[k] <= day) {
+				c6[k] = 0.0;
+				over -= c3[k] / UNITS_PER_CIV;
+				if (over <= 0.0)
+					break;
+			}
+		}
 	}
 };
 

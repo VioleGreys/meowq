@@ -1558,6 +1558,18 @@ static func _ai_cut(world: World, nat: World.Nation, mine: Array) -> void:
 			if c[0] == nat.id and c[2] == r and float(c[6]) < 0.0 and float(c[3]) <= extra and int(c[5]) <= world.day:
 				c[6] = 0.0
 				extra -= float(c[3])
+	# закупки сверх бюджета (фабрики потеряны или ушли на нужды населения) —
+	# отказ с конца, пока оплата не уложится в долю фабрик (иначе стройка встаёт)
+	var over := -_budget(world, nat.id)
+	if over <= 0.1:
+		return
+	for j in range(mine.size() - 1, -1, -1):
+		var c: Array = world.contracts[int(mine[j])]
+		if c[0] == nat.id and float(c[6]) < 0.0 and int(c[5]) <= world.day:
+			c[6] = 0.0
+			over -= float(c[3]) / UNITS_PER_CIV
+			if over <= 0.0:
+				break
 
 
 ## Сменить курс (игрок; ИИ — при вступлении в войну). Возвращает пусто или причину.
