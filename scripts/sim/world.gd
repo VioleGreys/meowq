@@ -1775,10 +1775,11 @@ func _bury(d: Division) -> void:
 ## не пополняется); manpower — призывники стран.
 ## Возвращает слоты дивизий, погибших в окружении.
 func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus: PackedFloat64Array, pool: PackedInt32Array) -> Array:
+	var fort := p_fort
 	if Native.core != null:
 		var r: Array = Native.core.call("recovery", d_alive, d_transit, d_sup, d_org, d_morg, d_str, d_eq, d_ent,
 				d_next, d_battle, d_owner, d_prov, d_tpl, p_controller, ally, nation_count, stock, manpower, rbonus,
-				tpl_eq, tpl_men, pool, tpl_sc)
+				tpl_eq, tpl_men, pool, tpl_sc, fort)
 		d_org = r[0]
 		d_str = r[1]
 		d_eq = r[2]
@@ -1801,8 +1802,9 @@ func k_recovery(stock: PackedFloat32Array, manpower: PackedFloat64Array, rbonus:
 		# роты поддержки (Military.SUPPORT, tpl_sc): сапёры — окопы быстрее и до 150 %
 		var t := d_tpl[i]
 		var sk := t * 6
-		var entk := tpl_sc[sk]
-		d_ent[i] = minf(entk, d_ent[i] + 0.05 * entk) if d_next[i] < 0 else 0.0
+		var pf := d_prov[i]
+		var entk := tpl_sc[sk] + (float(fort[pf]) if pf < fort.size() else 0.0)
+		d_ent[i] = minf(entk, d_ent[i] + ENT_GAIN) if d_next[i] < 0 else 0.0
 		if d_battle[i] != 0:
 			continue
 		var rate := (0.06 if d_next[i] < 0 else 0.03) * tpl_sc[sk + 4]
@@ -2088,7 +2090,7 @@ func k_snapshot() -> void:
 		# как в бою (_side_power): атака с планированием (×0,5 там — только у десанта с моря); оборона с окопами и организацией
 		var eqf := (EQ_FLOOR + (1.0 - EQ_FLOOR) * d_eq[i]) * sup_mult(d_sup[i])
 		dv_power[i] = st / 100.0 * d_atk[i] * (1.0 + Simulation.PLAN_MAX * d_plan[i]) * eqf
-		dv_defw[i] = st / 100.0 * d_def[i] * (1.0 + 0.3 * d_ent[i]) * orgf * eqf
+		dv_defw[i] = st / 100.0 * d_def[i] * (1.0 + ENT_DEF * d_ent[i]) * (1.0 + Simulation.PLAN_MAX * d_plan[i]) * orgf * eqf
 		if d_transit[i] <= 0:
 			counts[d_prov[i] + 1] += 1
 	pd_start.resize(prov_count + 1)
@@ -2109,13 +2111,18 @@ func k_snapshot() -> void:
 ## состоянию до боя, потом применяются по порядку провинций.
 func k_combat(provs: PackedInt32Array, att_start: PackedInt32Array, att_list: PackedInt32Array, seeds: PackedInt64Array,
 		plan_max: float = 0.0) -> void:
-	# атака и оборона с климатом (Climate.daily); планирование — только у наступающих
+	# атака и оборона с климатом (Climate.daily); планирование (решение пользователя,
+	# ноябрь 2026) — и атаке наступающих, и обороне обороняющихся (оборона
+	# наступающих в бою не нужна — множитель на всех)
 	var atk := _eff(d_atk_eff, d_atk)
 	var def := _eff(d_def_eff, d_def)
 	if plan_max > 0.0 and d_plan.size() == d_atk.size():
 		atk = atk.duplicate()
 		for i in att_list:
 			atk[i] = atk[i] * (1.0 + plan_max * d_plan[i])
+		def = def.duplicate()
+		for i in def.size():
+			def[i] = def[i] * (1.0 + plan_max * d_plan[i])
 	# атака через реку (как в жанре): малая −20 %, крупная −40 % (World.RIVER_ATK)
 	if adj_river.size() == adj_list.size() and not adj_river.is_empty():
 		var copied := plan_max > 0.0 and d_plan.size() == d_atk.size()
@@ -2255,6 +2262,11 @@ const ORG_DECAY := 0.03
 # оснащение). Потери людей в бою × MEN_LOSS (было 1), техники — EQ_PER_MEN оснащения
 # на 1 % людей (было 0,9: техника гибнет как раньше, люди — чаще). C++ — kernels.cpp.
 const EQ_FLOOR := 0.2
+# Окопы (решение пользователя): стоящая на месте дивизия окапывается на ENT_GAIN в день
+# до потолка — шаблон (Military.ENT_BASE, сапёры +1) + уровень укреплений провинции;
+# каждая единица — оборона +ENT_DEF. C++ — kernels.cpp.
+const ENT_GAIN := 0.1
+const ENT_DEF := 0.1
 const ORG_EQ := 0.6
 const MEN_LOSS := 1.25
 const EQ_PER_MEN := 0.72
@@ -2343,7 +2355,7 @@ func _side_power(slots: PackedInt32Array, terr: int, defending: bool, atk: Packe
 	for j in slots.size():
 		var i := slots[j]
 		var w: float = d_str[i] / 100.0 * part[j]
-		var base: float = def[i] * (1.0 + 0.3 * d_ent[i]) if defending else atk[i] * (0.5 if d_land[i] == 1 else 1.0)
+		var base: float = def[i] * (1.0 + ENT_DEF * d_ent[i]) if defending else atk[i] * (0.5 if d_land[i] == 1 else 1.0)
 		var c: float = base * w * (EQ_FLOOR + (1.0 - EQ_FLOOR) * d_eq[i]) * sup_mult(d_sup[i]) * tpl_terrain[d_tpl[i] * 8 + terr]
 		pw.append(c)
 		power += c

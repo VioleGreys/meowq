@@ -80,11 +80,12 @@ const BATTALIONS := [
 # шаблонов tpl_sc (ядра: окопы, ПВО, пополнение людей и техники, восстановление
 # организации, нагрузка на снабжение).
 const SUPPORT_MAX := 5
+const ENT_BASE := 2.0   # потолок окопов шаблона без сапёров (World.ENT_DEF за единицу)
 const SC_K := 6   # tpl_sc на шаблон: [окопы ×, защита от штурмовиков, пополнение людей ×, техники ×, восстановление организации ×, нагрузка снабжения ×]
 const SUPPORT := [
 	{"id": "eng", "name": "Сапёрная рота", "short": "сап.", "req": "eng1", "men": 0.3, "eq": [30.0, 0.0, 0.0, 0.0, 0.0],
-		"fx": {"def_m": 0.06, "ent": 0.5, "terr": [0.0, 0.05, 0.05, 0.05, 0.1, 0.0, 0.0, 0.1]},
-		"desc": "Окапывается в полтора раза быстрее и глубже (до 150 %), оборона +6 %, лучше в лесу, горах, городах и болотах."},
+		"fx": {"def_m": 0.06, "ent": 1.0, "terr": [0.0, 0.05, 0.05, 0.05, 0.1, 0.0, 0.0, 0.1]},
+		"desc": "Окапывается глубже (до 3 вместо 2, каждая единица окопов — оборона +10 %), оборона +6 %, лучше в лесу, горах, городах и болотах."},
 	{"id": "rec", "name": "Разведывательная рота", "short": "разв.", "req": "scout1", "men": 0.2, "eq": [30.0, 0.0, 0.0, 5.0, 0.0],
 		"fx": {"spd_m": 0.08, "atk_m": 0.05}, "desc": "Скорость +8 %, атака +5 %."},
 	{"id": "art", "name": "Артиллерийская батарея", "short": "батар.", "req": "art1", "men": 0.2, "eq": [10.0, 4.0, 0.0, 0.0, 0.0],
@@ -179,7 +180,7 @@ static func make_template(name: String, short: String, bat_in: Array, owner: int
 	# роты поддержки: люди и снаряжение, бонусы; ширины нет
 	var sup: Array = []
 	var fx := {"atk_m": 0.0, "def_m": 0.0, "spd_m": 0.0, "org_m": 0.0, "pierce": 0.0}
-	var sc := [1.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+	var sc := [ENT_BASE, 0.0, 1.0, 1.0, 1.0, 1.0]
 	var tadd := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 	var bat_men := men
 	for sid in sup_in:
@@ -1245,7 +1246,7 @@ static func side_power(divs: Array, terr: int, tmul: PackedFloat32Array, defendi
 	var wsum := 0.0
 	for d in divs:
 		var w: float = d.strength / 100.0
-		var base: float = d.def * (1.0 + 0.3 * d.entrench) if defending else d.atk * (0.5 if d.landing else 1.0)
+		var base: float = d.def * (1.0 + World.ENT_DEF * d.entrench) if defending else d.atk * (0.5 if d.landing else 1.0)
 		power += base * w * (World.EQ_FLOOR + (1.0 - World.EQ_FLOOR) * d.eq) * World.sup_mult(d.supply) * tmul[d.tpl * 8 + terr]
 		hard += d.hard * w
 		wsum += w

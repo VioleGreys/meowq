@@ -2225,6 +2225,25 @@ func _phase_planning() -> void:
 			hostile[nat.id * nc + int(t)] = 1
 	var old := world.d_plan.duplicate()
 	world.k_plan(hostile, PLAN_GAIN, PLAN_ACTIVE, PLAN_REAR)
+	# у игрока (решение пользователя, как в жанре) план копится только в армиях,
+	# которым выбрана цель наступления (приказ «наступать» и провинция-цель); ИИ
+	# всегда ведёт свои планы — у него копит каждая дивизия на фронте
+	var pl := world.d_plan
+	var any_player := false
+	for nat in world.nations:
+		if nat.is_player:
+			any_player = true
+	if any_player:
+		for s in mini(pl.size(), old.size()):
+			if pl[s] > old[s] and world.d_alive[s] == 1 and world.nations[world.d_owner[s]].is_player:
+				var g: int = world.divisions[s].group
+				var ok := false
+				if g >= 0 and g < world.groups.size():
+					var a: World.ArmyGroup = world.groups[g]
+					ok = a.alive and a.mode == "attack" and a.objective >= 0
+				if not ok:
+					pl[s] = old[s]
+		world.d_plan = pl
 	Leaders.plan_bonus(world, old)
 
 

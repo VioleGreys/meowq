@@ -193,13 +193,14 @@ func _init() -> void:
 	var d_b := w.spawn_division(POL, pnat.capital, b_i)
 	var d_s := w.spawn_division(POL, pnat.capital, b_i + 1)
 	check(d_s.def > d_b.def * 1.05 and d_s.atk > d_b.atk and d_s.spd > d_b.spd, "сапёры, батарея и разведка: оборона %.1f→%.1f, атака %.1f→%.1f, скорость %.3f→%.3f" % [d_b.def, d_s.def, d_b.atk, d_s.atk, d_b.spd, d_s.spd])
-	check(w.tpl_sc[(b_i + 1) * Military.SC_K] == 1.5 and w.tpl_sc[(b_i + 1) * Military.SC_K + 1] == 0.5, "в таблице шаблонов: окопы ×1,5, защита от штурмовиков 50 %")
+	check(w.tpl_sc[(b_i + 1) * Military.SC_K] == 3.0 and w.tpl_sc[(b_i + 1) * Military.SC_K + 1] == 0.5, "в таблице шаблонов: окопы до 3, защита от штурмовиков 50 %")
 	var was_player := pnat.is_player
 	pnat.is_player = true   # ИИ не двигает дивизии — окапываются стоящие
 	for i in 30:
 		sim.tick()
 	pnat.is_player = was_player
-	check(d_s.entrench > 1.0 and d_b.entrench <= 1.0, "с сапёрами окопы глубже (%d%% против %d%%)" % [roundi(d_s.entrench * 100.0), roundi(d_b.entrench * 100.0)])
+	var fcap := Military.ENT_BASE + w.p_fort[pnat.capital]
+	check(d_s.entrench > fcap and d_b.entrench <= fcap + 1e-9, "с сапёрами окопы глубже (%.1f против %.1f)" % [d_s.entrench, d_b.entrench])
 	var at_t2 := Military.make_template("П+птб", "п", [9, 0, 0, 0, 0, 0, 0], POL, ["at"])
 	var ap0 := Military.armor_pierce(pnat, base_t["bat"], TankDesigns.FALLBACK)
 	var ap1 := Military.armor_pierce(pnat, at_t2["bat"], TankDesigns.FALLBACK, float(at_t2["fx"]["pierce"]))

@@ -13,6 +13,8 @@ using namespace godot;
 static constexpr double SUP_BAD = 0.5, SUP_EXH = 0.25, EXH_LOSS = 1.5, ORG_DECAY = 0.03;
 // снаряжение и потери — как World.EQ_FLOOR, ORG_EQ, MEN_LOSS, EQ_PER_MEN
 static constexpr double EQ_FLOOR = 0.2, ORG_EQ = 0.6, MEN_LOSS = 1.25, EQ_PER_MEN = 0.72;
+// окопы — как World.ENT_GAIN, ENT_DEF
+static constexpr double ENT_GAIN = 0.1, ENT_DEF = 0.1;
 static inline double sup_mult(double s) { return s >= SUP_BAD ? 1.0 : (s >= SUP_EXH ? 0.75 : 0.5); }
 
 static inline double clampd(double v, double lo, double hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -26,8 +28,10 @@ Array MeowqCore::recovery(const PackedByteArray &alive, const PackedInt32Array &
 		const PackedInt32Array &tpl, const PackedInt32Array &ctrl, const PackedByteArray &ally, int nc,
 		const PackedFloat32Array &stock_in, const PackedFloat64Array &manpower_in, const PackedFloat64Array &rbonus,
 		const PackedFloat64Array &tpl_eq, const PackedFloat64Array &tpl_men, const PackedInt32Array &pool,
-		const PackedFloat64Array &tpl_sc) const {
+		const PackedFloat64Array &tpl_sc, const PackedFloat32Array &fort) const {
 	const int32_t *pl_p = pool.ptr();
+	const float *fo = fort.ptr();
+	const int64_t fn = fort.size();
 	const double *sc = tpl_sc.ptr();
 	PackedFloat64Array org = org_in, str = str_in, eq = eq_in, ent = ent_in, manpower = manpower_in;
 	PackedFloat32Array stock = stock_in;
@@ -50,8 +54,9 @@ Array MeowqCore::recovery(const PackedByteArray &alive, const PackedInt32Array &
 		}
 		const int32_t t = tp[i];
 		const int64_t sk = int64_t(t) * 6;
-		const double entk = sc[sk];
-		o_ent[i] = nx[i] < 0 ? mind(entk, o_ent[i] + 0.05 * entk) : 0.0;
+		const int32_t pf = pv[i];
+		const double entk = sc[sk] + (pf < fn ? double(fo[pf]) : 0.0);
+		o_ent[i] = nx[i] < 0 ? mind(entk, o_ent[i] + ENT_GAIN) : 0.0;
 		if (bt[i] != 0) continue;
 		const double rate = (nx[i] < 0 ? 0.06 : 0.03) * sc[sk + 4];
 		const double cap = mo[i] * mind(1.0, s) * (ORG_EQ + (1.0 - ORG_EQ) * o_eq[i]);
@@ -222,7 +227,7 @@ Array MeowqCore::snapshot(const PackedInt32Array &next, const PackedByteArray &b
 		// как в бою: атака с планированием (×0,5 там — только у десанта); оборона с окопами и организацией (как world.gd)
 		const double eqf = (EQ_FLOOR + (1.0 - EQ_FLOOR) * e[i]) * sup_mult(su[i]);
 		fp[i] = float(s / 100.0 * at[i] * (1.0 + plan_max * pl0[i]) * eqf);
-		fd[i] = float(s / 100.0 * df[i] * (1.0 + 0.3 * en[i]) * orgf * eqf);
+		fd[i] = float(s / 100.0 * df[i] * (1.0 + ENT_DEF * en[i]) * (1.0 + plan_max * pl0[i]) * orgf * eqf);
 		if (tr[i] <= 0) ps[pv[i] + 1]++;
 	}
 	for (int p = 0; p < prov_count; p++) ps[p + 1] += ps[p];
@@ -428,7 +433,7 @@ static SidePower side_power(const int32_t *slots, const double *part, int64_t co
 	for (int64_t k = 0; k < count; k++) {
 		const int32_t i = slots[k];
 		const double w = str[i] / 100.0 * part[k];
-		const double base = defending ? def[i] * (1.0 + 0.3 * ent[i]) : atk[i] * (landing[i] == 1 ? 0.5 : 1.0);
+		const double base = defending ? def[i] * (1.0 + ENT_DEF * ent[i]) : atk[i] * (landing[i] == 1 ? 0.5 : 1.0);
 		const double c = base * w * (EQ_FLOOR + (1.0 - EQ_FLOOR) * eq[i]) * sup_mult(sup[i]) * double(tmul[tpl[i] * 8 + terr]);
 		pw.push_back(c);
 		power += c;

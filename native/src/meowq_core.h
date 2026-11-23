@@ -56,7 +56,7 @@ public:
 			const PackedInt32Array &tpl, const PackedInt32Array &ctrl, const PackedByteArray &ally, int nc,
 			const PackedFloat32Array &stock, const PackedFloat64Array &manpower, const PackedFloat64Array &rbonus,
 			const PackedFloat64Array &tpl_eq, const PackedFloat64Array &tpl_men, const PackedInt32Array &pool,
-			const PackedFloat64Array &tpl_sc) const;
+			const PackedFloat64Array &tpl_sc, const PackedFloat32Array &fort) const;
 	PackedFloat64Array supply_apply(const PackedByteArray &alive, const PackedFloat64Array &sup_in, const PackedInt32Array &prov, const PackedInt32Array &tpl,
 			const PackedInt32Array &owner, const PackedInt32Array &side_of, const PackedInt32Array &dist,
 			const PackedFloat32Array &caps, int prov_count, int t_mot) const;
