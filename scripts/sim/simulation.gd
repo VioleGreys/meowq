@@ -645,10 +645,12 @@ func _phase_ai() -> void:
 			jobs.append({"nation": nat.id})
 			# развёртывание к запланированной фокусами войне: часть армии заранее
 			# держит фронт на границе с будущим противником (как армия игрока)
-			var x := _staging_enemy(nat)
+			var stg := _staging_enemies(nat)
 			Prof.add("из:развёртывание", _pz); _pz = Time.get_ticks_usec()
-			if x >= 0:
-				jobs.append({"stage_of": nat.id, "enemy": x})
+			for k in stg.size():
+				var sx: Array = stg[k]
+				if int(sx[0]) >= 0:
+					jobs.append({"stage_of": nat.id, "enemy": int(sx[0]), "lo": int(sx[1]), "hi": int(sx[2]), "k": k})
 			# окружённые части пытаются вырваться к основной зоне
 			# прорыв с двух сторон: из котла — к основной зоне, из основной зоны — навстречу
 			var bks := _breakouts(nat, by_nation[nat.id])
@@ -669,10 +671,13 @@ func _phase_ai() -> void:
 	var day := world.day
 	var seed_value := world.seed_value
 	# дивизии на развёртывание: STAGE_SHARE армии (по id — состав не скачет)
-	var staged := {}
+	var staged := {}   # страна -> [[lo, hi], ...] — корзины развёрнутых дивизий
 	for job in jobs:
 		if job.has("stage_of"):
-			staged[int(job["stage_of"])] = true
+			var sn0: int = job["stage_of"]
+			if not staged.has(sn0):
+				staged[sn0] = []
+			staged[sn0].append([int(job["lo"]), int(job["hi"])])
 	var pocketed := {}   # страна -> {участок: true} — дивизии котлов планируются отдельно
 	var relief := {}     # страна -> {слот: true} — дивизии деблокирования
 	for job in jobs:
@@ -692,7 +697,8 @@ func _phase_ai() -> void:
 	for job in jobs:
 		var rng: RandomNumberGenerator
 		if job.has("stage_of"):
-			rng = Parallel.rng(seed_value, day, 7000 + int(job["stage_of"]))
+			var sk: int = job["k"]
+			rng = Parallel.rng(seed_value, day, 7000 + int(job["stage_of"]) if sk == 0 else 900000 + int(job["stage_of"]) * 16 + sk)
 		elif job.has("pocket_of"):
 			rng = Parallel.rng(seed_value, day, 7600 + int(job["pocket_of"]) * 64 + int(job["comp"]) % 64)
 		elif job.has("relief_of"):
@@ -704,7 +710,7 @@ func _phase_ai() -> void:
 			var sn: int = job["stage_of"]
 			var part := PackedInt32Array()
 			for slot in by_nation[sn]:
-				if _is_staged(slot):
+				if _is_staged(slot) and _in_bucket(slot, [[int(job["lo"]), int(job["hi"])]]):
 					part.append(slot)
 			var _ps := Time.get_ticks_usec()
 			job["args"] = AIPlanner.military_args(world, sn, part, {"mode": "hold", "enemy": int(job["enemy"])})
@@ -755,7 +761,7 @@ func _phase_ai() -> void:
 			if staged.has(nid):
 				var rest := PackedInt32Array()
 				for slot in mine:
-					if not _is_staged(slot):
+					if not _is_staged(slot) or not _in_bucket(slot, staged[nid]):
 						rest.append(slot)
 				mine = rest
 			if pocketed.has(nid):
@@ -917,6 +923,76 @@ func _is_staged(slot: int) -> bool:
 	return world.d_id[slot] % 10 < STAGE_SHARE
 
 
+const STAGE_BUCKETS := 20   # развёрнутые делятся между будущими войнами корзинами по 5 %
+
+
+func _in_bucket(slot: int, ranges: Array) -> bool:
+	var b := (world.d_id[slot] / 10) % STAGE_BUCKETS
+	for r in ranges:
+		if b >= int(r[0]) and b < int(r[1]):
+			return true
+	return false
+
+
+## Развёртывание к будущим войнам: [[противник, lo, hi], ...] — корзины
+## развёрнутых дивизий (из STAGE_BUCKETS). Войны разных фокусов — разные
+## направления (Балканы и «Барбаросса» весной 1941 г.): от каждого фокуса —
+## один противник (_staging_enemy), корзины — по корню из числа его дивизий
+## (ширина фронта растёт медленнее армии: 23 дивизии Югославии против ~400 РККА — 4 из 20). Идёт
+## наступление по плану на более слабого, чем будущие противники, — его доля
+## остаётся при нём (противник -1: те дивизии — в общем плане страны), иначе
+## развёрнутые у Югославии уходили бы к СССР в первый же день войны.
+func _staging_enemies(nat: World.Nation) -> Array:
+	if nat.planned_wars.is_empty():
+		return []
+	var groups := {}
+	for x in nat.planned_wars:
+		var g := str(nat.planned_wars[x])
+		if not groups.has(g):
+			groups[g] = {}
+		groups[g][x] = true
+	var gk: Array = groups.keys()
+	gk.sort()
+	var picked: Array = []
+	for g in gk:
+		var x := _staging_enemy(nat, groups[g])
+		if x >= 0 and not picked.has(x):
+			picked.append(x)
+	if picked.is_empty():
+		return []
+	picked.sort()
+	if picked.size() == 1 and nat.offensive.is_empty():
+		return [[picked[0], 0, STAGE_BUCKETS]]
+	var cnt := {}
+	var dal := world.d_alive
+	var dow := world.d_owner
+	for i in dow.size():
+		if dal[i] == 1:
+			cnt[dow[i]] = int(cnt.get(dow[i], 0)) + 1
+	var ws: Array = []
+	var total := 0.0
+	for x in picked:
+		var v := sqrt(float(maxi(1, int(cnt.get(x, 0)))))
+		ws.append(v)
+		total += v
+	if not nat.offensive.is_empty():
+		var ot: int = nat.offensive[0]
+		var ov := sqrt(float(maxi(1, int(cnt.get(ot, 0)))))
+		if world.is_at_war(nat.id, ot) and not picked.has(ot) and ov < total:
+			picked.append(-1)
+			ws.append(ov)
+			total += ov
+	if picked.size() == 1:
+		return [[picked[0], 0, STAGE_BUCKETS]]
+	var out: Array = []
+	var lo := 0
+	for i in picked.size():
+		var hi := STAGE_BUCKETS if i == picked.size() - 1 else mini(STAGE_BUCKETS - (picked.size() - 1 - i), maxi(lo + 1, lo + roundi(STAGE_BUCKETS * float(ws[i]) / total)))
+		out.append([picked[i], lo, hi])
+		lo = hi
+	return out
+
+
 ## Будущий противник для развёртывания: война из текущего или следующего фокуса,
 ## ещё не начатая, и есть общая сухопутная граница.
 ## План наступления: веха взята (у нас или у союзника по стороне) — к следующей;
@@ -985,13 +1061,13 @@ func _axes_step(nat: World.Nation) -> void:
 	nat.offensive[4] = keep
 
 
-func _staging_enemy(nat: World.Nation) -> int:
+func _staging_enemy(nat: World.Nation, cands: Dictionary) -> int:
 	# из будущих противников, граничащих с нами, — тот, у кого длиннее граница с
 	# нынешними врагами (путь к ним: Бельгия к Франции в 1940 г., а не Нидерланды);
 	# при равенстве — меньший номер страны
-	if nat.planned_wars.is_empty():
+	if cands.is_empty():
 		return -1
-	var keys: Array = nat.planned_wars.keys()
+	var keys: Array = cands.keys()
 	keys.sort()
 	var nc := world.nation_count
 	var foes := {}   # нынешние враги — множество, как at_war.has

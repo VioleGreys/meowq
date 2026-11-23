@@ -488,6 +488,7 @@ static func planned_wars(world: World, n: int) -> Dictionary:
 				ok2 = false
 		if ok2:
 			look.append(fd)
+	# значение — фокус войны: развёртывание делится между фокусами (Simulation._staging_enemies)
 	for fd in look:
 		var effs: Array = fd.get("effects", []).duplicate()
 		for e in fd.get("effects", []):
@@ -497,7 +498,7 @@ static func planned_wars(world: World, n: int) -> Dictionary:
 			if e.get("t", "") == "war":
 				var t := tag_id(world, e["target"])
 				if t >= 0 and world.nations[t].alive:
-					res[t] = true
+					res[t] = str(fd.get("id", ""))
 	return res
 
 
@@ -1113,7 +1114,12 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 					nat.wargoals[target] = true
 					if Diplomacy.same_side(world, who, target):
 						continue
-					Diplomacy.declare_war(world, who, target, not e.get("limited", false))
+					var called: Array = []
+					for ct in e.get("call", []):
+						var ci := tag_id(world, ct)
+						if ci >= 0:
+							called.append(ci)
+					Diplomacy.declare_war(world, who, target, not e.get("limited", false), called)
 			"wargoal":
 				if target >= 0:
 					nat.wargoals[target] = true
@@ -2046,7 +2052,11 @@ static func effects_text(world: World, effects: Array) -> String:
 			"event":
 				parts.append("событие «%s»" % world.event_defs.get(e["id"], {}).get("title", e["id"]))
 			"war":
-				parts.append("%sвойна: %s" % [who, tname])
+				var cn: Array = []
+				for ct in e.get("call", []):
+					var ci := tag_id(world, ct)
+					cn.append(world.nations[ci].name if ci >= 0 else ct)
+				parts.append("%sвойна: %s%s" % [who, tname, " (призыв союзников: %s)" % ", ".join(cn) if not cn.is_empty() else ""])
 			"wargoal":
 				parts.append("%sпретензии к стране %s" % [who, tname])
 			"guarantee":

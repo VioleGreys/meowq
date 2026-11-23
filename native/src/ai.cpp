@@ -147,10 +147,12 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	const bool use_guard = guard_a.size() == int64_t(nc) * nc && guard_w_a.size() == int64_t(nc) * nc && mode == AUTO && enemy < 0 && !has_allowed && !has_tgt;
 	std::vector<char> war_front(pc, 0), guard_lvl(pc, 0), sparse_cand(pc, 0);
 	std::vector<double> gw(pc, 0.0);   // мир: худшие отношения соседей (вес, guard_w)
+	// до войны с выбранной страной (развёртывание): и союзная земля у её границы — обычный участок (как ai.gd)
+	const bool stage_ally = !at_war && enemy >= 0;
 	for (int p = 0; p < pc; p++) {
 		const bool own_p = ctrl[p] == nid;
 		// союзная у нашего врага — участок с нуждой «угроза − дивизии союзников» (как ai.gd)
-		if (!own_p && !(at_war && ctrl[p] >= 0 && has_ally && ally[int64_t(nid) * nc + ctrl[p]] == 1)) continue;
+		if (!own_p && !((at_war || stage_ally) && ctrl[p] >= 0 && has_ally && ally[int64_t(nid) * nc + ctrl[p]] == 1)) continue;
 		for (int32_t k = a_start[p]; k < a_start[p + 1]; k++) {
 			const int32_t q = a_list[k];
 			if (land[q] == 0) continue;
@@ -173,7 +175,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 				} else if (use_guard && own_p && !hostile && guard[int64_t(nid) * nc + c] != 0) {
 					sparse_cand[p] = 1;   // нейтрал или слабый сосед
 				}
-			} else if (own_p && matches && (enemy >= 0 || mode == AUTO || has_tgt) && (!has_ally || ally[int64_t(nid) * nc + c] == 0)) {
+			} else if ((own_p || (stage_ally && c == enemy)) && matches && (enemy >= 0 || mode == AUTO || has_tgt) && (!has_ally || ally[int64_t(nid) * nc + c] == 0)) {
 				int g = 2;
 				if (use_guard) {
 					g = guard[int64_t(nid) * nc + c];
@@ -610,6 +612,18 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 			}
 			ally_need[f] = threat - double(allyc);
 			weight[f] = 0.0;
+			// у направления удара по плану — и на союзной земле до ёмкости снабжения за вычетом союзников (как ai.gd)
+			if (has_axis && n_ax > 0 && has_cap) {
+				int aw2 = 0;
+				for (int32_t k = a_start[f]; k < a_start[f + 1]; k++) {
+					const int32_t ma = main_axis[a_list[k]];
+					if (ma) aw2 = std::max(aw2, int(ax_w[ma - 1]));
+				}
+				if (aw2 > 0) {
+					axis_front[f] = aw2;
+					ally_need[f] = std::max(ally_need[f], double(axis_cap(f, aw2) - allyc));
+				}
+			}
 			continue;
 		}
 		if (guard_min[f]) {
@@ -637,7 +651,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	int64_t pool = divs.size();
 	if (has_cap) {
 		for (int32_t f : fronts.order)
-			if (axis_front[f]) pool -= axis_cap(f, axis_front[f]);
+			if (axis_front[f]) pool -= ally_front[f] ? std::max(0, int(std::ceil(ally_need[f]))) : axis_cap(f, axis_front[f]);
 		if (pool < 0) pool = 0;
 	}
 	for (int32_t f : fronts.order) {

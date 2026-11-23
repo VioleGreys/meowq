@@ -163,7 +163,10 @@ static func can_declare(world: World, a: int, b: int) -> String:
 
 ## Объявление войны. Атакующая сторона: страна, её марионетки и согласные
 ## члены фракции. Защищающаяся: цель, её сюзерен и марионетки, фракция, гаранты.
-static func declare_war(world: World, a: int, b: int, call_guarantors: bool = true) -> bool:
+## called — союзники, которых нападающий призывает в войну (эффект war с "call"):
+## член его фракции под ИИ вступает (пакт с жертвой рвёт), игроку — событие
+## с выбором (Politics.ally_call).
+static func declare_war(world: World, a: int, b: int, call_guarantors: bool = true, called: Array = []) -> bool:
 	if can_declare(world, a, b) != "":
 		return false
 	var na: World.Nation = world.nations[a]
@@ -177,10 +180,18 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 	var rb := root(world, b)
 	# члены фракции атакующего: ИИ решает, присоединиться ли к наступательной войне
 	var target_side := {}
+	var player_calls: Array = []
 	for m in faction_members(world, world.nations[rb].faction):
 		target_side[m] = true
 	for m in faction_members(world, na.faction):
 		if m != a and not target_side.has(m) and m != b and m != rb and _joins_offensive(world, m, a, b):
+			attackers[m] = true
+		elif m != a and not target_side.has(m) and m != b and m != rb and called.has(m) and not world.nations[m].capitulated:
+			if world.nations[m].is_player:
+				player_calls.append(m)   # игрок решает сам (событие)
+				continue
+			world.nations[m].pacts.erase(b)
+			world.nations[b].pacts.erase(m)
 			attackers[m] = true
 	# защитники: замыкание по сюзеренам, марионеткам, фракциям и гарантам
 	var changed := true
@@ -226,6 +237,9 @@ static func declare_war(world: World, a: int, b: int, call_guarantors: bool = tr
 	for g in calls:
 		if not defenders.has(g) and not attackers.has(g) and not world.is_at_war(g, a):
 			Politics.guarantee_call(world, g, b, a)
+	for g in player_calls:
+		if not defenders.has(g) and not world.is_at_war(g, b):
+			Politics.ally_call(world, g, b, a)
 	Relations.on_war(world, a, b)
 	world.focus_epoch += 1
 	world.log_event("%s объявляет войну: %s!" % [na.name, world.nations[b].name])

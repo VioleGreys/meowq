@@ -373,9 +373,12 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var guard_lvl := {}   # война: наша провинция у враждебного не-противника -> 1 (минимум)
 	var sparse_cand := {} # война: наша провинция у нейтрала — охрана через провинцию
 	var gw := {}          # мир: наша провинция -> худшие отношения соседей (вес, guard_w)
+	# до войны с выбранной страной (развёртывание): и союзная земля у её границы —
+	# обычный участок (вермахт в Румынии, Болгарии и Венгрии весной 1941 г.)
+	var stage_ally := not at_war and enemy >= 0
 	for p in prov_count:
 		var own_p := ctrl[p] == nid
-		if not own_p and not (at_war and ctrl[p] >= 0 and ally.size() > 0 and ally[nid * nc + ctrl[p]] == 1):
+		if not own_p and not ((at_war or stage_ally) and ctrl[p] >= 0 and ally.size() > 0 and ally[nid * nc + ctrl[p]] == 1):
 			continue
 		for k in range(a_start[p], a_start[p + 1]):
 			var q := a_list[k]
@@ -402,7 +405,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 					guard_lvl[p] = 1
 				elif use_guard and own_p and not hostile and guard[nid * nc + c] != 0:
 					sparse_cand[p] = true   # нейтрал или слабый сосед
-			elif own_p and matches and (enemy >= 0 or mode == "auto" or has_tgt) and (ally.size() == 0 or ally[nid * nc + c] == 0):
+			elif (own_p or (stage_ally and c == enemy)) and matches and (enemy >= 0 or mode == "auto" or has_tgt) and (ally.size() == 0 or ally[nid * nc + c] == 0):
 				var g := 2
 				if use_guard:
 					g = guard[nid * nc + c]
@@ -798,6 +801,16 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 					allyc += 1
 			ally_need[f] = threat - float(allyc)
 			weight[f] = 0.0
+			# у направления удара по плану — и на союзной земле до ёмкости снабжения
+			# за вычетом союзников (Апрельская война: удар на Белград из Венгрии)
+			if not main_axis.is_empty() and n_ax > 0 and has_cap:
+				var aw2 := 0
+				for k in range(a_start[f], a_start[f + 1]):
+					if main_axis.has(a_list[k]):
+						aw2 = maxi(aw2, ax_w[int(main_axis[a_list[k]])])
+				if aw2 > 0:
+					axis_front[f] = aw2
+					ally_need[f] = maxf(float(ally_need[f]), float(_axis_cap(supcap[f], aw2) - allyc))
 			continue
 		if guard_min.has(f):
 			weight[f] = 0.0   # минимум — вне раздела армии
@@ -823,7 +836,7 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 	var pool := divs.size()
 	if has_cap and not axis_front.is_empty():
 		for f in axis_front:
-			pool -= _axis_cap(supcap[f], axis_front[f])
+			pool -= maxi(0, int(ceil(float(ally_need[f])))) if ally_front.has(f) else _axis_cap(supcap[f], axis_front[f])
 		pool = maxi(0, pool)
 	for f in fronts:
 		if ally_front.has(f):

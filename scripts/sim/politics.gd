@@ -315,6 +315,34 @@ static func guarantee_call(world: World, g: int, b: int, a: int) -> void:
 	world.event_queue.append([id, a, world.day])
 
 
+## Союзник a призывает игрока g в свою войну против b (эффект war с "call",
+## решение пользователя): событие с выбором — вступить или отказать; отказ
+## портит отношения с призвавшим.
+const CALL_REFUSE_REP := -30.0
+
+static func ally_call(world: World, g: int, b: int, a: int) -> void:
+	var tg: String = world.nation_tags[g]
+	var tb: String = world.nation_tags[b]
+	var ta: String = world.nation_tags[a]
+	var id := "acall_%d_%d_%d" % [g, b, world.day]
+	var nb: World.Nation = world.nations[b]
+	var na: World.Nation = world.nations[a]
+	var ev := {
+		"title": "Призыв союзника: война со страной %s" % nb.name,
+		"target": tg, "photo": ta,
+		"text": "%s начинает войну против страны %s и призывает нас выступить вместе, как подобает союзнику.\n\nОтказ не разорвёт союз, но союзник его запомнит." % [na.name, nb.name],
+		"options": [
+			{"name": "Выступить", "ai": 100, "desc": "Война со страной %s на стороне страны %s; +5 %% поддержки войны" % [nb.name, na.name],
+				"effects": [{"t": "war", "target": tb}, {"t": "war_support", "v": 0.05}]},
+			{"name": "Отказать", "ai": 0, "desc": "Отношения страны %s к нам −%d, −25 ПВ" % [na.name, int(absf(CALL_REFUSE_REP))],
+				"effects": [{"t": "rep", "by": ta, "of": tg, "v": CALL_REFUSE_REP}, {"t": "pol_power", "v": -25}]},
+		],
+	}
+	world.dyn_events[id] = ev
+	world.event_defs[id] = ev
+	world.event_queue.append([id, a, world.day])
+
+
 ## Расчёт ИИ-гаранта (решение пользователя): вступается, если по оценке война
 ## кончится за 2 года и у нападающих нет большого перевеса ни в промышленности,
 ## ни в военной силе (не больше JUDGE_RATIO). Срок: JUDGE_K × (A + D) / |A − D|
