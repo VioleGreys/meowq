@@ -21,6 +21,8 @@ var last_tick_usec := 0
 var phase_usec := {}
 var land_totals: Array = []   # Military.land_totals — для пересмотра заводов, раз в 10 дней
 var land_totals_day := -100
+var log_losses := false   # диагностика (tests/loss_diag.gd): причина гибели дивизии по id
+var loss_log := {}
 
 
 ## fresh = false — мир восстановлен из сохранения (SaveGame): стартовые
@@ -1582,7 +1584,7 @@ func _phase_combat(battles: Dictionary) -> void:
 				a.path = PackedInt32Array()
 				a.progress = 0.0
 				if a.strength <= 5.0:
-					_destroy(a, "разбита")
+					_destroy(a, "разбита", "атака")
 		var att_owner: int = battles[p][0].owner
 		var rt: Array = []
 		var h := world.pl_head[p]
@@ -1662,17 +1664,19 @@ func _retreat(d: World.Division) -> void:
 			best_score = score
 			best = q
 	if best < 0 or d.strength <= 5.0:
-		_destroy(d, "окружена и уничтожена" if best < 0 else "разбита")
+		_destroy(d, "окружена и уничтожена" if best < 0 else "разбита", "некуда отступить" if best < 0 else "оборона")
 		return
 	d.prov = best
 	d.path = PackedInt32Array()
 	d.progress = 0.0
 
 
-func _destroy(d: World.Division, why: String) -> void:
+func _destroy(d: World.Division, why: String, kind := "") -> void:
 	if not d.alive:
 		return
 	d.alive = false
+	if log_losses:
+		loss_log[d.id] = kind
 	if world.nations[d.owner].is_player:
 		world.log_event("Наша дивизия %s: %s" % [why, world.p_name[d.prov]])
 
@@ -1736,7 +1740,7 @@ func _phase_recovery() -> void:
 		nat.stock = st
 		nat.manpower = manpower[nat.id]
 	for i in r[2]:
-		_destroy(world.divisions[i], "погибла в окружении")
+		_destroy(world.divisions[i], "погибла в окружении", "без снабжения")
 
 
 # --- Капитуляция -------------------------------------------------------------
