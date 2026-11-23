@@ -6,6 +6,9 @@ extends SceneTree
 ## события, мир, переброска морем), районы гибели (ближайший город из списка
 ## ниже) и состояние дивизии за день до гибели (снабжение, организация, снаряжение).
 ##   godot --headless --path . --script res://tests/loss_diag.gd -- --from=1941-06-22 --until=1943-01-01 --tags=SOV,GER [--seed=N --top=6]
+##   [--detail=N — дни, когда в провинции погибло ≥N; --stacks=N — стопки раз в неделю;
+##    --pockets — котлы и цели прорыва каждый день и приказы отвода (Simulation._escapes);
+##    --save=1942-07-15:имя — записать партию; --load=имя — начать с записи]
 
 const AREAS := {
 	"Мурманск": Vector2(33.1, 68.97), "Карелия": Vector2(33.0, 62.5), "Ленинград": Vector2(30.3, 59.94),
@@ -56,6 +59,8 @@ func _init() -> void:
 	var top := 6
 	var stacks := 0   # раз в неделю: самые большие стопки первой страны --tags
 	var detail := 0   # печатать дни, когда в одной провинции погибло не меньше N дивизий
+	var pockets := false   # каждый день: котлы первой страны --tags, как их видит ИИ (Simulation._breakouts)
+	var saves := {}
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--until="):
 			until = a.split("=")[1]
@@ -71,6 +76,17 @@ func _init() -> void:
 			detail = int(a.split("=")[1])
 		if a.begins_with("--top="):
 			top = int(a.split("=")[1])
+		if a == "--pockets":
+			pockets = true
+		if a.begins_with("--save="):
+			var sv: PackedStringArray = a.split("=")[1].split(":")
+			saves[w.day_of(sv[0])] = sv[1]
+		if a.begins_with("--load="):
+			var r: Dictionary = SaveGame.load_into(a.split("=")[1], w, sim)
+			if r["err"] != "":
+				print("сохранение не загружено: ", r["err"])
+				quit(1)
+				return
 	var end_day := w.day_of(until)
 	var from_day := w.day_of(from)
 	var ids := []
@@ -88,6 +104,14 @@ func _init() -> void:
 			sim.resolve_peace("annex")
 		sim.loss_log.clear()
 		sim.tick()
+		if saves.has(w.day):
+			var se := SaveGame.write(saves[w.day], w, sim, {"nation": "SWE"})
+			print("  записано %s: %s" % [saves[w.day], se if se != "" else "ок"])
+		if pockets and w.day >= from_day:
+			_pockets(sim, ids[0])
+			if sim.esc_log.has(ids[0]):
+				print("  отвод %s: %d" % [w.date_short(), int(sim.esc_log[ids[0]])])
+				sim.esc_log.erase(ids[0])
 		for e in w.events:
 			if w.day >= from_day and ("капитулирует" in e or "объявляет войну" in e):
 				print("  %s — %s" % [w.date_short(), e])
@@ -162,11 +186,53 @@ func _init() -> void:
 					if cur[id][0] == n:
 						c += 1
 				_print(w.date_short(), tags[i], c, month[n], top)
+				if sim.esc_log.has(n):
+					print("    отвод из-под котла: %d приказов" % int(sim.esc_log[n]))
+					sim.esc_log.erase(n)
 				month[n] = _blank()
 	print("--- итого с %s по %s" % [from, until])
 	for i in ids.size():
 		_print("всего", tags[i], -1, total[ids[i]], 20)
 	quit(0)
+
+
+## Котлы страны n, как их видит ИИ: участок, дивизий в нём, снабжение, орг., цель прорыва.
+func _pockets(sim: Simulation, n: int) -> void:
+	var mine := PackedInt32Array()
+	for i in w.d_alive.size():
+		if w.d_alive[i] == 1 and w.d_owner[i] == n:
+			mine.append(i)
+	var nat: World.Nation = w.nations[n]
+	var cnt := {}
+	var home: int = sim._main_comp(n)
+	for i in mine:
+		var p := w.d_prov[i]
+		if p >= 0 and w.p_comp.size() == w.prov_count:
+			var c := w.p_comp[p]
+			if c != home:
+				if not cnt.has(c):
+					cnt[c] = [0, 0.0, 0.0, 0, p]
+				cnt[c][0] += 1
+				cnt[c][1] += w.d_sup[i]
+				cnt[c][2] += w.d_org[i] / maxf(w.divisions[i].max_org, 0.01)
+				if w.divisions[i].path.size() > 0:
+					cnt[c][3] += 1
+	if cnt.is_empty():
+		return
+	var bks: Array = sim._breakouts(nat, mine)
+	var parts: Array = []
+	for c in cnt:
+		var v: Array = cnt[c]
+		if v[0] < 3:
+			continue
+		var tgt := "нет"
+		for bk in bks:
+			if int(bk[0]) == int(c):
+				tgt = "%s←%s" % [w.p_name[int(bk[1])], w.p_name[int(bk[2])]]
+		parts.append("[%s: %dд сн%d%% орг%d%% с путём %d, прорыв %s]" % [w.p_name[int(v[4])], v[0],
+			roundi(100 * v[1] / v[0]), roundi(100 * v[2] / v[0]), v[3], tgt])
+	if not parts.is_empty():
+		print("  котлы %s %s (основная зона %d, столица %d): %s" % [w.date_short(), w.nation_tags[n], home, nat.dep_home, " ".join(parts)])
 
 
 func _blank() -> Dictionary:

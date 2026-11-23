@@ -23,6 +23,7 @@ var land_totals: Array = []   # Military.land_totals — для пересмот
 var land_totals_day := -100
 var log_losses := false   # диагностика (tests/loss_diag.gd): причина гибели дивизии по id
 var loss_log := {}
+var esc_log := {}   # страна -> приказов отвода из-под угрозы котла (диагностика)
 
 
 ## fresh = false — мир восстановлен из сохранения (SaveGame): стартовые
@@ -638,6 +639,8 @@ func _phase_ai() -> void:
 	for n in world.nation_count:
 		by_nation[n] = PackedInt32Array(by_nation[n])
 	var jobs: Array = []
+	var escaping := {}   # страна -> {слот: путь} — отвод из-под угрозы котла (вне общего плана)
+	_ai_escapes = escaping
 	for nat in world.nations:
 		if nat.alive and not nat.is_player:
 			var _pz := Time.get_ticks_usec()
@@ -660,6 +663,12 @@ func _phase_ai() -> void:
 			for bk in bks:
 				jobs.append({"pocket_of": nat.id, "comp": bk[0], "objective": bk[1]})
 				jobs.append({"relief_of": nat.id, "near": bk[1], "objective": bk[2]})
+			# угроза котла: дивизии за горловиной, которую враг вот-вот перережет, — отвод
+			_pz = Time.get_ticks_usec()
+			var esc := _escapes(nat, by_nation[nat.id])
+			Prof.add("из:отвод", _pz)
+			if not esc.is_empty():
+				escaping[nat.id] = esc
 	var _pg0 := Time.get_ticks_usec()
 	jobs.append_array(_group_jobs())
 	Prof.add("из:группы", _pg0)
@@ -766,6 +775,13 @@ func _phase_ai() -> void:
 					if not _is_staged(slot) or not _in_bucket(slot, staged[nid]):
 						rest.append(slot)
 				mine = rest
+			if escaping.has(nid):
+				var es: Dictionary = escaping[nid]
+				var rest3 := PackedInt32Array()
+				for slot in mine:
+					if not es.has(slot):
+						rest3.append(slot)
+				mine = rest3
 			if pocketed.has(nid):
 				var rest2 := PackedInt32Array()
 				var pk: Dictionary = pocketed[nid]
@@ -795,6 +811,7 @@ func _phase_ai() -> void:
 
 
 var _ai_jobs: Array = []
+var _ai_escapes := {}
 var _ai_tables := {}
 var _ai_plans: Array = []
 var _ai_gid := -1
@@ -803,7 +820,7 @@ var _ai_gid := -1
 ## Дождаться военных планов ИИ и применить приказы (конец дня).
 const BREAKOUT_STEPS := 15   # котёл: путь по суше до основной зоны не длиннее (иначе — гарнизон за морем)
 const BREAKOUT_RATIO := 0.8  # окружённые атакуют и без перевеса
-const BREAKOUT_SUP := 0.5    # окружение — среднее снабжение дивизий участка ниже
+const BREAKOUT_SUP := 0.5    # окружение — среднее снабжение дивизий участка ниже (0,9 пробовали: Испания — Франко проигрывает на зерне 1, у Горького не помогло — снабжение падает с 98 до 9 % за два дня)
 
 
 ## Котлы страны ИИ на войне: участки суши стороны (World.p_comp) не основной
@@ -812,8 +829,10 @@ const BREAKOUT_SUP := 0.5    # окружение — среднее снабж�
 ## котла, откуда путь]], крупные котлы первыми (не больше 3).
 func _breakouts(nat: World.Nation, mine: PackedInt32Array) -> Array:
 	var res: Array = []
-	var home: int = nat.dep_home
-	if nat.at_war.is_empty() or home < 0 or world.p_comp.size() != world.prov_count:
+	if nat.at_war.is_empty() or world.p_comp.size() != world.prov_count:
+		return res
+	var home := _main_comp(nat.id)
+	if home < 0:
 		return res
 	var comp := world.p_comp
 	var cnt := {}
@@ -881,6 +900,398 @@ func _breakouts(nat: World.Nation, mine: PackedInt32Array) -> Array:
 	return res
 
 
+## Основная зона страны для котлов: участок суши стороны (World.p_comp) с
+## наибольшим числом своих провинций (при равенстве — меньший номер участка).
+## Не участок столицы: окружённая столица (Москва летом 1942 г.) — сама котёл,
+## и прорыв к ней шёл сквозь врага, прочь от основной армии (Дзержинск, 143 дивизии).
+var _main_cache := {}   # страна -> основная зона на день _main_day
+var _main_day := -1
+
+
+func _main_comp(nid: int) -> int:
+	if _main_day != world.day:
+		# все страны за один проход по карте (на страну — дорого: десятки стран в войне)
+		_main_day = world.day
+		_main_cache.clear()
+		var comp := world.p_comp
+		var ctrl := world.p_controller
+		var cnt := {}   # страна * 2^20 + участок -> провинций
+		for p in world.prov_count:
+			var c := ctrl[p]
+			if c >= 0 and comp[p] >= 0:
+				var k := c * 1048576 + comp[p]
+				cnt[k] = int(cnt.get(k, 0)) + 1
+		var best := {}   # страна -> [провинций, участок]
+		for k in cnt:
+			var n: int = int(k) / 1048576
+			var c2: int = int(k) % 1048576
+			var v: int = cnt[k]
+			if not best.has(n) or v > int(best[n][0]) or (v == int(best[n][0]) and c2 < int(best[n][1])):
+				best[n] = [v, c2]
+		for n in best:
+			_main_cache[n] = int(best[n][1])
+	return int(_main_cache.get(nid, -1))
+
+
+const ESC_RATIO := 2.0    # угроза котла: участок фронта «не удержать», если сила врага рядом больше нашей во столько раз
+const ESC_MIN := 10       # отводим, если за горловиной не меньше стольких наших дивизий
+const ESC_PIECE_MAX := 400  # мешок — не больше стольких провинций (больше — основная зона, не бросаем)
+const ESC_STEPS := 12     # путь отвода — не длиннее
+
+
+var _esc_side := {}   # [день, зона, стороны] -> сила, «не удержать», куски (_esc_front)
+var _esc_pw: Array = []
+var _esc_pw_day := -1
+
+
+## Сила дивизий (люди × доля организации) по парам «провинция, владелец» — один
+## раз в день для всех сторон: [провинции, владельцы, сила] в порядке слотов.
+func _esc_power() -> Array:
+	var dal := world.d_alive
+	var dow := world.d_owner
+	var dpv := world.d_prov
+	var dst := world.d_str
+	var dorg := world.d_org
+	var dmo := world.d_morg
+	var dtr := world.d_transit
+	var idx := {}
+	var pr := PackedInt32Array()
+	var ow := PackedInt32Array()
+	var pw := PackedFloat64Array()
+	for i in dal.size():
+		if dal[i] == 0 or dpv[i] < 0 or dtr[i] > 0 or dow[i] < 0:
+			continue
+		var k := dpv[i] * 4096 + dow[i]
+		var v := dst[i] * (dorg[i] / maxf(dmo[i], 0.01))
+		if idx.has(k):
+			pw[int(idx[k])] += v
+		else:
+			idx[k] = pr.size()
+			pr.append(dpv[i])
+			ow.append(dow[i])
+			pw.append(v)
+	return [pr, ow, pw]
+
+
+## Для _escapes: сила по провинциям (люди × доля организации) нашей стороны и
+## врагов (sk: 1 — своя сторона, 2 — враг), участки основной зоны main, которые
+## не удержать, и куски зоны без них; {} — угрозы нет.
+func _esc_front(nid: int, main: int, sk: PackedByteArray) -> Dictionary:
+	var res := {}
+	var pc := world.prov_count
+	var comp := world.p_comp
+	var land := world.p_land
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	# сила по провинциям: наша сторона и враги (люди × доля организации)
+	var ours := PackedFloat64Array()
+	ours.resize(pc)
+	var theirs := PackedFloat64Array()
+	theirs.resize(pc)
+	if _esc_pw_day != world.day:
+		_esc_pw_day = world.day
+		_esc_pw = _esc_power()
+	var e_prov: PackedInt32Array = _esc_pw[0]
+	var e_own: PackedInt32Array = _esc_pw[1]
+	var e_pw: PackedFloat64Array = _esc_pw[2]
+	var hot := PackedInt32Array()   # провинции с врагом
+	for j in e_prov.size():
+		var o := e_own[j]
+		var sd := sk[o] if o < sk.size() else 0
+		if sd == 0:
+			continue
+		var pp := e_prov[j]
+		if sd == 1:
+			ours[pp] += e_pw[j]
+		else:
+			if theirs[pp] == 0.0:
+				hot.append(pp)
+			theirs[pp] += e_pw[j]
+	# участки фронта основной зоны, которые не удержать (смотрим только соседей
+	# провинций с врагом — полный обход карты на каждую сторону был дорог)
+	var lost := PackedByteArray()
+	lost.resize(pc)
+	var seen := PackedByteArray()
+	seen.resize(pc)
+	var lost_list := PackedInt32Array()
+	var any_lost := false
+	for e in hot:
+		for k0 in range(a_start[e], a_start[e + 1]):
+			var p := a_list[k0]
+			if seen[p] == 1 or comp[p] != main or land[p] == 0:
+				continue
+			seen[p] = 1
+			var th := 0.0
+			for k in range(a_start[p], a_start[p + 1]):
+				th += theirs[a_list[k]]
+			if th > 0.0 and th > ESC_RATIO * ours[p]:
+				lost[p] = 1
+				lost_list.append(p)
+				any_lost = true
+	if not any_lost:
+		return res
+	# куски основной зоны без них: обход от соседей участков «не удержать», не
+	# дальше ESC_PIECE_MAX провинций; не замкнулся — это основная зона (-1), а не
+	# мешок (полный обход зоны на каждую сторону был дорог — у Германии тысячи
+	# провинций)
+	var piece := PackedInt32Array()
+	piece.resize(pc)
+	piece.fill(-1)
+	var mark := PackedInt32Array()   # номер обхода, в котором провинция уже была
+	mark.resize(pc)
+	mark.fill(-1)
+	var sizes: Array = []
+	var run := 0
+	for lp in lost_list:
+		for k0 in range(a_start[lp], a_start[lp + 1]):
+			var st := a_list[k0]
+			if comp[st] != main or lost[st] == 1 or mark[st] >= 0:
+				continue
+			var q := PackedInt32Array([st])
+			mark[st] = run
+			var h := 0
+			var big := false
+			while h < q.size() and not big:
+				var x := q[h]
+				h += 1
+				for k in range(a_start[x], a_start[x + 1]):
+					var y := a_list[k]
+					if comp[y] != main or lost[y] == 1 or mark[y] == run:
+						continue
+					if mark[y] >= 0 or q.size() >= ESC_PIECE_MAX:
+						big = true   # дошли до уже основной зоны или слишком велик
+						break
+					mark[y] = run
+					q.append(y)
+			if not big:
+				var id := sizes.size()
+				for x in q:
+					piece[x] = id
+				sizes.append(q.size())
+			run += 1
+	if sizes.is_empty():
+		return res
+	var core := -1
+	return {"ours": ours, "theirs": theirs, "lost": lost, "lost_list": lost_list, "piece": piece, "sizes": sizes, "core": core}
+
+
+## Угроза котла (решение пользователя, ноябрь 2026: «ИИ обходит котлы»): взгляд на
+## шаг вперёд — враг берёт участки нашего фронта, где его сила у них больше нашей в
+## ESC_RATIO раз. Если без них основная зона распадается, то куски вне самого
+## большого — будущие котлы: дивизии оттуда отходят к нему заранее, пока горловина
+## открыта (раньше ждали окружения: 143 дивизии у Горького, август 1942 г.; прорыв
+## после замыкания поздний — снабжение падает с 98 до 9 % за два дня). Мешок со
+## столицей или крупным городом не бросаем. → {слот: путь}.
+func _escapes(nat: World.Nation, mine: PackedInt32Array) -> Dictionary:
+	var res := {}
+	if nat.at_war.is_empty() or world.p_comp.size() != world.prov_count or mine.size() < ESC_MIN:
+		return res
+	var main := _main_comp(nat.id)
+	if main < 0:
+		return res
+	var nid := nat.id
+	var pc := world.prov_count
+	var comp := world.p_comp
+	var ctrl := world.p_controller
+	var land := world.p_land
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	# сила, участки «не удержать» и куски — общие для стран с одинаковыми
+	# союзниками и врагами (Германия, Италия, Румыния…): один расчёт на сторону и день
+	var sk := PackedByteArray()
+	sk.resize(world.nations.size())
+	for o in world.nations.size():
+		sk[o] = 1 if (o == nid or Diplomacy.same_side(world, o, nid)) else (2 if world.is_at_war(nid, o) else 0)
+	var key := "%d:%d:%s" % [world.day, main, Marshalls.raw_to_base64(sk)]
+	if not _esc_side.has(key):
+		if _esc_side.size() > 64:
+			_esc_side.clear()
+		_esc_side[key] = _esc_front(nid, main, sk)
+	var fr: Dictionary = _esc_side[key]
+	if fr.is_empty():
+		return res
+	var ours: PackedFloat64Array = fr["ours"]
+	var theirs: PackedFloat64Array = fr["theirs"]
+	var lost: PackedByteArray = fr["lost"]
+	var piece: PackedInt32Array = fr["piece"]
+	var lost_list: PackedInt32Array = fr["lost_list"]
+	var sizes: Array = fr["sizes"]
+	var dal := world.d_alive
+	var dpv := world.d_prov
+	var dst := world.d_str
+	var dorg := world.d_org
+	var dmo := world.d_morg
+	var dtr := world.d_transit
+	# куски под угрозой: наших дивизий не меньше ESC_MIN
+	var cnt := {}
+	for i in mine:
+		if dal[i] == 1 and dpv[i] >= 0 and dtr[i] <= 0:
+			var pid := piece[dpv[i]]
+			if pid >= 0:
+				cnt[pid] = int(cnt.get(pid, 0)) + 1
+	var threat := {}
+	for pid in cnt:
+		if int(cnt[pid]) >= ESC_MIN:
+			threat[pid] = true
+	if threat.is_empty():
+		return res
+	# бросаем — малый кусок без столицы и крупных городов (его дивизии уходят);
+	# остальные держим (только подкрепление горловин)
+	var drop := threat.duplicate()
+	for p in pc:
+		if piece[p] >= 0 and drop.has(piece[p]) and (p == nat.capital or world.p_vp[p] >= 50):
+			drop.erase(piece[p])
+	# горловины (решение пользователя: «укреплять провинции, что могут привести к
+	# котлу, большим количеством дивизий»): участки «не удержать» у ядра и у куска
+	# под угрозой; нужда — сила врага рядом сверх нашей (паритет), не больше
+	# ESC_NECK_MAX дивизий на горловину
+	var necks: Array = []
+	for p in lost_list:
+		var by_core := false
+		var pieces_here := {}
+		for k in range(a_start[p], a_start[p + 1]):
+			var y := a_list[k]
+			if comp[y] == main and piece[y] < 0 and lost[y] == 0:
+				by_core = true
+			elif piece[y] >= 0 and threat.has(piece[y]):
+				pieces_here[piece[y]] = true
+		if by_core and not pieces_here.is_empty():
+			necks.append(p)
+	var power := func(i: int) -> float:
+		return dst[i] * (dorg[i] / maxf(dmo[i], 0.01))
+	var need := {}
+	for p in necks:
+		var th := 0.0
+		for k in range(a_start[p], a_start[p + 1]):
+			th += theirs[a_list[k]]
+		need[p] = th - ours[p]
+	if necks.size() > ESC_NECKS:
+		var ord: Array = []
+		for p in necks:
+			ord.append([-float(need[p]), p])
+		ord.sort()
+		necks = []
+		for o in ord.slice(0, ESC_NECKS):
+			necks.append(int(o[1]))
+	var sent := {}   # горловина -> отправлено подкреплений
+	# дивизии брошенного куска — в ядро (не в горловину: туда шли все без предела —
+	# 132 дивизии в Туле, ноябрь 1942 г., горловину отрезали вместе с ними)
+	var core_src: Array = []   # основная зона у участков «не удержать»
+	var cs_seen := {}
+	for lp in lost_list:
+		for k in range(a_start[lp], a_start[lp + 1]):
+			var y := a_list[k]
+			if comp[y] == main and piece[y] < 0 and lost[y] == 0 and not cs_seen.has(y):
+				cs_seen[y] = true
+				core_src.append(y)
+	var to_core := _bfs_to(core_src, comp, main, a_start, a_list, pc, ESC_STEPS, piece, lost, false)
+	for i in mine:
+		if dal[i] == 0 or dpv[i] < 0 or dtr[i] > 0:
+			continue
+		var p := dpv[i]
+		if piece[p] < 0 or not drop.has(piece[p]) or to_core[p] < 0:
+			continue
+		var path := _walk(to_core, p)
+		if not path.is_empty():
+			res[i] = path
+	# подкрепление горловин из ближнего тыла ядра (не с фронта: провинции без
+	# соседей-врагов), ближние первыми
+	var enemy_ctrl := PackedByteArray()
+	enemy_ctrl.resize(pc)
+	for p in pc:
+		var c := ctrl[p]
+		if c >= 0 and c < sk.size() and sk[c] == 2:
+			enemy_ctrl[p] = 1
+	var at_prov := {}
+	for i in mine:
+		if dal[i] == 1 and dpv[i] >= 0 and dtr[i] <= 0 and not res.has(i):
+			if not at_prov.has(dpv[i]):
+				at_prov[dpv[i]] = []
+			at_prov[dpv[i]].append(i)
+	for p in necks:
+		if float(need[p]) <= 0.0 or int(sent.get(p, 0)) >= ESC_NECK_MAX:
+			continue
+		var nx := _bfs_to([p], comp, main, a_start, a_list, pc, ESC_HELP_STEPS, piece, lost, true)
+		var order: Array = []
+		for x in at_prov:
+			if piece[x] >= 0 or nx[x] < 0 or lost[x] == 1:
+				continue
+			var front := false
+			for k in range(a_start[x], a_start[x + 1]):
+				if enemy_ctrl[a_list[k]] == 1:
+					front = true
+					break
+			if not front:
+				order.append([_hops(nx, x), x])
+		order.sort()
+		for o in order:
+			if float(need[p]) <= 0.0 or int(sent.get(p, 0)) >= ESC_NECK_MAX:
+				break
+			var x: int = o[1]
+			var path := _walk(nx, x)
+			for i in at_prov[x]:
+				if float(need[p]) <= 0.0 or int(sent.get(p, 0)) >= ESC_NECK_MAX:
+					break
+				if res.has(i):
+					continue
+				res[i] = path
+				need[p] = float(need[p]) - power.call(i)
+				sent[p] = int(sent.get(p, 0)) + 1
+	return res
+
+
+const ESC_NECK_MAX := 24    # горловина: подкреплений не больше
+const ESC_NECKS := 8        # подкрепляем не больше стольких горловин (самые опасные)
+const ESC_HELP_STEPS := 6   # подкрепление — из тыла не дальше стольких переходов
+
+
+## Обход от провинций src по суше участка main (core_only — только по основной
+## зоне: не мешки и не участки «не удержать»); → следующая провинция к src
+## (-1 — сама src, -2 — не дошли).
+func _bfs_to(src: Array, comp: PackedInt32Array, main: int, a_start: PackedInt32Array, a_list: PackedInt32Array,
+		pc: int, steps: int, piece: PackedInt32Array, lost: PackedByteArray, core_only: bool) -> PackedInt32Array:
+	var nxt := PackedInt32Array()
+	nxt.resize(pc)
+	nxt.fill(-2)
+	var dist := PackedInt32Array()
+	dist.resize(pc)
+	var q := PackedInt32Array()
+	for p in src:
+		nxt[p] = -1
+		q.append(p)
+	var h := 0
+	while h < q.size():
+		var x := q[h]
+		h += 1
+		if dist[x] >= steps:
+			continue
+		for k in range(a_start[x], a_start[x + 1]):
+			var y := a_list[k]
+			if comp[y] == main and nxt[y] == -2 and (not core_only or (piece[y] < 0 and lost[y] == 0)):
+				nxt[y] = x
+				dist[y] = dist[x] + 1
+				q.append(y)
+	return nxt
+
+
+static func _walk(nxt: PackedInt32Array, p: int) -> PackedInt32Array:
+	var path := PackedInt32Array()
+	var x := nxt[p]
+	while x >= 0:
+		path.append(x)
+		x = nxt[x]
+	return path
+
+
+static func _hops(nxt: PackedInt32Array, p: int) -> int:
+	var n := 0
+	var x := nxt[p]
+	while x >= 0:
+		n += 1
+		x = nxt[x]
+	return n
+
+
 const RELIEF_STEPS := 4      # деблокирование: дивизии основной зоны не дальше стольких переходов от точки прорыва
 const RELIEF_MAX := 15       # и не больше стольких (ближние первыми)
 const RELIEF_RATIO := 1.0    # навстречу окружённым — без требования перевеса
@@ -890,7 +1301,7 @@ const RELIEF_RATIO := 1.0    # навстречу окружённым — бе�
 ## переходов по своей суше от провинции near (куда прорываются окружённые),
 ## ближние первыми, не больше RELIEF_MAX; уже занятые другим котлом (taken) — нет.
 func _relief_divs(nid: int, near: int, mine: PackedInt32Array, taken: Dictionary) -> PackedInt32Array:
-	var home: int = world.nations[nid].dep_home
+	var home := _main_comp(nid)
 	var comp := world.p_comp
 	var dist := {near: 0}
 	var q := PackedInt32Array([near])
@@ -1127,6 +1538,7 @@ static func border_gd(ctrl: PackedInt32Array, a_start: PackedInt32Array, a_list:
 func _finish_ai() -> void:
 	Spec.finish(world)
 	if _ai_jobs.is_empty():
+		_apply_escapes()
 		return
 	Parallel.finish(_ai_gid)
 	_ai_gid = -1
@@ -1158,6 +1570,33 @@ func _finish_ai() -> void:
 				d.path = order[1]
 				d.progress = 0.0
 	_ai_plans = []
+	_apply_escapes()
+
+
+## Приказы отвода (_escapes): слоты — того же дня, что и снимок ИИ.
+func _apply_escapes() -> void:
+	var esc := _ai_escapes
+	_ai_escapes = {}
+	for nid in esc:
+		var e: Dictionary = esc[nid]
+		for slot in e:
+			if slot < world.divisions.size():
+				var d: World.Division = world.divisions[slot]
+				if d.alive and d.owner == int(nid) and d.transit_days <= 0:
+					var np: PackedInt32Array = e[slot]
+					var at := np.find(d.prov)   # путь из прежнего расчёта: часть уже пройдена
+					if at >= 0:
+						np = np.slice(at + 1)
+					if np.is_empty():
+						continue
+					# уже идёт туда же — переход не начинаем заново (приказ повторяется
+					# каждый день ИИ; сброс хода держал дивизии на месте)
+					var keep := not d.path.is_empty() and d.path[0] == np[0]
+					d.path = np
+					if not keep:
+						d.progress = 0.0
+					if log_losses:
+						esc_log[int(nid)] = int(esc_log.get(int(nid), 0)) + 1
 
 
 func _phase_navy() -> void:
@@ -1581,10 +2020,11 @@ func _phase_combat(battles: Dictionary) -> void:
 		var p: int = provs[i]
 		for a in battles[p]:
 			if a.org <= 0.5 or a.strength <= 5.0:
+				# атака отбита: дивизия остаётся в своей провинции — теряет опыт
+				# (организацию, людей и технику — в бою), но не гибнет
 				a.path = PackedInt32Array()
 				a.progress = 0.0
-				if a.strength <= 5.0:
-					_destroy(a, "разбита", "атака")
+				_beaten(a)
 		var att_owner: int = battles[p][0].owner
 		var rt: Array = []
 		var h := world.pl_head[p]
@@ -1663,12 +2103,28 @@ func _retreat(d: World.Division) -> void:
 		if score > best_score:
 			best_score = score
 			best = q
-	if best < 0 or d.strength <= 5.0:
-		_destroy(d, "окружена и уничтожена" if best < 0 else "разбита", "некуда отступить" if best < 0 else "оборона")
+	# решение пользователя (ноябрь 2026): проигравшая с путём отхода теряет
+	# организацию, оснащение, людей (в бою) и опыт, но не гибнет; без пути
+	# отхода — гибнет безвозвратно
+	if best < 0:
+		_destroy(d, "окружена и уничтожена", "некуда отступить")
 		return
 	d.prov = best
 	d.path = PackedInt32Array()
 	d.progress = 0.0
+	_beaten(d)
+
+
+const XP_BEATEN := 0.2   # проигравшая бой теряет такую долю опыта (уровень дивизии)
+const STR_MIN := 1.0     # разбитая, но отошедшая — не меньше стольких людей (не ноль)
+
+
+func _beaten(d: World.Division) -> void:
+	var s := d.slot
+	if s < world.d_xp.size():
+		world.d_xp[s] = world.d_xp[s] * (1.0 - XP_BEATEN)
+	if world.d_str[s] < STR_MIN:
+		world.d_str[s] = STR_MIN
 
 
 func _destroy(d: World.Division, why: String, kind := "") -> void:
