@@ -4440,13 +4440,18 @@ func _update_popup_dynamic() -> void:
 			var used := Military.assigned_factories(n)
 			_dynamic["prod"].text = "Военных заводов: %d · на линиях: %d · свободно: %d" % [n.mil, used, n.mil - used]
 		"build":
-			var rate := Simulation.build_points(n) * (maxf(0.0, 1.0 + n.b("mil_build")) if n.build_mode == "mil" else 1.0)
-			_dynamic["build"].text = "Фабрики: %d гражданских, %d военных\nНа товары народного потребления: %.1f (%d%% всех фабрик), на стройку свободно: %.1f\nСледующая: %s, %d%% (+%.1f/день)" % [
+			# стройки идут параллельно, на каждую — до 15 фабрик (Simulation._construct)
+			var jobs: Array = []
+			for job: Array in n.build_jobs:
+				var jc := Simulation.COST_CIV if int(job[0]) == 0 else (Simulation.COST_MIL if int(job[0]) == 1 else Simulation.COST_CONV)
+				jobs.append("%s %d%%" % [["гражданская", "военная", "переделка"][int(job[0])], roundi(float(job[1]) / jc * 100.0)])
+			_dynamic["build"].text = "Фабрики: %d гражданских, %d военных\nНа товары народного потребления: %.1f (%d%% всех фабрик), на стройку свободно: %.1f\nСтроек: %d (по %d фабрик): %s\nНовые: %s" % [
 				n.civ, n.mil, Politics.consumer_factories(n), roundi(Politics.consumer_share(n) * 100.0), Simulation.free_civ(n),
-				"гражданская" if n.build_mode == "civ" else "военная",
-				n.build_progress / Simulation.FACTORY_COST * 100.0, rate]
-			_dynamic["bar"].max_value = Simulation.FACTORY_COST
-			_dynamic["bar"].value = n.build_progress
+				jobs.size(), Simulation.JOB_CIV, ", ".join(jobs.slice(0, 4)) + (" …" if jobs.size() > 4 else ""),
+				"гражданские" if n.build_mode == "civ" else "военные"]
+			var first: Array = n.build_jobs[0] if not n.build_jobs.is_empty() else [1, 0.0]
+			_dynamic["bar"].max_value = Simulation.COST_CIV if int(first[0]) == 0 else (Simulation.COST_MIL if int(first[0]) == 1 else Simulation.COST_CONV)
+			_dynamic["bar"].value = float(first[1])
 
 
 # --- Меню партии: сохранение и загрузка ---------------------------------------

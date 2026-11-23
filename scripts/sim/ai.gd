@@ -11,7 +11,7 @@ extends RefCounted
 
 ## Экономика страны ИИ (главный поток): сколько дивизий заказать, что строить,
 ## случайная война (только процедурный мир). Военный план — military_args/plan_job.
-static func plan_economy(world: World, nid: int, rng: RandomNumberGenerator, mine: int) -> Dictionary:
+static func plan_economy(world: World, nid: int, rng: RandomNumberGenerator, mine: int, avg_eq := 1.0) -> Dictionary:
 	var nat: World.Nation = world.nations[nid]
 	var result := {"train": 0, "build": nat.build_mode, "war": -1}
 	if not nat.alive or nat.capitulated:
@@ -22,13 +22,44 @@ static func plan_economy(world: World, nid: int, rng: RandomNumberGenerator, min
 	# потолок армии по населению; закон о призыве (бонус conscription) поднимает его
 	var target_divs := target_divisions(nat)
 	var pending := mine + nat.training.size()
+	# на войне сначала пополнить, потом формировать: при среднем оснащении
+	# дивизий ниже TRAIN_EQ_MIN новых не заказываем (было: СССР в 1943 г. —
+	# 321 дивизия на 98 заводов, оснащение 55 %, численность 68 %, а ИИ
+	# формировал новые до 363)
+	# и только при запасе снаряжения на ведение войны (решение пользователя: «не
+	# упарываться в количество дивизий, держать запас»): склад каждого
+	# сухопутного вида не меньше TRAIN_STOCK_DAYS дней расхода
+	# ниже TRAIN_FLOOR предела армии потери восполняются и без запаса (иначе
+	# СССР таял: 255 → 64–97 дивизий за 1943–44 гг.); запас — для роста сверх него
+	if at_war and (avg_eq < TRAIN_EQ_MIN or not _stock_ok(nat)):
+		target_divs = mini(target_divs, maxi(pending, int(TRAIN_FLOOR * target_divs)))
 	while pending < target_divs and result["train"] < 3 and nat.manpower > 10.0 * (result["train"] + 1):
 		result["train"] += 1
 		pending += 1
-	if at_war or nat.mil < nat.civ * 0.7:
-		result["build"] = "mil"
-	else:
-		result["build"] = "civ"
+	# что строить (решение пользователя): по запасу людей против предела армии
+	# по заводам. Людей много, заводов мало — военные заводы; людей мало —
+	# фабрики, а на войне и в подготовке к ней — переделка свободных фабрик в
+	# военные заводы (дешевле новой стройки); посередине — прежнее правило
+	# сверка — раз в месяц (решение пользователя), в свой день страны
+	result["convert"] = nat.convert_civ
+	if (world.day + nid) % 30 == 0:
+		result["convert"] = false
+		# в приоритете военные заводы (решение пользователя: выпуск — только от
+		# них, фабрики — скорость стройки). Фабрики — до CIV_FREE_MIN свободных
+		# (на войне — половины), сверх того — только если заводов уже хватает:
+		# запас людей меньше предела армии по заводам (men_ratio < MEN_POOR);
+		# тогда на войне и в подготовке к ней — переделка фабрик в заводы
+		var war_mode := at_war or not nat.planned_wars.is_empty()
+		var civ_min := CIV_FREE_MIN * (0.5 if war_mode else 1.0)
+		if Simulation.free_civ(nat) < civ_min:
+			result["build"] = "civ"
+		elif men_ratio(world, nat) >= MEN_POOR:
+			result["build"] = "mil"
+		elif war_mode:
+			result["build"] = "mil"
+			result["convert"] = can_convert(nat)
+		else:
+			result["build"] = "civ"
 
 	# --- Старые случайные войны — только для процедурного мира без дипломатии
 	if world.ai_wars and not world.diplomacy and not at_war and world.day > 45 and rng.randf() < 0.06:
@@ -46,6 +77,43 @@ static func plan_economy(world: World, nid: int, rng: RandomNumberGenerator, min
 				best = other
 		result["war"] = best
 	return result
+
+
+const TRAIN_EQ_MIN := 0.8  # на войне новые дивизии — только при среднем оснащении не ниже
+const TRAIN_STOCK_DAYS := 30.0   # запас на складе — столько дней расхода (на войне, для новых дивизий)
+const TRAIN_FLOOR := 0.9         # до этой доли предела армии потери восполняются и без запаса
+const MEN_PER_DIV := 10.0   # тыс. человек на дивизию — для оценки запаса людей
+const MEN_POOR := 1.0       # запас людей меньше предела армии по заводам — в мире фабрики, на войне переделка их в заводы
+const CIV_FREE_MIN := 15.0  # минимум свободных фабрик, к которому стремится ИИ (решение пользователя; на войне — половина)
+const CONVERT_KEEP := 0.4   # переделка — пока свободных фабрик (за вычетом нужд) не меньше этой доли
+const CONVERT_MAX := 1.2    # и пока военных заводов меньше 1,2 гражданских
+
+
+## Хватает ли запаса снаряжения: по каждому сухопутному виду склад не меньше
+## TRAIN_STOCK_DAYS дней среднего расхода (Nation.eq_use, Military.plan_prep).
+static func _stock_ok(nat: World.Nation) -> bool:
+	for k in Military.EQ_LAND:
+		if nat.eq_use[k] > 0.0 and nat.stock[k] < nat.eq_use[k] * TRAIN_STOCK_DAYS:
+			return false
+	return true
+
+
+## Запас людей (в дивизиях) к пределу армии по заводам: заводы на авиацию и
+## флот (доли страны) дивизий не дают, а дивизии с танками, моторизацией и
+## ротами поддержки дороже пехотной (Military.div_cost_k) — на них заводов
+## нужно больше при тех же людях.
+static func men_ratio(world: World, nat: World.Nation) -> float:
+	var land := clampf(1.0 - nat.air_share - nat.naval_share, 0.2, 1.0)
+	var fac := 6.0 + (nat.mil * 2.5 * land + nat.civ * 0.3) / Military.div_cost_k(world, nat)
+	return nat.manpower / MEN_PER_DIV / fac
+
+
+## Есть ли фабрики, которые можно переделать в военные заводы: военных меньше
+## CONVERT_MAX гражданских, и после переделки свободных фабрик (без товаров и
+## закупок) остаётся не меньше CONVERT_KEEP.
+static func can_convert(nat: World.Nation) -> bool:
+	return nat.civ > 1 and float(nat.mil) < CONVERT_MAX * float(nat.civ) \
+		and Simulation.free_civ(nat) - 1.0 >= CONVERT_KEEP * float(nat.civ)
 
 
 ## Сколько дивизий страна ИИ хочет держать: от заводов, не больше потолка

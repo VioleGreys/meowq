@@ -196,7 +196,10 @@ static func step(world: World) -> void:
 			var no_: World.Nation = world.nations[k % 4096]
 			km = [LAWS[law_of(world, k)], minf(1.0, float(world.occ_garrison.get(k, 0.0)) / maxf(0.1, float(need[k]))),
 				maxf(0.0, 1.0 + nc_.b("occ_resist") + no_.b("resistance")), maxf(0.0, 1.0 + nc_.b("occ_suppress")),
-				maxf(0.0, 1.0 + nc_.b("occ_comply") - 0.5 * no_.b("resistance")), world.occ_integrate.has(k)]
+				maxf(0.0, 1.0 + nc_.b("occ_comply") - 0.5 * no_.b("resistance")), world.occ_integrate.has(k),
+				# выжженная земля (черта владельца, scorched): заводы и запасы
+				# вывезены или взорваны при отходе — оккупанту остаётся меньше
+				clampf(1.0 - no_.b("scorched"), 0.0, 1.0)]
 			kmemo[k] = km
 		var law: Dictionary = km[0]
 		var cover: float = km[1]
@@ -219,7 +222,7 @@ static func step(world: World) -> void:
 		var keep := 1.0 - RESIST_YIELD * r / 100.0
 		var take: float = law["take"]
 		var mp: float = law["mp"]
-		var yv := (take + (1.0 - take) * soft) * keep
+		var yv := (take + (1.0 - take) * soft) * keep * float(km[6])
 		p_yield[p] = yv
 		p_yield_mp[p] = (mp + (1.0 - mp) * soft) * keep
 		if not stats.has(k):

@@ -4,7 +4,6 @@ extends RefCounted
 ## последовательно применить», поэтому результат детерминирован и не зависит
 ## от числа ядер, а сама работа распределяется по WorkerThreadPool.
 
-const FACTORY_COST := 60.0
 const BUILD_RATE := 0.07      # очков стройки в день на свободную гражданскую фабрику (до товаров народного потребления — 0,05)
 const MAX_FACTORIES := 12
 const AI_PERIOD := 3
@@ -228,18 +227,12 @@ func _phase_economy() -> void:
 		# закупки ресурсов оплачиваются гражданскими заводами, продажи их приносят
 		Prof.add("эк:наука-день", _pt)
 		_pt = Time.get_ticks_usec()
-		# заказы узлов снабжения берут до половины очков стройки (Supply.build)
-		var bp := Supply.build(world, nat, build_points(nat))
-		if nat.build_mode == "mil":
-			bp *= maxf(0.0, 1.0 + nat.b("mil_build"))   # стройка военных заводов: закон, поддержка войны
-		nat.build_progress += bp
-		if nat.build_progress >= FACTORY_COST:
-			var bt := Puppets.build_target(world, nat)
-			if (bt >= 0 and Puppets.build_in(world, nat, bt)) or _place_factory(i, nat.build_mode):
-				nat.build_progress -= FACTORY_COST
-			else:
-				nat.build_progress = FACTORY_COST
-
+		# заказы узлов снабжения берут до половины очков стройки (Supply.build,
+		# прежние единицы); остаток свободных фабрик — на стройки заводов
+		var pts := build_points(nat)
+		var left := Supply.build(world, nat, pts)
+		var civ_left := free_civ(nat) * (left / pts if pts > 0.0 else 1.0)
+		_construct(i, nat, civ_left)
 		Prof.add("эк:наука+стройка", _pt)
 		_pt = Time.get_ticks_usec()
 		# подготовка дивизий
@@ -266,6 +259,81 @@ static func free_civ(nat: World.Nation) -> float:
 ## Очков стройки в день (до доли узлов снабжения и множителя военных заводов).
 static func build_points(nat: World.Nation) -> float:
 	return free_civ(nat) * BUILD_RATE * maxf(0.0, 1.0 + nat.b("construction"))
+
+
+# Стройка как в жанре (решение пользователя): стройки идут параллельно, на
+# одну — не больше JOB_CIV свободных фабрик, каждая даёт CIV_RATE очков в день
+# × бонусы стройки (construction; военные заводы и переделка — ещё mil_build).
+const JOB_CIV := 15
+
+
+## Среднее оснащение дивизий (слоты), 1 — нет дивизий.
+func _avg_eq(slots: PackedInt32Array) -> float:
+	if slots.is_empty():
+		return 1.0
+	var eq := world.d_eq
+	var s := 0.0
+	for i in slots:
+		s += eq[i]
+	return s / slots.size()
+const CIV_RATE := 5.0
+const COST_CIV := 10800.0    # гражданская фабрика (как в жанре)
+const COST_MIL := 7200.0     # военный завод (как в жанре)
+const COST_CONV := 3600.0    # переделка фабрики в военный завод — половина завода (своя оценка)
+const JOB_KIND := {"civ": 0, "mil": 1, "conv": 2}
+
+
+## Стройки страны за день: civ_left свободных фабрик раздаются по стройкам
+## очереди по JOB_CIV; очередь дополняется до числа строек, которым хватает
+## фабрик (вид — build_mode, у ИИ при convert_civ — переделка). Готовая
+## стройка ставит фабрику (у ИИ — сначала марионетке, Puppets) и уходит из
+## очереди; нет места — снимается.
+func _construct(nid: int, nat: World.Nation, civ_left: float) -> void:
+	var want := ceili(civ_left / JOB_CIV) if civ_left > 0.0 else 0
+	var kind: int = JOB_KIND["conv"] if (nat.convert_civ and not nat.is_player) else JOB_KIND[nat.build_mode]
+	while nat.build_jobs.size() < want:
+		nat.build_jobs.append([kind, 0.0])
+	var k_base := maxf(0.0, 1.0 + nat.b("construction"))
+	var k_mil := maxf(0.0, 1.0 + nat.b("mil_build"))
+	var keep: Array = []
+	for job: Array in nat.build_jobs:
+		var jk: int = job[0]
+		var alloc := minf(float(JOB_CIV), civ_left)
+		civ_left -= alloc
+		job[1] = float(job[1]) + alloc * CIV_RATE * k_base * (k_mil if jk != JOB_KIND["civ"] else 1.0)
+		var cost := COST_CIV if jk == JOB_KIND["civ"] else (COST_MIL if jk == JOB_KIND["mil"] else COST_CONV)
+		if float(job[1]) < cost:
+			keep.append(job)
+			continue
+		if jk == JOB_KIND["conv"]:
+			if AIPlanner.can_convert(nat) and _convert_factory(nid):
+				nat.civ -= 1
+				nat.mil += 1
+			else:
+				nat.convert_civ = false
+			continue
+		var mode := "civ" if jk == JOB_KIND["civ"] else "mil"
+		var bt := Puppets.build_target(world, nat) if not nat.is_player else -1
+		if bt < 0 or not Puppets.build_in(world, nat, bt):
+			_place_factory(nid, mode)   # нет места под фабрику — стройка просто снимается
+	nat.build_jobs = keep
+
+
+## Фабрика → военный завод в своей провинции с наибольшим числом фабрик
+## (при равенстве — с меньшим номером).
+func _convert_factory(nid: int) -> bool:
+	var best := -1
+	var owner := world.p_owner
+	var ctrl := world.p_controller
+	var civ := world.p_civ
+	for p in world.prov_count:
+		if owner[p] == nid and ctrl[p] == nid and civ[p] > 0 and (best < 0 or civ[p] > civ[best]):
+			best = p
+	if best < 0:
+		return false
+	world.p_civ[best] -= 1
+	world.p_mil[best] += 1
+	return true
 
 
 func _place_factory(nid: int, mode: String) -> bool:
@@ -752,12 +820,13 @@ func _phase_ai() -> void:
 			var nat: World.Nation = world.nations[nid]
 			var mine: PackedInt32Array = by_nation[nid]
 			var _pe := Time.get_ticks_usec()
-			var eco: Dictionary = AIPlanner.plan_economy(world, nid, rng, mine.size())
+			var eco: Dictionary = AIPlanner.plan_economy(world, nid, rng, mine.size(), _avg_eq(mine))
 			Prof.add("ии:экономика", _pe)
 			_pe = Time.get_ticks_usec()
 			_ai_train(nat, int(eco["train"]))
 			Prof.add("ии:призыв", _pe)
 			nat.build_mode = eco["build"]
+			nat.convert_civ = bool(eco.get("convert", false))
 			# выбор науки — в главном потоке: таблицы Tech общие для всех
 			_pe = Time.get_ticks_usec()
 			var fs := Tech.free_slot(nat)

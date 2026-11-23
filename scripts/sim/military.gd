@@ -840,6 +840,32 @@ static func plan_prep(world: World, nat: World.Nation, target_divs: int, prepare
 		"cost": PackedFloat64Array([EQ_COST[0], EQ_COST[1], EQ_COST[2] * nat.tank_cost, EQ_COST[3], EQ_COST[4]])}
 
 
+## Во сколько раз дивизии ИИ страны (очередь шаблонов, как в plan_prep: пехота,
+## артиллерия, моторизованные и танковые по доступности, с ротами поддержки)
+## дороже простой пехотной по снаряжению (не меньше 1).
+static func div_cost_k(world: World, nat: World.Nation) -> float:
+	if world.templates.is_empty():
+		build_tables(world)
+	var avail := available_templates(world, nat)
+	var sup := ai_support(world, nat)
+	var cycle := [with_support(world, T_INF, sup), with_support(world, T_INF, sup), with_support(world, T_ART, sup), with_support(world, T_INF, sup)]
+	if avail.has(T_MOT):
+		cycle.append(with_support(world, T_MOT, sup))
+	if avail.has(T_ARM):
+		cycle.append(with_support(world, T_ARM, sup))
+	var s := 0.0
+	for t: int in cycle:
+		s += _tpl_cost(world, nat, t)
+	return maxf(1.0, s / cycle.size() / maxf(0.01, _tpl_cost(world, nat, T_INF)))
+
+
+static func _tpl_cost(world: World, nat: World.Nation, t: int) -> float:
+	var c := 0.0
+	for k in EQ_LAND:
+		c += world.tpl_eq[t * EQ_COUNT + k] * float(EQ_COST[k]) * (nat.tank_cost if k == 2 else 1.0)
+	return c
+
+
 ## Средняя эффективность заводов на линиях (без линий — стартовая).
 static func _avg_eff(nat: World.Nation) -> float:
 	var s := 0.0

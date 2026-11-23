@@ -405,9 +405,38 @@ static func complete(nation, id: String) -> void:
 
 ## Выбор ИИ для свободного слота: сначала технологии своего года и раньше,
 ## по важности категории для страны; вперёд времени — не дальше полугода.
+## Склонность ветвей науки по «школе» страны (стартовые черты со school:
+## сильные и слабые рода войск, решение пользователя): бонусы школы по ветви,
+## суммой. ИИ берёт ветви сильной стороны раньше, слабой — позже.
+const SCHOOL_KEYS := {
+	"air": ["air", "air_fighter", "air_bomb", "air_naval"],
+	"navy": ["naval", "shipyard", "escort", "sub_raid", "ship_cv"],
+	"tank": ["attack", "speed", "tank_attack", "tank_defense"],
+	"inf": ["defense", "manpower", "inf_attack", "inf_defense"],
+	"ind": ["industry", "construction"],
+}
+const SCHOOL_W := 8.0   # приоритет ветви −8 × склонность (бонус +0,1 — на 0,8 раньше, −0,15 — на 1,2 позже)
+
+
+static func school_affinity(world, nat) -> Dictionary:
+	var out := {}
+	for cat in SCHOOL_KEYS:
+		out[cat] = 0.0
+	for id in nat.spirits:
+		var sd: Dictionary = world.spirit_defs.get(id, {})
+		if not sd.get("school", false):
+			continue
+		var bon: Dictionary = sd.get("bonus", {})
+		for cat in SCHOOL_KEYS:
+			for k in SCHOOL_KEYS[cat]:
+				out[cat] = float(out[cat]) + float(bon.get(k, 0.0))
+	return out
+
+
 static func ai_pick(world, nat) -> String:
 	var yr := year_now(world)
 	var has_navy: bool = nat.naval_share > 0.0
+	var aff := school_affinity(world, nat)
 	var best := ""
 	var best_score := 1e9
 	for t in available(nat):
@@ -435,6 +464,7 @@ static func ai_pick(world, nat) -> String:
 				if not has_navy:
 					continue
 				prio = 1.0 if nat.naval_share >= 0.2 else 2.5
+		prio -= SCHOOL_W * float(aff.get(String(t["cat"]), 0.0))
 		if t["id"] == "mot1" and not nat.major and nat.mil < 3:
 			continue
 		if not has_navy and (t["bonus"].has("escort") or t["bonus"].has("sub_raid")) and t["bonus"].size() == 1:
