@@ -169,14 +169,15 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 					// в войну: граница с враждебным не-противником — минимум
 					fronts.add(p);
 					guard_lvl[p] = 1;
-				} else if (use_guard && own_p && !hostile && guard[int64_t(nid) * nc + c] == 1) {
-					sparse_cand[p] = 1;
+				} else if (use_guard && own_p && !hostile && guard[int64_t(nid) * nc + c] != 0) {
+					sparse_cand[p] = 1;   // нейтрал или слабый сосед
 				}
 			} else if (own_p && matches && (enemy >= 0 || mode == AUTO || has_tgt) && (!has_ally || ally[int64_t(nid) * nc + c] == 0)) {
 				int g = 2;
 				if (use_guard) {
 					g = guard[int64_t(nid) * nc + c];
 					if (g == 0) continue;   // хорошие отношения — границу не держим
+					if (g == 3) { sparse_cand[p] = 1; continue; }   // слабый сосед — в мир тоже лишь минимум
 				}
 				fronts.add(p);
 				if (use_guard) gw[p] = std::max(gw[p], double(guard_w[int64_t(nid) * nc + c]));
@@ -189,7 +190,7 @@ Dictionary MeowqCore::plan_military(const Dictionary &tables, int nid, const Pac
 	std::vector<char> guard_min(pc, 0);
 	for (int p = 0; p < pc; p++)
 		if (guard_lvl[p] == 1 && !war_front[p]) guard_min[p] = 1;
-	// у нейтрала в войну — реже: провинция, рядом с которой нет участка фронта (как ai.gd)
+	// у нейтрала в войну и слабого соседа — реже: провинция, рядом с которой нет участка фронта (как ai.gd)
 	for (int p = 0; p < pc; p++) {
 		if (!sparse_cand[p] || fronts.has[p]) continue;
 		bool covered = false;

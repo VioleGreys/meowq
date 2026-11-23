@@ -58,6 +58,9 @@ static func natural(world: World, a: int, b: int) -> float:
 		v += 5.0
 	if world.is_at_war(a, b):
 		v -= 40.0
+	var an := world.rel_aff_n
+	if a < an and b < an and world.rel_aff.size() == an * an:
+		v += world.rel_aff[a * an + b]
 	return clampf(v, REP_MIN, REP_MAX)
 
 
@@ -90,7 +93,7 @@ static func _rel_snapshot(world: World) -> Dictionary:
 			if int(b) < n:
 				pact[a * n + int(b)] = 1
 	return {"n": n, "nc": world.nation_count, "ideo": ideo, "fac": fac, "over": over, "guar": guar,
-		"pact": pact, "aff": aff, "war": world.war.duplicate()}
+		"pact": pact, "aff": aff, "war": world.war.duplicate(), "bias": world.rel_aff.duplicate(), "bias_n": world.rel_aff_n}
 
 
 ## Матрица «естественных» отношений (как natural) — только по снимку, можно в потоке.
@@ -104,6 +107,9 @@ static func natural_matrix(t: Dictionary) -> PackedFloat32Array:
 	var pact: PackedByteArray = t["pact"]
 	var aff: PackedInt32Array = t["aff"]
 	var war: PackedByteArray = t["war"]
+	var bias: PackedFloat32Array = t.get("bias", PackedFloat32Array())
+	var bn: int = t.get("bias_n", 0)
+	var has_bias := bn > 0 and bias.size() == bn * bn
 	var m := PackedFloat32Array()
 	m.resize(n * n)
 	for a in n:
@@ -119,6 +125,8 @@ static func natural_matrix(t: Dictionary) -> PackedFloat32Array:
 				v += 5.0
 			if war[a * nc + b] == 1:
 				v -= 40.0
+			if has_bias and a < bn and b < bn:
+				v += bias[a * bn + b]
 			m[a * n + b] = clampf(v, REP_MIN, REP_MAX)
 	return m
 

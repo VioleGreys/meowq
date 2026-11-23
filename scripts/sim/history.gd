@@ -475,6 +475,19 @@ static func planned_wars(world: World, n: int) -> Dictionary:
 		if ok:
 			look.append(fd)
 			break
+	# «stage_from»: к войне фокуса готовимся заранее с этой даты (сосредоточение
+	# вермахта на Востоке шло с осени 1940 г.), если его требования выполнены
+	for fd in tree_of(world, n):
+		if not fd.has("stage_from") or nat.focus_done.has(fd["id"]) or look.has(fd):
+			continue
+		if world.day < world.day_of(str(fd["stage_from"])):
+			continue
+		var ok2 := true
+		for r in fd.get("requires", []):
+			if not nat.focus_done.has(r) and r != nat.focus_current:
+				ok2 = false
+		if ok2:
+			look.append(fd)
 	for fd in look:
 		var effs: Array = fd.get("effects", []).duplicate()
 		for e in fd.get("effects", []):

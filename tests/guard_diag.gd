@@ -1,7 +1,7 @@
 extends SceneTree
 ## Охрана границ ИИ по отношениям (AIPlanner.guard_table): на даты --dates для
 ## стран --tags — по каждому соседу уровень охраны (0 — не держим, 1 — минимум,
-## 2 — фронт), отношения (худшее из двух мнений), наших приграничных провинций
+## 2 — фронт, 3 — слабый сосед: минимум), отношения (худшее из двух мнений), наших приграничных провинций
 ## и дивизий в них; сколько дивизий в тылу.
 ##   godot --headless --path . --script res://tests/guard_diag.gd -- [--dates=1936-06-01,1939-08-01 --tags=GER,FRA,SWE --seed=N]
 
@@ -63,5 +63,5 @@ func _init() -> void:
 			for c in by:
 				var r := minf(Relations.rep(w, n, c), Relations.rep(w, c, n))
 				var st := "война" if w.is_at_war(n, c) else ("союз" if w.ally[n * nc + c] == 1 else "ур.%d" % gt[n * nc + c])
-				print("   %-4s %-6s отн.%3d  провинций %3d  дивизий %3d" % [w.nation_tags[c], st, roundi(r), by[c][0], by[c][1]])
+				print("   %-4s %-6s отн.%3d  провинций %3d  дивизий %3d  (у соседа %d)" % [w.nation_tags[c], st, roundi(r), by[c][0], by[c][1], w.nations[c].division_count])
 	quit()

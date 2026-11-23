@@ -400,21 +400,25 @@ static func _plan(tb: Dictionary, nid: int, divs: PackedInt32Array, mode_i: int,
 					# в войну: граница с враждебным не-противником — минимум
 					fronts[p] = true
 					guard_lvl[p] = 1
-				elif use_guard and own_p and not hostile and guard[nid * nc + c] == 1:
-					sparse_cand[p] = true
+				elif use_guard and own_p and not hostile and guard[nid * nc + c] != 0:
+					sparse_cand[p] = true   # нейтрал или слабый сосед
 			elif own_p and matches and (enemy >= 0 or mode == "auto" or has_tgt) and (ally.size() == 0 or ally[nid * nc + c] == 0):
 				var g := 2
 				if use_guard:
 					g = guard[nid * nc + c]
 					if g == 0:
 						continue   # хорошие отношения — границу не держим
+					if g == 3:
+						sparse_cand[p] = true   # слабый сосед — в мир тоже лишь минимум
+						continue
 				fronts[p] = true
 				if use_guard:
 					gw[p] = maxf(float(gw.get(p, 0.0)), guard_w[nid * nc + c])
 				fpairs.append(p)
 				fpairs.append(q)
-	# участки «ровно минимум» (только в войну): у враждебного не-противника — каждая
-	# провинция; у нейтрала — реже: провинция, рядом с которой нет участка фронта
+	# участки «ровно минимум»: в войну у враждебного не-противника — каждая
+	# провинция; у нейтрала и слабого соседа (в мир — только у слабого) — реже:
+	# провинция, рядом с которой нет участка фронта
 	# (по возрастанию номера — одинаково в GDScript и C++)
 	var guard_min := {}
 	for p in guard_lvl:
@@ -996,6 +1000,7 @@ const STORM_NEED := 0.1  # штурм осаждённого города в е�
 const GUARD_EVERY := 3   # охрана границ: отношения и претензии пересматриваем раз в 3 дня (решение пользователя)
 const GUARD_GOOD := 65.0 # отношения от 65 — границу не держим (демократии между собой — 65)
 const GUARD_WMUL := 2.0 # мир: вес участка × (1 + 2 × вес границы) — нейтральный ×1..3, плохой ×3..6, претензии +2
+const GUARD_WEAK := 0.15  # сосед с союзниками слабее 15 % нашей армии — лишь минимум и в мир (уровень 3)
 const GUARD_BAD := 40.0  # ниже 40 — держим фронт (демократия и фашизм — 35, фашизм и коммунизм — 25)
 const AXIS_COMMIT := 2.0 # к цели наступления (план, группа с целью): на лучшие цели — вдвое больше нужного
 
@@ -1282,8 +1287,10 @@ static func _enemy_near(world: World, nid: int, p: int, depth: int) -> bool:
 ## Охрана границ ИИ (решение пользователя, ноябрь 2026): как страна A держит
 ## границу с B — 0 не держит (союзник, хорошие отношения), 1 — минимум (по дивизии
 ## на провинцию; нейтральные отношения), 2 — фронт (плохие отношения или претензии
-## одной из сторон, в том числе к союзнику A). Отношения — худшее из двух мнений.
-## В войну с не-противником: 2 — минимум, 0 и 1 — не держим. nc×nc; пересчёт раз в
+## одной из сторон, в том числе к союзнику A), 3 — слабый сосед: B с союзниками
+## слабее GUARD_WEAK армии A, и A к нему претензий нет — лишь минимум и в мир.
+## Отношения — худшее из двух мнений.
+## В войну с не-противником: 2 — по дивизии на провинцию, 1 и 3 — через провинцию. nc×nc; пересчёт раз в
 ## GUARD_EVERY дней (таблица хранится в мире и попадает в сохранение).
 static func guard_table(world: World) -> PackedByteArray:
 	var nc := world.nation_count
@@ -1306,6 +1313,27 @@ static func guard_table(world: World) -> PackedByteArray:
 			if nb.justify_target >= 0:
 				cl.append(nb.justify_target)
 		claims[b] = cl
+	# армия страны (для «слабого соседа»)
+	var own := PackedInt32Array()
+	own.resize(nc)
+	for a in nc:
+		if world.nations[a].alive:
+			own[a] = world.nations[a].division_count
+	# соседство стран по суше (по контролю провинций)
+	var nb_t := PackedByteArray()
+	nb_t.resize(nc * nc)
+	var ctrl := world.p_controller
+	var land := world.p_land
+	var a_start := world.adj_start
+	var a_list := world.adj_list
+	for p in ctrl.size():
+		var cp := ctrl[p]
+		if cp < 0 or land[p] == 0:
+			continue
+		for k in range(a_start[p], a_start[p + 1]):
+			var cq := ctrl[a_list[k]]
+			if cq >= 0 and cq != cp and land[a_list[k]] == 1:
+				nb_t[cp * nc + cq] = 1
 	for a in nc:
 		if not world.nations[a].alive:
 			continue
@@ -1324,19 +1352,35 @@ static func guard_table(world: World) -> PackedByteArray:
 				if x == a or ally[a * nc + x] == 1:
 					claim = true
 					break
+			var mine := false   # наши претензии к B — граница под удар, не охрана
 			for x in claims[a]:
 				if x == b:
-					claim = true
+					mine = true
 					break
-			if claim:
+			if claim or mine:
 				g = 2
+			# слабый сосед (с союзниками, что тоже граничат с нами, меньше GUARD_WEAK
+			# нашей армии) не угроза:
+			# граница — лишь минимум и в мир (не держим 30 дивизий у Афганистана)
+			if g > 0 and not mine and nb_t[a * nc + b] == 1 and float(_bloc_at(b, a, own, ally, nb_t, nc)) < GUARD_WEAK * float(own[a]):
+				g = 3
+			claim = claim or mine
 			t[a * nc + b] = g
-			if g > 0:
+			if g == 1 or g == 2:
 				tw[a * nc + b] = maxf(0.0, (GUARD_GOOD - r) / (GUARD_GOOD - GUARD_BAD)) + (1.0 if claim else 0.0)
 	world.guard_t = t
 	world.guard_w = tw
 	world.guard_day = world.day
 	return t
+
+
+## Армия B вместе с союзниками B, которые тоже граничат с A (охрана границ).
+static func _bloc_at(b: int, a: int, own: PackedInt32Array, ally: PackedByteArray, nb_t: PackedByteArray, nc: int) -> int:
+	var sb := own[b]
+	for x in nc:
+		if x != b and x != a and ally[b * nc + x] == 1 and ally[a * nc + x] == 0 and nb_t[x * nc + a] == 1:
+			sb += own[x]
+	return sb
 
 
 ## Пары «воюем, но ИИ не наступает» (Nation.no_attack, только у ИИ): nc×nc;

@@ -816,6 +816,18 @@ static func load_setup(world: World, path: String) -> void:
 		if a >= 0 and b >= 0:
 			world.nations[a].pacts[b] = true
 			world.nations[b].pacts[a] = true
+	# историческое сродство пар (обе стороны): [A, B, добавка к естественным отношениям]
+	var nn := world.nations.size()
+	world.rel_aff = PackedFloat32Array()
+	world.rel_aff_n = nn
+	for af in d.get("affinity", []):
+		var a := world.nation_tags.find(af[0])
+		var b := world.nation_tags.find(af[1])
+		if a >= 0 and b >= 0:
+			if world.rel_aff.is_empty():
+				world.rel_aff.resize(nn * nn)
+			world.rel_aff[a * nn + b] += float(af[2])
+			world.rel_aff[b * nn + a] += float(af[2])
 	# марионетки: [сюзерен, марионетка]
 	for pp in d.get("puppets", []):
 		var a := world.nation_tags.find(pp[0])

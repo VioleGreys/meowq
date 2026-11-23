@@ -783,6 +783,8 @@ var info_events: Array = []     # [id события] — уже примене�
 # отношения (Relations): репутация A→B в rep[A * rep_n + B], 0–100
 var rep := PackedFloat32Array()
 var rep_n := 0
+var rel_aff := PackedFloat32Array()   # историческая добавка к «естественным» отношениям A→B (diplomacy.json «affinity»), rel_aff_n×rel_aff_n (страны на старте); пусто — нет
+var rel_aff_n := 0
 # охрана границ ИИ (AIPlanner.guard_table): nc×nc, 0 — не держим, 1 — минимум, 2 — фронт;
 # пересчёт раз в GUARD_EVERY дней — в мире, чтобы загрузка не меняла ход партии
 var guard_t := PackedByteArray()
