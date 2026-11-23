@@ -1013,7 +1013,9 @@ static func apply(world: World, n: int, effects: Array, rng: RandomNumberGenerat
 			"relocate":
 				var fr: Array = e.get("from_lon", [-180.0, 180.0])
 				var to: Array = e.get("to_lon", [-180.0, 180.0])
-				relocate(world, who, float(e.get("share", 0.5)), Vector2(float(fr[0]), float(fr[1])), Vector2(float(to[0]), float(to[1])))
+				var la: Array = e.get("to_lat", [-90.0, 90.0])
+				relocate(world, who, float(e.get("share", 0.5)), Vector2(float(fr[0]), float(fr[1])), Vector2(float(to[0]), float(to[1])),
+					Vector2(float(la[0]), float(la[1])))
 			"bonus":
 				nat.bonus[e["key"]] = float(nat.bonus.get(e["key"], 0.0)) + float(e["v"])
 				nat.stats_dirty = true
@@ -1594,9 +1596,14 @@ static func nearest_held(world: World, who: int, ll: Vector2) -> int:
 
 ## Эвакуация промышленности: доля share заводов (гражд. и воен.) своих
 ## провинций с долготой в диапазоне from_lon (x..y) уезжает в свои провинции
-## с долготой в to_lon: Китай в 1937–38 гг. — в Сычуань и Юньнань, СССР в
-## 1941 г. — на Урал и в Сибирь.
-static func relocate(world: World, nid: int, share: float, from_lon: Vector2, to_lon: Vector2) -> void:
+## с долготой в to_lon и широтой в to_lat: Китай в 1937–38 гг. — в Сычуань и
+## Юньнань, СССР в 1941 г. — на Волгу, Урал и в Сибирь. Заводы едут в крупные
+## города (очки победы ≥ RELOC_CITY_VP) по заполненности мест (Simulation.factory_slots,
+## +2 сверх них); места кончились — в любые свои провинции полосы.
+const RELOC_CITY_VP := 8
+
+
+static func relocate(world: World, nid: int, share: float, from_lon: Vector2, to_lon: Vector2, to_lat := Vector2(-90.0, 90.0)) -> void:
 	var civ := 0
 	var mil := 0
 	for p in world.prov_count:
@@ -1609,27 +1616,55 @@ static func relocate(world: World, nid: int, share: float, from_lon: Vector2, to
 		world.p_mil[p] -= m
 		civ += c
 		mil += m
+	var cities := PackedInt32Array()
+	var rest := PackedInt32Array()
+	for p in world.prov_count:
+		var ll := world.p_lonlat[p]
+		if world.p_owner[p] != nid or world.p_controller[p] != nid or ll.x < to_lon.x or ll.x > to_lon.y \
+				or ll.y < to_lat.x or ll.y > to_lat.y:
+			continue
+		if world.p_vp[p] >= RELOC_CITY_VP:
+			cities.append(p)
+		else:
+			rest.append(p)
+	var moved := 0
 	for k in civ + mil:
-		var best := -1
-		var best_score := INF
-		for p in world.prov_count:
-			var lon := world.p_lonlat[p].x
-			if world.p_owner[p] != nid or world.p_controller[p] != nid or lon < to_lon.x or lon > to_lon.y:
-				continue
-			var total := world.p_civ[p] + world.p_mil[p]
-			if total >= Simulation.factory_slots(world, p) + 2:
-				continue
-			var score := float(total) - float(world.p_vp[p]) * 0.1 + float(p % 7) * 0.01
-			if score < best_score:
-				best_score = score
-				best = p
+		var best := _reloc_pick(world, cities)
+		if best < 0:
+			best = _reloc_pick(world, rest)
 		if best < 0:
 			break
+		moved += 1
 		if k < civ:
 			world.p_civ[best] += 1
 		else:
 			world.p_mil[best] += 1
+	# не нашлось места — остаток не пропадает: возвращается в столицу (если она своя)
+	var cap: int = world.nations[nid].capital
+	if moved < civ + mil and cap >= 0 and world.p_controller[cap] == nid:
+		for k in range(moved, civ + mil):
+			if k < civ:
+				world.p_civ[cap] += 1
+			else:
+				world.p_mil[cap] += 1
 	world.log_event("%s эвакуирует заводы вглубь страны: %d гражд., %d воен." % [world.nations[nid].name, civ, mil])
+
+
+## Самая свободная (заполненность мест: заводы / места) провинция из списка; при
+## равенстве — первая по номеру. −1 — мест нет нигде (заводы ≥ места + 2).
+static func _reloc_pick(world: World, provs: PackedInt32Array) -> int:
+	var best := -1
+	var best_score := INF
+	for p in provs:
+		var total := world.p_civ[p] + world.p_mil[p]
+		var sl := Simulation.factory_slots(world, p)
+		if total >= sl + 2:
+			continue
+		var score := float(total) / float(sl)
+		if score < best_score:
+			best_score = score
+			best = p
+	return best
 
 
 ## Передача провинций: войска прежнего владельца отходят к своей столице.
@@ -2005,7 +2040,7 @@ static func effects_text(world: World, effects: Array) -> String:
 	var bonus_names := Tech.BONUS_NAMES.duplicate()
 	bonus_names.merge({"research": "наука", "attack": "атака", "defense": "оборона", "speed": "скорость",
 		"occ_resist": "рост сопротивления на занятых нами землях", "occ_comply": "рост принятия на занятых нами землях",
-		"resistance": "сопротивление на наших занятых землях", "scorched": "выжженная земля (заводы наших занятых земель не достаются оккупанту)", "aid_eq": "помощь снаряжением из-за рубежа (заводов)",
+		"resistance": "сопротивление на наших занятых землях", "scorched": "выжженная земля (заводы наших занятых земель не достаются оккупанту)", "aid_eq": "помощь снаряжением из-за рубежа (заводов)", "aid_res": "помощь ресурсами из-за рубежа на войне (доля нужды)",
 		"expedition": "доля армии метрополии на заморском фронте", "army_cap": "численность армии",
 		"cold_native": "привычка к холоду (уровень акклиматизации)",
 		"coord": "координация войск", "naval_coord": "координация флота"}, true)

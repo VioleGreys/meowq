@@ -2145,6 +2145,8 @@ func _share_score(side: Dictionary, loss: float) -> void:
 
 
 const RETREAT_FRONT := 100.0   # отступление: за каждую соседнюю провинцию врага (прочь от фронта)
+const RETREAT_EQ := 0.08       # выбитая из провинции теряет столько оснащения (брошенная техника)
+const RETREAT_STR := 5.0       # и столько людей, % (отставшие и пленные)
 
 
 func _retreat(d: World.Division) -> void:
@@ -2181,6 +2183,10 @@ func _retreat(d: World.Division) -> void:
 	d.prov = best
 	d.path = PackedInt32Array()
 	d.progress = 0.0
+	# выбитая из провинции бросает тяжёлое оружие и отставших (решение пользователя)
+	var s := d.slot
+	world.d_eq[s] = maxf(0.0, world.d_eq[s] - RETREAT_EQ)
+	world.d_str[s] = maxf(0.0, world.d_str[s] - RETREAT_STR)
 	_beaten(d)
 
 
@@ -2625,15 +2631,30 @@ func _fix_capitals() -> void:
 			nat.alive = false
 
 
-## Столица захвачена — правительство переезжает в крупнейший свободный город.
+## Столица захвачена — правительство переезжает в крупнейший свободный город
+## главного участка суши (Depots: p_comp; больше всего своих очков победы, при
+## равенстве — провинций): не в отрезанный город (Таллин, Ленинград в блокаде) —
+## иначе вся армия на «большой земле» остаётся без пополнения (Depots.pools).
 func _move_capital(nat: World.Nation) -> bool:
 	var best := -1
 	var owner := world.p_owner
 	var ctrl := world.p_controller
 	var vp := world.p_vp
 	var nid := nat.id
+	var comp := world.p_comp
+	var main := -1
+	if comp.size() == world.prov_count:
+		var wsum := {}
+		for p in world.prov_count:
+			if owner[p] == nid and ctrl[p] == nid and comp[p] >= 0:
+				wsum[comp[p]] = int(wsum.get(comp[p], 0)) + vp[p] * 1000 + 1
+		var bw := -1
+		for c in wsum:
+			if int(wsum[c]) > bw or (int(wsum[c]) == bw and int(c) < main):
+				bw = int(wsum[c])
+				main = int(c)
 	for p in world.prov_count:
-		if owner[p] == nid and ctrl[p] == nid:
+		if owner[p] == nid and ctrl[p] == nid and (main < 0 or comp[p] == main):
 			if best < 0 or vp[p] > vp[best]:
 				best = p
 	if best < 0:

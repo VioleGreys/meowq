@@ -31,7 +31,9 @@ static func plan_economy(world: World, nid: int, rng: RandomNumberGenerator, min
 	# сухопутного вида не меньше TRAIN_STOCK_DAYS дней расхода
 	# ниже TRAIN_FLOOR предела армии потери восполняются и без запаса (иначе
 	# СССР таял: 255 → 64–97 дивизий за 1943–44 гг.); запас — для роста сверх него
-	if at_war and (avg_eq < TRAIN_EQ_MIN or not _stock_ok(nat)):
+	if at_war and avg_eq < TRAIN_EQ_MIN:
+		target_divs = mini(target_divs, pending)
+	elif at_war and not _stock_ok(nat):
 		target_divs = mini(target_divs, maxi(pending, int(TRAIN_FLOOR * target_divs)))
 	while pending < target_divs and result["train"] < 3 and nat.manpower > 10.0 * (result["train"] + 1):
 		result["train"] += 1

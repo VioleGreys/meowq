@@ -218,9 +218,35 @@ static func components(world: World) -> void:
 		_cmp_waste = waste.duplicate()
 		_cmp_res = comp
 	world.p_comp = comp
+	# метрополия — участок столицы; если столица в кольце (у участка меньше половины
+	# своих очков победы главного участка страны: Москва или Ленинград в окружении),
+	# — главный участок: иначе вся армия «на большой земле» без пополнения (pools)
+	var own := world.p_owner
+	var vp := world.p_vp
+	var wsum := {}   # страна * pc + участок -> свои очки победы * 1000 + провинции
+	for p in pc:
+		var o := own[p]
+		if o >= 0 and ctrl[p] == o and comp[p] >= 0:
+			var key := o * pc + comp[p]
+			wsum[key] = int(wsum.get(key, 0)) + vp[p] * 1000 + 1
+	var main := PackedInt32Array()
+	main.resize(nc)
+	main.fill(-1)
+	var mw := PackedInt32Array()
+	mw.resize(nc)
+	for key: int in wsum:
+		var o := key / pc
+		var v: int = wsum[key]
+		if v > mw[o] or (v == mw[o] and key % pc < main[o]):
+			mw[o] = v
+			main[o] = key % pc
 	for nat in world.nations:
 		var cp: int = nat.capital
 		nat.dep_home = comp[cp] if nat.alive and cp >= 0 and cp < pc and ctrl[cp] == nat.id else -1
+		if nat.alive and nat.id < nc and main[nat.id] >= 0 and main[nat.id] != nat.dep_home:
+			var hv := int(wsum.get(nat.id * pc + nat.dep_home, 0)) if nat.dep_home >= 0 else 0
+			if hv * 2 < mw[nat.id]:
+				nat.dep_home = main[nat.id]
 
 
 static func _components_gd(pc: int, nc: int, ctrl: PackedInt32Array, land: PackedByteArray, ally: PackedByteArray,

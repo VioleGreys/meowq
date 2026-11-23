@@ -1483,9 +1483,12 @@ static func _update_fill(world: World) -> void:
 		# на войне ИИ ограничивает экспорт (как в жанре)
 		if not nat.is_player and nat.alive and not nat.at_war.is_empty() and nat.trade_law > 1:
 			set_law(world, nat, 1)
+		# помощь союзников ресурсами на войне (черта с aid_res — доля нужды: ленд-лиз
+		# алюминия, каучука и вольфрама в СССР) — к доступному
+		var aid: float = nat.b("aid_res") if not nat.at_war.is_empty() else 0.0
 		for r in RES_COUNT:
 			var need: float = nat.res_need[r]
-			nat.res_fill[r] = 1.0 if need <= 0.0 else clampf(available(nat, r) / need, 0.0, 1.0)
+			nat.res_fill[r] = 1.0 if need <= 0.0 else clampf((available(nat, r) + need * aid) / need, 0.0, 1.0)
 
 
 static func _ai_buy(world: World, nat: World.Nation, free: Array) -> void:

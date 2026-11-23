@@ -11,6 +11,8 @@ using namespace godot;
 
 // Снабжение (World.sup_mult и константы — двойники)
 static constexpr double SUP_BAD = 0.5, SUP_EXH = 0.25, EXH_LOSS = 1.5, ORG_DECAY = 0.03;
+// снаряжение и потери — как World.EQ_FLOOR, ORG_EQ, MEN_LOSS, EQ_PER_MEN
+static constexpr double EQ_FLOOR = 0.2, ORG_EQ = 0.6, MEN_LOSS = 1.25, EQ_PER_MEN = 0.72;
 static inline double sup_mult(double s) { return s >= SUP_BAD ? 1.0 : (s >= SUP_EXH ? 0.75 : 0.5); }
 
 static inline double clampd(double v, double lo, double hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -52,7 +54,7 @@ Array MeowqCore::recovery(const PackedByteArray &alive, const PackedInt32Array &
 		o_ent[i] = nx[i] < 0 ? mind(entk, o_ent[i] + 0.05 * entk) : 0.0;
 		if (bt[i] != 0) continue;
 		const double rate = (nx[i] < 0 ? 0.06 : 0.03) * sc[sk + 4];
-		const double cap = mo[i] * mind(1.0, s);
+		const double cap = mo[i] * mind(1.0, s) * (ORG_EQ + (1.0 - ORG_EQ) * o_eq[i]);
 		if (o_org[i] > cap)
 			o_org[i] = maxd(cap, o_org[i] - mo[i] * ORG_DECAY);
 		else
@@ -218,7 +220,7 @@ Array MeowqCore::snapshot(const PackedInt32Array &next, const PackedByteArray &b
 		const double orgf = clampd(og[i] / maxd(1.0, mo[i]), 0.0, 1.0);
 		fo[i] = float(orgf);
 		// как в бою: атака с планированием (×0,5 там — только у десанта); оборона с окопами и организацией (как world.gd)
-		const double eqf = (0.4 + 0.6 * e[i]) * sup_mult(su[i]);
+		const double eqf = (EQ_FLOOR + (1.0 - EQ_FLOOR) * e[i]) * sup_mult(su[i]);
 		fp[i] = float(s / 100.0 * at[i] * (1.0 + plan_max * pl0[i]) * eqf);
 		fd[i] = float(s / 100.0 * df[i] * (1.0 + 0.3 * en[i]) * orgf * eqf);
 		if (tr[i] <= 0) ps[pv[i] + 1]++;
@@ -427,7 +429,7 @@ static SidePower side_power(const int32_t *slots, const double *part, int64_t co
 		const int32_t i = slots[k];
 		const double w = str[i] / 100.0 * part[k];
 		const double base = defending ? def[i] * (1.0 + 0.3 * ent[i]) : atk[i] * (landing[i] == 1 ? 0.5 : 1.0);
-		const double c = base * w * (0.4 + 0.6 * eq[i]) * sup_mult(sup[i]) * double(tmul[tpl[i] * 8 + terr]);
+		const double c = base * w * (EQ_FLOOR + (1.0 - EQ_FLOOR) * eq[i]) * sup_mult(sup[i]) * double(tmul[tpl[i] * 8 + terr]);
 		pw.push_back(c);
 		power += c;
 		hd += hard[i] * w;
@@ -558,7 +560,7 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 			att_power *= r1 * (1.0 - terrain_def * 0.6);
 			att_power *= 1.0 - def_hard * 0.6 * (1.0 - att_hard);
 			const double sh = (1.0 - ca) * dw[j] / wd + (j == fd ? ca : 0.0);
-			deltas.push_back({ defenders[j], att_power * sh * 0.55, att_power * sh * 0.12 * (su[defenders[j]] < SUP_EXH ? EXH_LOSS : 1.0) });
+			deltas.push_back({ defenders[j], att_power * sh * 0.55, att_power * sh * 0.12 * MEN_LOSS * (su[defenders[j]] < SUP_EXH ? EXH_LOSS : 1.0) });
 		}
 		for (size_t j = 0; j < attackers.size(); j++) {
 			const double aa2 = scp[int64_t(tp[attackers[j]]) * 6 + 1];
@@ -566,7 +568,7 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 			def_power *= r2;
 			def_power *= 1.0 - att_hard * 0.6 * (1.0 - def_hard);
 			const double sh2 = (1.0 - cd) * aw[j] / wa + (j == fa ? cd : 0.0);
-			deltas.push_back({ attackers[j], def_power * sh2 * 0.5, def_power * sh2 * 0.10 * (su[attackers[j]] < SUP_EXH ? EXH_LOSS : 1.0) });
+			deltas.push_back({ attackers[j], def_power * sh2 * 0.5, def_power * sh2 * 0.10 * MEN_LOSS * (su[attackers[j]] < SUP_EXH ? EXH_LOSS : 1.0) });
 		}
 	}
 	double *o = org.ptrw(), *s = str.ptrw(), *q = eq.ptrw();
@@ -575,7 +577,7 @@ Array MeowqCore::combat(const PackedInt32Array &provs, const PackedInt32Array &a
 		bt[d.slot] = 1;
 		o[d.slot] = maxd(0.0, o[d.slot] - d.org);
 		s[d.slot] = maxd(0.0, s[d.slot] - d.str);
-		q[d.slot] = maxd(0.0, q[d.slot] - d.str / 100.0 * 0.9);
+		q[d.slot] = maxd(0.0, q[d.slot] - d.str / 100.0 * EQ_PER_MEN);
 	}
 	Array r;
 	r.push_back(org);
