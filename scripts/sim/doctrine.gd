@@ -26,10 +26,10 @@ const NAVY_CAP := 0.8
 # школы: ступени [id, название, бонусы, пояснение] — по порядку изучения
 const SCHOOLS := [
 	{"id": "mob", "branch": "land", "name": "Подвижная война", "steps": [
-		["l_mob1", "Танковые соединения", {"tank_attack": 0.05}, "Танки собраны в дивизии, а не розданы пехоте."],
+		["l_mob1", "Танковые соединения", {"tank_attack": 0.05, "plan_speed": 0.2}, "Танки собраны в дивизии, а не розданы пехоте."],
 		["l_mob2", "Взаимодействие с авиацией", {"air_cas": 0.05, "speed": 0.02}, "Самолёты расчищают путь наступающим колоннам."],
-		["l_mob3", "Прорыв и охват", {"attack": 0.04, "tank_attack": 0.03}, "Удар в узком месте и выход в тыл, не оглядываясь на фланги."],
-		["l_mob4", "Боевые группы", {"org": 0.04, "speed": 0.03, "coord": 0.05}, "Сводные отряды под задачу дня."],
+		["l_mob3", "Прорыв и охват", {"attack": 0.04, "tank_attack": 0.03, "plan_speed": 0.3, "plan_cap": 0.1}, "Удар в узком месте и выход в тыл, не оглядываясь на фланги."],
+		["l_mob4", "Боевые группы", {"org": 0.04, "speed": 0.03, "coord": 0.05, "plan_cap": 0.1}, "Сводные отряды под задачу дня."],
 		["l_mob5", "Подвижная оборона", {"tank_defense": 0.05, "defense": 0.02}, "Танковые резервы срезают чужие прорывы контрударами."],
 	]},
 	{"id": "fire", "branch": "land", "name": "Огневое превосходство", "steps": [
@@ -47,10 +47,10 @@ const SCHOOLS := [
 		["l_meth5", "Резервы командования", {"org": 0.04, "reinforce": 0.06}, "Свежие дивизии в руках командующего."],
 	]},
 	{"id": "mass", "branch": "land", "name": "Массированный удар", "steps": [
-		["l_mass1", "Массовые армии", {"manpower": 0.10}, "Кадры для развёртывания миллионов."],
-		["l_mass2", "Глубокий бой", {"attack": 0.03}, "Удар сразу на всю глубину обороны."],
-		["l_mass3", "Эшелоны развития успеха", {"inf_attack": 0.04, "speed": 0.02}, "Второй эшелон входит в пробитую брешь."],
-		["l_mass4", "Ударные армии", {"attack": 0.03, "reinforce": 0.06}, "Армии прорыва с усиленной артиллерией."],
+		["l_mass1", "Массовые армии", {"manpower": 0.10, "defense": 0.03, "plan_cap": 0.15}, "Кадры для развёртывания миллионов."],
+		["l_mass2", "Глубокий бой", {"attack": 0.03, "plan_cap": 0.15}, "Удар сразу на всю глубину обороны."],
+		["l_mass3", "Оборона в глубину", {"defense": 0.05, "inf_defense": 0.03, "plan_cap": 0.15}, "Полосы обороны на десятки километров — прорыв вязнет."],
+		["l_mass4", "Ударные армии", {"attack": 0.03, "reinforce": 0.06, "inf_attack": 0.04}, "Армии прорыва с усиленной артиллерией."],
 		["l_mass5", "Операции на окружение", {"attack": 0.03, "tank_attack": 0.03}, "Встречные удары смыкаются в тылу врага."],
 	]},
 	{"id": "bb", "branch": "navy", "name": "Линейный флот", "steps": [
@@ -104,6 +104,21 @@ static func _ensure() -> void:
 		for i in steps.size():
 			var r: Array = steps[i]
 			_step[r[0]] = {"id": r[0], "school": s["id"], "branch": s["branch"], "n": i, "name": r[1], "bonus": r[2], "desc": r[3]}
+
+
+const PLAN_KEYS := ["plan_speed", "plan_cap"]
+
+
+## Бонус к планированию от принятых ступеней (скорость или потолок) —
+## считается из списка ступеней, так что правка таблицы видна и в старых партиях.
+static func plan_bonus(nat, key: String) -> float:
+	_ensure()
+	var v := 0.0
+	for id in nat.doctrines:
+		var st: Dictionary = _step.get(id, {})
+		if not st.is_empty():
+			v += float(st["bonus"].get(key, 0.0))
+	return v
 
 
 static func branch_index(branch: String) -> int:
@@ -192,6 +207,8 @@ static func buy(nat, id: String) -> bool:
 	nat.doctrines[id] = true
 	var bon: Dictionary = st["bonus"]
 	for k in bon:
+		if PLAN_KEYS.has(k):
+			continue   # план — из принятых ступеней (plan_bonus), не через nat.bonus
 		nat.bonus[k] = float(nat.bonus.get(k, 0.0)) + float(bon[k])
 		if not Tech.ECON_KEYS.has(k):
 			nat.stats_dirty = true

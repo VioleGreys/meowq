@@ -165,6 +165,7 @@ const BONUS_NAMES := {
 	"industry": "выпуск снаряжения", "research": "скорость науки", "construction": "стройка",
 	"resources": "добыча ресурсов", "attack": "атака дивизий", "defense": "оборона дивизий",
 	"org": "организация", "speed": "скорость войск", "manpower": "призыв", "reinforce": "пополнение",
+	"plan_speed": "скорость планирования", "plan_cap": "потолок планирования",
 	"inf_attack": "атака пехоты", "inf_defense": "оборона пехоты",
 	"art_attack": "атака артиллерии", "art_defense": "оборона артиллерии",
 	"tank_attack": "атака танков", "tank_defense": "оборона танков",

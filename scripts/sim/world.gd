@@ -2389,12 +2389,12 @@ func _pierced(pw: PackedFloat64Array, slots: PackedInt32Array, armor: float) -> 
 ## противник или будущий противник: hostile N×N), копит план на gain в день до 1;
 ## идущая, атакующая, в пути — теряет active в день; стоящая в тылу — rear.
 ## C++ — MeowqCore.plan_update, результаты совпадают.
-func k_plan(hostile: PackedByteArray, gain: float, active: float, rear: float) -> void:
+func k_plan(hostile: PackedByteArray, gain: float, active: float, rear: float, caps: PackedFloat64Array) -> void:
 	if d_plan.size() != d_alive.size():
 		d_plan.resize(d_alive.size())
 	if Native.core != null:
 		d_plan = Native.core.call("plan_update", d_alive, d_transit, d_next, d_battle, d_prov, d_owner, p_controller,
-				adj_start, adj_list, p_land, hostile, nation_count, d_plan, gain, active, rear)
+				adj_start, adj_list, p_land, hostile, nation_count, d_plan, gain, active, rear, caps)
 		return
 	var nc := nation_count
 	var ctrl := p_controller
@@ -2414,7 +2414,9 @@ func k_plan(hostile: PackedByteArray, gain: float, active: float, rear: float) -
 				if p_land[q] == 1 and c >= 0 and hostile[o * nc + c] == 1:
 					front = true
 					break
-			v = minf(1.0, v + gain) if front else maxf(0.0, v - rear)
+			# потолок страны (доктрины): план выше 1 — сверх Simulation.PLAN_MAX;
+			# выше потолка (доктрину сменили) план не растёт, но и не срезается
+			v = maxf(v, minf(caps[o], v + gain)) if front else maxf(0.0, v - rear)
 		d_plan[i] = v
 
 

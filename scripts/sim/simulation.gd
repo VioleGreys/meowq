@@ -2198,8 +2198,8 @@ func _phase_combat(battles: Dictionary) -> void:
 # Наступающая — +FAT_ATK за день боя, до FAT_ATK_MAX; обороняющаяся — медленнее
 # (+FAT_DEF, окопы режут прибавку на FAT_ENT за единицу) и до FAT_DEF_MAX. Потери
 # людей и техники за день боя × (1 + истощение): долгий натиск дорог наступающему.
-const FAT_ATK := 0.05
-const FAT_DEF := 0.03
+const FAT_ATK := 0.02
+const FAT_DEF := 0.01
 const FAT_ENT := 0.15
 const FAT_ATK_MAX := 1.0
 const FAT_DEF_MAX := 0.7
@@ -2388,6 +2388,16 @@ func _nearest_friendly(o: int, from: int) -> int:
 	return cap if cap >= 0 and world.p_controller[cap] == o else -1
 
 
+## Потолок плана страны в долях PLAN_MAX: 1 — +30 %, доктрины поднимают
+## («Подвижная война» +20 %, «Массированный удар» +45 %, ключ plan_cap).
+static func plan_caps(w: World) -> PackedFloat64Array:
+	var caps := PackedFloat64Array()
+	caps.resize(w.nation_count)
+	for nat in w.nations:
+		caps[nat.id] = 1.0 + maxf(0.0, Doctrine.plan_bonus(nat, "plan_cap")) / PLAN_MAX
+	return caps
+
+
 func _phase_planning() -> void:
 	var nc := world.nation_count
 	var hostile := world.war.duplicate()
@@ -2399,7 +2409,7 @@ func _phase_planning() -> void:
 		for t in nat.wargoals:
 			hostile[nat.id * nc + int(t)] = 1
 	var old := world.d_plan.duplicate()
-	world.k_plan(hostile, PLAN_GAIN, PLAN_ACTIVE, PLAN_REAR)
+	world.k_plan(hostile, PLAN_GAIN, PLAN_ACTIVE, PLAN_REAR, plan_caps(world))
 	# у игрока (решение пользователя, как в жанре) план копится только в армиях,
 	# которым выбрана цель наступления (приказ «наступать» и провинция-цель); ИИ
 	# всегда ведёт свои планы — у него копит каждая дивизия на фронте

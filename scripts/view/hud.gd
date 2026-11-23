@@ -1621,7 +1621,7 @@ func _update_group_text(g: World.ArmyGroup) -> void:
 	if g.front >= 0 and w.fronts[g.front].alive:
 		var f: World.ArmyFront = w.fronts[g.front]
 		gtxt += "\n%s%s" % [f.name, (" · маршал %s" % w.commanders[f.marshal].name) if f.marshal >= 0 else " · без маршала"]
-	_info_text("%s · %d из %d %s\n%s · сила %d%% · опыт: %s\nСнабжение %d%% · план %d%% (+%d%% к атаке) · в бою %d" % [
+	_info_text("%s · %d из %d %s\n%s · сила %d%% · опыт: %s\nСнабжение %d%% · план %d%% (+%d%% к атаке и обороне) · в бою %d" % [
 		g.name, divs.size(), Leaders.ARMY_MAX, _plural(Leaders.ARMY_MAX, "дивизия", "дивизии", "дивизий"), order[0].to_upper() + order.substr(1),
 		s / n, _xp_text(dxp / n), sup / n * 100.0, pl / n * 100.0, pl / n * Simulation.PLAN_MAX * 100.0, fights] + gtxt + _sup_flags(bad, exh) + _clim_flags())
 
@@ -1695,7 +1695,7 @@ func _update_selection_text() -> void:
 			moving += 1
 		if d.in_battle:
 			fighting += 1
-	_info_text("Выбрано: %d %s · опыт: %s\nСила %d%% · организация %d%% · план %d%% · в пути %d · в бою %d%s\nПлан копится, пока войска стоят у фронта (до +%d%% к атаке), и тает в наступлении. Коснитесь провинции, чтобы отправить войска." % [
+	_info_text("Выбрано: %d %s · опыт: %s\nСила %d%% · организация %d%% · план %d%% · в пути %d · в бою %d%s\nПлан копится, пока войска стоят у фронта (до +%d%% к атаке и обороне, с доктринами — больше), и тает в наступлении. Коснитесь провинции, чтобы отправить войска." % [
 		sel.size(), _plural(sel.size(), "дивизия", "дивизии", "дивизий"), _xp_text(dxp / sel.size()), s / sel.size(), o / sel.size() * 100.0, pl / sel.size() * 100.0, moving, fighting,
 		_sup_flags(bad, exh) + _clim_flags(), roundi(Simulation.PLAN_MAX * 100.0)])
 

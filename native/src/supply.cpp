@@ -525,7 +525,8 @@ PackedFloat64Array MeowqCore::plan_update(const PackedByteArray &alive_a, const 
 		const PackedInt32Array &next_a, const PackedByteArray &battle_a, const PackedInt32Array &prov_a,
 		const PackedInt32Array &owner_a, const PackedInt32Array &ctrl_a, const PackedInt32Array &adj_start_a,
 		const PackedInt32Array &adj_list_a, const PackedByteArray &land_a, const PackedByteArray &hostile_a, int nc,
-		const PackedFloat64Array &plan_in, double gain, double active, double rear) const {
+		const PackedFloat64Array &plan_in, double gain, double active, double rear, const PackedFloat64Array &caps_a) const {
+	const double *caps = caps_a.ptr();
 	const uint8_t *alive = alive_a.ptr(), *battle = battle_a.ptr(), *land = land_a.ptr(), *hostile = hostile_a.ptr();
 	const int32_t *transit = transit_a.ptr(), *next = next_a.ptr(), *prov = prov_a.ptr(), *owner = owner_a.ptr();
 	const int32_t *ctrl = ctrl_a.ptr(), *adj_start = adj_start_a.ptr(), *adj_list = adj_list_a.ptr();
@@ -550,7 +551,7 @@ PackedFloat64Array MeowqCore::plan_update(const PackedByteArray &alive_a, const 
 				break;
 			}
 		}
-		v[i] = front ? std::min(1.0, v[i] + gain) : std::max(0.0, v[i] - rear);
+		v[i] = front ? std::max(v[i], std::min(caps[o], v[i] + gain)) : std::max(0.0, v[i] - rear);
 	}
 	return out;
 }

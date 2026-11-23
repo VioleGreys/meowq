@@ -1011,7 +1011,8 @@ static func plan_bonus(world: World, old: PackedFloat64Array) -> void:
 	var nk := PackedFloat64Array()
 	nk.resize(world.nation_count)
 	for nat in world.nations:
-		nk[nat.id] = maxf(0.0, 1.0 + nat.b("plan_speed"))
+		nk[nat.id] = maxf(0.0, 1.0 + nat.b("plan_speed") + Doctrine.plan_bonus(nat, "plan_speed"))
+	var caps := Simulation.plan_caps(world)
 	var act := active_mults(world)
 	var gen := world.ld_gen
 	var mar := world.ld_mar
@@ -1027,5 +1028,5 @@ static func plan_bonus(world: World, old: PackedFloat64Array) -> void:
 						a = maxf(a, float(act[c][3]))
 				k *= 1.0 + a
 			if k != 1.0:
-				pl[s] = minf(1.0, old[s] + (pl[s] - old[s]) * k)
+				pl[s] = minf(caps[own[s]], old[s] + (pl[s] - old[s]) * k)
 	world.d_plan = pl
